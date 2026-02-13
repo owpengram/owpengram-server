@@ -107,6 +107,23 @@ func (c *VoipCallsCore) pushSignalingUpdate(userID int64, callID int64, data []b
 	})
 }
 
+func (c *VoipCallsCore) pushCallUpdateIfNot(userID int64, excludeAuthIDs []int64, phoneCall *mtproto.PhoneCall) {
+	update := mtproto.MakeTLUpdatePhoneCall(&mtproto.Update{
+		PhoneCall: phoneCall,
+	}).To_Update()
+	push := mtproto.MakeUpdatesByUpdates(update)
+	push.Users = c.getUsersForResponseFor(
+		userID,
+		phoneCall.GetAdminId(),
+		phoneCall.GetParticipantId(),
+	)
+	_, _ = c.svcCtx.Dao.SyncClient.SyncPushUpdatesIfNot(c.ctx, &sync.TLSyncPushUpdatesIfNot{
+		UserId:   userID,
+		Excludes: excludeAuthIDs,
+		Updates:  push,
+	})
+}
+
 func (c *VoipCallsCore) relayConnections() []*mtproto.PhoneConnection {
 	if len(c.svcCtx.Config.VoipRelayEndpoints) == 0 {
 		return []*mtproto.PhoneConnection{
@@ -142,14 +159,14 @@ func (c *VoipCallsCore) relayConnections() []*mtproto.PhoneConnection {
 	return connections
 }
 
-func (c *VoipCallsCore) pushCallHistoryMessage(ownerID, peerID, fromID int64, out bool, callID int64, video bool, reason *mtproto.PhoneCallDiscardReason, duration int32) {
+func (c *VoipCallsCore) pushCallHistoryMessage(actorID, peerID int64, callID int64, video bool, reason *mtproto.PhoneCallDiscardReason, duration int32) {
 	serviceMessage := mtproto.MakeTLMessageService(&mtproto.Message{
-		Out:         out,
+		Out:         true,
 		Mentioned:   false,
 		MediaUnread: false,
 		Silent:      false,
 		Id:          0,
-		FromId:      mtproto.MakePeerUser(fromID),
+		FromId:      mtproto.MakePeerUser(actorID),
 		PeerId:      mtproto.MakePeerUser(peerID),
 		Date:        c.nowUnix(),
 		Action: mtproto.MakeTLMessageActionPhoneCall(&mtproto.MessageAction{
@@ -161,11 +178,11 @@ func (c *VoipCallsCore) pushCallHistoryMessage(ownerID, peerID, fromID int64, ou
 	}).To_Message()
 
 	_, _ = c.svcCtx.Dao.MsgClient.MsgPushUserMessage(c.ctx, &msg.TLMsgPushUserMessage{
-		UserId:    ownerID,
+		UserId:    actorID,
 		AuthKeyId: 0,
 		PeerType:  mtproto.PEER_USER,
 		PeerId:    peerID,
-		PushType:  1,
+		PushType:  0,
 		Message: msg.MakeTLOutboxMessage(&msg.OutboxMessage{
 			NoWebpage:    false,
 			Background:   false,
@@ -248,6 +265,10 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		return nil, mtproto.ErrCallPeerInvalid
 	}
 	call.State = svc.CallStateAccepted
+	call.AcceptedByAuth = c.MD.GetPermAuthKeyId()
+	if call.AcceptedByAuth == 0 {
+		call.AcceptedByAuth = c.MD.GetAuthId()
+	}
 	call.GB = in.GB
 	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
 	accepted := mtproto.MakeTLPhoneCallAccepted(&mtproto.PhoneCall{
@@ -272,6 +293,15 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 	c.svcCtx.Mu.Unlock()
 
 	c.pushCallUpdate(call.AdminID, accepted)
+	if call.AcceptedByAuth != 0 {
+		busyOnOtherDevices := mtproto.MakeTLPhoneCallDiscarded(&mtproto.PhoneCall{
+			Video:    call.Video,
+			Id:       call.ID,
+			Reason:   mtproto.MakeTLPhoneCallDiscardReasonBusy(nil).To_PhoneCallDiscardReason(),
+			Duration: wrapperspb.Int32(0),
+		}).To_PhoneCall()
+		c.pushCallUpdateIfNot(call.ParticipantID, []int64{call.AcceptedByAuth}, busyOnOtherDevices)
+	}
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: waiting,
 		Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
@@ -354,6 +384,17 @@ func (c *VoipCallsCore) PhoneDiscardCall(in *mtproto.TLPhoneDiscardCall) (*mtpro
 		c.svcCtx.Mu.Unlock()
 		return mtproto.MakeUpdatesByUpdates(), nil
 	}
+	callerAuth := c.MD.GetPermAuthKeyId()
+	if callerAuth == 0 {
+		callerAuth = c.MD.GetAuthId()
+	}
+	if call.State == svc.CallStateEstablished &&
+		c.MD.UserId == call.ParticipantID &&
+		call.AcceptedByAuth != 0 &&
+		call.AcceptedByAuth != callerAuth {
+		c.svcCtx.Mu.Unlock()
+		return mtproto.MakeUpdatesByUpdates(), nil
+	}
 	call.State = svc.CallStateDiscarded
 	call.LastReason = in.Reason
 	call.LastDuration = in.Duration
@@ -377,8 +418,7 @@ func (c *VoipCallsCore) PhoneDiscardCall(in *mtproto.TLPhoneDiscardCall) (*mtpro
 
 	c.pushCallUpdate(call.AdminID, discarded)
 	c.pushCallUpdate(call.ParticipantID, discarded)
-	c.pushCallHistoryMessage(actorID, peerID, actorID, true, call.ID, call.Video, in.Reason, in.Duration)
-	c.pushCallHistoryMessage(peerID, actorID, actorID, false, call.ID, call.Video, in.Reason, in.Duration)
+	c.pushCallHistoryMessage(actorID, peerID, call.ID, call.Video, in.Reason, in.Duration)
 	return mtproto.MakeUpdatesByUpdates(mtproto.MakeTLUpdatePhoneCall(&mtproto.Update{
 		PhoneCall: discarded,
 	}).To_Update()), nil

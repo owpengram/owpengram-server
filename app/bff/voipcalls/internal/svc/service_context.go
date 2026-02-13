@@ -25,6 +25,7 @@ type PrivateCallSession struct {
 	AccessHash     int64
 	AdminID        int64
 	ParticipantID  int64
+	AcceptedByAuth int64
 	Video          bool
 	Date           int32
 	StartDate      int32
