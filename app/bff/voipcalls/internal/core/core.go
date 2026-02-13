@@ -68,16 +68,35 @@ func (c *VoipCallsCore) getUsersForResponseFor(viewerUserID int64, userIDs ...in
 }
 
 func (c *VoipCallsCore) getOrDefaultProtocol(protocol *mtproto.PhoneCallProtocol) *mtproto.PhoneCallProtocol {
-	if protocol != nil {
-		return protocol
+	if protocol == nil {
+		protocol = mtproto.MakeTLPhoneCallProtocol(&mtproto.PhoneCallProtocol{
+			UdpP2P:          true,
+			UdpReflector:    true,
+			MinLayer:        65,
+			MaxLayer:        200,
+			LibraryVersions: []string{"2.4.4"},
+		}).To_PhoneCallProtocol()
 	}
-	return mtproto.MakeTLPhoneCallProtocol(&mtproto.PhoneCallProtocol{
-		UdpP2P:          true,
-		UdpReflector:    true,
-		MinLayer:        65,
-		MaxLayer:        200,
-		LibraryVersions: []string{"2.4.4"},
+	normalized := mtproto.MakeTLPhoneCallProtocol(&mtproto.PhoneCallProtocol{
+		UdpP2P:          protocol.GetUdpP2P(),
+		UdpReflector:    protocol.GetUdpReflector(),
+		MinLayer:        protocol.GetMinLayer(),
+		MaxLayer:        protocol.GetMaxLayer(),
+		LibraryVersions: append([]string(nil), protocol.GetLibraryVersions()...),
 	}).To_PhoneCallProtocol()
+	if normalized.MinLayer == 0 {
+		normalized.MinLayer = 65
+	}
+	if normalized.MaxLayer == 0 {
+		normalized.MaxLayer = 200
+	}
+	if normalized.MaxLayer < normalized.MinLayer {
+		normalized.MaxLayer = normalized.MinLayer
+	}
+	if len(normalized.LibraryVersions) == 0 {
+		normalized.LibraryVersions = []string{"2.4.4"}
+	}
+	return normalized
 }
 
 func (c *VoipCallsCore) pushCallUpdate(userID int64, phoneCall *mtproto.PhoneCall) {
@@ -264,11 +283,20 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		c.svcCtx.Mu.Unlock()
 		return nil, mtproto.ErrCallPeerInvalid
 	}
-	call.State = svc.CallStateAccepted
-	call.AcceptedByAuth = c.MD.GetPermAuthKeyId()
-	if call.AcceptedByAuth == 0 {
-		call.AcceptedByAuth = c.MD.GetAuthId()
+	acceptedByAuth := c.MD.GetAuthId()
+	acceptedByPerm := c.MD.GetPermAuthKeyId()
+	if acceptedByAuth == 0 {
+		acceptedByAuth = acceptedByPerm
 	}
+	if call.State >= svc.CallStateAccepted &&
+		((call.AcceptedByAuth != 0 && call.AcceptedByAuth != acceptedByAuth) ||
+			(call.AcceptedByPerm != 0 && call.AcceptedByPerm != acceptedByPerm)) {
+		c.svcCtx.Mu.Unlock()
+		return nil, mtproto.ErrCallPeerInvalid
+	}
+	call.State = svc.CallStateAccepted
+	call.AcceptedByAuth = acceptedByAuth
+	call.AcceptedByPerm = acceptedByPerm
 	call.GB = in.GB
 	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
 	accepted := mtproto.MakeTLPhoneCallAccepted(&mtproto.PhoneCall{
@@ -293,14 +321,21 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 	c.svcCtx.Mu.Unlock()
 
 	c.pushCallUpdate(call.AdminID, accepted)
+	excludeAuthIDs := make([]int64, 0, 2)
 	if call.AcceptedByAuth != 0 {
+		excludeAuthIDs = append(excludeAuthIDs, call.AcceptedByAuth)
+	}
+	if call.AcceptedByPerm != 0 && call.AcceptedByPerm != call.AcceptedByAuth {
+		excludeAuthIDs = append(excludeAuthIDs, call.AcceptedByPerm)
+	}
+	if len(excludeAuthIDs) > 0 {
 		busyOnOtherDevices := mtproto.MakeTLPhoneCallDiscarded(&mtproto.PhoneCall{
 			Video:    call.Video,
 			Id:       call.ID,
 			Reason:   mtproto.MakeTLPhoneCallDiscardReasonBusy(nil).To_PhoneCallDiscardReason(),
 			Duration: wrapperspb.Int32(0),
 		}).To_PhoneCall()
-		c.pushCallUpdateIfNot(call.ParticipantID, []int64{call.AcceptedByAuth}, busyOnOtherDevices)
+		c.pushCallUpdateIfNot(call.ParticipantID, excludeAuthIDs, busyOnOtherDevices)
 	}
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: waiting,
@@ -384,14 +419,15 @@ func (c *VoipCallsCore) PhoneDiscardCall(in *mtproto.TLPhoneDiscardCall) (*mtpro
 		c.svcCtx.Mu.Unlock()
 		return mtproto.MakeUpdatesByUpdates(), nil
 	}
-	callerAuth := c.MD.GetPermAuthKeyId()
+	callerAuth := c.MD.GetAuthId()
+	callerPerm := c.MD.GetPermAuthKeyId()
 	if callerAuth == 0 {
-		callerAuth = c.MD.GetAuthId()
+		callerAuth = callerPerm
 	}
-	if call.State == svc.CallStateEstablished &&
+	if call.State >= svc.CallStateAccepted &&
 		c.MD.UserId == call.ParticipantID &&
-		call.AcceptedByAuth != 0 &&
-		call.AcceptedByAuth != callerAuth {
+		((call.AcceptedByAuth != 0 && call.AcceptedByAuth != callerAuth) ||
+			(call.AcceptedByPerm != 0 && call.AcceptedByPerm != callerPerm)) {
 		c.svcCtx.Mu.Unlock()
 		return mtproto.MakeUpdatesByUpdates(), nil
 	}
@@ -407,18 +443,14 @@ func (c *VoipCallsCore) PhoneDiscardCall(in *mtproto.TLPhoneDiscardCall) (*mtpro
 		Reason:     in.Reason,
 		Duration:   wrapperspb.Int32(in.Duration),
 	}).To_PhoneCall()
-	actorID := c.MD.UserId
-	peerID := call.ParticipantID
-	if actorID != call.AdminID {
-		peerID = call.AdminID
-	}
 	delete(c.svcCtx.CallsByID, call.ID)
 	delete(c.svcCtx.CallsByUserKey, c.userPairKey(call.AdminID, call.ParticipantID))
 	c.svcCtx.Mu.Unlock()
 
 	c.pushCallUpdate(call.AdminID, discarded)
 	c.pushCallUpdate(call.ParticipantID, discarded)
-	c.pushCallHistoryMessage(actorID, peerID, call.ID, call.Video, in.Reason, in.Duration)
+	// Always persist call history from call initiator perspective to keep direction stable.
+	c.pushCallHistoryMessage(call.AdminID, call.ParticipantID, call.ID, call.Video, in.Reason, in.Duration)
 	return mtproto.MakeUpdatesByUpdates(mtproto.MakeTLUpdatePhoneCall(&mtproto.Update{
 		PhoneCall: discarded,
 	}).To_Update()), nil
