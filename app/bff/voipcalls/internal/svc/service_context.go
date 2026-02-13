@@ -21,23 +21,24 @@ const (
 )
 
 type PrivateCallSession struct {
-	ID             int64
-	AccessHash     int64
-	AdminID        int64
-	ParticipantID  int64
-	AcceptedByAuth int64
-	AcceptedByPerm int64
-	Video          bool
-	Date           int32
-	StartDate      int32
-	State          CallState
-	Protocol       *mtproto.PhoneCallProtocol
-	GAHash         []byte
-	GA             []byte
-	GB             []byte
-	KeyFingerprint int64
-	LastReason     *mtproto.PhoneCallDiscardReason
-	LastDuration   int32
+	ID                  int64
+	AccessHash          int64
+	AdminID             int64
+	ParticipantID       int64
+	AcceptedByAuth      int64
+	AcceptedByPerm      int64
+	Video               bool
+	Date                int32
+	StartDate           int32
+	State               CallState
+	Protocol            *mtproto.PhoneCallProtocol
+	ParticipantProtocol *mtproto.PhoneCallProtocol
+	GAHash              []byte
+	GA                  []byte
+	GB                  []byte
+	KeyFingerprint      int64
+	LastReason          *mtproto.PhoneCallDiscardReason
+	LastDuration        int32
 }
 
 type ServiceContext struct {

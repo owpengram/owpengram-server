@@ -6,6 +6,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	mrand "math/rand"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -97,6 +100,94 @@ func (c *VoipCallsCore) getOrDefaultProtocol(protocol *mtproto.PhoneCallProtocol
 		normalized.LibraryVersions = []string{"2.4.4"}
 	}
 	return normalized
+}
+
+// parseSemVer parses a "major.minor.patch" version string into three integers.
+// Returns (0,0,0) if parsing fails.
+func parseSemVer(version string) (int, int, int) {
+	parts := strings.SplitN(version, ".", 3)
+	if len(parts) != 3 {
+		return 0, 0, 0
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	patch, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, 0, 0
+	}
+	return major, minor, patch
+}
+
+// compareSemVer compares two semantic version strings.
+// Returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareSemVer(a, b string) int {
+	aMaj, aMin, aPat := parseSemVer(a)
+	bMaj, bMin, bPat := parseSemVer(b)
+	if aMaj != bMaj {
+		return aMaj - bMaj
+	}
+	if aMin != bMin {
+		return aMin - bMin
+	}
+	return aPat - bPat
+}
+
+// negotiateProtocol computes a negotiated protocol from the admin's and
+// participant's protocols. It finds the intersection of LibraryVersions,
+// sorts them by semantic version (highest first), and negotiates the
+// layer range and UDP flags.
+func (c *VoipCallsCore) negotiateProtocol(
+	adminProto, participantProto *mtproto.PhoneCallProtocol,
+) *mtproto.PhoneCallProtocol {
+	adminProto = c.getOrDefaultProtocol(adminProto)
+	if participantProto == nil {
+		return adminProto
+	}
+
+	// Build a set of participant versions for fast lookup.
+	participantSet := make(map[string]struct{}, len(participantProto.GetLibraryVersions()))
+	for _, v := range participantProto.GetLibraryVersions() {
+		participantSet[v] = struct{}{}
+	}
+
+	// Intersect: keep only versions present in both lists.
+	var intersection []string
+	for _, v := range adminProto.GetLibraryVersions() {
+		if _, ok := participantSet[v]; ok {
+			intersection = append(intersection, v)
+		}
+	}
+
+	// Sort by semantic version descending (highest version first).
+	sort.Slice(intersection, func(i, j int) bool {
+		return compareSemVer(intersection[i], intersection[j]) > 0
+	})
+
+	// Fallback: if no common versions, use admin's list as-is.
+	if len(intersection) == 0 {
+		intersection = append([]string(nil), adminProto.GetLibraryVersions()...)
+	}
+
+	// Negotiate layer range.
+	minLayer := adminProto.GetMinLayer()
+	if participantProto.GetMinLayer() > minLayer {
+		minLayer = participantProto.GetMinLayer()
+	}
+	maxLayer := adminProto.GetMaxLayer()
+	if participantProto.GetMaxLayer() < maxLayer {
+		maxLayer = participantProto.GetMaxLayer()
+	}
+	if maxLayer < minLayer {
+		maxLayer = minLayer
+	}
+
+	return mtproto.MakeTLPhoneCallProtocol(&mtproto.PhoneCallProtocol{
+		UdpP2P:          adminProto.GetUdpP2P() && participantProto.GetUdpP2P(),
+		UdpReflector:    adminProto.GetUdpReflector() && participantProto.GetUdpReflector(),
+		MinLayer:        minLayer,
+		MaxLayer:        maxLayer,
+		LibraryVersions: intersection,
+	}).To_PhoneCallProtocol()
 }
 
 func (c *VoipCallsCore) pushCallUpdate(userID int64, phoneCall *mtproto.PhoneCall) {
@@ -288,9 +379,32 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 	if acceptedByAuth == 0 {
 		acceptedByAuth = acceptedByPerm
 	}
-	if call.State >= svc.CallStateAccepted &&
-		((call.AcceptedByAuth != 0 && call.AcceptedByAuth != acceptedByAuth) ||
-			(call.AcceptedByPerm != 0 && call.AcceptedByPerm != acceptedByPerm)) {
+	// Defensive check: don't process if call is already discarded
+	if call.State == svc.CallStateDiscarded {
+		c.svcCtx.Mu.Unlock()
+		return nil, mtproto.ErrCallPeerInvalid
+	}
+	// Idempotency: if already accepted by the same device, return current state
+	if call.State >= svc.CallStateAccepted {
+		if (call.AcceptedByAuth != 0 && call.AcceptedByAuth == acceptedByAuth) ||
+			(call.AcceptedByPerm != 0 && call.AcceptedByPerm == acceptedByPerm) {
+			// Already accepted by this device, return current state
+			waiting := mtproto.MakeTLPhoneCallWaiting(&mtproto.PhoneCall{
+				Video:         call.Video,
+				Id:            call.ID,
+				AccessHash:    call.AccessHash,
+				Date:          call.Date,
+				AdminId:       call.AdminID,
+				ParticipantId: call.ParticipantID,
+				Protocol:      call.Protocol,
+			}).To_PhoneCall()
+			c.svcCtx.Mu.Unlock()
+			return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
+				PhoneCall: waiting,
+				Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
+			}).To_Phone_PhoneCall(), nil
+		}
+		// Accepted by different device, reject
 		c.svcCtx.Mu.Unlock()
 		return nil, mtproto.ErrCallPeerInvalid
 	}
@@ -298,7 +412,7 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 	call.AcceptedByAuth = acceptedByAuth
 	call.AcceptedByPerm = acceptedByPerm
 	call.GB = in.GB
-	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
+	call.ParticipantProtocol = c.getOrDefaultProtocol(in.Protocol)
 	accepted := mtproto.MakeTLPhoneCallAccepted(&mtproto.PhoneCall{
 		Video:         call.Video,
 		Id:            call.ID,
@@ -307,7 +421,7 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
 		GB:            call.GB,
-		Protocol:      call.Protocol,
+		Protocol:      call.ParticipantProtocol,
 	}).To_PhoneCall()
 	waiting := mtproto.MakeTLPhoneCallWaiting(&mtproto.PhoneCall{
 		Video:         call.Video,
@@ -316,30 +430,59 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		Date:          call.Date,
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
-		Protocol:      call.Protocol,
+		Protocol:      call.ParticipantProtocol,
 	}).To_PhoneCall()
+	// Store values needed after unlock
+	adminID := call.AdminID
+	participantID := call.ParticipantID
+	storedAcceptedByAuth := call.AcceptedByAuth
+	storedAcceptedByPerm := call.AcceptedByPerm
+	callVideo := call.Video
+	storedCallID := call.ID
 	c.svcCtx.Mu.Unlock()
 
-	c.pushCallUpdate(call.AdminID, accepted)
-	excludeAuthIDs := make([]int64, 0, 2)
-	if call.AcceptedByAuth != 0 {
-		excludeAuthIDs = append(excludeAuthIDs, call.AcceptedByAuth)
+	// Send phoneCallAccepted to admin first to ensure proper state transition
+	// This must be received before any discarded updates to prevent "Unexpected state" errors
+	// Use pushCallUpdate helper which uses SyncPushUpdates internally
+	c.pushCallUpdate(adminID, accepted)
+
+	// Small delay to ensure phoneCallAccepted is processed before any subsequent updates
+	// This is especially important when admin and participant are on different network paths
+	// (e.g., server on localhost, desktop on same machine, android on different IP)
+	time.Sleep(100 * time.Millisecond)
+
+	// Defensive check: only send busy updates if call is still in Accepted state
+	// Re-acquire lock to check current state
+	c.svcCtx.Mu.RLock()
+	callCheck, ok := c.svcCtx.CallsByID[storedCallID]
+	callState := svc.CallStateDiscarded
+	if ok {
+		callState = callCheck.State
 	}
-	if call.AcceptedByPerm != 0 && call.AcceptedByPerm != call.AcceptedByAuth {
-		excludeAuthIDs = append(excludeAuthIDs, call.AcceptedByPerm)
-	}
-	if len(excludeAuthIDs) > 0 {
-		busyOnOtherDevices := mtproto.MakeTLPhoneCallDiscarded(&mtproto.PhoneCall{
-			Video:    call.Video,
-			Id:       call.ID,
-			Reason:   mtproto.MakeTLPhoneCallDiscardReasonBusy(nil).To_PhoneCallDiscardReason(),
-			Duration: wrapperspb.Int32(0),
-		}).To_PhoneCall()
-		c.pushCallUpdateIfNot(call.ParticipantID, excludeAuthIDs, busyOnOtherDevices)
+	c.svcCtx.Mu.RUnlock()
+
+	// Only send busy updates if call is still accepted (not discarded or established)
+	if callState == svc.CallStateAccepted {
+		excludeAuthIDs := make([]int64, 0, 2)
+		if storedAcceptedByAuth != 0 {
+			excludeAuthIDs = append(excludeAuthIDs, storedAcceptedByAuth)
+		}
+		if storedAcceptedByPerm != 0 && storedAcceptedByPerm != storedAcceptedByAuth {
+			excludeAuthIDs = append(excludeAuthIDs, storedAcceptedByPerm)
+		}
+		if len(excludeAuthIDs) > 0 {
+			busyOnOtherDevices := mtproto.MakeTLPhoneCallDiscarded(&mtproto.PhoneCall{
+				Video:    callVideo,
+				Id:       storedCallID,
+				Reason:   mtproto.MakeTLPhoneCallDiscardReasonBusy(nil).To_PhoneCallDiscardReason(),
+				Duration: wrapperspb.Int32(0),
+			}).To_PhoneCall()
+			c.pushCallUpdateIfNot(participantID, excludeAuthIDs, busyOnOtherDevices)
+		}
 	}
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: waiting,
-		Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
+		Users:     c.getUsersForResponseFor(c.MD.UserId, adminID, participantID),
 	}).To_Phone_PhoneCall(), nil
 }
 
@@ -353,10 +496,44 @@ func (c *VoipCallsCore) PhoneConfirmCall(in *mtproto.TLPhoneConfirmCall) (*mtpro
 		c.svcCtx.Mu.Unlock()
 		return nil, mtproto.ErrCallPeerInvalid
 	}
+	// Defensive check: don't process if call is already discarded
+	if call.State == svc.CallStateDiscarded {
+		c.svcCtx.Mu.Unlock()
+		return nil, mtproto.ErrCallPeerInvalid
+	}
+	// Idempotency: if already established, return current state
+	if call.State == svc.CallStateEstablished {
+		connections := c.relayConnections()
+		established := mtproto.MakeTLPhoneCall(&mtproto.PhoneCall{
+			Video:               call.Video,
+			P2PAllowed:          true,
+			ConferenceSupported: false,
+			Id:                  call.ID,
+			AccessHash:          call.AccessHash,
+			Date:                call.Date,
+			AdminId:             call.AdminID,
+			ParticipantId:       call.ParticipantID,
+			GAOrB:               call.GA,
+			KeyFingerprint:      call.KeyFingerprint,
+			Protocol:            call.Protocol,
+			Connections:         connections,
+			StartDate:           call.StartDate,
+		}).To_PhoneCall()
+		c.svcCtx.Mu.Unlock()
+		return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
+			PhoneCall: established,
+			Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
+		}).To_Phone_PhoneCall(), nil
+	}
+	// Defensive check: can only confirm if call is in Accepted state
+	if call.State != svc.CallStateAccepted {
+		c.svcCtx.Mu.Unlock()
+		return nil, mtproto.ErrCallPeerInvalid
+	}
 	call.State = svc.CallStateEstablished
 	call.GA = in.GA
 	call.KeyFingerprint = in.KeyFingerprint
-	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
+	call.Protocol = c.negotiateProtocol(in.Protocol, call.ParticipantProtocol)
 	call.StartDate = c.nowUnix()
 	connections := c.relayConnections()
 	established := mtproto.MakeTLPhoneCall(&mtproto.PhoneCall{
@@ -376,6 +553,11 @@ func (c *VoipCallsCore) PhoneConfirmCall(in *mtproto.TLPhoneConfirmCall) (*mtpro
 	}).To_PhoneCall()
 	c.svcCtx.Mu.Unlock()
 
+	// Send Established to BOTH admin and participant
+	// This ensures both sides receive the update in the correct order
+	// Small delay to ensure phoneCallAccepted is processed first by clients
+	time.Sleep(100 * time.Millisecond)
+	c.pushCallUpdate(call.AdminID, established)
 	c.pushCallUpdate(call.ParticipantID, established)
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: established,
