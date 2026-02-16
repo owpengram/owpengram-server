@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../owpengram-desktop"
+		},
+		{
+			"path": "../owpengram-desktop-client"
+		},
+		{
+			"path": "../owpengram-android"
+		},
+		{
+			"path": "../owpengram-android-client"
+		}
+	],
+	"settings": {}
+}
