@@ -1,12 +1,19 @@
 {
 	"folders": [
 		{
+			"name": "owpenproto",
+			"path": "../owpenproto"
+		},
+		{
+			"name": "owpengram-server",
 			"path": "."
 		},
 		{
+			"name": "owpengram-desktop-client",
 			"path": "../owpengram-desktop-client"
 		},
 		{
+			"name": "owpengram-android-client",
 			"path": "../owpengram-android-client"
 		}
 	],
