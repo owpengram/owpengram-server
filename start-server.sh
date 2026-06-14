@@ -47,9 +47,14 @@ echo "[1/2] docker compose -f docker-compose-env.yaml up -d"
 docker compose -f docker-compose-env.yaml up -d
 
 echo
-echo "[2/2] docker compose up -d --build"
+echo "[2/3] docker compose up -d --build  (core server)"
 # --build so the edited config (public address) is baked into the image.
 docker compose up -d --build
+
+echo
+echo "[3/3] coturn (calls relay) — best-effort, never blocks the core server"
+docker compose -f docker-compose-turn.yaml up -d \
+  || echo "[WARN] coturn failed to start — calls relay unavailable; the core server is fine."
 
 echo
 echo "[OK] Server started (public address: ${PUBLIC_IP})."

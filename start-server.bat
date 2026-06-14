@@ -63,13 +63,20 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo [2/2] docker compose up -d --build
+echo [2/3] docker compose up -d --build  (core server)
 rem --build so the edited config (public address) is baked into the image.
 docker compose up -d --build
 if %ERRORLEVEL% neq 0 (
   echo [ERROR] app stack failed
   pause
   exit /b %ERRORLEVEL%
+)
+
+echo.
+echo [3/3] coturn (calls relay) - best-effort, never blocks the core server
+docker compose -f docker-compose-turn.yaml up -d
+if %ERRORLEVEL% neq 0 (
+  echo [WARN] coturn failed to start - calls relay unavailable; core server is fine.
 )
 
 echo.

@@ -1,0 +1,29 @@
+# TURN/STUN relay for global voice/video calls (P2P fails behind NAT).
+# Kept SEPARATE from the core stack on purpose: publishing the large UDP media
+# range can be slow or fail on Docker Desktop (Windows/Mac), and that must
+# never block the main server (gnetway/session/...) from starting.
+#
+# PUBLIC_IP and TURN_SECRET come from the .env file written by start-server.
+# On a Linux host, "network_mode: host" is more efficient than the published
+# ports below; --external-ip makes relayed media reach remote clients either way.
+services:
+  coturn:
+    image: coturn/coturn:latest
+    restart: always
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+    command:
+      - -n
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --realm=owpengram
+      - --lt-cred-mech
+      - --fingerprint
+      - --no-tls
+      - --no-dtls
+      - --no-cli
+      - --external-ip=${PUBLIC_IP:-127.0.0.1}
+      - --user=owpengram:${TURN_SECRET:-changeme}
