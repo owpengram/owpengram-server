@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/readme/owpengram_splash.png" alt="OwpenGram" width="440">
+</p>
+
 # 🚀 OwpenGram Server
 
 **Your own private messaging server — up and running in one command.**
@@ -9,7 +13,9 @@ no censorship.
 
 > 🔗 Implements **MTProto API layer 222**.
 
-> 📸 _Screenshot placeholder — to be added._
+<p align="center">
+  <img src="media/readme/server_hero.png" alt="OwpenGram server: Docker stack and the one-command start script" width="900">
+</p>
 
 ---
 
