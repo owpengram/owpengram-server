@@ -1,27 +1,30 @@
-# docker-compose-env2: 高性能组件栈（独立方案，不依赖 docker-compose-env.yaml）
-# 组件: jaeger, prometheus, grafana, elasticsearch, kibana,
-#       go-stash, filebeat, kafka, mysql, redis, etcd, minio, minio-mc, node-exporter
-# 启动: docker compose -f docker-compose-env2.yaml up -d
+# OwpenGram infrastructure — FULL profile
+# ---------------------------------------------------------------------------
+# Default services plus the full observation stack (jaeger, prometheus, grafana, elasticsearch,
+# kibana, go-stash, filebeat, kafka, mysql, redis, etcd, minio, minio-mc, node-exporter)
+#
+# Recommended RAM: 8+ GB
+#
+# Start:  docker compose -f docker-compose-env-full.yaml up -d
+# ---------------------------------------------------------------------------
 
 services:
-  # --- 消息队列 (Bitnami Kafka KRaft 模式，无需 Zookeeper) ---
-  #消息队列 - Message queue
+  # --- Message Queue (Bitnami, Kafka, KRaft mode, no Zookeeper required) ---
   kafka:
     image: apache/kafka:3.9.0
     container_name: kafka
     ports:
-      - 9092:9092  # 容器内部之间使用的监听端口
-      - 9094:9094  # 容器外部访问监听端口
+      - 9092:9092
+      - 9094:9094
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CREATE_TOPICS: "Inbox-T:1:0,Sync-T:1:0,teamgram-log:1:0"
-      # 外部访问监听端口为 9092，容器内部使用不同的端口 9094
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094,CONTROLLER://localhost:9093,PLAINTEXT_CONTAINER://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094,CONTROLLER://kafka:9093,PLAINTEXT_CONTAINER://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9094,PLAINTEXT_CONTAINER://kafka:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_CONTAINER:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -33,7 +36,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 配置与发现 ---
+  # --- Config & service discovery ---
   etcd:
     image: quay.io/coreos/etcd:v3.5.11
     container_name: etcd
@@ -57,7 +60,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 缓存 ---
+  # --- Cache ---
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -75,7 +78,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 关系数据库 ---
+  # --- Relational database ---
   mysql:
     image: mysql:8.0
     container_name: mysql
@@ -103,7 +106,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 对象存储 ---
+  # --- Object storage ---
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -140,8 +143,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 可观测：追踪 ---
-  #jaeger链路追踪 — Jaeger for tracing
+  # --- Observation: Tracing ---
   jaeger:
     image: jaegertracing/all-in-one:1.63.0
     container_name: jaeger
@@ -163,7 +165,7 @@ services:
     networks:
       - teamgram_net
 
-  # --- 可观测：指标 ---
+# --- Observation: Indicators ---
   node-exporter:
     image: prom/node-exporter:v1.7.0
     container_name: node-exporter
@@ -182,13 +184,12 @@ services:
     networks:
       - teamgram_net
 
-  #prometheus监控 — Prometheus for monitoring
-  prometheus:
+  # --- Observation: Monitoring ---
     image: prom/prometheus:v2.28.1
     container_name: prometheus
     environment:
-      # 时区上海 - Time zone Shanghai (Change if needed)
-      TZ: Asia/Shanghai
+      # Time zone Moscow (Change if needed)
+      TZ: Europe/Moscow
     volumes:
       - ./teamgramd/deploy/prometheus/server/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./data/prometheus/data:/prometheus
@@ -202,15 +203,16 @@ services:
     networks:
       - teamgram_net
 
-  #查看prometheus监控数据 - Grafana to view Prometheus monitoring data
+  # Grafana to view Prometheus monitoring data
   grafana:
     image: grafana/grafana:8.0.6
     container_name: grafana
     hostname: grafana
     user: root
     environment:
-      TZ: Asia/Shanghai
-      # 首次启动时生效；若已有数据卷则需在容器内用 grafana-cli 重置 - Only used on first run; reset via grafana-cli if volume exists
+      # Time zone Moscow (Change if needed)
+      TZ: Europe/Moscow
+      # This takes effect on first run; if a data volume already exists, it needs to be reset within the container using grafana-cli.
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     restart: always
@@ -221,14 +223,15 @@ services:
     networks:
       - teamgram_net
 
-  # --- 日志与搜索 ---
+# --- Logs and Search ---
   elasticsearch:
     container_name: elasticsearch
     image: elasticsearch:8.12.2
     restart: always
     environment:
       - "ES_JAVA_OPTS=-Xms1024m -Xmx1024m"
-      - "TZ=Asia/Shanghai"
+      # Time zone Moscow (Change if needed)
+      - "TZ=Europe/Moscow"
       - "discovery.type=single-node"
       - "xpack.security.enabled=false"
     ports:
@@ -245,8 +248,9 @@ services:
     image: kibana:8.12.2
     restart: always
     environment:
-      - "TZ=Asia/Shanghai"
-      - "I18N_LOCALE=zh-CN"
+      # Time zone Moscow (Change if needed)
+      - "TZ=Europe/Moscow"
+      - "I18N_LOCALE=en-US"
       - "ELASTICSEARCH_HOSTS=http://elasticsearch:9200"
       - "XPACK_SECURITY_ENABLED=false"
     ports:
@@ -260,15 +264,15 @@ services:
     image: elastic/filebeat:8.12.2
     container_name: filebeat
     environment:
-      # 时区上海 - Time zone Shanghai (Change if needed)
-      TZ: Asia/Shanghai
+      # Time zone Moscow (Change if needed)
+      TZ: Europe/Moscow
     user: root
     restart: always
-    entrypoint: "filebeat -e -strict.perms=false"  #解决配置文件权限问题 - Solving the configuration file permissions
+    entrypoint: "filebeat -e -strict.perms=false"  #Solving the configuration file permissions
     volumes:
       - ./teamgramd/deploy/filebeat/conf/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      # 此处需指定docker的containers目录，取决于你docker的配置 - The containers directory of docker needs to be specified here, depending on your docker configuration
-      # 如snap安装的docker，则为/var/snap/docker/common/var-lib-docker/containers - Example if docker is installed by Snap /var/snap/docker/common/var-lib-docker/containers
+      # The containers directory of docker needs to be specified here, depending on your docker configuration
+      # If Docker is installed by Snap, then it would be located at /var/snap/docker/common/var-lib-docker/containers
       # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers
       - /var/lib/docker/containers:/var/lib/docker/containers
     networks:
@@ -276,13 +280,13 @@ services:
     depends_on:
       - kafka
 
-  #消费kafka中filebeat收集的数据输出到es - The data output collected by FileBeat in Kafka is output to ES
+  #The data output collected by FileBeat in Kafka is output to ES
   go-stash:
     image: kevinwan/go-stash:1.1.1
     container_name: go-stash
     environment:
-      # 时区上海 - Time zone Shanghai (Change if needed)
-      TZ: Asia/Shanghai
+      # Time zone Moscow (Change if needed)
+      TZ: Europe/Moscow
     restart: always
     volumes:
       - ./teamgramd/deploy/go-stash/etc:/app/etc
@@ -295,6 +299,3 @@ services:
 networks:
   teamgram_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
