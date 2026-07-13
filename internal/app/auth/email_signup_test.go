@@ -58,6 +58,41 @@ func TestEmailSignupSendCodeRoutesFreshSignupToEmail(t *testing.T) {
 	}
 }
 
+// Regression test: TELESRV_LOGIN_EMAIL_REQUIRE_SETUP=true (a real deployment
+// combo, not just EMAIL_SIGNUP_ENABLE alone) used to permanently reject
+// SignUp for every email-signup account with ErrCodeInvalid, because SignUp's
+// "must have a verified/pending login email" gate only recognized the legacy
+// VerifiedEmail/PendingEmail fields, which the email-signup path never sets.
+func TestEmailSignupSignUpSucceedsWithLoginEmailRequireSetupAlsoOn(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	sender := &testMailSender{}
+	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginEmail(LoginEmailOptions{Sender: sender, RequireSetup: true, Enabled: true}),
+		WithEmailSignup(true))
+
+	phone, ok := domain.EncodeEmailPhone("requiresetup@owpengram.local")
+	if !ok {
+		t.Fatalf("EncodeEmailPhone: ok=false")
+	}
+
+	hash, err := svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if _, _, needSignUp, err := svc.SignInWithEmail(ctx, domain.Authorization{}, phone, hash, sender.code); err != nil || !needSignUp {
+		t.Fatalf("SignInWithEmail: needSignUp=%v err=%v", needSignUp, err)
+	}
+	created, _, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "Needs", "Setup")
+	if err != nil {
+		t.Fatalf("SignUp: %v (this is the loop bug if it fails with ErrCodeInvalid)", err)
+	}
+	if created.Phone != phone {
+		t.Fatalf("created.Phone = %q, want %q", created.Phone, phone)
+	}
+}
+
 func TestEmailSignupSendCodeIgnoredWhenPhoneIsNotEncoded(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()

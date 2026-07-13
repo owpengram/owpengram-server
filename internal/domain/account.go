@@ -235,7 +235,14 @@ func MaskEmail(email string) string {
 
 // NormalizePhone 仅保留手机号中的数字（与 users.phone 的存储形态一致）。全部被过滤
 // 掉时返回原串，便于上层做 validPhone 拒绝。auth/account 两域共用同一规则避免漂移。
+//
+// Email-signup 合成号码（EncodeEmailPhone 生成，"888" 前缀 + 至少一个字母）是唯一例外：
+// 原样保留（仅 lower+trim），不剥离字母——否则 DecodeEmailPhone 会因编码内容被剥空而
+// 永远解不出邮箱。真实手机号恒为纯数字，不含字母，故这个判定不会误伤任何真实号码。
 func NormalizePhone(phone string) string {
+	if IsEmailSignupPhone(phone) {
+		return strings.ToLower(strings.TrimSpace(phone))
+	}
 	var b strings.Builder
 	b.Grow(len(phone))
 	for _, r := range phone {
@@ -249,13 +256,21 @@ func NormalizePhone(phone string) string {
 	return b.String()
 }
 
-// ValidPhone 校验 NormalizePhone 后的持久化形态：5-200 位纯数字。
+// ValidPhone 校验 NormalizePhone 后的持久化形态：真实手机号是 5-200 位纯数字；
+// email-signup 合成号码额外允许小写字母（EncodeEmailPhone 的转义字符集）。
 // 上限与 users.phone 列宽一致；当前开发登录/改号链路不强制精确 E.164 长度，
-// 但拒绝空串、非数字和会截断的超长输入。上限从 32 放宽到 200 是为了容纳
-// EncodeEmailPhone 生成的 "888"+反向可解码大整数（真实手机号远用不到这个上限）。
+// 但拒绝空串、非法字符和会截断的超长输入。
 func ValidPhone(phone string) bool {
 	if len(phone) < 5 || len(phone) > 200 {
 		return false
+	}
+	if IsEmailSignupPhone(phone) {
+		for _, r := range phone {
+			if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') {
+				return false
+			}
+		}
+		return true
 	}
 	for _, r := range phone {
 		if r < '0' || r > '9' {

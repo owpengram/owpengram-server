@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -311,7 +312,7 @@ func TestOwnerTransferAwayAndBackCannotReviveLoginHash(t *testing.T) {
 	})
 }
 
-func TestEmailSetupVerificationAuthorizesSignUpWithout777000Message(t *testing.T) {
+func TestEmailSetupVerificationAuthorizesSignUpWithWelcomeMessageOnlyNoCodeEcho(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
 	codes := memory.NewCodeStore()
@@ -364,6 +365,11 @@ func TestEmailSetupVerificationAuthorizesSignUpWithout777000Message(t *testing.T
 	if err != nil {
 		t.Fatalf("SignUp after email setup: %v", err)
 	}
+	// The SMTP setup code itself is still never echoed back as a 777000
+	// message (it's a secret factor) — SignUp's own explicit return stays
+	// empty for the email channel. The unconditional welcome message (added
+	// for every completed sign-in, regardless of channel) is a separate,
+	// non-secret message verified below.
 	if msg.ID != 0 || msg.Body != "" {
 		t.Fatalf("email SignUp returned SMTP code message: %+v", msg)
 	}
@@ -371,8 +377,8 @@ func TestEmailSetupVerificationAuthorizesSignUpWithout777000Message(t *testing.T
 	if err != nil {
 		t.Fatalf("ListByUser: %v", err)
 	}
-	if len(list.Dialogs) != 0 || len(list.Messages) != 0 {
-		t.Fatalf("email SignUp created 777000 bootstrap state: dialogs=%+v messages=%+v", list.Dialogs, list.Messages)
+	if len(list.Dialogs) != 1 || len(list.Messages) != 1 || !strings.Contains(list.Messages[0].Body, "Welcome to OwpenGram") {
+		t.Fatalf("email SignUp welcome message = dialogs=%+v messages=%+v, want exactly one welcome message", list.Dialogs, list.Messages)
 	}
 	if email, found, err := accountSvc.LoginEmailByPhone(ctx, phone); err != nil || !found || email != "new@example.test" {
 		t.Fatalf("LoginEmailByPhone email=%q found=%v err=%v", email, found, err)

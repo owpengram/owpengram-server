@@ -228,6 +228,14 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 		return nil, err
 	}
 	r.rememberClientAPIID(ctx, req.APIID)
+	if r.log != nil {
+		normalized := domain.NormalizePhone(req.PhoneNumber)
+		_, decodeOK := domain.DecodeEmailPhone(normalized)
+		r.log.Info("auth.sendCode phone diagnostics",
+			zap.Int("phone_len", len(normalized)),
+			zap.Bool("looks_like_email_signup", domain.IsEmailSignupPhone(normalized)),
+			zap.Bool("decodes_to_email", decodeOK))
+	}
 	hash, err := r.deps.Auth.SendCode(ctx, req.PhoneNumber)
 	if err != nil {
 		if errors.Is(err, auth.ErrPhoneNumberInvalid) ||

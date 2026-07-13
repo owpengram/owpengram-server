@@ -291,7 +291,17 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte)
 	if s == nil || s.auths == nil {
 		return nil
 	}
-	return s.auths.MarkPasswordPassed(ctx, authKeyID)
+	if err := s.auths.MarkPasswordPassed(ctx, authKeyID); err != nil {
+		return err
+	}
+	// This is where a 2FA account's sign-in actually finishes — finishSignIn
+	// deliberately skipped the welcome message while password_pending.
+	if a, found, err := s.auths.ByAuthKey(ctx, authKeyID); err == nil && found {
+		if u, found, err := s.users.ByID(ctx, a.UserID); err == nil && found {
+			s.recordWelcomeMessage(ctx, u.ID, u.Phone)
+		}
+	}
+	return nil
 }
 
 // SendCode 为 phone 生成 phone_code_hash，按配置选择开发 app code、登录邮箱 code
@@ -893,6 +903,10 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 	if passwordNeeded {
 		return existing, domain.Message{}, false, domain.ErrSessionPasswordNeeded
 	}
+	// 2FA accounts only really finish authorizing in CompletePasswordSignIn;
+	// firing the welcome message here too would notify about an attempt that
+	// never actually got past the password check.
+	s.recordWelcomeMessage(ctx, existing.ID, existing.Phone)
 	return existing, domain.Message{}, false, nil
 }
 
@@ -936,7 +950,14 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	if rec.Channel != codeChannelPhone && rec.Channel != codeChannelEmailLogin {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
-	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" {
+	// Email-signup accounts (888-encoded phone) already proved ownership of
+	// their email through the code they just entered — their whole identity
+	// is that email. The separate loginEmailRequireSetup gate exists to force
+	// a *phone*-based account to additionally configure a recovery/login
+	// email via the legacy VerifiedEmail/PendingEmail flow; it does not apply
+	// here and would otherwise permanently block SignUp for every
+	// email-signup account.
+	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" && !domain.IsEmailSignupPhone(phone) {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {
@@ -991,13 +1012,16 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	}
 	loginMessage := domain.Message{}
 	// SMTP setup/login codes are secret factors, not 777000 app messages. Only
-	// the normal phone/app-code registration path creates the bootstrap dialog.
+	// the normal phone/app-code registration path creates the bootstrap dialog
+	// carrying the actual code; every account additionally gets the
+	// welcome message below regardless of channel.
 	if rec.Channel == codeChannelPhone {
 		loginMessage, err = s.recordLoginMessage(ctx, u.ID, rec.Code)
 		if err != nil {
 			return domain.User{}, domain.Message{}, err
 		}
 	}
+	s.recordWelcomeMessage(ctx, u.ID, phone)
 	return u, loginMessage, nil
 }
 
@@ -1298,6 +1322,30 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 		return domain.Message{}, err
 	}
 	return msg, nil
+}
+
+// recordWelcomeMessage writes the unconditional "Welcome to OwpenGram!"
+// 777000 message for every completed sign-in (SignUp and every subsequent
+// SignIn/SignInWithEmail), regardless of channel. Best-effort: a failure here
+// must never fail the sign-in itself, since unlike recordLoginMessage it
+// carries no secret the caller needs.
+func (s *Service) recordWelcomeMessage(ctx context.Context, userID int64, phone string) {
+	if s == nil || s.messages == nil || s.dialogs == nil {
+		return
+	}
+	msg, err := domain.OfficialWelcomeMessage(userID, domain.SignInMethodLabel(phone), int(time.Now().Unix()))
+	if err != nil {
+		return
+	}
+	created, err := s.messages.Create(ctx, msg)
+	if err != nil {
+		return
+	}
+	_ = s.dialogs.UpsertInbox(ctx, userID, domain.Dialog{
+		Peer:           created.Peer,
+		TopMessage:     created.ID,
+		TopMessageDate: created.Date,
+	})
 }
 
 func (s *Service) validateBindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (mtcrypto.BindAuthKeyInner, error) {
