@@ -531,9 +531,10 @@ func run(logger *zap.Logger) error {
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
+		account.WithEmailSignup(cfg.EmailSignupEnable),
 	}
 	var loginEmailSender mailpkg.Sender
-	if cfg.LoginEmailEnable {
+	if cfg.LoginEmailEnable || cfg.EmailSignupEnable {
 		loginEmailSender = mailpkg.NewSMTP(mailpkg.Config{
 			Host:     cfg.SMTPHost,
 			Port:     cfg.SMTPPort,
@@ -705,7 +706,8 @@ func run(logger *zap.Logger) error {
 			CodeLength:   cfg.LoginEmailCodeLength,
 			Store:        accountService,
 			Sender:       loginEmailSender,
-		}))
+		}),
+		auth.WithEmailSignup(cfg.EmailSignupEnable))
 	updatesService := updates.NewService(updateStateStore, updateEventStore, updates.WithLogger(logger.Named("app").Named("updates")))
 	router := rpc.New(rpc.Config{
 		DC:                       cfg.DC,
@@ -733,7 +735,7 @@ func run(logger *zap.Logger) error {
 		Auth:             authService,
 		Account:          accountService,
 		Privacy:          privacyService,
-		Help:             help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken)),
+		Help:             help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken), help.WithEmailSignupEnable(cfg.EmailSignupEnable)),
 		AICompose:        aiComposeService,
 		Users:            usersService,
 		Updates:          updatesService,

@@ -119,6 +119,11 @@ type Config struct {
 	LoginEmailRequireSetup bool
 	// LoginEmailCodeLength 是邮箱验证码长度。
 	LoginEmailCodeLength int
+	// EmailSignupEnable 启用「邮箱作为账号身份」模式：客户端用邮箱注册/登录，服务端把邮箱
+	// 编码进一个 888 前缀的合成号码复用现有 phone 全流程（sendCode/signUp/signIn/changePhone
+	// 不变），验证码通过 SMTP 发到解码出的邮箱而非发短信。要求 SMTP 配置可用（与
+	// LoginEmailEnable 共用同一组 TELESRV_SMTP_* 变量）。
+	EmailSignupEnable bool
 	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 时必须可用。
 	SMTPHost     string
 	SMTPPort     int
@@ -453,6 +458,7 @@ func Load() (Config, error) {
 		AuthCodeRateWindow:            envDurationOr("TELESRV_AUTH_CODE_RATE_WINDOW", 10*time.Minute),
 		LoginEmailEnable:              envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:        envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
+		EmailSignupEnable:             envBoolOr("TELESRV_EMAIL_SIGNUP_ENABLE", false),
 		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
 		SMTPHost:                      envOr("TELESRV_SMTP_HOST", ""),
 		SMTPPort:                      envIntOr("TELESRV_SMTP_PORT", 587),
@@ -582,17 +588,17 @@ func validateLoginEmailConfig(cfg Config) error {
 	default:
 		return fmt.Errorf("TELESRV_SMTP_TLS must be starttls, tls, or none")
 	}
-	if !cfg.LoginEmailEnable {
+	if !cfg.LoginEmailEnable && !cfg.EmailSignupEnable {
 		return nil
 	}
 	if strings.TrimSpace(cfg.SMTPHost) == "" {
-		return fmt.Errorf("TELESRV_SMTP_HOST is required when TELESRV_LOGIN_EMAIL_ENABLE=true")
+		return fmt.Errorf("TELESRV_SMTP_HOST is required when TELESRV_LOGIN_EMAIL_ENABLE=true or TELESRV_EMAIL_SIGNUP_ENABLE=true")
 	}
 	if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
 		return fmt.Errorf("TELESRV_SMTP_PORT must be between 1 and 65535")
 	}
 	if strings.TrimSpace(cfg.SMTPFrom) == "" && strings.TrimSpace(cfg.SMTPUsername) == "" {
-		return fmt.Errorf("TELESRV_SMTP_FROM or TELESRV_SMTP_USERNAME is required when TELESRV_LOGIN_EMAIL_ENABLE=true")
+		return fmt.Errorf("TELESRV_SMTP_FROM or TELESRV_SMTP_USERNAME is required when TELESRV_LOGIN_EMAIL_ENABLE=true or TELESRV_EMAIL_SIGNUP_ENABLE=true")
 	}
 	if cfg.SMTPTimeout <= 0 {
 		return fmt.Errorf("TELESRV_SMTP_TIMEOUT must be positive")

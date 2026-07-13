@@ -42,7 +42,17 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 	} else if found && existing.ID != 0 {
 		return "", domain.AuthCodeDelivery{}, domain.ErrPhoneNumberOccupied
 	}
-	if s.codes == nil || strings.TrimSpace(s.phoneChangeCode) == "" {
+	if s.codes == nil {
+		return "", domain.AuthCodeDelivery{}, fmt.Errorf("phone change code service is not configured")
+	}
+	// Email-as-identity mode: this server has no real SMS delivery at all, so
+	// letting an account switch to an arbitrary non-encoded number would just
+	// hand out the universal dev code with no real verification. Only numbers
+	// that decode back to an email are accepted; the code goes to that inbox.
+	if s.emailSignupEnabled {
+		return s.sendChangePhoneCodeByEmail(ctx, userID, authKeyID, sessionID, phone)
+	}
+	if strings.TrimSpace(s.phoneChangeCode) == "" {
 		return "", domain.AuthCodeDelivery{}, fmt.Errorf("phone change code service is not configured")
 	}
 	hash, err := phoneChangeHash()
@@ -64,6 +74,44 @@ func (s *Service) SendChangePhoneCode(ctx context.Context, userID int64, authKey
 		return "", domain.AuthCodeDelivery{}, fmt.Errorf("store phone change code: %w", err)
 	}
 	return hash, domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliverySMS, Length: len(rec.Code)}, nil
+}
+
+func (s *Service) sendChangePhoneCodeByEmail(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64, phone string) (string, domain.AuthCodeDelivery, error) {
+	email, ok := domain.DecodeEmailPhone(phone)
+	if !ok {
+		return "", domain.AuthCodeDelivery{}, domain.ErrPhoneNumberInvalid
+	}
+	if s.loginEmailSender == nil {
+		return "", domain.AuthCodeDelivery{}, fmt.Errorf("email signup sender is not configured")
+	}
+	code, err := randomDigits(6)
+	if err != nil {
+		return "", domain.AuthCodeDelivery{}, err
+	}
+	hash, err := phoneChangeHash()
+	if err != nil {
+		return "", domain.AuthCodeDelivery{}, err
+	}
+	ttl := s.phoneChangeCodeTTL
+	rec := store.PhoneCode{
+		Version:     store.PhoneCodeVersionCurrent,
+		Phone:       phone,
+		Code:        code,
+		Channel:     store.PhoneCodeChannelEmailLogin,
+		Purpose:     store.PhoneCodePurposeChangePhone,
+		Email:       email,
+		UserID:      userID,
+		AuthKeyID:   authKeyID,
+		SessionID:   sessionID,
+		MaxAttempts: s.phoneChangeMaxAttempts,
+	}
+	if err := s.codes.Set(ctx, hash, rec, ttl); err != nil {
+		return "", domain.AuthCodeDelivery{}, fmt.Errorf("store phone change code: %w", err)
+	}
+	if err := s.loginEmailSender.SendLoginCode(ctx, email, code, ttl); err != nil {
+		return "", domain.AuthCodeDelivery{}, fmt.Errorf("send phone change email code: %w", err)
+	}
+	return hash, domain.AuthCodeDelivery{Kind: domain.AuthCodeDeliveryEmail, EmailPattern: emailPattern(email), Length: len(code)}, nil
 }
 
 // ChangePhone 验证作用域和验证码后执行原子改号。返回事件用于当前 session 的
@@ -107,7 +155,8 @@ func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, orig
 		return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
 	}
 	consumed := verified.Record
-	if consumed.Version != store.PhoneCodeVersionCurrent || consumed.Scope() != scope || consumed.Channel != store.PhoneCodeChannelPhone {
+	channelOK := consumed.Channel == store.PhoneCodeChannelPhone || consumed.Channel == store.PhoneCodeChannelEmailLogin
+	if consumed.Version != store.PhoneCodeVersionCurrent || consumed.Scope() != scope || !channelOK {
 		return domain.PhoneChangeResult{}, domain.ErrPhoneCodeInvalid
 	}
 	if date == 0 {

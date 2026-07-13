@@ -249,11 +249,12 @@ func NormalizePhone(phone string) string {
 	return b.String()
 }
 
-// ValidPhone 校验 NormalizePhone 后的持久化形态：5-32 位纯数字。
+// ValidPhone 校验 NormalizePhone 后的持久化形态：5-200 位纯数字。
 // 上限与 users.phone 列宽一致；当前开发登录/改号链路不强制精确 E.164 长度，
-// 但拒绝空串、非数字和会截断的超长输入。
+// 但拒绝空串、非数字和会截断的超长输入。上限从 32 放宽到 200 是为了容纳
+// EncodeEmailPhone 生成的 "888"+反向可解码大整数（真实手机号远用不到这个上限）。
 func ValidPhone(phone string) bool {
-	if len(phone) < 5 || len(phone) > 32 {
+	if len(phone) < 5 || len(phone) > 200 {
 		return false
 	}
 	for _, r := range phone {

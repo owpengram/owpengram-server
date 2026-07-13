@@ -64,9 +64,10 @@ const defaultAppConfigHash = 23 // 默认 app config 内容变更时必须递增
 // (登录页/启动配置是高频握手路径)。运维改库需重启生效。timezones/emoji 等其余目录走
 // internal/seed/catalog(go:embed 一次解析),本就在内存。
 type Service struct {
-	appConfigs  store.AppConfigStore
-	countries   store.CountryStore
-	mapboxToken string
+	appConfigs        store.AppConfigStore
+	countries         store.CountryStore
+	mapboxToken       string
+	emailSignupEnable bool
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -84,6 +85,14 @@ func WithMapboxToken(token string) Option {
 	}
 }
 
+// WithEmailSignupEnable 下发 email_signup_enabled，供已适配的客户端在登录/注册入口
+// 用邮箱输入替代手机号输入（见 domain.EncodeEmailPhone）。
+func WithEmailSignupEnable(enabled bool) Option {
+	return func(s *Service) {
+		s.emailSignupEnable = enabled
+	}
+}
+
 // NewService 创建 help 服务。
 func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, opts ...Option) *Service {
 	s := &Service{appConfigs: appConfigs, countries: countries}
@@ -95,28 +104,36 @@ func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, o
 	return s
 }
 
-func defaultAppConfig(mapboxToken string) domain.AppConfig {
-	jsonBytes := defaultAppConfigJSON(mapboxToken)
-	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken), JSON: jsonBytes}
+func defaultAppConfig(mapboxToken string, emailSignupEnable bool) domain.AppConfig {
+	jsonBytes := defaultAppConfigJSON(mapboxToken, emailSignupEnable)
+	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken, emailSignupEnable), JSON: jsonBytes}
 }
 
-func defaultAppConfigJSON(mapboxToken string) []byte {
+func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool) []byte {
+	base := tdesktopDefaultAppConfigBase
+	if emailSignupEnable {
+		base += `,"email_signup_enabled":true`
+	}
 	if mapboxToken == "" {
-		return []byte(tdesktopDefaultAppConfigBase + `}`)
+		return []byte(base + `}`)
 	}
 	token, err := json.Marshal(mapboxToken)
 	if err != nil {
-		return []byte(tdesktopDefaultAppConfigBase + `}`)
+		return []byte(base + `}`)
 	}
 	tokenJSON := string(token)
-	return []byte(tdesktopDefaultAppConfigBase + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
+	return []byte(base + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
 }
 
-func defaultAppConfigHashFor(mapboxToken string) int {
-	if mapboxToken == "" {
-		return defaultAppConfigHash
+func defaultAppConfigHashFor(mapboxToken string, emailSignupEnable bool) int {
+	h := defaultAppConfigHash
+	if emailSignupEnable {
+		h += 1000003 // large odd offset so toggling the flag always changes the hash
 	}
-	return defaultAppConfigHash + 1 + int(crc32.ChecksumIEEE([]byte(mapboxToken))&0x3fffffff)
+	if mapboxToken == "" {
+		return h
+	}
+	return h + 1 + int(crc32.ChecksumIEEE([]byte(mapboxToken))&0x3fffffff)
 }
 
 // GetAppConfig 返回 TDesktop app config，hash 命中时返回 notModified。首次调用加载一次后缓存。
@@ -127,9 +144,9 @@ func (s *Service) GetAppConfig(ctx context.Context, hash int) (domain.AppConfig,
 
 func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 	if s == nil {
-		return defaultAppConfig("")
+		return defaultAppConfig("", false)
 	}
-	defaultCfg := defaultAppConfig(s.mapboxToken)
+	defaultCfg := defaultAppConfig(s.mapboxToken, s.emailSignupEnable)
 	s.appConfigOnce.Do(func() {
 		if s.appConfigs == nil {
 			s.appConfigCache = defaultCfg

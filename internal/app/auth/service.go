@@ -86,6 +86,10 @@ type Service struct {
 	loginEmailEnabled      bool
 	loginEmailRequireSetup bool
 	loginEmailCodeLength   int
+	// emailSignupEnabled 打开后，888 前缀的合成号码（domain.EncodeEmailPhone）
+	// 在 sendCode 阶段直接解码出邮箱、复用登录邮箱同一投递通道发码，与
+	// loginEmailEnabled（手机号账号的第二验证渠道）是两条独立开关。
+	emailSignupEnabled bool
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
 }
@@ -178,6 +182,15 @@ func WithLoginEmail(opts LoginEmailOptions) Option {
 		}
 		s.loginEmails = opts.Store
 		s.loginEmailSender = opts.Sender
+	}
+}
+
+// WithEmailSignup 打开「邮箱即身份」登录方式：见 emailSignupEnabled 字段注释。
+// 邮件投递复用 WithLoginEmail 注入的 loginEmailSender，调用方需保证两条配置
+// 共用同一组 SMTP 设置时任一开关打开都会构造好 sender（见 internal/config 校验）。
+func WithEmailSignup(enabled bool) Option {
+	return func(s *Service) {
+		s.emailSignupEnabled = enabled
 	}
 }
 
@@ -301,6 +314,11 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	issuedUserID := int64(0)
 	if found {
 		issuedUserID = existing.ID
+	}
+	if s.emailSignupEnabled {
+		if email, ok := domain.DecodeEmailPhone(phone); ok {
+			return s.createEmailLoginCode(ctx, phone, email, issuedUserID)
+		}
 	}
 	if s.loginEmailEnabled && s.loginEmails != nil {
 		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)

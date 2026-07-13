@@ -51,6 +51,10 @@ type Service struct {
 	loginEmailCodeTTL         time.Duration
 	loginEmailCodeMaxAttempts int
 	loginEmailCodeLength      int
+	// emailSignupEnabled 打开后，SendChangePhoneCode 只接受 888 前缀（邮箱编码）目标号码，
+	// 验证码走 loginEmailSender 发到解码出的邮箱；非 888 号码一律拒绝——本服务器没有真实
+	// 短信通道，放行会让账号的邮箱身份绑定被绕过（见迁移前的密码找回验证码漏洞教训）。
+	emailSignupEnabled bool
 }
 
 // ServiceOption 调整 account 服务依赖。
@@ -149,6 +153,13 @@ func WithLoginEmailVerification(codes store.CodeStore, sender mail.Sender, ttl t
 		if length > 0 {
 			s.loginEmailCodeLength = length
 		}
+	}
+}
+
+// WithEmailSignup 打开「邮箱即身份」模式下的改号限制：见 emailSignupEnabled 字段注释。
+func WithEmailSignup(enabled bool) ServiceOption {
+	return func(s *Service) {
+		s.emailSignupEnabled = enabled
 	}
 }
 
