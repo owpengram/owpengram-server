@@ -1,42 +1,45 @@
-# gramsrv - Open Source Telegram Server / MTProto Server in Go
+<p align="center">
+  <img src="media/readme/owpengram_splash.png" alt="OwpenGram" width="440">
+</p>
 
-`gramsrv` is an open-source Telegram server implementation and MTProto server
-written in Go. It is a Telegram-like backend for real client compatibility,
-self-hosted chat experiments, protocol research, and long-running work toward a
-practical community server.
+# 🚀 OwpenGram Server
 
-If you are looking for a **Telegram server**, **MTProto server**,
-**Telegram backend**, **Telegram clone server**, or **self-hosted
-Telegram-like chat server**, this repository is the server-side implementation
-to study, run, and improve.
+**Your own private messaging server — self-hosted, protocol-compatible, fully yours.**
 
-[Website](https://telesrv.net) · [Discussion group](https://t.me/telesrv_chat) · [Channel](https://t.me/telesrv) · [中文 README](README.zh-CN.md)
+OwpenGram Server is an open-source, Telegram-compatible MTProto backend written
+in Go. Run it on your own network for a private, closed setup, or on a VPS to
+be reachable anywhere in the world. Your data, your keys, your rules — no
+cloud, no lock-in, no censorship.
+
+> 🔗 Implements **MTProto API layer 227**.
 
 `gramsrv` is independent and unofficial. It is not affiliated with, endorsed by,
 or sponsored by Telegram or the official Telegram team.
 
-## Project Keywords
+---
 
-`telegram server` · `telegram server implementation` · `mtproto server` ·
-`mtproto server in go` · `telegram backend` · `telegram-like server` ·
-`self-hosted telegram` · `telegram desktop compatible server` ·
-`android telegram compatible server` · `open source chat server`
+## ✨ Why OwpenGram?
 
-## Demo Video
+- 🔒 **Private & self-hosted** — messages live on infrastructure you control.
+- 🧩 **Telegram-compatible** — works with the OwpenGram Android and Desktop clients.
+- 🌍 **Reachable anywhere** — host it globally, or keep it on your own network.
+- 🛡️ **Censorship-resistant** — no central authority can shut you down.
+- ⚙️ **Single binary** — one Go program prepares keys, runs migrations, serves
+  MTProto, and dispatches updates and background workers.
+- 🆓 **Free & open source** — Apache-2.0, audit and extend it freely.
 
-https://github.com/user-attachments/assets/25e651dc-a022-4d60-8b9b-ca3e8bfe216c
+## 🎯 What works today
 
-## Project Traits
+- 💬 Private chats, groups, supergroups & channels
+- 📞 Voice & group calls, live streams, SFU/TURN building blocks
+- 🖼️ Media & files — photos, videos, documents, stickers, reactions
+- 🤖 Bots and mini apps, with a minimal Bot API gateway
+- 🌐 Message translation and AI-assisted compose
+- 📇 Contacts, dialogs sync, chat folders, public link landing pages
+- 🖥️ Admin API and web UI for operations
 
-| Status | Trait | What it means |
-|---|---|---|
-| ✅ | One program startup | One Go binary prepares RSA keys, runs migrations, seeds data, opens MTProto, serves RPC handlers, dispatches updates, and starts workers. |
-| ✅ | Fully open server code | Protocol edge, domain services, storage, compatibility handlers, media, updates, admin surfaces, and experiments are all in this repository. |
-
-## Feature Checklist
-
-Everything below is an implemented server-side capability in the open-source
-codebase.
+<details>
+<summary><b>📋 Full feature checklist (click to expand)</b></summary>
 
 | Status | Feature | What works today |
 |---|---|---|
@@ -59,24 +62,31 @@ codebase.
 | ✅ | Desktop, Android, iOS, and Web focus | Telegram Desktop is the primary target, with Android, iOS, and Web compatibility paths actively covered by the same server. |
 
 Some items are compatibility-first or experimental, but they are real open
-server code, not hidden product-only features. The next step is making these
-paths stronger together.
+server code, not hidden product-only features.
+</details>
 
-## Quick Start
+## ⚡ Quick Start
 
 Requirements:
 
-- Go 1.25 or newer
-- Docker Desktop or Docker Engine with Compose
-- OpenSSL, if you want to build a matching Telegram Desktop client
+- **Go 1.25+**
+- **Docker** (or Docker Desktop), for PostgreSQL and Redis
+- OpenSSL, if you want to build a matching Telegram Desktop-based client
 
-Start PostgreSQL and Redis:
+**1. Clone the repository**
+
+```bash
+git clone https://github.com/owpengram/owpengram-server.git
+cd owpengram-server
+```
+
+**2. Start the infrastructure** (PostgreSQL + Redis)
 
 ```powershell
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Build and run the single server program:
+**3. Build and run the server**
 
 Windows (PowerShell):
 
@@ -92,16 +102,19 @@ go build -o bin/gramsrv ./cmd/telesrv
 ./bin/gramsrv
 ```
 
-On first start, `gramsrv` creates `data/server_rsa.pem`, applies database
+On first start, the server creates `data/server_rsa.pem`, applies database
 migrations, seeds bundled language packs, prepares optional media resources,
 starts MTProto on `0.0.0.0:2398`, and brings up the update/media/background
 workers in the same process.
 
-Useful local environment variables:
+> **Default local login code:** `12345` — change it before any real use!
+
+### ⚙️ Configuration
 
 See the complete [English configuration reference](docs/configuration.en.md) or
-the [Chinese configuration reference](docs/configuration.zh-CN.md). `.env.example`
-is a copyable development template, not an exhaustive parameter dictionary.
+the [Chinese configuration reference](docs/configuration.zh-CN.md).
+`.env.example` is a copyable development template, not an exhaustive parameter
+dictionary. Most commonly used variables:
 
 | Variable | Default | Meaning |
 |---|---:|---|
@@ -110,55 +123,37 @@ is a copyable development template, not an exhaustive parameter dictionary.
 | `TELESRV_DC` | `2` | self-hosted DC id |
 | `TELESRV_DEV_AUTH_CODE` | `12345` | fixed login code for local development |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | `5` | wrong-code attempts before the code hash is deleted |
-| `TELESRV_LOGIN_EMAIL_ENABLE` | `false` | send login codes to confirmed login email addresses through SMTP |
-| `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | force phone login/registration to set a login email first |
-| `TELESRV_SMTP_HOST` | empty | SMTP host used when login email verification is enabled |
-| `TELESRV_PUBLIC_BASE_URL` | `https://telesrv.net` | canonical external base URL for username, sticker, emoji, and chatlist links |
-| `TELESRV_PUBLIC_APP_SCHEME` | `telesrv` | custom URL scheme opened by public landing pages |
-| `TELESRV_PUBLIC_WEB_BASE_URL` | `https://web.telesrv.net` | Web client base URL shown on public landing pages |
-| `TELESRV_PUBLIC_APP_NAME` | `telesrv` | display product name for public landing pages |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
 | `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |
-| `TELESRV_LANGPACK_SEED_DIR` | `data/langpack` | bundled language pack seed directory |
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
-| `TELESRV_STICKER_SEED_DIR` | `data/sticker-seed` | optional sticker/reaction seed directory |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing listener, for example `127.0.0.1:2401` |
 | `TELESRV_BOT_API_ADDR` | empty | optional HTTP Bot API gateway listen address, for example `127.0.0.1:8081` |
-| `TELESRV_BOT_API_UPDATE_RETENTION` | `24h` | retention window for unconfirmed Bot API `getUpdates` queue entries |
 | `TELESRV_AI_ENABLED` | `true` | enable AI compose entry points |
-| `TELESRV_AI_PROVIDERS` | `local` | ordered AI provider chain, such as `local` or `kimi,local` |
-| `TELESRV_AI_TIMEOUT` | `15s` | per AI provider call timeout |
-| `TELESRV_AI_RATE_LIMIT` | `20` | per-account AI compose request budget |
-| `TELESRV_AI_RATE_WINDOW` | `1m` | AI compose rate-limit window |
-| `TELESRV_AI_LOG_CONTENT` | `false` | whether logs may include prompt/generated text |
 | `TELESRV_TRANSLATION_ENABLED` | `true` | enable Telegram message translation RPCs |
-| `TELESRV_TRANSLATION_PROVIDERS` | empty | optional subset of configured remote AI providers for translation |
-| `TELESRV_TRANSLATION_RATE_LIMIT` | `60` | per-account translated text item budget |
-| `TELESRV_BUSINESS_AI_PROVIDER` | `echo` | Business automation reply provider |
 
-The optional sticker seed directory is skipped when it does not exist.
-Optional OpenAI-compatible, Kimi/Moonshot, Gemini, and Anthropic provider
-variables are documented in `.env.example`.
+Optional OpenAI-compatible, Kimi/Moonshot, Gemini, and Anthropic AI provider
+variables, login email/SMTP settings, and Business AI settings are documented
+in `.env.example` and the configuration reference.
 
-## Public Deployment Ports
+## 🔌 Ports to open
 
-When deploying `gramsrv` on a public server, open the following ports according
-to the features you enable.
+When deploying on a public server, open the following according to the
+features you enable.
 
-### Minimal public deployment (chat only)
+**Minimal (chat only)**
 
 | Port | Protocol | Purpose | Required |
 |---|---|---|---|
 | 2398 | TCP | MTProto main port; also handles WebSocket when `TELESRV_WEBSOCKET_ENABLE=true` | Yes |
 
-### With Admin backend
+**With admin backend**
 
 | Port | Protocol | Purpose | Notes |
 |---|---|---|---|
 | 2399 | TCP | Admin REST API | Restrict to trusted IPs or put behind VPN |
 | 2600 | TCP | Admin Web UI | Use Nginx/reverse proxy + HTTPS in production |
 
-### Optional feature ports
+**Optional features**
 
 | Port | Protocol | Purpose | When needed |
 |---|---|---|---|
@@ -169,7 +164,7 @@ to the features you enable.
 | configurable | TCP | Bot API | When `TELESRV_BOT_API_ADDR` is set |
 | 2401 example | TCP | Public username/sticker/chatlist landing pages | When `TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401` is set |
 
-### Internal/debug ports (do not expose publicly)
+**Internal/debug (do not expose publicly)**
 
 | Port | Default bind | Purpose |
 |---|---|---|
@@ -180,21 +175,13 @@ to the features you enable.
 Make sure `TELESRV_LISTEN=0.0.0.0:2398` is set, and `TELESRV_ADVERTISE_IP`
 points to your public IP so clients can connect.
 
-## Public Link Landing Pages
+## 🌐 Public link landing pages
 
-`gramsrv` can serve public landing pages for `/<username>`, profile avatars,
+The server can serve public landing pages for `/<username>`, profile avatars,
 `/addstickers/<shortName>`, `/addemoji/<shortName>`, and `/addlist/<slug>`.
-
-Use `TELESRV_PUBLIC_LINK_WEB_ADDR` as the local HTTP bind address:
 
 ```env
 TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
-```
-
-Use `TELESRV_PUBLIC_BASE_URL` as the external canonical URL shown in generated
-links:
-
-```env
 TELESRV_PUBLIC_BASE_URL=https://your-domain.example
 TELESRV_PUBLIC_APP_SCHEME=yourapp
 TELESRV_PUBLIC_WEB_BASE_URL=https://web.your-domain.example
@@ -204,35 +191,39 @@ TELESRV_PUBLIC_APP_NAME=YourApp
 In production, keep `TELESRV_PUBLIC_LINK_WEB_ADDR` on loopback and reverse-proxy
 the public routes to it with HTTPS.
 
-## Client Compatibility
+## 📱 Connect a client
 
-Stock Telegram clients will not connect to `gramsrv` because they trust
-Telegram's production DC list and RSA keys. Use a patched experience client from
-the [official website](https://telesrv.net), or build your own client with a
-minimal protocol patch.
+Use the OwpenGram clients, which have a built-in **Add Server** option on the
+server-selection screen at login — no source patching or custom build needed:
 
-Current Telegram Desktop baseline:
+- 🤖 [Android client](https://github.com/owpengram/owpengram-android-client)
+- 💻 [Desktop client](https://github.com/owpengram/owpengram-desktop-client)
 
-- Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
-- TL layer: 227
-- Local DC: `127.0.0.1:2398`, DC id `2`
+A stock Telegram client will not connect, since it only trusts Telegram's own
+DC list and RSA keys.
 
-After `gramsrv` generates `data/server_rsa.pem`, export the matching public key:
+**1. Export your server's public key**
+
+After the server generates `data/server_rsa.pem`, export the matching public
+key as PEM:
 
 ```powershell
 openssl rsa -in data/server_rsa.pem -RSAPublicKey_out -out data/server_rsa.pub
 ```
 
-Patch `Telegram/SourceFiles/mtproto/mtproto_dc_options.cpp`:
+**2. Add the server in the client**
 
-1. Replace the built-in production/test DC lists with your `gramsrv` endpoint.
-2. Replace both `kPublicRSAKeys` and `kTestPublicRSAKeys` with
-   `data/server_rsa.pub`.
-3. Add `Flag::f_tcpo_only` to the built-in DC flags.
+On the login screen, open server selection → **Add Server**, and fill in:
 
-Keep the client patch minimal: endpoint, RSA key, and TCP-only flags only.
+- **Host** — your server's address (e.g. `192.168.1.50` or `chat.example.com`)
+- **Port** — `2398` by default
+- **Main data center** — the DC id from `TELESRV_DC` (`2` by default)
+- **RSA Public Key** — paste the full contents of `data/server_rsa.pub`
+  (the `-----BEGIN RSA PUBLIC KEY-----...` PEM block) into the key field
 
-## Multi-Device Smoke Test
+Current baseline: TL layer `227`.
+
+## 🧪 Development: multi-device smoke test
 
 Use separate client working directories so sessions do not share local `tdata`:
 
@@ -242,10 +233,8 @@ Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-alice")
 Start-Process $tdesktop -ArgumentList @("-workdir", "$PWD\.tdata-bob")
 ```
 
-Log in with different phone numbers. In local development, the login code is
-`12345` unless you changed `TELESRV_DEV_AUTH_CODE`.
-
-Recommended checks:
+Log in with different phone numbers — the local login code is `12345` unless
+you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 
 - Send private messages, stickers, media, replies, forwards, edits, deletes,
   and read receipts between two users.
@@ -256,11 +245,7 @@ Recommended checks:
 - Check server logs for no new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`,
   panic, or internal errors.
 
-## Contributors
-
-- [ajarshia](https://github.com/ajarshia) - Android Persian (`fa`) language pack.
-
-## Repository Layout
+## 📂 Repository layout
 
 ```text
 cmd/telesrv/              server entrypoint
@@ -277,15 +262,9 @@ internal/sfu/             real-time SFU experiments
 internal/turnsrv/         TURN/STUN building blocks
 ```
 
-## TODO List
+## 🤝 Contributing
 
-- Improve Bot compatibility for third-party libraries, such as `python-telegram-bot`.
-- Fix known bugs and keep hardening existing compatibility paths.
-
-## Help Improve It
-
-`gramsrv` will get better fastest if more people run it, break it, profile it,
-and send focused improvements. Helpful contributions include:
+This server gets better fastest with real usage and focused fixes:
 
 - Telegram Desktop and Android compatibility reports with reproducible steps.
 - RPC traces for startup, sync, chat, media, calls, bots, or edge cases.
@@ -294,20 +273,23 @@ and send focused improvements. Helpful contributions include:
   and channel behavior.
 - Performance work on hot paths such as fan-out, pagination, storage queries,
   media upload/download, and connection handling.
-- Setup improvements that make the one-program local experience smoother.
 
 If a change affects visible client behavior, please include the client
-version/commit, the RPC path you tested, and whether server logs stayed free of
-new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`, panic, or internal errors.
+version/commit, the RPC path you tested, and whether server logs stayed free
+of new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`, panic, or internal errors.
 
-## License
+## 💬 Community
 
-`gramsrv` is released under the [Apache License 2.0](LICENSE). You may use,
-modify, distribute, and use it commercially under the terms of Apache-2.0.
+- 📢 Channel: [@owpengram](https://t.me/owpengram)
+- 💬 Chat: [Join the discussion](https://t.me/+sVB6Ymv70jEwNTAy)
 
-## Custom Development
+OwpenGram Server builds on the open-source
+[gramsrv](https://github.com/iamxvbaba/gramsrv) project.
 
-For paid custom development, you can contact the author through the discussion
-group or website. Custom work can cover server features, Telegram Desktop,
-Android, Web, deployment, compatibility adaptation, or other client/server
-paths around this project.
+## 📄 License
+
+[Apache License 2.0](LICENSE)
+
+---
+
+⭐ If OwpenGram is useful to you, a star on GitHub helps the project grow.
