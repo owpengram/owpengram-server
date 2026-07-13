@@ -71,7 +71,7 @@ Requirements:
 
 - **Go 1.25+**
 - **Docker** (or Docker Desktop), for PostgreSQL and Redis
-- OpenSSL, if you want to build a matching Telegram Desktop-based client
+- OpenSSL, to export the server's RSA public key for the client's "Add Server" dialog
 
 **1. Clone the repository**
 
