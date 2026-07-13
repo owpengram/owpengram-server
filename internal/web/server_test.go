@@ -458,7 +458,7 @@ func TestHandlerReturnsTrustedUsernameNotFoundPage(t *testing.T) {
 	for _, path := range []string{"/MissingName", "/bad-name", "/Nope"} {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
-		if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "Username not found") || !strings.Contains(rr.Body.String(), "noindex,nofollow") {
+		if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "Nothing found") || !strings.Contains(rr.Body.String(), "noindex,nofollow") {
 			t.Fatalf("%s status=%d body=%s", path, rr.Code, rr.Body.String())
 		}
 		if strings.Contains(rr.Body.String(), "telesrv://resolve") {
@@ -592,6 +592,17 @@ type fakeChannels map[string]domain.Channel
 func (f fakeChannels) ResolvePublicChannelUsername(_ context.Context, _ int64, username string) (domain.Channel, bool, error) {
 	ch, ok := f[strings.ToLower(strings.TrimPrefix(username, "@"))]
 	return ch, ok, nil
+}
+
+// ResolvePublicChannelInvite reuses the same map, keyed by whatever string
+// the test registers as the invite "hash" (map keys are otherwise usernames,
+// but nothing stops a test from also registering a hash-shaped key).
+func (f fakeChannels) ResolvePublicChannelInvite(_ context.Context, hash string) (domain.Channel, domain.ChannelInvite, bool, error) {
+	ch, ok := f[hash]
+	if !ok {
+		return domain.Channel{}, domain.ChannelInvite{}, false, nil
+	}
+	return ch, domain.ChannelInvite{ChannelID: ch.ID, Hash: hash}, true, nil
 }
 
 type fakeAnonymousPrivacy map[domain.PrivacyKey]bool

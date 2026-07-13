@@ -42,6 +42,11 @@ type ChannelStore interface {
 	// viewerUserID may be zero for anonymous public-link projection; this lookup
 	// never returns viewer-specific membership or dialog state.
 	ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error)
+	// ResolvePublicChannelInvite resolves an active (not revoked, not deleted,
+	// not expired) invite hash to its target channel/supergroup for the
+	// anonymous public invite-link preview page. It never returns viewer-specific
+	// membership state and does not require a userID.
+	ResolvePublicChannelInvite(ctx context.Context, hash string) (domain.Channel, domain.ChannelInvite, bool, error)
 	SearchPublicChannels(ctx context.Context, viewerUserID int64, query string, limit int) (domain.PublicChannelSearchResult, error)
 	SetSignatures(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetChannelPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error)

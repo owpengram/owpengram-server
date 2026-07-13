@@ -273,6 +273,30 @@ func (s *ChannelStore) CheckInvite(_ context.Context, userID int64, hash string,
 	}, nil
 }
 
+// ResolvePublicChannelInvite is the anonymous, unauthenticated counterpart of
+// CheckInvite: no userID/membership lookup, just "is this hash currently
+// joinable" plus the public channel projection for the invite preview page.
+func (s *ChannelStore) ResolvePublicChannelInvite(_ context.Context, hash string) (domain.Channel, domain.ChannelInvite, bool, error) {
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return domain.Channel{}, domain.ChannelInvite{}, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invite, ok := s.invites[hash]
+	if !ok || invite.Revoked {
+		return domain.Channel{}, domain.ChannelInvite{}, false, nil
+	}
+	if invite.ExpireDate > 0 && invite.ExpireDate < int(time.Now().Unix()) {
+		return domain.Channel{}, domain.ChannelInvite{}, false, nil
+	}
+	channel, ok := s.channels[invite.ChannelID]
+	if !ok || channel.Deleted {
+		return domain.Channel{}, domain.ChannelInvite{}, false, nil
+	}
+	return channel, invite, true, nil
+}
+
 func (s *ChannelStore) ImportInvite(_ context.Context, req domain.ImportChannelInviteRequest) (domain.CreateChannelResult, error) {
 	if req.UserID == 0 || strings.TrimSpace(req.Hash) == "" {
 		return domain.CreateChannelResult{}, domain.ErrInviteHashEmpty

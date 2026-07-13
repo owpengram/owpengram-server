@@ -46,6 +46,9 @@ type UsernameResolver interface {
 // projection. viewerUserID is always zero for this anonymous Web endpoint.
 type PublicChannelResolver interface {
 	ResolvePublicChannelUsername(ctx context.Context, viewerUserID int64, username string) (domain.Channel, bool, error)
+	// ResolvePublicChannelInvite resolves a private invite-link hash (the
+	// "/+<hash>" landing page) to its target channel/supergroup.
+	ResolvePublicChannelInvite(ctx context.Context, hash string) (domain.Channel, domain.ChannelInvite, bool, error)
 }
 
 type AnonymousPrivacyResolver interface {
@@ -161,6 +164,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /_public/assets/logo.png", h.brandLogo)
 	mux.HandleFunc("GET /_public/assets/fonts/{file}", h.brandFont)
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
+	mux.HandleFunc("GET /_public/invite-avatar/{hash}/{photoID}", h.publicInviteAvatar)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
 	mux.HandleFunc("GET /addlist/{slug}", h.addList)
@@ -221,7 +225,12 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
-	username := strings.TrimSpace(r.PathValue("username"))
+	raw := strings.TrimSpace(r.PathValue("username"))
+	if strings.HasPrefix(raw, "+") {
+		h.inviteLink(w, r, strings.TrimPrefix(raw, "+"))
+		return
+	}
+	username := raw
 	if !validUsernamePath(username) {
 		h.serveUsernameNotFound(w, username)
 		return
@@ -280,6 +289,70 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// inviteLink serves the "/+<hash>" private invite-link preview page: the
+// channel/supergroup's photo, title, and member count, with a Join button
+// that deep-links into the app. It never requires or reveals viewer-specific
+// membership state.
+func (h *handler) inviteLink(w http.ResponseWriter, r *http.Request, hash string) {
+	if !validInviteHashPath(hash) || h.channels == nil {
+		h.serveInviteNotFound(w)
+		return
+	}
+	ch, invite, found, err := h.channels.ResolvePublicChannelInvite(r.Context(), hash)
+	if err != nil {
+		h.logger.Error("Public invite lookup failed", zap.String("invite_hash", hash), zap.Error(err))
+		http.Error(w, "invite lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		h.serveInviteNotFound(w)
+		return
+	}
+	peer, ok, err := h.publicInviteChannelPeer(r.Context(), ch)
+	if err != nil || !ok {
+		if err != nil {
+			h.logger.Error("Public invite channel projection failed", zap.String("invite_hash", hash), zap.Error(err))
+		}
+		h.serveInviteNotFound(w)
+		return
+	}
+	title := peer.title
+	if title == "" {
+		title = strings.TrimSpace(invite.Title)
+	}
+	app := h.appURL("join", "invite", hash)
+	description := peer.about
+	if description == "" {
+		description = peer.fallbackDescription(h.appName)
+	}
+	grad := avatarGradient(peer.id)
+	data := usernamePageData{
+		AppName:      h.appName,
+		AppInitial:   appInitial(h.appName),
+		Title:        title,
+		Verified:     peer.verified,
+		Extra:        peer.extra(),
+		Description:  description,
+		AboutText:    peer.about,
+		CanonicalURL: h.publicInviteURL(hash),
+		HomeURL:      h.publicBaseURL + "/",
+		DownloadURL:  h.downloadURL,
+		AppURL:       template.URL(app),
+		ButtonLabel:  peer.inviteButtonLabel(),
+		Initials:     peer.initials(),
+		GradFrom:     grad[0],
+		GradTo:       grad[1],
+	}
+	if peer.hasPhoto {
+		data.PhotoURL = h.publicInviteAvatarURL(hash, peer.photo.ID)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=60, must-revalidate")
+	if err := usernameLandingTemplate.Execute(w, data); err != nil {
+		h.logger.Error("Render public invite page failed", zap.String("invite_hash", hash), zap.Error(err))
+	}
+}
+
 const maxPublicAvatarBytes = 4 << 20
 
 func (h *handler) publicAvatar(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +372,39 @@ func (h *handler) publicAvatar(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	h.servePeerAvatarPhoto(w, r, peer, photoID, zap.String("username", username))
+}
+
+func (h *handler) publicInviteAvatar(w http.ResponseWriter, r *http.Request) {
+	hash := strings.TrimSpace(r.PathValue("hash"))
+	photoID, err := strconv.ParseInt(r.PathValue("photoID"), 10, 64)
+	if err != nil || photoID <= 0 || !validInviteHashPath(hash) || h.photos == nil || h.channels == nil {
+		http.NotFound(w, r)
+		return
+	}
+	ch, _, found, err := h.channels.ResolvePublicChannelInvite(r.Context(), hash)
+	if err != nil {
+		h.logger.Error("Public invite avatar lookup failed", zap.String("invite_hash", hash), zap.Error(err))
+		http.Error(w, "avatar lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	peer, ok, err := h.publicInviteChannelPeer(r.Context(), ch)
+	if err != nil || !ok || !peer.hasPhoto || peer.photo.ID != photoID {
+		http.NotFound(w, r)
+		return
+	}
+	h.servePeerAvatarPhoto(w, r, peer, photoID, zap.String("invite_hash", hash))
+}
+
+// servePeerAvatarPhoto streams an already-authorized public peer's profile
+// photo. logField identifies the lookup key (username or invite hash) for
+// diagnostics only; the caller has already verified peer.hasPhoto and that
+// peer.photo.ID matches the requested photoID.
+func (h *handler) servePeerAvatarPhoto(w http.ResponseWriter, r *http.Request, peer publicPeer, photoID int64, logField zap.Field) {
 	size, inline, ok := bestPublicPhotoSize(peer.photo.Sizes)
 	if !ok {
 		http.NotFound(w, r)
@@ -319,12 +425,12 @@ func (h *handler) publicAvatar(w http.ResponseWriter, r *http.Request) {
 			Limit:       maxPublicAvatarBytes + 1,
 		})
 		if err != nil {
-			h.logger.Error("Read public avatar blob failed", zap.String("username", username), zap.Int64("photo_id", photoID), zap.Error(err))
+			h.logger.Error("Read public avatar blob failed", logField, zap.Int64("photo_id", photoID), zap.Error(err))
 			http.Error(w, "avatar read failed", http.StatusInternalServerError)
 			return
 		}
 		if !found || chunk.Total <= 0 || chunk.Total > maxPublicAvatarBytes || int64(len(chunk.Bytes)) != chunk.Total {
-			h.logger.Warn("Public avatar blob is missing or outside bounds", zap.String("username", username), zap.Int64("photo_id", photoID), zap.Int64("total", chunk.Total), zap.Int("bytes", len(chunk.Bytes)))
+			h.logger.Warn("Public avatar blob is missing or outside bounds", logField, zap.Int64("photo_id", photoID), zap.Int64("total", chunk.Total), zap.Int("bytes", len(chunk.Bytes)))
 			http.NotFound(w, r)
 			return
 		}
@@ -337,7 +443,7 @@ func (h *handler) publicAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 	detected := http.DetectContentType(data)
 	if !safePublicImageType(detected) {
-		h.logger.Warn("Public avatar blob is not a safe raster image", zap.String("username", username), zap.Int64("photo_id", photoID), zap.String("detected_type", detected), zap.String("stored_type", mimeType))
+		h.logger.Warn("Public avatar blob is not a safe raster image", logField, zap.Int64("photo_id", photoID), zap.String("detected_type", detected), zap.String("stored_type", mimeType))
 		http.NotFound(w, r)
 		return
 	}
@@ -405,6 +511,14 @@ func (h *handler) publicUsernameURL(username string) string {
 
 func (h *handler) publicAvatarURL(username string, photoID int64) string {
 	return h.publicBaseURL + "/_public/avatar/" + url.PathEscape(username) + "/" + strconv.FormatInt(photoID, 10)
+}
+
+func (h *handler) publicInviteURL(hash string) string {
+	return h.publicBaseURL + "/+" + url.PathEscape(hash)
+}
+
+func (h *handler) publicInviteAvatarURL(hash string, photoID int64) string {
+	return h.publicBaseURL + "/_public/invite-avatar/" + url.PathEscape(hash) + "/" + strconv.FormatInt(photoID, 10)
 }
 
 type publicPeerKind string
@@ -515,8 +629,22 @@ func (h *handler) publicUserPeer(ctx context.Context, requested string, u domain
 }
 
 func (h *handler) publicChannelPeer(ctx context.Context, requested string, ch domain.Channel) (publicPeer, bool, error) {
-	if ch.ID == 0 || ch.Deleted || ch.ParticipantsCount < 0 || (!ch.Broadcast && !ch.Megagroup) || !strings.EqualFold(strings.TrimSpace(ch.Username), requested) || !validUsernamePath(ch.Username) {
+	if !strings.EqualFold(strings.TrimSpace(ch.Username), requested) || !validUsernamePath(ch.Username) {
 		return publicPeer{}, false, fmt.Errorf("channel username lookup returned invalid owner for %q", requested)
+	}
+	return h.channelToPublicPeer(ctx, ch)
+}
+
+// publicInviteChannelPeer projects a channel resolved via an invite hash.
+// Unlike publicChannelPeer it does not require (or use) a public username —
+// invite links exist precisely for channels/groups that may not have one.
+func (h *handler) publicInviteChannelPeer(ctx context.Context, ch domain.Channel) (publicPeer, bool, error) {
+	return h.channelToPublicPeer(ctx, ch)
+}
+
+func (h *handler) channelToPublicPeer(ctx context.Context, ch domain.Channel) (publicPeer, bool, error) {
+	if ch.ID == 0 || ch.Deleted || ch.ParticipantsCount < 0 || (!ch.Broadcast && !ch.Megagroup) {
+		return publicPeer{}, false, fmt.Errorf("channel %d is not eligible for a public projection", ch.ID)
 	}
 	if err := validatePublicPeerText(ch.Title, ch.About); err != nil {
 		return publicPeer{}, false, fmt.Errorf("invalid public channel %q: %w", ch.Username, err)
@@ -573,6 +701,15 @@ func (p publicPeer) buttonLabel() string {
 	default:
 		return "Send Message"
 	}
+}
+
+// inviteButtonLabel is used on invite-link preview pages, where the viewer is
+// not yet a member — "Join", not "View" like the public-username page.
+func (p publicPeer) inviteButtonLabel() string {
+	if p.kind == publicPeerSupergroup {
+		return "Join Group"
+	}
+	return "Join Channel"
 }
 
 func (p publicPeer) extra() string {
@@ -821,6 +958,23 @@ func validUsernamePath(username string) bool {
 	return true
 }
 
+func validInviteHashPath(hash string) bool {
+	if hash == "" || len(hash) > 64 {
+		return false
+	}
+	for _, r := range hash {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func linkKind(set domain.StickerSet) string {
 	if set.Kind == domain.StickerSetKindEmoji || set.Emojis {
 		return "addemoji"
@@ -900,16 +1054,28 @@ type usernamePageData struct {
 }
 
 func (h *handler) serveUsernameNotFound(w http.ResponseWriter, username string) {
+	message := "This is not a valid public " + h.appName + " username."
+	if username != "" {
+		message = "@" + username + " is not an active public " + h.appName + " username."
+	}
+	h.serveNotFound(w, message)
+}
+
+func (h *handler) serveInviteNotFound(w http.ResponseWriter) {
+	h.serveNotFound(w, "This invite link is not active anymore.")
+}
+
+func (h *handler) serveNotFound(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=30, must-revalidate")
 	w.WriteHeader(http.StatusNotFound)
 	if err := usernameNotFoundTemplate.Execute(w, struct {
-		Username    string
+		Message     string
 		HomeURL     string
 		AppName     string
 		DownloadURL string
-	}{Username: username, HomeURL: h.publicBaseURL + "/", AppName: h.appName, DownloadURL: h.downloadURL}); err != nil {
-		h.logger.Error("Render public username not-found page failed", zap.String("username", username), zap.Error(err))
+	}{Message: message, HomeURL: h.publicBaseURL + "/", AppName: h.appName, DownloadURL: h.downloadURL}); err != nil {
+		h.logger.Error("Render public not-found page failed", zap.Error(err))
 	}
 }
 
@@ -1137,7 +1303,7 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#2563eb">
-  <title>{{.Title}} (@{{.Username}}) - {{.AppName}}</title>
+  <title>{{.Title}}{{if .Username}} (@{{.Username}}){{end}} - {{.AppName}}</title>
   <meta name="description" content="{{.Description}}">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="{{.CanonicalURL}}">
@@ -1183,7 +1349,7 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
         <span>{{.Title}}</span>
         {{if .Verified}}<svg class="badge" viewBox="0 0 24 24" fill="none" aria-label="Verified"><circle cx="12" cy="12" r="11" fill="#2563eb"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{end}}
       </div>
-      <div class="sub">@{{.Username}}</div>
+      {{if .Username}}<div class="sub">@{{.Username}}</div>{{end}}
       {{if .Extra}}<div class="extra">{{.Extra}}</div>{{end}}
       {{if .AboutText}}<div class="about">{{.AboutText}}</div>{{end}}
       <div class="actions">
@@ -1203,7 +1369,7 @@ var usernameNotFoundTemplate = template.Must(template.New("username-not-found").
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#2563eb">
   <meta name="robots" content="noindex,nofollow">
-  <title>Username not found - {{.AppName}}</title>
+  <title>Nothing found - {{.AppName}}</title>
   <link rel="icon" type="image/png" href="/_public/assets/logo.png">
   <style>` + publicPageStyleSheet + `</style>
 </head>
@@ -1219,8 +1385,7 @@ var usernameNotFoundTemplate = template.Must(template.New("username-not-found").
     <div class="card">
       <div class="nf-emoji">🤔</div>
       <h2 style="font-size:22px">Nothing found</h2>
-      <div class="about">{{if .Username}}@{{.Username}} is not an active public {{.AppName}} username.{{else}}This is not a valid public {{.AppName}} username.{{end}}</div>
-      <div class="actions"><a class="btn btn-primary" href="{{.HomeURL}}">Back to {{.AppName}}</a></div>
+      <div class="about">{{.Message}}</div>
     </div>
   </main>` + publicBgIconsScript + `
 </body>
