@@ -81,6 +81,15 @@ func (s *Service) sendChangePhoneCodeByEmail(ctx context.Context, userID int64, 
 	if !ok {
 		return "", domain.AuthCodeDelivery{}, domain.ErrPhoneNumberInvalid
 	}
+	// The wire value never equals any stored users.phone once assigned (see
+	// ChangePhone), so the generic ByPhone occupied check above is a no-op
+	// for this path; the real "is this email already someone else's
+	// account" guard is by SignupEmail instead.
+	if existing, found, err := s.users.ByEmail(ctx, email); err != nil {
+		return "", domain.AuthCodeDelivery{}, err
+	} else if found && existing.ID != userID {
+		return "", domain.AuthCodeDelivery{}, domain.ErrPhoneNumberOccupied
+	}
 	if s.loginEmailSender == nil {
 		return "", domain.AuthCodeDelivery{}, fmt.Errorf("email signup sender is not configured")
 	}
@@ -162,7 +171,7 @@ func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, orig
 	if date == 0 {
 		date = int(time.Now().Unix())
 	}
-	result, err := s.phoneChanges.ChangePhone(ctx, domain.PhoneChangeRequest{
+	req := domain.PhoneChangeRequest{
 		UserID: userID,
 		Phone:  phone,
 		Date:   date,
@@ -171,7 +180,31 @@ func (s *Service) ChangePhone(ctx context.Context, userID int64, authKeyID, orig
 		// echoes updateUserPhone back to the initiating device and suppresses the wrong session.
 		ExcludeAuthKeyID: originRawAuthKeyID,
 		ExcludeSessionID: sessionID,
-	})
+	}
+	// Rebinding to a different email: the account keeps its short "888"
+	// display number (or gets a fresh one), never the long wire value —
+	// same reasoning as SignUp. ByPhone above is a no-op for this case since
+	// the wire value never equals a stored users.phone; the real
+	// already-bound-elsewhere guard is by SignupEmail.
+	if s.emailSignupEnabled && domain.IsEmailSignupPhone(phone) {
+		email, ok := domain.DecodeEmailPhone(phone)
+		if !ok {
+			return domain.PhoneChangeResult{}, domain.ErrPhoneNumberInvalid
+		}
+		email = domain.NormalizeEmailForPhone(email)
+		if existing, found, err := s.users.ByEmail(ctx, email); err != nil {
+			return domain.PhoneChangeResult{}, err
+		} else if found && existing.ID != userID {
+			return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
+		}
+		displayPhone, err := s.assignEmailSignupDisplayPhone(ctx)
+		if err != nil {
+			return domain.PhoneChangeResult{}, err
+		}
+		req.Phone = displayPhone
+		req.SignupEmail = email
+	}
+	result, err := s.phoneChanges.ChangePhone(ctx, req)
 	if err != nil {
 		return domain.PhoneChangeResult{}, err
 	}
@@ -203,6 +236,30 @@ func (s *Service) phoneChangeCaller(ctx context.Context, userID int64, authKeyID
 		return domain.User{}, domain.ErrPhoneChangeForbidden
 	}
 	return u, nil
+}
+
+// maxEmailSignupPhoneAttempts bounds assignEmailSignupDisplayPhone's
+// collision-retry loop so a store failure can't spin forever.
+const maxEmailSignupPhoneAttempts = 20
+
+// assignEmailSignupDisplayPhone generates a short "888" display number for
+// an email-signup account rebinding to a new email (see
+// domain.NewEmailSignupDisplayPhone / auth.Service's SignUp counterpart),
+// re-rolling on the astronomically unlikely collision with an existing
+// account's phone.
+func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, error) {
+	for i := 0; i < maxEmailSignupPhoneAttempts; i++ {
+		candidate, err := domain.NewEmailSignupDisplayPhone()
+		if err != nil {
+			return "", err
+		}
+		if _, found, err := s.users.ByPhone(ctx, candidate); err != nil {
+			return "", err
+		} else if !found {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("assign email signup display phone: exhausted %d attempts", maxEmailSignupPhoneAttempts)
 }
 
 func phoneChangeHash() (string, error) {

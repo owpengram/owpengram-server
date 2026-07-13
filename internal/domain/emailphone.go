@@ -1,6 +1,10 @@
 package domain
 
-import "strings"
+import (
+	"crypto/rand"
+	"fmt"
+	"strings"
+)
 
 // EmailPhonePrefix marks a "phone number" as a synthetic identity encoding an
 // email address, not a real phone. It reuses Telegram's own +888 "Anonymous
@@ -24,11 +28,11 @@ const MaxEmailSignupPhoneLen = 200
 const emailPhoneEscape = 'q'
 
 var emailPhoneEscapeEncode = map[rune]byte{
-	'@': '0',
-	'.': '1',
-	'-': '2',
-	'_': '3',
-	'+': '4',
+	'@':              '0',
+	'.':              '1',
+	'-':              '2',
+	'_':              '3',
+	'+':              '4',
 	emailPhoneEscape: '5',
 }
 
@@ -133,6 +137,33 @@ func asciiDigitByte(r rune) (byte, bool) {
 // user typed it (e.g. on a different device).
 func NormalizeEmailForPhone(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// emailSignupDisplayPhoneDigits is how many random digits follow the "888"
+// prefix in a NewEmailSignupDisplayPhone result, e.g. "888" + 8 digits =
+// "88812345678" (formats on-screen as something like "+888 1234 5678").
+const emailSignupDisplayPhoneDigits = 8
+
+// NewEmailSignupDisplayPhone generates a short, all-digit "888" phone number
+// for an email-signup account's users.phone column. Unlike EncodeEmailPhone
+// this carries no information about the email — it is purely a
+// normal-looking display/identity number — so the caller must separately
+// persist the email->user association (see User.SignupEmail) for returning
+// logins to be found. Because the result is all digits, IsEmailSignupPhone
+// on it is always false: once assigned, it behaves exactly like a real phone
+// number everywhere else in the system (contacts, search, ByPhone lookups).
+func NewEmailSignupDisplayPhone() (string, error) {
+	b := make([]byte, emailSignupDisplayPhoneDigits)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate email signup display phone: %w", err)
+	}
+	var out strings.Builder
+	out.Grow(len(EmailPhonePrefix) + emailSignupDisplayPhoneDigits)
+	out.WriteString(EmailPhonePrefix)
+	for _, v := range b {
+		out.WriteByte('0' + v%10)
+	}
+	return out.String(), nil
 }
 
 // IsEmailSignupPhone reports whether phone was produced by EncodeEmailPhone.

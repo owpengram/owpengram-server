@@ -42,7 +42,11 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 		}
 	}
 	currentPhone := u.Phone
+	currentSignupEmail := u.SignupEmail
 	u.Phone = req.Phone
+	if req.SignupEmail != "" {
+		u.SignupEmail = req.SignupEmail
+	}
 	s.users.byID[req.UserID] = u
 
 	date := req.Date
@@ -62,6 +66,7 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 		if err != nil {
 			// 保持内存替身与 PG 的 user+event 原子可见语义。
 			u.Phone = currentPhone
+			u.SignupEmail = currentSignupEmail
 			s.users.byID[req.UserID] = u
 			s.users.mu.Unlock()
 			return domain.PhoneChangeResult{}, err

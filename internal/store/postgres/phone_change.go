@@ -64,9 +64,14 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 		return domain.PhoneChangeResult{User: userFromModel(row)}, nil
 	}
 
-	row, err := qtx.UpdateUserPhone(ctx, sqlcgen.UpdateUserPhoneParams{ID: req.UserID, Phone: req.Phone})
+	var row sqlcgen.User
+	if req.SignupEmail != "" {
+		row, err = qtx.UpdateUserPhoneAndSignupEmail(ctx, sqlcgen.UpdateUserPhoneAndSignupEmailParams{ID: req.UserID, Phone: req.Phone, SignupEmail: req.SignupEmail})
+	} else {
+		row, err = qtx.UpdateUserPhone(ctx, sqlcgen.UpdateUserPhoneParams{ID: req.UserID, Phone: req.Phone})
+	}
 	if err != nil {
-		if isUniqueConstraint(err, "users_phone_unique_idx") {
+		if isUniqueConstraint(err, "users_phone_unique_idx") || isUniqueConstraint(err, "users_signup_email_lower_unique_idx") {
 			return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
 		}
 		if errors.Is(err, pgx.ErrNoRows) {

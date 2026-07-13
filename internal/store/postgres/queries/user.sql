@@ -10,6 +10,9 @@ ORDER BY id;
 -- name: GetUserByPhone :one
 SELECT * FROM users WHERE phone = $1;
 
+-- name: GetUserBySignupEmail :one
+SELECT * FROM users WHERE lower(signup_email) = lower($1) AND signup_email <> '';
+
 -- name: GetUsersByPhones :many
 SELECT *
 FROM users
@@ -99,8 +102,8 @@ ORDER BY contact DESC, rank, id
 LIMIT sqlc.arg(limit_count);
 
 -- name: CreateUser :one
-INSERT INTO users (access_hash, phone, first_name, last_name, username, country_code, premium_expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO users (access_hash, phone, signup_email, first_name, last_name, username, country_code, premium_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: UpdateUserUsername :one
@@ -128,6 +131,14 @@ RETURNING *;
 -- name: UpdateUserPhone :one
 UPDATE users
 SET phone = sqlc.arg(phone)::text,
+    updated_at = now()
+WHERE id = sqlc.arg(id)::bigint
+RETURNING *;
+
+-- name: UpdateUserPhoneAndSignupEmail :one
+UPDATE users
+SET phone = sqlc.arg(phone)::text,
+    signup_email = sqlc.arg(signup_email)::text,
     updated_at = now()
 WHERE id = sqlc.arg(id)::bigint
 RETURNING *;

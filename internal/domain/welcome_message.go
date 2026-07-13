@@ -30,10 +30,12 @@ func OfficialWelcomeMessage(userID int64, method string, date int) (Message, err
 }
 
 // SignInMethodLabel returns the human-readable method name embedded in
-// OfficialWelcomeMessage, derived from whether phone is an email-signup
-// synthetic number (see EncodeEmailPhone) or a real phone number.
-func SignInMethodLabel(phone string) string {
-	if IsEmailSignupPhone(phone) {
+// OfficialWelcomeMessage. Email-signup accounts are identified by
+// SignupEmail (see NewEmailSignupDisplayPhone) rather than by their stored
+// Phone, which — once assigned — is an ordinary-looking short number that
+// carries no information about the signup method.
+func SignInMethodLabel(u User) string {
+	if u.SignupEmail != "" {
 		return "email"
 	}
 	return "phone number"

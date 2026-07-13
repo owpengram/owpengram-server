@@ -1579,6 +1579,7 @@ type User struct {
 	BirthdayMonth                 int32
 	BirthdayYear                  int32
 	PersonalChannelID             int64
+	SignupEmail                   string
 }
 
 type UserBusinessProfile struct {

@@ -66,6 +66,24 @@ func (s *UserStore) ByPhone(ctx context.Context, phone string) (domain.User, boo
 	return userFromModel(row), true, nil
 }
 
+// ByEmail looks up an email-signup account by its signup_email (see
+// domain.NewEmailSignupDisplayPhone). Ordinary phone accounts never match
+// since signup_email is '' for them and the index excludes empty values.
+func (s *UserStore) ByEmail(ctx context.Context, email string) (domain.User, bool, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return domain.User{}, false, nil
+	}
+	row, err := s.q.GetUserBySignupEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, false, nil
+		}
+		return domain.User{}, false, fmt.Errorf("get user by signup email: %w", err)
+	}
+	return userFromModel(row), true, nil
+}
+
 func (s *UserStore) ByPhones(ctx context.Context, phones []string) ([]domain.User, error) {
 	filtered := make([]string, 0, len(phones))
 	for _, phone := range phones {
@@ -262,6 +280,7 @@ func (s *UserStore) Create(ctx context.Context, u domain.User) (domain.User, err
 	row, err := qtx.CreateUser(ctx, sqlcgen.CreateUserParams{
 		AccessHash:       u.AccessHash,
 		Phone:            u.Phone,
+		SignupEmail:      u.SignupEmail,
 		FirstName:        u.FirstName,
 		LastName:         u.LastName,
 		Username:         u.Username,
@@ -448,6 +467,7 @@ func userFromModel(r sqlcgen.User) domain.User {
 		ID:                    r.ID,
 		AccessHash:            r.AccessHash,
 		Phone:                 r.Phone,
+		SignupEmail:           r.SignupEmail,
 		FirstName:             r.FirstName,
 		LastName:              r.LastName,
 		About:                 r.About,

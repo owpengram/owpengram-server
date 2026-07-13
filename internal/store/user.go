@@ -12,6 +12,10 @@ type UserStore interface {
 	ByIDs(ctx context.Context, ids []int64) ([]domain.User, error)
 	ByPhone(ctx context.Context, phone string) (domain.User, bool, error)
 	ByPhones(ctx context.Context, phones []string) ([]domain.User, error)
+	// ByEmail looks up an email-signup account by its signup_email (see
+	// domain.NewEmailSignupDisplayPhone). Ordinary phone accounts never
+	// match: signup_email is empty for them.
+	ByEmail(ctx context.Context, email string) (domain.User, bool, error)
 	ByUsername(ctx context.Context, username string) (domain.User, bool, error)
 	Search(ctx context.Context, currentUserID int64, query, phoneQuery string, limit int) (domain.UserSearchResult, error)
 	UpdateProfile(ctx context.Context, userID int64, firstName, lastName, about string) (domain.User, error)

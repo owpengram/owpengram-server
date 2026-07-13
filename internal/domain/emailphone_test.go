@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEncodeDecodeEmailPhoneRoundTrip(t *testing.T) {
 	for _, email := range []string{
@@ -60,5 +63,34 @@ func TestDecodeEmailPhoneRejectsNonEmailNumbers(t *testing.T) {
 		if _, ok := DecodeEmailPhone(phone); ok {
 			t.Fatalf("DecodeEmailPhone(%q) ok=true, want false", phone)
 		}
+	}
+}
+
+func TestNewEmailSignupDisplayPhoneLooksLikeARealPhoneNumber(t *testing.T) {
+	seen := make(map[string]struct{})
+	for i := 0; i < 200; i++ {
+		phone, err := NewEmailSignupDisplayPhone()
+		if err != nil {
+			t.Fatalf("NewEmailSignupDisplayPhone: %v", err)
+		}
+		if !strings.HasPrefix(phone, EmailPhonePrefix) {
+			t.Fatalf("phone %q missing %q prefix", phone, EmailPhonePrefix)
+		}
+		if !ValidPhone(phone) {
+			t.Fatalf("phone %q fails ValidPhone", phone)
+		}
+		// Must be indistinguishable from a real phone number: no letters, so
+		// IsEmailSignupPhone/DecodeEmailPhone never mistake it for a wire
+		// email-signup value once it's assigned as an account's real phone.
+		if IsEmailSignupPhone(phone) {
+			t.Fatalf("IsEmailSignupPhone(%q) = true, want false (must look like a real number)", phone)
+		}
+		if _, ok := DecodeEmailPhone(phone); ok {
+			t.Fatalf("DecodeEmailPhone(%q) unexpectedly succeeded", phone)
+		}
+		seen[phone] = struct{}{}
+	}
+	if len(seen) < 190 {
+		t.Fatalf("only %d distinct values out of 200 draws, generator looks non-random", len(seen))
 	}
 }

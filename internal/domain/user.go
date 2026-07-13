@@ -22,9 +22,14 @@ func (c PeerColor) Empty() bool {
 // User 是一个账号。第一阶段仅保留登录链路必须字段；
 // access_hash 为任何 InputUser 校验所必须，不可省。
 type User struct {
-	ID          int64
-	AccessHash  int64
-	Phone       string
+	ID         int64
+	AccessHash int64
+	Phone      string
+	// SignupEmail is set only for email-signup accounts (see
+	// domain.NewEmailSignupDisplayPhone): it is the durable email->user
+	// reverse lookup key, since Phone itself no longer encodes the email.
+	// Empty for every ordinary phone-number account.
+	SignupEmail string
 	FirstName   string
 	LastName    string
 	About       string

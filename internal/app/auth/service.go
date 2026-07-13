@@ -298,7 +298,7 @@ func (s *Service) CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte)
 	// deliberately skipped the welcome message while password_pending.
 	if a, found, err := s.auths.ByAuthKey(ctx, authKeyID); err == nil && found {
 		if u, found, err := s.users.ByID(ctx, a.UserID); err == nil && found {
-			s.recordWelcomeMessage(ctx, u.ID, u.Phone)
+			s.recordWelcomeMessage(ctx, u)
 		}
 	}
 	return nil
@@ -345,9 +345,24 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	return s.createPhoneCode(ctx, phone, issuedUserID)
 }
 
+// currentPhoneOwner resolves the account currently identified by a wire
+// phone value. For email-signup phones (see domain.EncodeEmailPhone) the
+// account's real users.phone is a short, unrelated "888" display number
+// (domain.NewEmailSignupDisplayPhone) assigned at SignUp — the wire value
+// itself is never stored — so lookup goes through the decoded email and
+// User.SignupEmail instead of ByPhone. Every owner-drift/idempotency
+// invariant elsewhere in this file (issuedOwnerMatches, verifyLoginCode,
+// SignUp's occupied checks, ...) is expressed purely in terms of "the
+// account currentPhoneOwner resolves to", so fixing this one lookup keeps
+// all of them correct for email-signup phones with no further changes.
 func (s *Service) currentPhoneOwner(ctx context.Context, phone string) (domain.User, bool, error) {
 	if s == nil || s.users == nil {
 		return domain.User{}, false, fmt.Errorf("user store is not configured")
+	}
+	if s.emailSignupEnabled {
+		if email, ok := domain.DecodeEmailPhone(phone); ok {
+			return s.users.ByEmail(ctx, email)
+		}
 	}
 	return s.users.ByPhone(ctx, phone)
 }
@@ -906,7 +921,7 @@ func (s *Service) finishSignIn(ctx context.Context, auth domain.Authorization, e
 	// 2FA accounts only really finish authorizing in CompletePasswordSignIn;
 	// firing the welcome message here too would notify about an attempt that
 	// never actually got past the password check.
-	s.recordWelcomeMessage(ctx, existing.ID, existing.Phone)
+	s.recordWelcomeMessage(ctx, existing)
 	return existing, domain.Message{}, false, nil
 }
 
@@ -993,6 +1008,23 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		FirstName:  firstName,
 		LastName:   lastName,
 	}
+	// Email-signup accounts don't keep the long email-encoded wire value as
+	// their permanent phone — that only ever needed to travel on the wire to
+	// get here. Assign a short, normal-looking "888" number instead and
+	// record the email separately (SignupEmail), which is what
+	// currentPhoneOwner uses to find this account again on a later login.
+	if s.emailSignupEnabled && domain.IsEmailSignupPhone(phone) {
+		email, ok := domain.DecodeEmailPhone(phone)
+		if !ok {
+			return domain.User{}, domain.Message{}, ErrPhoneNumberInvalid
+		}
+		displayPhone, err := s.assignEmailSignupDisplayPhone(ctx)
+		if err != nil {
+			return domain.User{}, domain.Message{}, err
+		}
+		newUser.Phone = displayPhone
+		newUser.SignupEmail = domain.NormalizeEmailForPhone(email)
+	}
 	// 新账号默认赠送会员：到期时间 = 注册时刻 + N 个月（与迁移 0094 对存量
 	// 账号的 backfill 同一语义）。premium 状态由下发路径按该时间即时派生。
 	if s.premiumGrantMonths > 0 {
@@ -1021,7 +1053,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 			return domain.User{}, domain.Message{}, err
 		}
 	}
-	s.recordWelcomeMessage(ctx, u.ID, phone)
+	s.recordWelcomeMessage(ctx, u)
 	return u, loginMessage, nil
 }
 
@@ -1329,11 +1361,11 @@ func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code str
 // SignIn/SignInWithEmail), regardless of channel. Best-effort: a failure here
 // must never fail the sign-in itself, since unlike recordLoginMessage it
 // carries no secret the caller needs.
-func (s *Service) recordWelcomeMessage(ctx context.Context, userID int64, phone string) {
+func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 	if s == nil || s.messages == nil || s.dialogs == nil {
 		return
 	}
-	msg, err := domain.OfficialWelcomeMessage(userID, domain.SignInMethodLabel(phone), int(time.Now().Unix()))
+	msg, err := domain.OfficialWelcomeMessage(u.ID, domain.SignInMethodLabel(u), int(time.Now().Unix()))
 	if err != nil {
 		return
 	}
@@ -1341,7 +1373,7 @@ func (s *Service) recordWelcomeMessage(ctx context.Context, userID int64, phone 
 	if err != nil {
 		return
 	}
-	_ = s.dialogs.UpsertInbox(ctx, userID, domain.Dialog{
+	_ = s.dialogs.UpsertInbox(ctx, u.ID, domain.Dialog{
 		Peer:           created.Peer,
 		TopMessage:     created.ID,
 		TopMessageDate: created.Date,
@@ -1443,6 +1475,28 @@ func authKeyIDInt64(id [8]byte) int64 {
 
 func normalizePhone(phone string) string {
 	return domain.NormalizePhone(phone)
+}
+
+// assignEmailSignupDisplayPhone generates a short "888" display number for a
+// new email-signup account (see domain.NewEmailSignupDisplayPhone),
+// re-rolling on the astronomically unlikely collision with an existing
+// account's phone. maxEmailSignupPhoneAttempts bounds the loop so a store
+// failure can't spin forever.
+const maxEmailSignupPhoneAttempts = 20
+
+func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, error) {
+	for i := 0; i < maxEmailSignupPhoneAttempts; i++ {
+		candidate, err := domain.NewEmailSignupDisplayPhone()
+		if err != nil {
+			return "", err
+		}
+		if _, found, err := s.users.ByPhone(ctx, candidate); err != nil {
+			return "", err
+		} else if !found {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("assign email signup display phone: exhausted %d attempts", maxEmailSignupPhoneAttempts)
 }
 
 func randomHex(n int) (string, error) {

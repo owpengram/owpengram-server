@@ -47,14 +47,20 @@ func TestEmailSignupSendCodeRoutesFreshSignupToEmail(t *testing.T) {
 		t.Fatalf("needSignUp = false, want true for a brand-new email-signup account")
 	}
 
-	// SignUp itself is completely untouched by email-signup: same call, same
-	// phone (the 888-encoded value), no email-specific parameter anywhere.
+	// SignUp itself is called exactly like the plain-phone path (same phone
+	// argument, no email-specific parameter anywhere), but the account it
+	// creates gets a short, normal-looking "888" display number instead of
+	// storing the long email-encoded wire value as its permanent phone; the
+	// email->user association lives in SignupEmail instead.
 	created, _, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "New", "User")
 	if err != nil {
 		t.Fatalf("SignUp: %v", err)
 	}
-	if created.Phone != phone {
-		t.Fatalf("created.Phone = %q, want %q", created.Phone, phone)
+	if created.Phone == phone || !domain.ValidPhone(created.Phone) || domain.IsEmailSignupPhone(created.Phone) {
+		t.Fatalf("created.Phone = %q, want a short all-digit 888 display number distinct from the wire value %q", created.Phone, phone)
+	}
+	if created.SignupEmail != "newuser@owpengram.local" {
+		t.Fatalf("created.SignupEmail = %q, want newuser@owpengram.local", created.SignupEmail)
 	}
 }
 
@@ -88,8 +94,11 @@ func TestEmailSignupSignUpSucceedsWithLoginEmailRequireSetupAlsoOn(t *testing.T)
 	if err != nil {
 		t.Fatalf("SignUp: %v (this is the loop bug if it fails with ErrCodeInvalid)", err)
 	}
-	if created.Phone != phone {
-		t.Fatalf("created.Phone = %q, want %q", created.Phone, phone)
+	if created.Phone == phone || !domain.ValidPhone(created.Phone) || domain.IsEmailSignupPhone(created.Phone) {
+		t.Fatalf("created.Phone = %q, want a short all-digit 888 display number distinct from the wire value %q", created.Phone, phone)
+	}
+	if created.SignupEmail != "requiresetup@owpengram.local" {
+		t.Fatalf("created.SignupEmail = %q, want requiresetup@owpengram.local", created.SignupEmail)
 	}
 }
 

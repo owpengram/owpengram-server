@@ -9,6 +9,11 @@ type PhoneChangeRequest struct {
 	Date             int
 	ExcludeAuthKeyID [8]byte
 	ExcludeSessionID int64
+	// SignupEmail, when non-empty, is written to users.signup_email in the
+	// same transaction as Phone. Only email-signup phone changes set this
+	// (see account.Service.ChangePhone); ordinary phone-number changes leave
+	// it as the zero value and the column untouched.
+	SignupEmail string
 }
 
 type PhoneChangeResult struct {

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,23 @@ func (s *UserStore) ByPhone(_ context.Context, phone string) (domain.User, bool,
 	defer s.mu.RUnlock()
 	for _, u := range s.byID {
 		if u.Phone == phone {
+			return u, true, nil
+		}
+	}
+	return domain.User{}, false, nil
+}
+
+// ByEmail looks up an email-signup account by its signup_email (see
+// domain.NewEmailSignupDisplayPhone). Mirrors postgres.UserStore.ByEmail.
+func (s *UserStore) ByEmail(_ context.Context, email string) (domain.User, bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return domain.User{}, false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.byID {
+		if u.SignupEmail != "" && strings.ToLower(u.SignupEmail) == email {
 			return u, true, nil
 		}
 	}
@@ -374,6 +392,14 @@ func (s *UserStore) Create(_ context.Context, u domain.User) (domain.User, error
 		for _, existing := range s.byID {
 			if strings.ToLower(existing.Username) == username {
 				return domain.User{}, domain.ErrUsernameOccupied
+			}
+		}
+	}
+	signupEmail := strings.ToLower(strings.TrimSpace(u.SignupEmail))
+	if signupEmail != "" {
+		for _, existing := range s.byID {
+			if existing.SignupEmail != "" && strings.ToLower(existing.SignupEmail) == signupEmail {
+				return domain.User{}, fmt.Errorf("create user: signup email occupied")
 			}
 		}
 	}

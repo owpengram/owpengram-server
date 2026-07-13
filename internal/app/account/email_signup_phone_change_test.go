@@ -75,8 +75,14 @@ func TestEmailSignupChangePhoneRoutesCodeToDecodedEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChangePhone: %v", err)
 	}
-	if result.User.Phone != newPhone {
-		t.Fatalf("result.User.Phone = %q, want %q", result.User.Phone, newPhone)
+	// Rebinding to a new email assigns a fresh short "888" display number
+	// (see auth.Service.SignUp's identical treatment) rather than storing
+	// the long wire value directly; SignupEmail carries the association.
+	if result.User.Phone == newPhone || !domain.ValidPhone(result.User.Phone) || domain.IsEmailSignupPhone(result.User.Phone) {
+		t.Fatalf("result.User.Phone = %q, want a short all-digit 888 display number distinct from the wire value %q", result.User.Phone, newPhone)
+	}
+	if result.User.SignupEmail != "newmail@owpengram.local" {
+		t.Fatalf("result.User.SignupEmail = %q, want newmail@owpengram.local", result.User.SignupEmail)
 	}
 }
 
