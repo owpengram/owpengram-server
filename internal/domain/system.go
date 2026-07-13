@@ -3,6 +3,11 @@ package domain
 const (
 	// OfficialSystemUserID 是 Telegram 兼容客户端识别的官方系统账号。
 	OfficialSystemUserID int64 = 777000
+	// OfficialSystemUserPhotoID/AccessHash 是该账号头像 photo 的固定 id，
+	// 与 files.Service.SeedOfficialSystemAvatar 种子写入的行保持一致，
+	// 确保跨重启后 OfficialSystemUser() 引用的 photo id 稳定不变。
+	OfficialSystemUserPhotoID         int64 = 7770000001
+	OfficialSystemUserPhotoAccessHash int64 = 5837219004471160321
 
 	// BotFatherUserID 是内置 BotFather 账号，与官方 @BotFather 同 ID。
 	BotFatherUserID int64 = 93372553
@@ -21,17 +26,38 @@ const (
 	ChatBotAccessHash int64 = 6332902371644871201
 )
 
+// officialSystemUserPhotoDCID/Stripped 由 files.Service.SeedOfficialSystemAvatar
+// 在启动时通过 SetOfficialSystemUserAvatar 写入一次；写入前 OfficialSystemUser()
+// 不带头像（PhotoID==0），与其它未设置头像的账号行为一致。
+var (
+	officialSystemUserPhotoDCID     int
+	officialSystemUserPhotoStripped []byte
+)
+
+// SetOfficialSystemUserAvatar 记录官方系统账号头像所在的 DC 与内联缩略图字节。
+// 只应在启动阶段、头像 seed 完成后调用一次。
+func SetOfficialSystemUserAvatar(dcID int, stripped []byte) {
+	officialSystemUserPhotoDCID = dcID
+	officialSystemUserPhotoStripped = stripped
+}
+
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
 func OfficialSystemUser() User {
-	return User{
+	u := User{
 		ID:         OfficialSystemUserID,
 		AccessHash: 6599886787491911851,
 		Phone:      "42777",
-		FirstName:  "Telegram",
-		Username:   "telegram",
+		FirstName:  "OwpenGram",
+		Username:   "owpengram",
 		Verified:   true,
 		Support:    true,
 	}
+	if officialSystemUserPhotoDCID != 0 {
+		u.PhotoID = OfficialSystemUserPhotoID
+		u.PhotoDCID = officialSystemUserPhotoDCID
+		u.PhotoStripped = officialSystemUserPhotoStripped
+	}
+	return u
 }
 
 // BotFatherUser 返回内置 BotFather 账号。username 不以 bot 结尾属种子例外（与官方一致）。
