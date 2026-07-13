@@ -825,6 +825,7 @@ func run(logger *zap.Logger) error {
 		AppScheme:     cfg.PublicAppScheme,
 		WebBaseURL:    cfg.PublicWebBaseURL,
 		AppName:       cfg.PublicAppName,
+		DownloadURL:   cfg.PublicDownloadURL,
 		StickerSets:   filesService,
 		Users:         userStore,
 		Channels:      channelStore,

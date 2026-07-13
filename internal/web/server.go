@@ -26,6 +26,7 @@ type Config struct {
 	AppScheme     string
 	WebBaseURL    string
 	AppName       string
+	DownloadURL   string
 	StickerSets   StickerSetResolver
 	Users         UsernameResolver
 	Channels      PublicChannelResolver
@@ -87,7 +88,8 @@ func Start(ctx context.Context, cfg Config, logger *zap.Logger) (*http.Server, e
 			zap.String("addr", addr),
 			zap.String("public_base_url", cfg.PublicBaseURL),
 			zap.String("app_scheme", cfg.AppScheme),
-			zap.String("web_base_url", cfg.WebBaseURL))
+			zap.String("web_base_url", cfg.WebBaseURL),
+			zap.String("download_url", cfg.DownloadURL))
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Warn("Public link Web endpoint exited", zap.Error(err))
 		}
@@ -110,9 +112,6 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if cfg.StickerSets == nil {
 		return nil, fmt.Errorf("public Web sticker set resolver is nil")
 	}
-	if strings.TrimSpace(cfg.WebBaseURL) == "" {
-		cfg.WebBaseURL = links.DefaultWebBaseURL
-	}
 	if strings.TrimSpace(cfg.AppName) == "" {
 		cfg.AppName = links.DefaultAppName
 	}
@@ -122,11 +121,24 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if cfg.AppScheme, err = links.ValidateAppScheme(cfg.AppScheme); err != nil {
 		return nil, fmt.Errorf("app scheme: %w", err)
 	}
-	if cfg.WebBaseURL, err = links.ValidateBaseURL(cfg.WebBaseURL); err != nil {
-		return nil, fmt.Errorf("Web base URL: %w", err)
+	// WebBaseURL is optional: leaving it unset disables the "Open in Web"
+	// button on the username landing page instead of falling back to a
+	// default URL that would point at someone else's Web client.
+	if strings.TrimSpace(cfg.WebBaseURL) != "" {
+		if cfg.WebBaseURL, err = links.ValidateBaseURL(cfg.WebBaseURL); err != nil {
+			return nil, fmt.Errorf("Web base URL: %w", err)
+		}
+	} else {
+		cfg.WebBaseURL = ""
 	}
 	if cfg.AppName, err = links.ValidateAppName(cfg.AppName); err != nil {
 		return nil, fmt.Errorf("app name: %w", err)
+	}
+	if strings.TrimSpace(cfg.DownloadURL) == "" {
+		cfg.DownloadURL = links.DefaultDownloadURL
+	}
+	if cfg.DownloadURL, err = links.ValidateBaseURL(cfg.DownloadURL); err != nil {
+		return nil, fmt.Errorf("download URL: %w", err)
 	}
 	if logger == nil {
 		logger = zap.NewNop()
@@ -141,10 +153,13 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		appScheme:     cfg.AppScheme,
 		webBaseURL:    cfg.WebBaseURL,
 		appName:       cfg.AppName,
+		downloadURL:   cfg.DownloadURL,
 		logger:        logger,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
+	mux.HandleFunc("GET /_public/assets/logo.png", h.brandLogo)
+	mux.HandleFunc("GET /_public/assets/fonts/{file}", h.brandFont)
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
 	mux.HandleFunc("GET /addstickers/{shortName}", h.addStickers)
 	mux.HandleFunc("GET /addemoji/{shortName}", h.addEmoji)
@@ -164,6 +179,7 @@ type handler struct {
 	appScheme     string
 	webBaseURL    string
 	appName       string
+	downloadURL   string
 	logger        *zap.Logger
 }
 
@@ -195,9 +211,8 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 		Description:  "This page opens the app so you can preview and add this shared folder.",
 		CanonicalURL: h.publicURL("addlist", slug),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL("addlist", "slug", slug)),
+		DownloadURL:  h.downloadURL,
 	}
-	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	if err := landingTemplate.Execute(w, data); err != nil {
@@ -228,11 +243,11 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 	}
 	params.Set("domain", peer.username)
 	app := schemeURLValues(h.appScheme, "resolve", params)
-	legacy := schemeURLValues("tg", "resolve", params)
 	description := peer.about
 	if description == "" {
 		description = peer.fallbackDescription(h.appName)
 	}
+	grad := avatarGradient(peer.id)
 	data := usernamePageData{
 		AppName:      h.appName,
 		AppInitial:   appInitial(h.appName),
@@ -241,18 +256,23 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 		Verified:     peer.verified,
 		Extra:        peer.extra(),
 		Description:  description,
+		AboutText:    peer.about,
 		CanonicalURL: h.publicUsernameURL(peer.username),
 		HomeURL:      h.publicBaseURL + "/",
+		DownloadURL:  h.downloadURL,
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacy),
-		WebURL:       template.URL(publicWebAppURL(h.webBaseURL, legacy)),
 		ButtonLabel:  peer.buttonLabel(),
 		Initials:     peer.initials(),
+		GradFrom:     grad[0],
+		GradTo:       grad[1],
+	}
+	if h.webBaseURL != "" {
+		legacy := schemeURLValues("tg", "resolve", params)
+		data.WebURL = template.URL(publicWebAppURL(h.webBaseURL, legacy))
 	}
 	if peer.hasPhoto {
 		data.PhotoURL = h.publicAvatarURL(peer.username, peer.photo.ID)
 	}
-	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60, must-revalidate")
 	if err := usernameLandingTemplate.Execute(w, data); err != nil {
@@ -366,9 +386,8 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 		Description:  "This page opens the app so you can preview and install the set. Files are still fetched by the app through MTProto.",
 		CanonicalURL: h.publicURL(canonicalKind, set.ShortName),
 		AppURL:       template.URL(app),
-		LegacyTgURL:  template.URL(legacyTgURL(canonicalKind, "set", set.ShortName)),
+		DownloadURL:  h.downloadURL,
 	}
-	data.AppURLJS = template.JS(strconv.Quote(app))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	if err := landingTemplate.Execute(w, data); err != nil {
@@ -398,6 +417,7 @@ const (
 )
 
 type publicPeer struct {
+	id          int64
 	kind        publicPeerKind
 	username    string
 	title       string
@@ -470,6 +490,7 @@ func (h *handler) publicUserPeer(ctx context.Context, requested string, u domain
 		}
 	}
 	peer := publicPeer{
+		id:       u.ID,
 		kind:     publicPeerUser,
 		username: u.Username,
 		title:    title,
@@ -501,6 +522,7 @@ func (h *handler) publicChannelPeer(ctx context.Context, requested string, ch do
 		return publicPeer{}, false, fmt.Errorf("invalid public channel %q: %w", ch.Username, err)
 	}
 	peer := publicPeer{
+		id:          ch.ID,
 		kind:        publicPeerChannel,
 		username:    ch.Username,
 		title:       strings.TrimSpace(ch.Title),
@@ -596,6 +618,23 @@ func (p publicPeer) initials() string {
 		}
 	}
 	return strings.ToUpper(string(out))
+}
+
+var publicAvatarGradients = [...][2]string{
+	{"#FF885E", "#FF516A"},
+	{"#FFCD6A", "#FFA85C"},
+	{"#82B1FF", "#665FFF"},
+	{"#A0DE7E", "#54CB68"},
+	{"#53EDD6", "#28C9B7"},
+	{"#72D5FD", "#2A9EF1"},
+	{"#E0A2F3", "#D669ED"},
+}
+
+func avatarGradient(id int64) [2]string {
+	if id < 0 {
+		id = -id
+	}
+	return publicAvatarGradients[id%int64(len(publicAvatarGradients))]
 }
 
 func groupedDecimal(n int) string {
@@ -734,7 +773,7 @@ func publicWebAppURL(webBaseURL, legacyURL string) string {
 
 func publicSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; font-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -824,10 +863,6 @@ func (h *handler) appURL(kind, key, value string) string {
 	return schemeURL(h.appScheme, kind, key, value)
 }
 
-func legacyTgURL(kind, key, value string) string {
-	return schemeURL("tg", kind, key, value)
-}
-
 func schemeURL(scheme, kind, key, value string) string {
 	return scheme + "://" + kind + "?" + key + "=" + url.QueryEscape(value)
 }
@@ -839,9 +874,8 @@ type pageData struct {
 	Subtitle     string
 	Description  string
 	CanonicalURL string
+	DownloadURL  string
 	AppURL       template.URL
-	LegacyTgURL  template.URL
-	AppURLJS     template.JS
 }
 
 type usernamePageData struct {
@@ -852,15 +886,17 @@ type usernamePageData struct {
 	Verified     bool
 	Extra        string
 	Description  string
+	AboutText    string
 	CanonicalURL string
 	HomeURL      string
+	DownloadURL  string
 	PhotoURL     string
 	Initials     string
+	GradFrom     string
+	GradTo       string
 	ButtonLabel  string
 	AppURL       template.URL
-	LegacyTgURL  template.URL
 	WebURL       template.URL
-	AppURLJS     template.JS
 }
 
 func (h *handler) serveUsernameNotFound(w http.ResponseWriter, username string) {
@@ -868,24 +904,244 @@ func (h *handler) serveUsernameNotFound(w http.ResponseWriter, username string) 
 	w.Header().Set("Cache-Control", "public, max-age=30, must-revalidate")
 	w.WriteHeader(http.StatusNotFound)
 	if err := usernameNotFoundTemplate.Execute(w, struct {
-		Username string
-		HomeURL  string
-		AppName  string
-	}{Username: username, HomeURL: h.publicBaseURL + "/", AppName: h.appName}); err != nil {
+		Username    string
+		HomeURL     string
+		AppName     string
+		DownloadURL string
+	}{Username: username, HomeURL: h.publicBaseURL + "/", AppName: h.appName, DownloadURL: h.downloadURL}); err != nil {
 		h.logger.Error("Render public username not-found page failed", zap.String("username", username), zap.Error(err))
 	}
 }
+
+// publicPageStyleSheet is the shared visual system for every public landing
+// page (username profile, not-found, sticker/addlist): CSS variables (light
+// theme + dark-scheme override), the card/avatar/button component classes,
+// and the floating background orbs. Fonts are self-hosted (no Google Fonts
+// CDN call from visitors' browsers) via the /_public/assets/fonts/ route.
+const publicPageStyleSheet = `
+  @font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:400;font-display:swap;src:url('/_public/assets/fonts/plus-jakarta-sans-400.woff2') format('woff2')}
+  @font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:500;font-display:swap;src:url('/_public/assets/fonts/plus-jakarta-sans-500.woff2') format('woff2')}
+  @font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:600;font-display:swap;src:url('/_public/assets/fonts/plus-jakarta-sans-600.woff2') format('woff2')}
+  @font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:700;font-display:swap;src:url('/_public/assets/fonts/plus-jakarta-sans-700.woff2') format('woff2')}
+  @font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:800;font-display:swap;src:url('/_public/assets/fonts/plus-jakarta-sans-800.woff2') format('woff2')}
+  :root{
+    --accent:#2563eb; --accent-bright:#38bdf8;
+    --grad:linear-gradient(135deg,#38bdf8 0%,#2563eb 55%,#1e40af 100%);
+    --bg:#f7f9fc; --surface:#ffffff; --surface-2:#f1f5f9; --line:#e2e8f0; --line-strong:#cbd5e1;
+    --ink:#050508; --body:#3f4b5c; --muted:#64748b;
+    --hero-glow:rgba(37,99,235,0.14); --hero-grid:rgba(5,5,8,0.04);
+    --radius:18px; --radius-lg:24px;
+    --shadow:0 28px 70px -36px rgba(5,5,8,0.35);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --accent:#60a5fa; --accent-bright:#7dd3fc;
+      --grad:linear-gradient(135deg,#7dd3fc 0%,#3b82f6 50%,#2563eb 100%);
+      --bg:#08080e; --surface:#12121a; --surface-2:#181822; --line:#222228; --line-strong:#2e2e36;
+      --ink:#f8fafc; --body:#a8b4c4; --muted:#7b8798;
+      --hero-glow:rgba(59,130,246,0.25); --hero-grid:rgba(255,255,255,0.04);
+      --shadow:0 32px 80px -40px rgba(0,0,0,0.75);
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--body); background:var(--bg);
+    font-family:'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.65;
+    min-height:100vh; display:flex; flex-direction:column;
+    background-image:
+      radial-gradient(900px 480px at 50% -8%, var(--hero-glow) 0%, rgba(0,0,0,0) 70%),
+      linear-gradient(var(--hero-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
+    background-size:auto, 44px 44px, 44px 44px;
+    background-attachment:fixed;
+  }
+  h1,h2,h3{color:var(--ink); letter-spacing:-0.03em; font-weight:800; margin:0}
+  a{color:var(--accent); text-decoration:none}
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 26px; max-width:1100px; width:100%; margin:0 auto;
+  }
+  .brand{display:flex; align-items:center; gap:11px; font-weight:800; font-size:19px; color:var(--ink); letter-spacing:-0.02em}
+  .brand img{width:34px; height:34px; border-radius:9px; display:block}
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    font-weight:700; font-size:0.92rem; padding:12px 20px; border-radius:11px;
+    border:none; cursor:pointer; text-decoration:none; line-height:1; transition:transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease, color .16s ease;
+    font-family:inherit;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn-primary{background:var(--grad); color:#fff; box-shadow:0 12px 28px -14px rgba(37,99,235,0.65); width:100%}
+  .btn-primary:hover{box-shadow:0 16px 36px -14px rgba(37,99,235,0.75)}
+  .btn-ghost{background:var(--surface); color:var(--ink); border:1px solid var(--line)}
+  .btn-ghost:hover{border-color:var(--accent); color:var(--accent)}
+  main{flex:1; display:flex; align-items:center; justify-content:center; padding:24px}
+  .card{
+    width:100%; max-width:430px; background:var(--surface);
+    border:1px solid var(--line); border-radius:var(--radius-lg); padding:38px 30px 30px;
+    text-align:center; box-shadow:var(--shadow);
+  }
+  .avatar-wrap{position:relative; width:124px; height:124px; margin:0 auto 20px}
+  .avatar{position:absolute; inset:0; width:124px; height:124px; border-radius:50%; display:block}
+  .avatar-photo{object-fit:cover; background:var(--surface-2)}
+  .name{font-size:25px; font-weight:800; line-height:1.2; color:var(--ink); word-break:break-word; display:inline-flex; align-items:center; gap:8px; justify-content:center}
+  .badge{width:20px; height:20px; flex:0 0 auto}
+  .sub{color:var(--muted); font-size:15px; margin-top:6px; font-weight:500}
+  .about{color:var(--body); font-size:15px; line-height:1.6; margin-top:18px; white-space:pre-wrap; word-break:break-word; text-align:center}
+  .actions{margin-top:26px; display:grid; gap:10px}
+  .scam{display:inline-block; margin-top:12px; color:#e5484d; border:1px solid rgba(229,72,77,0.25); background:rgba(229,72,77,0.08); font-size:12px; font-weight:700; letter-spacing:.4px; padding:4px 10px; border-radius:8px}
+  .nf-emoji{font-size:60px; line-height:1; margin-bottom:14px}
+  @media (max-width:480px){ .card{padding:30px 22px 24px} header{padding:16px 18px} }
+
+  /* Floating background orbs. */
+  .bg-orbs{position:fixed; inset:-60px; z-index:-1; pointer-events:none; transition:transform .3s ease-out; will-change:transform}
+  .bg-orb{position:absolute; border-radius:50%; filter:blur(100px); pointer-events:none}
+  .bg-orb--1{width:700px; height:700px; top:-15%; left:-10%; background:color-mix(in srgb,var(--accent-bright) 40%,transparent); animation:orbFloat1 20s ease-in-out infinite}
+  .bg-orb--2{width:600px; height:600px; top:25%; right:-15%; background:color-mix(in srgb,var(--accent) 38%,transparent); animation:orbFloat2 24s ease-in-out infinite}
+  .bg-orb--3{width:500px; height:500px; bottom:-15%; left:30%; background:color-mix(in srgb,var(--accent-bright) 30%,transparent); animation:orbFloat3 28s ease-in-out infinite}
+  @keyframes orbFloat1{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(60px,-40px) scale(1.08)}66%{transform:translate(-30px,30px) scale(.92)}}
+  @keyframes orbFloat2{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(-50px,-35px) scale(.93)}66%{transform:translate(45px,25px) scale(1.07)}}
+  @keyframes orbFloat3{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(40px,45px) scale(1.06)}66%{transform:translate(-55px,-25px) scale(.94)}}
+  @media (max-width:720px){ .bg-orb{filter:blur(60px)} .bg-orb--1{width:350px;height:350px} .bg-orb--2{width:300px;height:300px} .bg-orb--3{width:250px;height:250px} }
+  @media (prefers-reduced-motion: reduce){ .bg-orb{animation:none} }
+
+  /* Drifting line-icon particles. */
+  .bg-icons{position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none; color:var(--accent)}
+  .bg-icon{position:absolute; left:0; top:0; will-change:transform}
+`
+
+// publicBgOrbsMarkup is the floating-orb + particle container markup, placed
+// right after <body> on every public landing page.
+const publicBgOrbsMarkup = `
+  <div class="bg-orbs" aria-hidden="true">
+    <div class="bg-orb bg-orb--1"></div>
+    <div class="bg-orb bg-orb--2"></div>
+    <div class="bg-orb bg-orb--3"></div>
+  </div>
+  <div class="bg-icons" aria-hidden="true"></div>`
+
+// publicBgIconsScript drives the orb parallax and drifting line-icon
+// particles. Self-contained vanilla JS, no external requests.
+const publicBgIconsScript = `
+  <script>
+    (function(){
+      var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var orbs = document.querySelector('.bg-orbs');
+      var box = document.querySelector('.bg-icons');
+      var mx = 0.5, my = 0.5;
+      window.addEventListener('pointermove', function(e){
+        mx = e.clientX / window.innerWidth;
+        my = e.clientY / window.innerHeight;
+        if (orbs) orbs.style.transform = 'translate(' + ((mx-0.5)*30) + 'px,' + ((my-0.5)*30) + 'px)';
+      }, { passive: true });
+
+      if (!box || reduce) return;
+
+      var defs = [
+        '<rect x="2.5" y="3.5" width="19" height="12" rx="2"/><path d="M8 20h8M12 15.5V20"/>',
+        '<rect x="3.5" y="4" width="17" height="6" rx="2"/><rect x="3.5" y="14" width="17" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+        '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3 7l9 6.5L21 7"/>',
+        '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.5 4 5.7 4 9s-1.4 6.5-4 9c-2.6-2.5-4-5.7-4-9s1.4-6.5 4-9z"/>',
+        '<rect x="7" y="3" width="10" height="18" rx="2.4"/><path d="M11 18h2"/>',
+        '<path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/>',
+        '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/>',
+        '<path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6l7-3z"/><path d="M8.8 12.2l2.1 2.1 4.3-4.3"/>',
+        '<path d="M21.5 3.5l-19 7.5 5.5 2.5 3 5 3-2 5.5 5z"/><path d="M11 14l8.5-8.5"/>',
+        '<rect x="4.5" y="11" width="15" height="9" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 7.5-1.9"/><path d="M12 15v2"/>',
+        '<path d="M12 3v12"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/>',
+        '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+        '<path d="M12 2l3.1 6.3L22 9.5l-5 4.9 1.2 7L12 17.3 5.8 21.4 7 14.4l-5-4.9 6.9-1.2z"/>',
+        '<path d="M14.5 17.5L19 13l-4.5-4.5M9.5 6.5L5 11l4.5 4.5"/>',
+        '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+        '<path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><path d="M15 12h4M17 10v4"/>',
+        '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
+        '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+        '<path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>',
+        '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+        '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
+        '<circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/>'
+      ];
+      var SVGNS = 'http://www.w3.org/2000/svg';
+      var ps = [];
+
+      function build(){
+        box.textContent = '';
+        ps.length = 0;
+        var w = window.innerWidth, h = window.innerHeight, margin = 60;
+        var count = w < 720 ? 16 : 28;
+        for (var i = 0; i < count; i++){
+          var size = 22 + Math.random() * 30;
+          var el = document.createElementNS(SVGNS, 'svg');
+          el.setAttribute('class', 'bg-icon');
+          el.setAttribute('viewBox', '0 0 24 24');
+          el.setAttribute('fill', 'none');
+          el.setAttribute('stroke', 'currentColor');
+          el.setAttribute('stroke-width', '1.6');
+          el.setAttribute('stroke-linecap', 'round');
+          el.setAttribute('stroke-linejoin', 'round');
+          el.style.width = size + 'px';
+          el.style.height = size + 'px';
+          el.innerHTML = defs[i % defs.length];
+          var op = 0.18 + Math.random() * 0.12;
+          el.style.opacity = op;
+          box.appendChild(el);
+          ps.push({
+            x: margin + Math.random() * (w - margin * 2),
+            y: margin + Math.random() * (h - margin * 2),
+            vx: (Math.random() - 0.5) * 0.3,
+            vy: (Math.random() - 0.5) * 0.3,
+            size: size, rot: Math.random() * 360,
+            rotSpeed: (Math.random() - 0.5) * 0.08, el: el
+          });
+        }
+      }
+
+      function tick(){
+        var w = window.innerWidth, h = window.innerHeight;
+        for (var i = 0; i < ps.length; i++){
+          var a = ps[i];
+          a.x += a.vx; a.y += a.vy; a.rot += a.rotSpeed;
+          var half = a.size / 2;
+          if (a.x < half){ a.x = half; a.vx *= -1; }
+          if (a.x > w - half){ a.x = w - half; a.vx *= -1; }
+          if (a.y < half){ a.y = half; a.vy *= -1; }
+          if (a.y > h - half){ a.y = h - half; a.vy *= -1; }
+          for (var j = i + 1; j < ps.length; j++){
+            var b = ps[j];
+            var dx = b.x - a.x, dy = b.y - a.y;
+            var dist = Math.sqrt(dx * dx + dy * dy);
+            var minD = (a.size + b.size) / 2 + 20;
+            if (dist < minD && dist > 0.01){
+              var f = (minD - dist) / minD * 0.02, nx = dx / dist, ny = dy / dist;
+              a.vx -= nx * f; a.vy -= ny * f; b.vx += nx * f; b.vy += ny * f;
+            }
+          }
+        }
+        for (var k = 0; k < ps.length; k++){
+          var p = ps[k];
+          p.el.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px) rotate(' + p.rot + 'deg)';
+        }
+        requestAnimationFrame(tick);
+      }
+
+      build();
+      window.addEventListener('resize', build);
+      requestAnimationFrame(tick);
+    })();
+  </script>`
 
 var usernameLandingTemplate = template.Must(template.New("username-landing").Parse(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0e1621">
+  <meta name="theme-color" content="#2563eb">
   <title>{{.Title}} (@{{.Username}}) - {{.AppName}}</title>
   <meta name="description" content="{{.Description}}">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="{{.CanonicalURL}}">
+  <link rel="icon" type="image/png" href="/_public/assets/logo.png">
   <meta property="og:type" content="profile">
   <meta property="og:site_name" content="{{.AppName}}">
   <meta property="og:title" content="{{.Title}}">
@@ -898,123 +1154,113 @@ var usernameLandingTemplate = template.Must(template.New("username-landing").Par
   <meta name="twitter:title" content="{{.Title}}">
   <meta name="twitter:description" content="{{.Description}}">
   {{if .PhotoURL}}<meta name="twitter:image" content="{{.PhotoURL}}">{{end}}
-  <style>
-    :root { color-scheme: dark; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100svh; color: #f5f8fb; background:
-      radial-gradient(circle at 50% -20%, rgba(50, 161, 255, .25), transparent 42%), #0e1621; }
-    .shell { min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto; }
-    .brand { display: flex; align-items: center; gap: 10px; width: fit-content; margin: 28px auto 0; color: #dceeff;
-      font-size: 17px; font-weight: 700; letter-spacing: .01em; text-decoration: none; }
-    .brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: white;
-      background: linear-gradient(145deg, #52b8ff, #168de2); box-shadow: 0 8px 24px rgba(31, 151, 232, .3); }
-    main { display: grid; place-items: center; padding: 32px 18px; }
-    .card { width: min(100%, 420px); padding: 34px 30px 28px; text-align: center; border: 1px solid rgba(255,255,255,.08);
-      border-radius: 24px; background: rgba(23, 33, 43, .92); box-shadow: 0 28px 90px rgba(0,0,0,.34); backdrop-filter: blur(18px); }
-    .avatar { display: grid; place-items: center; width: 112px; height: 112px; margin: 0 auto 22px; overflow: hidden;
-      border-radius: 50%; background: linear-gradient(145deg, #47b7ff, #167bc1); box-shadow: 0 16px 44px rgba(10, 112, 183, .3); }
-    .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .initials { font-size: 38px; font-weight: 750; letter-spacing: -.04em; color: white; }
-    h1 { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0; font-size: clamp(25px, 7vw, 32px);
-      line-height: 1.18; letter-spacing: -.025em; overflow-wrap: anywhere; }
-    .verified { display: inline-grid; flex: 0 0 auto; place-items: center; width: 21px; height: 21px; border-radius: 50%;
-      color: #fff; background: #3aa8f7; font-size: 13px; font-weight: 900; }
-    .username { margin: 8px 0 0; color: #67bff9; font-size: 16px; overflow-wrap: anywhere; }
-    .extra { margin: 7px 0 0; color: #91a3b5; font-size: 14px; }
-    .description { margin: 22px auto 0; color: #c5d0da; font-size: 15px; line-height: 1.55; white-space: pre-line;
-      overflow-wrap: anywhere; }
-    .actions { display: grid; gap: 11px; margin-top: 28px; }
-    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 20px; border-radius: 13px;
-      font-size: 15px; font-weight: 720; text-decoration: none; transition: transform .16s ease, background .16s ease; }
-    .button:hover { transform: translateY(-1px); }
-    .primary { color: #fff; background: linear-gradient(135deg, #31a9f5, #168de2); box-shadow: 0 10px 28px rgba(22,141,226,.25); }
-    .secondary { color: #a9dafa; background: rgba(72, 164, 226, .12); border: 1px solid rgba(89, 180, 241, .15); }
-    .legacy { margin: 18px 0 0; color: #718395; font-size: 12px; }
-    .legacy a { color: #83bddd; text-decoration: none; }
-    footer { padding: 0 18px 26px; color: #657789; font-size: 12px; text-align: center; }
-    @media (max-width: 480px) {
-      .brand { margin-top: 20px; }
-      main { padding: 24px 14px; align-items: start; }
-      .card { padding: 28px 22px 24px; border-radius: 20px; }
-      .avatar { width: 96px; height: 96px; }
-    }
-    @media (prefers-reduced-motion: reduce) { .button { transition: none; } }
+  <style>` + publicPageStyleSheet + `
+    .extra{color:var(--muted); font-size:14px; margin-top:2px}
   </style>
 </head>
-<body>
-  <div class="shell">
-    <a class="brand" href="{{.HomeURL}}" aria-label="{{.AppName}} home"><span class="brand-mark">{{.AppInitial}}</span><span>{{.AppName}}</span></a>
-    <main>
-      <article class="card">
-        <div class="avatar">{{if .PhotoURL}}<img src="{{.PhotoURL}}" alt="{{.Title}} profile photo" width="112" height="112">{{else}}<span class="initials" aria-hidden="true">{{.Initials}}</span>{{end}}</div>
-        <h1><span>{{.Title}}</span>{{if .Verified}}<span class="verified" title="Verified" aria-label="Verified">✓</span>{{end}}</h1>
-        <p class="username">@{{.Username}}</p>
-        {{if .Extra}}<p class="extra">{{.Extra}}</p>{{end}}
-        <p class="description">{{.Description}}</p>
-        <div class="actions">
-          <a class="button primary" href="{{.AppURL}}">{{.ButtonLabel}}</a>
-          <a class="button secondary" href="{{.WebURL}}">Open in Web</a>
-        </div>
-        <p class="legacy">Old test clients only: <a href="{{.LegacyTgURL}}">open with tg://</a></p>
-      </article>
-    </main>
-    <footer>If you have {{.AppName}}, this page can open the chat directly.</footer>
-  </div>
-  <script>window.setTimeout(function () { window.location.href = {{.AppURLJS}}; }, 250);</script>
+<body>` + publicBgOrbsMarkup + `
+  <header>
+    <a class="brand" href="{{.HomeURL}}" aria-label="{{.AppName}} home">
+      <img src="/_public/assets/logo.png" alt="{{.AppName}}">
+      <span>{{.AppName}}</span>
+    </a>
+    <a class="btn btn-ghost" href="{{.DownloadURL}}">Download</a>
+  </header>
+  <main>
+    <div class="card">
+      <div class="avatar-wrap">
+        <svg class="avatar" viewBox="0 0 124 124" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="{{.GradFrom}}"/><stop offset="1" stop-color="{{.GradTo}}"/>
+          </linearGradient></defs>
+          <circle cx="62" cy="62" r="62" fill="url(#ag)"/>
+          <text x="62" y="64" text-anchor="middle" dominant-baseline="central"
+                font-family="'Plus Jakarta Sans',Arial,sans-serif" font-size="46" font-weight="700" fill="#fff">{{.Initials}}</text>
+        </svg>
+        {{if .PhotoURL}}<img class="avatar avatar-photo" src="{{.PhotoURL}}" alt="" loading="eager" onerror="this.remove()">{{end}}
+      </div>
+      <div class="name">
+        <span>{{.Title}}</span>
+        {{if .Verified}}<svg class="badge" viewBox="0 0 24 24" fill="none" aria-label="Verified"><circle cx="12" cy="12" r="11" fill="#2563eb"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{end}}
+      </div>
+      <div class="sub">@{{.Username}}</div>
+      {{if .Extra}}<div class="extra">{{.Extra}}</div>{{end}}
+      {{if .AboutText}}<div class="about">{{.AboutText}}</div>{{end}}
+      <div class="actions">
+        <a class="btn btn-primary" href="{{.AppURL}}">{{.ButtonLabel}}</a>
+        {{if .WebURL}}<a class="btn btn-ghost" href="{{.WebURL}}">Open in Web</a>{{end}}
+      </div>
+    </div>
+  </main>` + publicBgIconsScript + `
 </body>
 </html>
 `))
 
 var usernameNotFoundTemplate = template.Must(template.New("username-not-found").Parse(`<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>Username not found - {{.AppName}}</title>
-<style>:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px;background:#0e1621;color:#f5f8fb}.card{width:min(100%,420px);padding:34px 28px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:#17212b;text-align:center}h1{margin:0 0 12px;font-size:26px}p{margin:0;color:#9fb0bf;line-height:1.55;overflow-wrap:anywhere}a{display:inline-block;margin-top:24px;color:#67bff9;text-decoration:none}</style>
-</head><body><main class="card"><h1>Username not found</h1><p>{{if .Username}}@{{.Username}} is not an active public {{.AppName}} username.{{else}}This is not a valid public {{.AppName}} username.{{end}}</p><a href="{{.HomeURL}}">Back to {{.AppName}}</a></main></body></html>`))
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Username not found - {{.AppName}}</title>
+  <link rel="icon" type="image/png" href="/_public/assets/logo.png">
+  <style>` + publicPageStyleSheet + `</style>
+</head>
+<body>` + publicBgOrbsMarkup + `
+  <header>
+    <a class="brand" href="{{.HomeURL}}" aria-label="{{.AppName}} home">
+      <img src="/_public/assets/logo.png" alt="{{.AppName}}">
+      <span>{{.AppName}}</span>
+    </a>
+    <a class="btn btn-ghost" href="{{.DownloadURL}}">Download</a>
+  </header>
+  <main>
+    <div class="card">
+      <div class="nf-emoji">🤔</div>
+      <h2 style="font-size:22px">Nothing found</h2>
+      <div class="about">{{if .Username}}@{{.Username}} is not an active public {{.AppName}} username.{{else}}This is not a valid public {{.AppName}} username.{{end}}</div>
+      <div class="actions"><a class="btn btn-primary" href="{{.HomeURL}}">Back to {{.AppName}}</a></div>
+    </div>
+  </main>` + publicBgIconsScript + `
+</body>
+</html>
+`))
 
 var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2563eb">
   <title>{{.Title}} - {{.AppName}}</title>
   <link rel="canonical" href="{{.CanonicalURL}}">
+  <link rel="icon" type="image/png" href="/_public/assets/logo.png">
   <meta property="og:title" content="{{.Title}}">
   <meta property="og:description" content="{{.Description}}">
   <meta property="og:url" content="{{.CanonicalURL}}">
   <meta name="robots" content="noindex">
-  <style>
-    :root { color-scheme: light dark; font-family: Arial, Helvetica, sans-serif; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f7fb; color: #15202b; }
-    main { width: min(92vw, 460px); padding: 32px; border: 1px solid #d9e1ea; border-radius: 8px; background: #fff; box-shadow: 0 16px 48px rgba(21, 32, 43, .08); }
-    h1 { margin: 0 0 10px; font-size: 28px; line-height: 1.18; font-weight: 700; }
-    p { margin: 0 0 18px; line-height: 1.5; color: #4a5b6b; }
-    .meta { font-size: 14px; color: #6b7b8b; }
-    a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 6px; background: #1677c8; color: #fff; text-decoration: none; font-weight: 700; }
-    a.raw { color: #1677c8; overflow-wrap: anywhere; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #111820; color: #e9eef5; }
-      main { background: #18222d; border-color: #293849; box-shadow: none; }
-      p, .meta { color: #aebdca; }
-      a.button { background: #45a3ff; color: #06131f; }
-      a.raw { color: #74baff; }
-    }
+  <style>` + publicPageStyleSheet + `
+    .kind{display:inline-block; color:var(--accent); background:color-mix(in srgb,var(--accent) 12%,transparent); font-size:12.5px; font-weight:700; letter-spacing:.3px; padding:4px 10px; border-radius:8px; margin-bottom:14px}
   </style>
 </head>
-<body>
+<body>` + publicBgOrbsMarkup + `
+  <header>
+    <a class="brand" href="{{.CanonicalURL}}" aria-label="{{.AppName}}">
+      <img src="/_public/assets/logo.png" alt="{{.AppName}}">
+      <span>{{.AppName}}</span>
+    </a>
+    <a class="btn btn-ghost" href="{{.DownloadURL}}">Download</a>
+  </header>
   <main>
-    <p class="meta">{{.KindLabel}}</p>
-    <h1>{{.Title}}</h1>
-    <p class="meta">{{.Subtitle}}</p>
-    <p><a class="button" href="{{.AppURL}}">Open in {{.AppName}}</a></p>
-    <p>{{.Description}}</p>
-    <p class="meta">Old test clients only: <a class="raw" href="{{.LegacyTgURL}}">open with tg://</a></p>
-    <p class="meta"><a class="raw" href="{{.CanonicalURL}}">{{.CanonicalURL}}</a></p>
-  </main>
-  <script>
-    window.setTimeout(function () {
-      window.location.href = {{.AppURLJS}};
-    }, 250);
-  </script>
+    <div class="card">
+      <div class="kind">{{.KindLabel}}</div>
+      <h2 style="font-size:24px">{{.Title}}</h2>
+      {{if .Subtitle}}<div class="sub">{{.Subtitle}}</div>{{end}}
+      {{if .Description}}<div class="about">{{.Description}}</div>{{end}}
+      <div class="actions"><a class="btn btn-primary" href="{{.AppURL}}">Open in {{.AppName}}</a></div>
+    </div>
+  </main>` + publicBgIconsScript + `
 </body>
 </html>
 `))

@@ -67,7 +67,6 @@ func TestHandlerServesStickerSetLandingPage(t *testing.T) {
 		"Fresh Pack",
 		"https://telesrv.net/addstickers/fresh_pack",
 		"telesrv://addstickers?set=fresh_pack",
-		"tg://addstickers?set=fresh_pack",
 		"Files are still fetched by the app through MTProto.",
 	} {
 		if !strings.Contains(body, want) {
@@ -106,7 +105,6 @@ func TestHandlerServesEmojiLandingPage(t *testing.T) {
 		"custom emoji set",
 		"https://example.test/base/addemoji/emoji_pack",
 		"telesrv://addemoji?set=emoji_pack",
-		"tg://addemoji?set=emoji_pack",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -128,7 +126,6 @@ func TestHandlerServesChatlistLandingPage(t *testing.T) {
 		"Shared Folder",
 		"http://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
 		"telesrv://addlist?slug=zNhytIbwRwjaC2GH",
-		"tg://addlist?slug=zNhytIbwRwjaC2GH",
 		"preview and add this shared folder",
 	} {
 		if !strings.Contains(body, want) {
@@ -164,7 +161,6 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 		"@TetrisBot",
 		"http://127.0.0.1:2401/TetrisBot",
 		"telesrv://resolve?domain=TetrisBot",
-		"tg://resolve?domain=TetrisBot",
 		"Start Bot",
 		"Open telesrv to start a chat with this bot.",
 		`property="og:title" content="Tetris Bot"`,
@@ -323,7 +319,7 @@ func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
 					t.Fatalf("body missing %q:\n%s", want, rr.Body.String())
 				}
 			}
-			if tc.path == "/aLiCe/" && strings.Count(rr.Body.String(), `<p class="username">@Alice</p>`) != 1 {
+			if tc.path == "/aLiCe/" && strings.Count(rr.Body.String(), `<div class="sub">@Alice</div>`) != 1 {
 				t.Fatalf("ordinary user username rendered more than once:\n%s", rr.Body.String())
 			}
 			if strings.Contains(rr.Body.String(), "+15551234567") || strings.Contains(rr.Body.String(), "987654321") || strings.Contains(rr.Body.String(), "1700000000") {
@@ -345,7 +341,6 @@ func TestHandlerPreservesBoundedResolveQueryAndOverridesDomain(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"telesrv://resolve?domain=TetrisBot&amp;ref=campaign&amp;start=hello",
-		"tg://resolve?domain=TetrisBot&amp;ref=campaign&amp;start=hello",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing sanitized query %q:\n%s", want, body)

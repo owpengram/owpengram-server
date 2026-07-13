@@ -74,6 +74,8 @@ type Config struct {
 	PublicWebBaseURL string
 	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
 	PublicAppName string
+	// PublicDownloadURL 是公开落地页头部“Download”按钮指向的产品官网/下载页 URL。
+	PublicDownloadURL string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
 	PublicLinkWebAddr string
@@ -372,13 +374,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_SCHEME: %w", err)
 	}
-	publicWebBaseURL, err := links.ValidateBaseURL(envOr("TELESRV_PUBLIC_WEB_BASE_URL", links.DefaultWebBaseURL))
-	if err != nil {
-		return Config{}, fmt.Errorf("TELESRV_PUBLIC_WEB_BASE_URL: %w", err)
+	// TELESRV_PUBLIC_WEB_BASE_URL is nullable: an explicitly empty value disables
+	// the "Open in Web" button on public landing pages instead of falling back
+	// to the default telesrv Web client URL.
+	publicWebBaseURL := envAllowEmptyOr("TELESRV_PUBLIC_WEB_BASE_URL", links.DefaultWebBaseURL)
+	if publicWebBaseURL != "" {
+		if publicWebBaseURL, err = links.ValidateBaseURL(publicWebBaseURL); err != nil {
+			return Config{}, fmt.Errorf("TELESRV_PUBLIC_WEB_BASE_URL: %w", err)
+		}
 	}
 	publicAppName, err := links.ValidateAppName(envOr("TELESRV_PUBLIC_APP_NAME", links.DefaultAppName))
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_NAME: %w", err)
+	}
+	publicDownloadURL, err := links.ValidateBaseURL(envOr("TELESRV_PUBLIC_DOWNLOAD_URL", links.DefaultDownloadURL))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_DOWNLOAD_URL: %w", err)
 	}
 
 	cfg := Config{
@@ -416,6 +427,7 @@ func Load() (Config, error) {
 		PublicAppScheme:                      publicAppScheme,
 		PublicWebBaseURL:                     publicWebBaseURL,
 		PublicAppName:                        publicAppName,
+		PublicDownloadURL:                    publicDownloadURL,
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		AdminUIAddr:                          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:                      envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
