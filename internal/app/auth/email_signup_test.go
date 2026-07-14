@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -124,5 +125,42 @@ func TestEmailSignupSendCodeIgnoredWhenPhoneIsNotEncoded(t *testing.T) {
 	}
 	if delivery.Kind == domain.AuthCodeDeliveryEmail {
 		t.Fatalf("delivery.Kind = Email, want a non-email fallback for a real phone number")
+	}
+}
+
+// This server has no real SMS delivery, so a real phone number is only
+// reachable via the client's explicit "log in by phone number" fallback
+// (see EmailSignupWidget). That account must get a login email bound
+// immediately: EmailSignupEnable alone must force the setup-required gate
+// even though neither LOGIN_EMAIL_ENABLE nor LOGIN_EMAIL_REQUIRE_SETUP is on.
+func TestEmailSignupForcesLoginEmailSetupForRealPhoneNumbers(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	sender := &testMailSender{}
+	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginEmail(LoginEmailOptions{Store: &testLoginEmailStore{emails: map[string]string{}}, Sender: sender}),
+		WithEmailSignup(true))
+
+	hash, err := svc.SendCode(ctx, "+15550029999")
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if sender.to != "" {
+		t.Fatalf("sender.to = %q, want empty (setup-required never sends a code itself)", sender.to)
+	}
+	delivery, found, err := svc.CodeDelivery(ctx, hash)
+	if err != nil || !found {
+		t.Fatalf("CodeDelivery found=%v err=%v", found, err)
+	}
+	if delivery.Kind != domain.AuthCodeDeliveryEmailSetupRequired {
+		t.Fatalf("delivery.Kind = %v, want AuthCodeDeliveryEmailSetupRequired", delivery.Kind)
+	}
+
+	// Signing up straight off this code without ever completing email setup
+	// (the account.sendVerifyEmailCode/verifyEmail round trip) must be
+	// rejected: the hash was never marked SignUpVerified.
+	if _, _, err := svc.SignUp(ctx, domain.Authorization{}, "+15550029999", hash, "No", "Email"); !errors.Is(err, ErrCodeInvalid) {
+		t.Fatalf("SignUp err = %v, want ErrCodeInvalid (email setup was never completed)", err)
 	}
 }

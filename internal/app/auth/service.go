@@ -330,7 +330,13 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 			return s.createEmailLoginCode(ctx, phone, email, issuedUserID)
 		}
 	}
-	if s.loginEmailEnabled && s.loginEmails != nil {
+	// A real (non-encoded) phone number reaching here on an email-signup
+	// server is someone using the client's explicit "log in by phone number"
+	// fallback (see EmailSignupWidget) — a real phone is otherwise
+	// unreachable from the intro flow. This server never sends real SMS, so
+	// that account must get a login email bound immediately: force the setup
+	// gate on regardless of the raw TELESRV_LOGIN_EMAIL_REQUIRE_SETUP config.
+	if (s.loginEmailEnabled || s.emailSignupEnabled) && s.loginEmails != nil {
 		email, found, err := s.loginEmails.LoginEmailByPhone(ctx, phone)
 		if err != nil {
 			return "", err
@@ -338,11 +344,20 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 		if found && strings.TrimSpace(email) != "" {
 			return s.createEmailLoginCode(ctx, phone, email, issuedUserID)
 		}
-		if s.loginEmailRequireSetup {
+		if s.requireLoginEmailSetup() {
 			return s.createSetupRequiredCode(ctx, phone, issuedUserID)
 		}
 	}
 	return s.createPhoneCode(ctx, phone, issuedUserID)
+}
+
+// requireLoginEmailSetup reports whether a phone-number account without a
+// bound login email must set one up before it can finish signing in/up. This
+// is forced on for every real phone number once email-signup is enabled —
+// see SendCode — independent of the raw TELESRV_LOGIN_EMAIL_REQUIRE_SETUP
+// config value, since this server has no real SMS delivery to fall back to.
+func (s *Service) requireLoginEmailSetup() bool {
+	return s.loginEmailRequireSetup || s.emailSignupEnabled
 }
 
 // currentPhoneOwner resolves the account currently identified by a wire
@@ -972,7 +987,7 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	// email via the legacy VerifiedEmail/PendingEmail flow; it does not apply
 	// here and would otherwise permanently block SignUp for every
 	// email-signup account.
-	if s.loginEmailRequireSetup && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" && !domain.IsEmailSignupPhone(phone) {
+	if s.requireLoginEmailSetup() && !rec.VerifiedEmail && strings.TrimSpace(rec.PendingEmail) == "" && !domain.IsEmailSignupPhone(phone) {
 		return domain.User{}, domain.Message{}, ErrCodeInvalid
 	}
 	if current, currentFound, err := s.currentPhoneOwner(ctx, phone); err != nil {
