@@ -1053,6 +1053,16 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, rec.PendingEmail); err != nil {
 			return domain.User{}, domain.Message{}, err
 		}
+	} else if u.SignupEmail != "" && s.loginEmails != nil {
+		// Email-signup accounts have no phone number of their own to fall back
+		// on — the email they just verified *is* their account identity — so
+		// the "login email" shown in Settings (account_passwords.login_email,
+		// the older recovery-email feature reused for delivery) must be
+		// populated too, or a freshly created account looks like it has none
+		// configured even though it plainly does.
+		if err := s.loginEmails.SetLoginEmail(ctx, u.ID, u.SignupEmail); err != nil {
+			return domain.User{}, domain.Message{}, err
+		}
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err

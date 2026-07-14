@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	accountapp "telesrv/internal/app/account"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
@@ -162,5 +164,49 @@ func TestEmailSignupForcesLoginEmailSetupForRealPhoneNumbers(t *testing.T) {
 	// rejected: the hash was never marked SignUpVerified.
 	if _, _, err := svc.SignUp(ctx, domain.Authorization{}, "+15550029999", hash, "No", "Email"); !errors.Is(err, ErrCodeInvalid) {
 		t.Fatalf("SignUp err = %v, want ErrCodeInvalid (email setup was never completed)", err)
+	}
+}
+
+// An email-signup account's whole identity is the email it verified, so
+// Settings' "login email" (account_passwords.login_email, the older
+// recovery-email feature reused here for delivery) must reflect it right
+// after SignUp — otherwise a freshly created account looks like it has no
+// login email configured even though it plainly does.
+func TestEmailSignupSignUpPopulatesLoginEmail(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	codes := memory.NewCodeStore()
+	passwords := memory.NewPasswordStore()
+	sender := &testMailSender{}
+	accountSvc := accountapp.NewService(passwords,
+		accountapp.WithUsers(users),
+		accountapp.WithLoginEmailVerification(codes, sender, time.Minute, 3, 6),
+	)
+	svc := NewService(users, authz, codes, nil, nil, "12345",
+		WithLoginEmail(LoginEmailOptions{Store: accountSvc, Sender: sender}),
+		WithEmailSignup(true))
+
+	phone, ok := domain.EncodeEmailPhone("loginemail@owpengram.local")
+	if !ok {
+		t.Fatalf("EncodeEmailPhone: ok=false")
+	}
+	hash, err := svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if _, _, needSignUp, err := svc.SignInWithEmail(ctx, domain.Authorization{}, phone, hash, sender.code); err != nil || !needSignUp {
+		t.Fatalf("SignInWithEmail: needSignUp=%v err=%v", needSignUp, err)
+	}
+	u, _, err := svc.SignUp(ctx, domain.Authorization{}, phone, hash, "Login", "Email")
+	if err != nil {
+		t.Fatalf("SignUp: %v", err)
+	}
+
+	if email, found, err := accountSvc.LoginEmail(ctx, u.ID); err != nil || !found || email != "loginemail@owpengram.local" {
+		t.Fatalf("LoginEmail(%d) = %q found=%v err=%v, want loginemail@owpengram.local", u.ID, email, found, err)
+	}
+	if email, found, err := accountSvc.LoginEmailByPhone(ctx, u.Phone); err != nil || !found || email != "loginemail@owpengram.local" {
+		t.Fatalf("LoginEmailByPhone(%q) = %q found=%v err=%v", u.Phone, email, found, err)
 	}
 }
