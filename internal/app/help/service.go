@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"hash/crc32"
+	"strings"
 	"sync"
 
 	"telesrv/internal/domain"
@@ -64,10 +65,11 @@ const defaultAppConfigHash = 23 // 默认 app config 内容变更时必须递增
 // (登录页/启动配置是高频握手路径)。运维改库需重启生效。timezones/emoji 等其余目录走
 // internal/seed/catalog(go:embed 一次解析),本就在内存。
 type Service struct {
-	appConfigs        store.AppConfigStore
-	countries         store.CountryStore
-	mapboxToken       string
-	emailSignupEnable bool
+	appConfigs               store.AppConfigStore
+	countries                store.CountryStore
+	mapboxToken              string
+	emailSignupEnable        bool
+	emailSignupPhonePrefixes []string
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -93,6 +95,16 @@ func WithEmailSignupEnable(enabled bool) Option {
 	}
 }
 
+// WithEmailSignupPhonePrefixes 下发 email_signup_phone_prefixes：账号展示号码
+// （domain.NewEmailSignupDisplayPhone）随机挑选的号段前缀列表，纯信息性——当前
+// 客户端并不需要读它就能工作（该号码全程由服务端生成/下发），暴露出来只是让
+// 管理员改动列表天然对所有已适配客户端可见，不需要客户端升级。
+func WithEmailSignupPhonePrefixes(prefixes []string) Option {
+	return func(s *Service) {
+		s.emailSignupPhonePrefixes = prefixes
+	}
+}
+
 // NewService 创建 help 服务。
 func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, opts ...Option) *Service {
 	s := &Service{appConfigs: appConfigs, countries: countries}
@@ -104,15 +116,20 @@ func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, o
 	return s
 }
 
-func defaultAppConfig(mapboxToken string, emailSignupEnable bool) domain.AppConfig {
-	jsonBytes := defaultAppConfigJSON(mapboxToken, emailSignupEnable)
-	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken, emailSignupEnable), JSON: jsonBytes}
+func defaultAppConfig(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) domain.AppConfig {
+	jsonBytes := defaultAppConfigJSON(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes)
+	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes), JSON: jsonBytes}
 }
 
-func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool) []byte {
+func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) []byte {
 	base := tdesktopDefaultAppConfigBase
 	if emailSignupEnable {
 		base += `,"email_signup_enabled":true`
+		if len(emailSignupPhonePrefixes) > 0 {
+			if prefixesJSON, err := json.Marshal(emailSignupPhonePrefixes); err == nil {
+				base += `,"email_signup_phone_prefixes":` + string(prefixesJSON)
+			}
+		}
 	}
 	if mapboxToken == "" {
 		return []byte(base + `}`)
@@ -125,10 +142,13 @@ func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool) []byte {
 	return []byte(base + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
 }
 
-func defaultAppConfigHashFor(mapboxToken string, emailSignupEnable bool) int {
+func defaultAppConfigHashFor(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) int {
 	h := defaultAppConfigHash
 	if emailSignupEnable {
 		h += 1000003 // large odd offset so toggling the flag always changes the hash
+		if len(emailSignupPhonePrefixes) > 0 {
+			h += 1 + int(crc32.ChecksumIEEE([]byte(strings.Join(emailSignupPhonePrefixes, ",")))&0x3fffffff)
+		}
 	}
 	if mapboxToken == "" {
 		return h
@@ -144,9 +164,9 @@ func (s *Service) GetAppConfig(ctx context.Context, hash int) (domain.AppConfig,
 
 func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 	if s == nil {
-		return defaultAppConfig("", false)
+		return defaultAppConfig("", false, nil)
 	}
-	defaultCfg := defaultAppConfig(s.mapboxToken, s.emailSignupEnable)
+	defaultCfg := defaultAppConfig(s.mapboxToken, s.emailSignupEnable, s.emailSignupPhonePrefixes)
 	s.appConfigOnce.Do(func() {
 		if s.appConfigs == nil {
 			s.appConfigCache = defaultCfg

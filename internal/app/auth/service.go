@@ -90,6 +90,11 @@ type Service struct {
 	// 在 sendCode 阶段直接解码出邮箱、复用登录邮箱同一投递通道发码，与
 	// loginEmailEnabled（手机号账号的第二验证渠道）是两条独立开关。
 	emailSignupEnabled bool
+	// emailSignupPhonePrefixes 是 SignUp 时随机挑选的账号展示号码号段前缀
+	// 列表（domain.NewEmailSignupDisplayPhone）；与 emailSignupEnabled 本身
+	// 用的合成 wire 号码前缀（固定 "888"，见 domain.EncodeEmailPhone）无关。
+	// 为空时退回默认 "888"。
+	emailSignupPhonePrefixes []string
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
 }
@@ -191,6 +196,14 @@ func WithLoginEmail(opts LoginEmailOptions) Option {
 func WithEmailSignup(enabled bool) Option {
 	return func(s *Service) {
 		s.emailSignupEnabled = enabled
+	}
+}
+
+// WithEmailSignupPhonePrefixes 设置 SignUp 展示号码随机挑选的号段前缀列表
+// （见 emailSignupPhonePrefixes 字段注释）。
+func WithEmailSignupPhonePrefixes(prefixes []string) Option {
+	return func(s *Service) {
+		s.emailSignupPhonePrefixes = prefixes
 	}
 }
 
@@ -1510,8 +1523,12 @@ func normalizePhone(phone string) string {
 const maxEmailSignupPhoneAttempts = 20
 
 func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, error) {
+	prefix, err := randomEmailSignupPhonePrefix(s.emailSignupPhonePrefixes)
+	if err != nil {
+		return "", err
+	}
 	for i := 0; i < maxEmailSignupPhoneAttempts; i++ {
-		candidate, err := domain.NewEmailSignupDisplayPhone()
+		candidate, err := domain.NewEmailSignupDisplayPhone(prefix)
 		if err != nil {
 			return "", err
 		}
@@ -1522,6 +1539,26 @@ func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, er
 		}
 	}
 	return "", fmt.Errorf("assign email signup display phone: exhausted %d attempts", maxEmailSignupPhoneAttempts)
+}
+
+// randomEmailSignupPhonePrefix picks one entry at random from prefixes,
+// falling back to domain.EmailPhonePrefix ("888") when the list is empty —
+// config validation requires a non-empty list whenever email signup is
+// enabled, but store-agnostic callers (tests, WithEmailSignupPhonePrefixes
+// simply never called) shouldn't crash for lack of one.
+func randomEmailSignupPhonePrefix(prefixes []string) (string, error) {
+	if len(prefixes) == 0 {
+		return domain.EmailPhonePrefix, nil
+	}
+	if len(prefixes) == 1 {
+		return prefixes[0], nil
+	}
+	n, err := randomInt64()
+	if err != nil {
+		return "", err
+	}
+	idx := uint64(n) % uint64(len(prefixes))
+	return prefixes[idx], nil
 }
 
 func randomHex(n int) (string, error) {

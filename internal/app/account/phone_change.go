@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -242,14 +243,18 @@ func (s *Service) phoneChangeCaller(ctx context.Context, userID int64, authKeyID
 // collision-retry loop so a store failure can't spin forever.
 const maxEmailSignupPhoneAttempts = 20
 
-// assignEmailSignupDisplayPhone generates a short "888" display number for
-// an email-signup account rebinding to a new email (see
+// assignEmailSignupDisplayPhone generates a short display number for an
+// email-signup account rebinding to a new email (see
 // domain.NewEmailSignupDisplayPhone / auth.Service's SignUp counterpart),
 // re-rolling on the astronomically unlikely collision with an existing
 // account's phone.
 func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, error) {
+	prefix, err := randomEmailSignupPhonePrefix(s.emailSignupPhonePrefixes)
+	if err != nil {
+		return "", err
+	}
 	for i := 0; i < maxEmailSignupPhoneAttempts; i++ {
-		candidate, err := domain.NewEmailSignupDisplayPhone()
+		candidate, err := domain.NewEmailSignupDisplayPhone(prefix)
 		if err != nil {
 			return "", err
 		}
@@ -260,6 +265,25 @@ func (s *Service) assignEmailSignupDisplayPhone(ctx context.Context) (string, er
 		}
 	}
 	return "", fmt.Errorf("assign email signup display phone: exhausted %d attempts", maxEmailSignupPhoneAttempts)
+}
+
+// randomEmailSignupPhonePrefix mirrors auth.Service's identical helper
+// (unexported to each package, but must pick with the same fairness): pick
+// one entry at random from prefixes, falling back to domain.EmailPhonePrefix
+// ("888") when the list is empty.
+func randomEmailSignupPhonePrefix(prefixes []string) (string, error) {
+	if len(prefixes) == 0 {
+		return domain.EmailPhonePrefix, nil
+	}
+	if len(prefixes) == 1 {
+		return prefixes[0], nil
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("pick email signup phone prefix: %w", err)
+	}
+	idx := binary.LittleEndian.Uint64(b[:]) % uint64(len(prefixes))
+	return prefixes[idx], nil
 }
 
 func phoneChangeHash() (string, error) {

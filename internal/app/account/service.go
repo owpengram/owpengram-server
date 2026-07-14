@@ -55,6 +55,10 @@ type Service struct {
 	// 验证码走 loginEmailSender 发到解码出的邮箱；非 888 号码一律拒绝——本服务器没有真实
 	// 短信通道，放行会让账号的邮箱身份绑定被绕过（见迁移前的密码找回验证码漏洞教训）。
 	emailSignupEnabled bool
+	// emailSignupPhonePrefixes 是改绑邮箱时随机挑选的账号展示号码号段前缀
+	// 列表（domain.NewEmailSignupDisplayPhone），与 auth.Service 的同名字段
+	// 同一份服务端配置来源。为空时退回默认 "888"。
+	emailSignupPhonePrefixes []string
 }
 
 // ServiceOption 调整 account 服务依赖。
@@ -160,6 +164,14 @@ func WithLoginEmailVerification(codes store.CodeStore, sender mail.Sender, ttl t
 func WithEmailSignup(enabled bool) ServiceOption {
 	return func(s *Service) {
 		s.emailSignupEnabled = enabled
+	}
+}
+
+// WithEmailSignupPhonePrefixes 设置改绑邮箱时展示号码随机挑选的号段前缀列表
+// （见 emailSignupPhonePrefixes 字段注释）。
+func WithEmailSignupPhonePrefixes(prefixes []string) ServiceOption {
+	return func(s *Service) {
+		s.emailSignupPhonePrefixes = prefixes
 	}
 }
 

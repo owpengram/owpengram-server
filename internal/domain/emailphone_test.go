@@ -69,7 +69,7 @@ func TestDecodeEmailPhoneRejectsNonEmailNumbers(t *testing.T) {
 func TestNewEmailSignupDisplayPhoneLooksLikeARealPhoneNumber(t *testing.T) {
 	seen := make(map[string]struct{})
 	for i := 0; i < 200; i++ {
-		phone, err := NewEmailSignupDisplayPhone()
+		phone, err := NewEmailSignupDisplayPhone(EmailPhonePrefix)
 		if err != nil {
 			t.Fatalf("NewEmailSignupDisplayPhone: %v", err)
 		}
@@ -92,5 +92,28 @@ func TestNewEmailSignupDisplayPhoneLooksLikeARealPhoneNumber(t *testing.T) {
 	}
 	if len(seen) < 190 {
 		t.Fatalf("only %d distinct values out of 200 draws, generator looks non-random", len(seen))
+	}
+}
+
+func TestNewEmailSignupDisplayPhoneHonorsConfiguredPrefix(t *testing.T) {
+	for _, prefix := range []string{"380", "1", "7777"} {
+		phone, err := NewEmailSignupDisplayPhone(prefix)
+		if err != nil {
+			t.Fatalf("NewEmailSignupDisplayPhone(%q): %v", prefix, err)
+		}
+		if !strings.HasPrefix(phone, prefix) {
+			t.Fatalf("phone %q missing configured prefix %q", phone, prefix)
+		}
+		if !ValidPhone(phone) {
+			t.Fatalf("phone %q fails ValidPhone", phone)
+		}
+	}
+}
+
+func TestNewEmailSignupDisplayPhoneRejectsInvalidPrefix(t *testing.T) {
+	for _, prefix := range []string{"", "abc", "88q", "-1"} {
+		if _, err := NewEmailSignupDisplayPhone(prefix); err == nil {
+			t.Fatalf("NewEmailSignupDisplayPhone(%q) err = nil, want error", prefix)
+		}
 	}
 }

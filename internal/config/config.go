@@ -124,6 +124,14 @@ type Config struct {
 	// 不变），验证码通过 SMTP 发到解码出的邮箱而非发短信。要求 SMTP 配置可用（与
 	// LoginEmailEnable 共用同一组 TELESRV_SMTP_* 变量）。
 	EmailSignupEnable bool
+	// EmailSignupPhonePrefixes 是账号实际可见的 users.phone 短号码
+	// （domain.NewEmailSignupDisplayPhone）随机选用的号段前缀列表，逗号分隔，
+	// 默认仅 "888"。注意这与合成 wire 号码（domain.EncodeEmailPhone，sendCode
+	// 阶段用于携带邮箱本身）无关——那个前缀恒为 "888" 且从不下发给客户端；
+	// 这里只影响注册后账号真正落库/展示的号码好不好看，可通过
+	// help.getAppConfig 的 email_signup_phone_prefixes 下发给客户端，管理员
+	// 改动此列表不需要客户端升级。
+	EmailSignupPhonePrefixes []string
 	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 时必须可用。
 	SMTPHost     string
 	SMTPPort     int
@@ -459,6 +467,7 @@ func Load() (Config, error) {
 		LoginEmailEnable:              envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
 		LoginEmailRequireSetup:        envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
 		EmailSignupEnable:             envBoolOr("TELESRV_EMAIL_SIGNUP_ENABLE", false),
+		EmailSignupPhonePrefixes:      envListOr("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES", []string{"888"}),
 		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
 		SMTPHost:                      envOr("TELESRV_SMTP_HOST", ""),
 		SMTPPort:                      envIntOr("TELESRV_SMTP_PORT", 587),
@@ -587,6 +596,16 @@ func validateLoginEmailConfig(cfg Config) error {
 	case "", "starttls", "tls", "none":
 	default:
 		return fmt.Errorf("TELESRV_SMTP_TLS must be starttls, tls, or none")
+	}
+	if cfg.EmailSignupEnable {
+		if len(cfg.EmailSignupPhonePrefixes) == 0 {
+			return fmt.Errorf("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES must not be empty when TELESRV_EMAIL_SIGNUP_ENABLE=true")
+		}
+		for _, prefix := range cfg.EmailSignupPhonePrefixes {
+			if !isDigitsOnly(prefix) || len(prefix) < 1 || len(prefix) > 4 {
+				return fmt.Errorf("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES entry %q must be 1-4 digits", prefix)
+			}
+		}
 	}
 	if !cfg.LoginEmailEnable && !cfg.EmailSignupEnable {
 		return nil
@@ -797,6 +816,18 @@ func (e envSource) envAllowEmptyOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func isDigitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (e envSource) envListOr(key string, def []string) []string {

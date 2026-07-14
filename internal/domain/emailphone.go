@@ -139,31 +139,51 @@ func NormalizeEmailForPhone(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// emailSignupDisplayPhoneDigits is how many random digits follow the "888"
-// prefix in a NewEmailSignupDisplayPhone result, e.g. "888" + 8 digits =
+// emailSignupDisplayPhoneDigits is how many random digits follow the prefix
+// in a NewEmailSignupDisplayPhone result, e.g. prefix "888" + 8 digits =
 // "88812345678" (formats on-screen as something like "+888 1234 5678").
 const emailSignupDisplayPhoneDigits = 8
 
-// NewEmailSignupDisplayPhone generates a short, all-digit "888" phone number
-// for an email-signup account's users.phone column. Unlike EncodeEmailPhone
-// this carries no information about the email — it is purely a
-// normal-looking display/identity number — so the caller must separately
-// persist the email->user association (see User.SignupEmail) for returning
-// logins to be found. Because the result is all digits, IsEmailSignupPhone
-// on it is always false: once assigned, it behaves exactly like a real phone
-// number everywhere else in the system (contacts, search, ByPhone lookups).
-func NewEmailSignupDisplayPhone() (string, error) {
+// NewEmailSignupDisplayPhone generates a short, all-digit phone number for an
+// email-signup account's users.phone column, using the given prefix (one of
+// the server's configured EmailSignupPhonePrefixes — see
+// help.getAppConfig's email_signup_phone_prefixes, config.go). This is
+// unrelated to EncodeEmailPhone's own fixed "888" wire prefix: that one only
+// ever travels internally between client and server during sendCode/signIn
+// and is never shown to anyone, so it has no reason to be configurable,
+// unlike this display number, which is the account's actual, permanent,
+// user-visible phone. The caller must separately persist the email->user
+// association (see User.SignupEmail) for returning logins to be found.
+// Because the result is all digits, IsEmailSignupPhone on it is always
+// false: once assigned, it behaves exactly like a real phone number
+// everywhere else in the system (contacts, search, ByPhone lookups).
+func NewEmailSignupDisplayPhone(prefix string) (string, error) {
+	if !isAllASCIIDigits(prefix) {
+		return "", fmt.Errorf("email signup display phone prefix %q must be non-empty digits", prefix)
+	}
 	b := make([]byte, emailSignupDisplayPhoneDigits)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("generate email signup display phone: %w", err)
 	}
 	var out strings.Builder
-	out.Grow(len(EmailPhonePrefix) + emailSignupDisplayPhoneDigits)
-	out.WriteString(EmailPhonePrefix)
+	out.Grow(len(prefix) + emailSignupDisplayPhoneDigits)
+	out.WriteString(prefix)
 	for _, v := range b {
 		out.WriteByte('0' + v%10)
 	}
 	return out.String(), nil
+}
+
+func isAllASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // IsEmailSignupPhone reports whether phone was produced by EncodeEmailPhone.
