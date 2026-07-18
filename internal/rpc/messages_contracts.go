@@ -2,7 +2,7 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"telesrv/internal/domain"
 )
 
@@ -10,8 +10,12 @@ type accountDefaultReactionService interface {
 	SetDefaultReaction(ctx context.Context, userID int64, reaction domain.MessageReaction) (domain.AccountReactionSettings, error)
 }
 
-type accountPaidReactionPrivacyService interface {
+type accountReactionSettingsReader interface {
 	GetReactionSettings(ctx context.Context, userID int64) (domain.AccountReactionSettings, error)
+}
+
+type accountPaidReactionPrivacyService interface {
+	accountReactionSettingsReader
 	SetPaidReactionPrivacy(ctx context.Context, userID int64, privacy domain.PaidReactionPrivacy) (domain.AccountReactionSettings, error)
 }
 

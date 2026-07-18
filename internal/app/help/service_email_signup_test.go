@@ -14,7 +14,7 @@ func TestAppConfigEmailSignupPhonePrefixes(t *testing.T) {
 	ctx := context.Background()
 
 	disabled := NewService(nil, nil)
-	cfg, _, err := disabled.GetAppConfig(ctx, 0)
+	cfg, _, err := disabled.GetAppConfig(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("GetAppConfig (disabled): %v", err)
 	}
@@ -29,7 +29,7 @@ func TestAppConfigEmailSignupPhonePrefixes(t *testing.T) {
 	enabled := NewService(nil, nil,
 		WithEmailSignupEnable(true),
 		WithEmailSignupPhonePrefixes([]string{"888", "380", "373"}))
-	cfg2, _, err := enabled.GetAppConfig(ctx, 0)
+	cfg2, _, err := enabled.GetAppConfig(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("GetAppConfig (enabled): %v", err)
 	}
@@ -49,7 +49,7 @@ func TestAppConfigEmailSignupPhonePrefixes(t *testing.T) {
 	other := NewService(nil, nil,
 		WithEmailSignupEnable(true),
 		WithEmailSignupPhonePrefixes([]string{"888"}))
-	cfg3, _, err := other.GetAppConfig(ctx, 0)
+	cfg3, _, err := other.GetAppConfig(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("GetAppConfig (different prefixes): %v", err)
 	}

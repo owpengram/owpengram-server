@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -15,6 +15,17 @@ import (
 	"telesrv/internal/store/memory"
 	"testing"
 )
+
+// dispatchCanonicalValue exposes the handler value behind tlprofile's exact
+// result encoder. Object/class results already arrive as concrete tg values;
+// primitive and Vector<T> method results remain attached to the exact result
+// plan because they are not bin.Object values.
+func dispatchCanonicalValue(encoded bin.Encoder) any {
+	if result, ok := encoded.(interface{ CanonicalValue() any }); ok {
+		return result.CanonicalValue()
+	}
+	return encoded
+}
 
 type rpcChannelFixture struct {
 	t        *testing.T
@@ -111,8 +122,6 @@ func searchMessagesPayload(t *testing.T, enc bin.Encoder) ([]tg.MessageClass, []
 		return result.Messages, result.Chats, result.Users
 	case *tg.MessagesChannelMessages:
 		return result.Messages, result.Chats, result.Users
-	case *tg.MessagesMessagesBox:
-		return searchMessagesPayload(t, result.Messages)
 	default:
 		t.Fatalf("search result type = %T, want messages/messagesSlice", enc)
 		return nil, nil, nil

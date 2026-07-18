@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -103,9 +103,6 @@ func TestChannelMultiPinAndroidOpenAndJump(t *testing.T) {
 		Filter: &tg.InputMessagesFilterPinned{},
 		Limit:  40,
 	})
-	if box, ok := searchEnc.(*tg.MessagesMessagesBox); ok {
-		searchEnc = box.Messages
-	}
 	channelMessages, ok := searchEnc.(*tg.MessagesChannelMessages)
 	if !ok {
 		t.Fatalf("pinned search response = %T, want messages.channelMessages", searchEnc)

@@ -7,6 +7,9 @@ import (
 )
 
 type captureAuthService struct {
+	bindTempCalls         int
+	bindTempLayer         int
+	bindTempHook          func(domain.TempAuthKeyBinding) error
 	resolvedAuthKeyID     [8]byte
 	hasResolved           bool
 	resolveCount          int
@@ -24,7 +27,6 @@ type captureAuthService struct {
 	authorizations        []domain.Authorization
 	authorizationLookups  int
 	authorizationLists    int
-	layerUpdates          int
 	authKeyClientInfos    map[[8]byte]domain.AuthKeyClientInfo
 	authKeyInfoLookups    int
 	loggedOutAuthKeyID    [8]byte
@@ -33,7 +35,14 @@ type captureAuthService struct {
 	completedPasswordKey  [8]byte
 	completePasswordCount int
 	codeDelivery          domain.AuthCodeDelivery
+	signInCount           int
+	signInPhone           string
+	signInHash            string
+	signInCode            string
 	signInWithEmailCount  int
+	signInWithEmailPhone  string
+	signInWithEmailHash   string
+	signInWithEmailCode   string
 }
 
 type blockingUserAuthService struct {
@@ -120,10 +129,6 @@ func (s *blockingUserAuthService) Authorization(context.Context, [8]byte) (domai
 	return domain.Authorization{}, false, nil
 }
 
-func (s *blockingUserAuthService) UpdateAuthorizationLayer(context.Context, [8]byte, int) error {
-	return nil
-}
-
 func (s *blockingUserAuthService) AuthKeyClientInfo(context.Context, [8]byte) (domain.AuthKeyClientInfo, bool, error) {
 	return domain.AuthKeyClientInfo{}, false, nil
 }
@@ -152,7 +157,12 @@ func (s *blockingUserAuthService) CompletePasswordSignIn(context.Context, [8]byt
 	return nil
 }
 
-func (s *captureAuthService) BindTempAuthKey(context.Context, int64, domain.TempAuthKeyBinding) error {
+func (s *captureAuthService) BindTempAuthKey(ctx context.Context, _ int64, binding domain.TempAuthKeyBinding) error {
+	s.bindTempCalls++
+	s.bindTempLayer = LayerFrom(ctx)
+	if s.bindTempHook != nil {
+		return s.bindTempHook(binding)
+	}
 	return nil
 }
 
@@ -185,15 +195,22 @@ func (s *captureAuthService) CancelCode(context.Context, string, string) error {
 	return nil
 }
 
-func (s *captureAuthService) SignIn(context.Context, domain.Authorization, string, string, string) (domain.User, domain.Message, bool, error) {
+func (s *captureAuthService) SignIn(_ context.Context, _ domain.Authorization, phone, hash, code string) (domain.User, domain.Message, bool, error) {
+	s.signInCount++
+	s.signInPhone = phone
+	s.signInHash = hash
+	s.signInCode = code
 	if s.signInUser.ID != 0 {
 		return s.signInUser, domain.Message{}, false, nil
 	}
 	return domain.User{}, domain.Message{}, false, nil
 }
 
-func (s *captureAuthService) SignInWithEmail(context.Context, domain.Authorization, string, string, string) (domain.User, domain.Message, bool, error) {
+func (s *captureAuthService) SignInWithEmail(_ context.Context, _ domain.Authorization, phone, hash, code string) (domain.User, domain.Message, bool, error) {
 	s.signInWithEmailCount++
+	s.signInWithEmailPhone = phone
+	s.signInWithEmailHash = hash
+	s.signInWithEmailCode = code
 	if s.signInUser.ID != 0 {
 		return s.signInUser, domain.Message{}, false, nil
 	}
@@ -251,17 +268,6 @@ func (s *captureAuthService) Authorization(_ context.Context, authKeyID [8]byte)
 	return domain.Authorization{}, false, nil
 }
 
-func (s *captureAuthService) UpdateAuthorizationLayer(_ context.Context, authKeyID [8]byte, layer int) error {
-	s.layerUpdates++
-	for i := range s.authorizations {
-		if s.authorizations[i].AuthKeyID == authKeyID {
-			s.authorizations[i].Layer = layer
-			return nil
-		}
-	}
-	return nil
-}
-
 func (s *captureAuthService) AuthKeyClientInfo(_ context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error) {
 	s.authKeyInfoLookups++
 	info, ok := s.authKeyClientInfos[authKeyID]
@@ -292,6 +298,26 @@ func (s *captureAuthService) UpdateAuthKeyClientInfo(_ context.Context, authKeyI
 		current.AppVersion = info.AppVersion
 	}
 	s.authKeyClientInfos[authKeyID] = current
+	for i := range s.authorizations {
+		if s.authorizations[i].AuthKeyID != authKeyID {
+			continue
+		}
+		if info.DeviceModel != "" {
+			s.authorizations[i].DeviceModel = info.DeviceModel
+		}
+		if info.Platform != "" {
+			s.authorizations[i].Platform = info.Platform
+		}
+		if info.SystemVersion != "" {
+			s.authorizations[i].SystemVersion = info.SystemVersion
+		}
+		if info.APIID != 0 {
+			s.authorizations[i].APIID = info.APIID
+		}
+		if info.AppVersion != "" {
+			s.authorizations[i].AppVersion = info.AppVersion
+		}
+	}
 	return nil
 }
 

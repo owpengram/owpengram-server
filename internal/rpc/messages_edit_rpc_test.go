@@ -2,9 +2,9 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	"strings"
 	"telesrv/internal/domain"
@@ -73,13 +73,12 @@ func TestMessagesEditMessageReturnsUpdateAndRecordsOwnerContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.UpdatesBox)
+	got, ok := enc.(*tg.Updates)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.UpdatesBox", enc)
+		t.Fatalf("response = %T, want *tg.Updates", enc)
 	}
-	got, ok := box.Updates.(*tg.Updates)
-	if !ok || len(got.Updates) != 1 {
-		t.Fatalf("boxed updates = %T %+v, want one update", box.Updates, box.Updates)
+	if len(got.Updates) != 1 {
+		t.Fatalf("updates = %+v, want one update", got)
 	}
 	edit, ok := got.Updates[0].(*tg.UpdateEditMessage)
 	if !ok || edit.Pts != 7 || edit.PtsCount != 1 {

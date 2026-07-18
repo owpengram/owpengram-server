@@ -3,10 +3,11 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap/zaptest"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
@@ -15,6 +16,21 @@ import (
 	"telesrv/internal/store/memory"
 	"testing"
 )
+
+func TestMessagesSearchGlobalRejectsUnsupportedCommunityScope(t *testing.T) {
+	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesSearchGlobalRequest{
+		Q:          "scoped",
+		Filter:     &tg.InputMessagesFilterEmpty{},
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      20,
+	}
+	req.SetCommunity(&tg.InputChannel{ChannelID: 42, AccessHash: 84})
+
+	if _, err := r.onMessagesSearchGlobal(WithUserID(context.Background(), 1000000001), req); !tgerr.Is(err, "CHANNEL_INVALID") {
+		t.Fatalf("community-scoped messages.searchGlobal err = %v, want CHANNEL_INVALID", err)
+	}
+}
 
 func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 	ctx := context.Background()
@@ -114,9 +130,6 @@ func TestMessagesSearchChannelPeerReturnsSingleCopyMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch shared media count search: %v", err)
 	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
-	}
 	channelMessages, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
 		t.Fatalf("shared media count search result = %T, want messages.channelMessages", enc)
@@ -193,9 +206,6 @@ func TestMessagesSearchChatPhotosDoesNotReturnOrdinaryChannelHistory(t *testing.
 	enc, err := r.Dispatch(WithUserID(ctx, owner.ID), [8]byte{}, 0, &in)
 	if err != nil {
 		t.Fatalf("dispatch chat photos search: %v", err)
-	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
 	}
 	got, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
@@ -298,9 +308,6 @@ func TestMessagesGetSearchCountersUsesMediaCategoryCounts(t *testing.T) {
 	enc, err := r.Dispatch(WithUserID(ctx, owner.ID), [8]byte{}, 0, &in)
 	if err != nil {
 		t.Fatalf("dispatch shared media count search: %v", err)
-	}
-	if box, ok := enc.(*tg.MessagesMessagesBox); ok {
-		enc = box.Messages
 	}
 	channelMessages, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
@@ -482,13 +489,9 @@ func TestMessagesGetHistoryReturnsStoredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesMessagesBox)
+	got, ok := enc.(*tg.MessagesMessages)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessagesMessagesBox", enc)
-	}
-	got, ok := box.Messages.(*tg.MessagesMessages)
-	if !ok {
-		t.Fatalf("boxed response = %T, want *tg.MessagesMessages", box.Messages)
+		t.Fatalf("response = %T, want *tg.MessagesMessages", enc)
 	}
 	if len(got.Messages) != 1 || len(got.Users) != 1 {
 		t.Fatalf("history = %+v, want one message and one user", got)

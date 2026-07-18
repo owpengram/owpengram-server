@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 	"strings"
 	"telesrv/internal/domain"
 	"unicode/utf8"
@@ -202,12 +202,14 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 
 func messageSendErr(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrUserSendRestricted):
+	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()
 	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):
 		return randomIDDuplicateErr()
+	case errors.Is(err, domain.ErrMessageEmpty):
+		return messageEmptyErr()
 	default:
 		return internalErr()
 	}

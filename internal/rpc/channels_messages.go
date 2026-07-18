@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 )
@@ -260,6 +260,9 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	}
 	channelID, err := r.channelIDFromInput(ctx, userID, req.Channel)
 	if err != nil {
+		return nil, err
+	}
+	if err := r.checkFrozenChannelParticipants(ctx, userID, channelID); err != nil {
 		return nil, err
 	}
 	ids := make([]int, 0, len(req.ID))

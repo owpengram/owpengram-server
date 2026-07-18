@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/proto"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/sfu"
@@ -40,7 +40,6 @@ type AuthService interface {
 	SignInBot(ctx context.Context, a domain.Authorization, token string) (domain.User, error)
 	LogOut(ctx context.Context, authKeyID [8]byte) error
 	Authorization(ctx context.Context, authKeyID [8]byte) (domain.Authorization, bool, error)
-	UpdateAuthorizationLayer(ctx context.Context, authKeyID [8]byte, layer int) error
 	AuthKeyClientInfo(ctx context.Context, authKeyID [8]byte) (domain.AuthKeyClientInfo, bool, error)
 	UpdateAuthKeyClientInfo(ctx context.Context, authKeyID [8]byte, info domain.AuthKeyClientInfo) error
 	ListAuthorizations(ctx context.Context, userID int64) ([]domain.Authorization, error)
@@ -60,16 +59,30 @@ type SessionBinder interface {
 	UserIDResolvedForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (userID int64, resolved bool)
 	UnbindAuthKey(authKeyID [8]byte) int
 	SetReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64, receives bool)
-	PushToSessionForAuthKey(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
+	PushToSessionForAuthKey(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error
 	// excludeAuthKeyID/excludeSessionID 必须同时为零（不排除）或同时非零（精确排除）。
-	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder) (int, error)
+	PushToUserExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error)
+}
+
+// RawAuthKeySessionBinder 在 auth.bindTempAuthKey 成功后，把同一 raw temporary key
+// 已建立的所有 session 一次性切到 canonical permanent identity。只更新当前 session
+// 会让并发启动的其它连接永久粘在 raw identity。
+type RawAuthKeySessionBinder interface {
+	BindAuthKeyForRawAuthKey(rawAuthKeyID [8]byte, authKeyID [8]byte) int
+}
+
+// RawAuthKeyMetadataProvider 暴露握手时确定的 raw key protocol expiry。0 表示
+// permanent key；正值表示 temporary key。Router 只用它判断 cached==raw 是否可作为
+// permanent 快路径，协议过期的实际拒绝仍由 mtprotoedge 完成。
+type RawAuthKeyMetadataProvider interface {
+	AuthKeyExpiresAtForSession(rawAuthKeyID [8]byte, sessionID int64) (expiresAt int, found bool)
 }
 
 // ImmediateSessionPusher 是可选的登录前信号直推能力。
 // 它绕过登录后 updates-ready 队列，只能用于会解锁登录流程本身的握手消息，
 // 例如 updateLoginToken。
 type ImmediateSessionPusher interface {
-	PushToSessionForAuthKeyImmediate(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg bin.Encoder) error
+	PushToSessionForAuthKeyImmediate(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64, t proto.MessageType, msg tg.UpdatesClass) error
 }
 
 // SessionUpdatesStateProvider 暴露连接当前的 updates 接收状态（可选能力）。
@@ -84,6 +97,52 @@ type SessionUpdatesStateProvider interface {
 // Dispatch 返回后的兜底刷新，重连老客户端首条 RPC 期间的推送会漏降级。
 type ClientLayerBinder interface {
 	SetClientLayerForAuthKey(rawAuthKeyID [8]byte, sessionID int64, layer int)
+}
+
+// AuthKeyLayerBinder seeds an inherited auth-key default into every live
+// session that still has no explicit invokeWithLayer observation. Implementors
+// must not overwrite an explicit per-session profile; the returned count is
+// diagnostic only.
+//
+// Router uses this optional capability after auth.bindTempAuthKey normalizes a
+// raw temporary key to its permanent identity. Keeping it separate from
+// ClientLayerBinder makes the source distinction explicit: inherited defaults
+// are mutable initialization state, while an explicit session observation is a
+// correction for exactly one logical session.
+type AuthKeyLayerBinder interface {
+	SeedInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int
+}
+
+// BusinessAuthKeyLayerBinder seeds unknown live sessions across every raw PFS
+// key currently normalized to the same permanent/business auth key.
+type BusinessAuthKeyLayerBinder interface {
+	SeedInheritedLayerForBusinessAuthKey(authKeyID [8]byte, layer int) int
+}
+
+// AuthKeyLayerRefresher is the identity-normalization variant used after
+// auth.bindTempAuthKey. It may replace an inherited raw-key shadow with the
+// permanent key's default, but must still preserve every explicit session
+// profile.
+type AuthKeyLayerRefresher interface {
+	RefreshInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte, layer int) int
+}
+
+// AuthKeyInheritedLayerClearer removes only the mutable inherited default for
+// a physical/raw key. Explicit per-session invokeWithLayer profiles are wire
+// evidence and must survive. Router uses this when a temp key binds to a
+// permanent key whose durable Layer is authoritative but unsupported by this
+// binary; retaining the raw key's older inherited default would silently
+// downgrade naked RPCs instead of asking the client to correct explicitly.
+type AuthKeyInheritedLayerClearer interface {
+	ClearInheritedLayerForRawAuthKey(rawAuthKeyID [8]byte) int
+}
+
+// ActiveSessionLayerEvidenceProvider exposes the live connection's explicit
+// profile when auth.bindTempAuthKey runs after the Router's bounded exact-
+// profile retention window. It is deliberately session-scoped and must never
+// report an inherited profile as explicit evidence.
+type ActiveSessionLayerEvidenceProvider interface {
+	ExplicitLayerEvidenceForAuthKey(rawAuthKeyID [8]byte, sessionID int64) (layer int, msgID int64, ok bool)
 }
 
 // SessionTerminator 暴露按业务 auth_key 强制断开活跃连接的能力（可选）。
@@ -103,22 +162,22 @@ type RawSessionTerminator interface {
 // BestEffortSessionBinder 是带 raw auth_key_id 精确排除当前设备的短超时推送接口；
 // 不用于 RPC result/ack。
 type BestEffortSessionBinder interface {
-	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // TransientSessionBinder 推送短命、不写 durable log 的 update（typing / presence）。
 // 与普通推送的关键区别：目标 session 未就绪时直接跳过、不进 pending——transient 数据
 // getDifference 无法补，就绪后由 getState 快照/下次状态变化重建，囤积过期 transient 无意义。
 type TransientSessionBinder interface {
-	PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // AuthKeyTargetedSessionBinder 把 update 定向投递给某用户【绑定到具体 business auth_key
 // 这台设备】的就绪连接（密聊设备级投递）。SessionManager 实现；测试替身/未装配时
 // rpc 层回退账号级推送。未就绪连接跳过、不进 pending（密聊离线靠 getDifference 补）。
 type AuthKeyTargetedSessionBinder interface {
-	PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder) (int, error)
-	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg bin.Encoder, timeout time.Duration) (int, error)
+	PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass) (int, error)
+	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // OnlineUserProvider exposes a bounded runtime snapshot for best-effort fanout.
@@ -323,8 +382,14 @@ type PrivacyService interface {
 
 // HelpService 抽象启动配置与国家区号目录。
 type HelpService interface {
-	GetAppConfig(ctx context.Context, hash int) (domain.AppConfig, bool, error)
+	GetAppConfig(ctx context.Context, userID int64, hash int) (domain.AppConfig, bool, error)
 	GetCountries(ctx context.Context, langCode string, hash int) (domain.CountriesList, bool, error)
+}
+
+// AccountFreezeService exposes the account-level read-only fact used by the
+// central RPC mutation gate. It is domain-only and shared with app/help.
+type AccountFreezeService interface {
+	AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
 }
 
 // UpdatesService 抽象 update 状态查询。
@@ -332,8 +397,9 @@ type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
 	CurrentState(ctx context.Context, userID int64) (domain.UpdateState, error)
 	ConfirmedState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, bool, error)
-	AcknowledgeCurrentState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
+	ObserveDifferenceRequest(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateState, error)
 	GetDifference(ctx context.Context, authKeyID [8]byte, userID int64, from domain.UpdateState) (domain.UpdateDifference, error)
+	CommitDeliveredState(ctx context.Context, authKeyID [8]byte, userID int64, state domain.UpdateState, mode domain.UpdateStateCommitMode) error
 	ClearAuthKey(ctx context.Context, authKeyID [8]byte) error
 	RecordNewMessage(ctx context.Context, authKeyID [8]byte, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
 	PublishNewMessage(ctx context.Context, userID int64, msg domain.Message) (domain.UpdateEvent, domain.UpdateState, error)
@@ -709,6 +775,7 @@ type LangPackService interface {
 	GetLangPack(ctx context.Context, langPack, langCode string) (domain.LangPack, error)
 	GetDifference(ctx context.Context, langPack, langCode string, fromVersion int) (domain.LangPack, error)
 	GetStrings(ctx context.Context, langPack, langCode string, keys []string) (domain.LangPack, error)
+	ListLanguages(ctx context.Context, langPack string) ([]domain.LangPackLanguage, error)
 }
 
 // AIComposeService 抽象客户端输入框 AI 改写/润色与 aicompose tones 目录。
@@ -726,40 +793,45 @@ type AIComposeService interface {
 
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
-	Auth             AuthService
-	Account          AccountService
-	Privacy          PrivacyService
-	Help             HelpService
-	AICompose        AIComposeService
-	Users            UsersService
-	Updates          UpdatesService
-	BootstrapUpdates store.BootstrapUpdateJobStore
-	BotAPIUpdates    store.BotAPIUpdateStore
-	Contacts         ContactsService
-	Dialogs          DialogsService
-	Chatlists        ChatlistsService
-	Messages         MessagesService
-	Translation      TranslationService
-	Stories          StoriesService
-	Channels         ChannelsService
-	Files            FilesService
-	Bots             BotsService
-	Polls            PollsService
-	Phone            PhoneService
-	GroupCalls       GroupCallsService
-	LiveStreams      LiveStreamsService
-	SFU              sfu.Service
-	TURN             turnsrv.Service
-	LangPack         LangPackService
-	Sessions         SessionBinder
-	Inline           store.InlineRegistryStore
-	Limiter          RateLimiter
-	Metrics          Metrics
-	SecretChats      SecretChatService
-	Stars            StarsService
-	Gifts            GiftsService
-	Passkey          PasskeyService
-	Themes           ThemeService
+	Auth AuthService
+	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
+	// explicit invokeWithLayer evidence. Production must wire the same auth-key
+	// store used by the MTProto edge; nil is reserved for isolated router tests.
+	AuthKeySessionLayers store.AuthKeySessionLayerStore
+	Account              AccountService
+	Privacy              PrivacyService
+	Help                 HelpService
+	AccountFreeze        AccountFreezeService
+	AICompose            AIComposeService
+	Users                UsersService
+	Updates              UpdatesService
+	BootstrapUpdates     store.BootstrapUpdateJobStore
+	BotAPIUpdates        store.BotAPIUpdateStore
+	Contacts             ContactsService
+	Dialogs              DialogsService
+	Chatlists            ChatlistsService
+	Messages             MessagesService
+	Translation          TranslationService
+	Stories              StoriesService
+	Channels             ChannelsService
+	Files                FilesService
+	Bots                 BotsService
+	Polls                PollsService
+	Phone                PhoneService
+	GroupCalls           GroupCallsService
+	LiveStreams          LiveStreamsService
+	SFU                  sfu.Service
+	TURN                 turnsrv.Service
+	LangPack             LangPackService
+	Sessions             SessionBinder
+	Inline               store.InlineRegistryStore
+	Limiter              RateLimiter
+	Metrics              Metrics
+	SecretChats          SecretChatService
+	Stars                StarsService
+	Gifts                GiftsService
+	Passkey              PasskeyService
+	Themes               ThemeService
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。
@@ -793,12 +865,27 @@ type GiftsService interface {
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
 	CatalogHash(ctx context.Context) (int, error)
 	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
+	GiftRevisionByID(ctx context.Context, revisionID int64) (domain.StarGift, bool, error)
+	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
+	CollectibleAvailability(ctx context.Context, giftIDs []int64) (map[int64]domain.StarGiftCollectibleAvailability, error)
+	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
+	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
+	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
+	Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
 	RecordSavedGift(ctx context.Context, gift domain.SavedStarGift) (int64, error)
 	ListSaved(ctx context.Context, owner domain.Peer, excludeUnsaved bool, offset string, limit int) (domain.SavedStarGiftPage, error)
+	ListSavedFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
 	GetSaved(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error)
+	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
 	CountSaved(ctx context.Context, owner domain.Peer) (int, error)
 	ToggleSaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
 	Convert(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, error)
+	ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error)
+	CreateCollection(ctx context.Context, owner domain.Peer, title string, savedGiftIDs []int64) (domain.StarGiftCollection, error)
+	UpdateCollection(ctx context.Context, owner domain.Peer, collectionID int, patch domain.StarGiftCollectionPatch) (domain.StarGiftCollection, error)
+	DeleteCollection(ctx context.Context, owner domain.Peer, collectionID int) (bool, error)
+	ReorderCollections(ctx context.Context, owner domain.Peer, collectionIDs []int) error
+	SetPinned(ctx context.Context, owner domain.Peer, savedGiftIDs []int64) error
 }
 
 // StarsService 抽象 Stars 本地账本（app/stars）：余额查询、贷记/借记、流水分页。

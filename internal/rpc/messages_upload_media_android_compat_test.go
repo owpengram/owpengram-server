@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appusers "telesrv/internal/app/users"
@@ -44,15 +44,10 @@ func TestLegacyAndroidMessagesUploadMediaDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch legacy uploadMedia: %v", err)
 	}
-	// Routed through the unified layerwire inbound body-transform + the normal
-	// gotd dispatcher, which boxes a class result (MessageMedia) as *...Box.
-	box, ok := enc.(*tg.MessageMediaBox)
+	// Routed through the generated static client overlay and sparse dispatcher.
+	media, ok := enc.(*tg.MessageMediaPhoto)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.MessageMediaBox", enc)
-	}
-	media, ok := box.MessageMedia.(*tg.MessageMediaPhoto)
-	if !ok {
-		t.Fatalf("media = %T, want messageMediaPhoto", box.MessageMedia)
+		t.Fatalf("response = %T, want *tg.MessageMediaPhoto", enc)
 	}
 	photo, ok := media.Photo.(*tg.Photo)
 	if !ok || photo.ID != 777 {

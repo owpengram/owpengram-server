@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"
@@ -25,6 +25,9 @@ func wrapperTooDeepErr() error { return tgerr.New(400, "WRAPPER_TOO_DEEP") }
 
 // inputConstructorInvalidErr 表示客户端传入的 TL 构造器不在当前 RPC 接受范围内。
 func inputConstructorInvalidErr() error { return tgerr.New(400, "INPUT_CONSTRUCTOR_INVALID") }
+
+// langCodeNotSupportedErr 表示请求的语言码没有已导入的语言包。
+func langCodeNotSupportedErr() error { return tgerr.New(400, "LANG_CODE_NOT_SUPPORTED") }
 
 // folderIDInvalidErr 表示客户端传入多个 folder peer 或非法 folder。
 func folderIDInvalidErr() error { return tgerr.New(400, "FOLDER_ID_INVALID") }
@@ -91,7 +94,8 @@ func documentInvalidErr() error      { return tgerr.New(400, "DOCUMENT_INVALID")
 
 func mediaEmptyErr() error { return tgerr.New(400, "MEDIA_EMPTY") }
 
-func frozenMethodInvalidErr() error { return tgerr.New(400, "FROZEN_METHOD_INVALID") }
+func frozenMethodInvalidErr() error      { return tgerr.New(420, "FROZEN_METHOD_INVALID") }
+func frozenParticipantMissingErr() error { return tgerr.New(400, "FROZEN_PARTICIPANT_MISSING") }
 
 func photoInvalidErr() error { return tgerr.New(400, "PHOTO_INVALID") }
 
@@ -399,6 +403,8 @@ func signInErr(err error) error {
 		return tgerr.New(400, "PHONE_CODE_INVALID")
 	case errors.Is(err, auth.ErrCodeExpired):
 		return tgerr.New(400, "PHONE_CODE_EXPIRED")
+	case errors.Is(err, auth.ErrAuthKeyPermEmpty):
+		return tgerr.New(401, "AUTH_KEY_PERM_EMPTY")
 	case errors.Is(err, domain.ErrFirstNameInvalid):
 		return firstNameInvalidErr()
 	case errors.Is(err, domain.ErrSessionPasswordNeeded):
@@ -455,8 +461,14 @@ func passwordErr(err error) error {
 // bindTempAuthKeyErr 映射 PFS temp auth key 绑定错误。
 func bindTempAuthKeyErr(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrExpiresAtInvalid):
+		return tgerr.New(400, "EXPIRES_AT_INVALID")
+	case errors.Is(err, auth.ErrTempAuthKeyEmpty):
+		return tgerr.New(400, "TEMP_AUTH_KEY_EMPTY")
 	case errors.Is(err, auth.ErrEncryptedMessageInvalid):
 		return tgerr.New(400, "ENCRYPTED_MESSAGE_INVALID")
+	case errors.Is(err, auth.ErrTempAuthKeyAlreadyBound):
+		return tgerr.New(400, "TEMP_AUTH_KEY_ALREADY_BOUND")
 	default:
 		return internalErr()
 	}

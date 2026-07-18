@@ -2,9 +2,9 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	"strings"
 	appchannels "telesrv/internal/app/channels"
@@ -60,11 +60,10 @@ func TestMessagesForwardMessagesRecordsRequestAndReturnsUpdates(t *testing.T) {
 	if messages.sendReq.ReplyTo == nil || messages.sendReq.ReplyTo.MessageID != 9 || messages.sendReq.ReplyTo.Peer.ID != toID || messages.sendReq.ReplyTo.QuoteText != "target" {
 		t.Fatalf("forward reply = %+v, want target peer reply metadata", messages.sendReq.ReplyTo)
 	}
-	box, ok := enc.(*tg.UpdatesBox)
+	got, ok := enc.(*tg.Updates)
 	if !ok {
-		t.Fatalf("response = %T, want *tg.UpdatesBox", enc)
+		t.Fatalf("response = %T, want *tg.Updates", enc)
 	}
-	got := box.Updates.(*tg.Updates)
 	if len(got.Updates) != 4 {
 		t.Fatalf("updates = %+v, want two message ids and two new messages", got.Updates)
 	}

@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 )
 
 // TestSetReceivesUpdatesFlushesPendingBeforeActivation 验证置位时先排空暂存推送
@@ -23,6 +24,7 @@ func TestSetReceivesUpdatesFlushesPendingBeforeActivation(t *testing.T) {
 	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
 
 	raw := auth.AuthKey.ID
+	freezeActiveTestSessionProfile(t, srv.Conns(), raw, auth.SessionID, tlprofile.ProfileCanonical)
 	ctx := context.Background()
 
 	// 完全就绪还要求 membership 路由建立（ReceivesUpdatesForAuthKey 的另一半条件）。

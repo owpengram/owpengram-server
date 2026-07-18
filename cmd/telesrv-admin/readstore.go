@@ -10,6 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"telesrv/internal/domain"
 )
 
 const (
@@ -63,6 +65,9 @@ type AccountDetail struct {
 
 type RestrictionRow struct {
 	Frozen    bool
+	Since     *time.Time
+	Until     *time.Time
+	AppealURL string
 	Reason    string
 	Actor     string
 	CommandID string
@@ -128,6 +133,60 @@ type ChannelDetail struct {
 	AuditLogs   []AuditLogRow
 }
 
+type StarGiftRow struct {
+	GiftID        int64
+	RevisionID    int64
+	Revision      int
+	Title         string
+	Stars         int64
+	ConvertStars  int64
+	Enabled       bool
+	SortOrder     int
+	DocumentID    int64
+	SourceName    string
+	SourceFormat  string
+	AnimationSHA  string
+	AnimationSize int64
+	Width         int
+	Height        int
+	FrameRate     float64
+	ReceivedCount int64
+	CreatedBy     string
+	UpdatedAt     time.Time
+}
+
+func (s *readStore) ListStarGifts(ctx context.Context) ([]StarGiftRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT c.gift_id, r.id, r.revision, r.title, r.stars, r.convert_stars,
+       c.enabled, c.sort_order, r.document_id, r.source_name, r.source_format,
+       encode(r.animation_sha256, 'hex'), d.size, r.width, r.height, r.frame_rate,
+       (SELECT COUNT(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id),
+       r.created_by, c.updated_at
+FROM star_gift_catalog c
+JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
+JOIN documents d ON d.id = r.document_id
+ORDER BY c.sort_order, c.gift_id
+LIMIT $1`, domain.MaxStarGiftCatalogSize)
+	if err != nil {
+		return nil, fmt.Errorf("list star gifts: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StarGiftRow, 0)
+	for rows.Next() {
+		var row StarGiftRow
+		if err := rows.Scan(
+			&row.GiftID, &row.RevisionID, &row.Revision, &row.Title, &row.Stars, &row.ConvertStars,
+			&row.Enabled, &row.SortOrder, &row.DocumentID, &row.SourceName, &row.SourceFormat,
+			&row.AnimationSHA, &row.AnimationSize, &row.Width, &row.Height, &row.FrameRate,
+			&row.ReceivedCount, &row.CreatedBy, &row.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
@@ -152,7 +211,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 LEFT JOIN auth a ON a.user_id = u.id
 WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
@@ -326,7 +385,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
 JOIN auth ON auth.user_id = u.id
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
@@ -364,7 +423,7 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(sb.balance, 0)::bigint, COALESCE(sb.granted, false),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
 FROM users u
-LEFT JOIN account_send_restrictions r ON r.user_id = u.id
+LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN stars_balances sb ON sb.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 WHERE u.id = $1`, userID).Scan(
@@ -393,9 +452,12 @@ WHERE u.id = $1`, userID).Scan(
 func (s *readStore) restriction(ctx context.Context, userID int64) (RestrictionRow, bool, error) {
 	var r RestrictionRow
 	err := s.pool.QueryRow(ctx, `
-SELECT frozen, reason, actor, command_id, updated_at
-FROM account_send_restrictions
-WHERE user_id = $1`, userID).Scan(&r.Frozen, &r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt)
+SELECT frozen, frozen_since, frozen_until, appeal_url, reason, actor, command_id, updated_at
+FROM account_restrictions
+WHERE user_id = $1`, userID).Scan(
+		&r.Frozen, &r.Since, &r.Until, &r.AppealURL,
+		&r.Reason, &r.Actor, &r.CommandID, &r.UpdatedAt,
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return RestrictionRow{}, false, nil

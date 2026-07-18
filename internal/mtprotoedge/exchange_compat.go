@@ -13,14 +13,14 @@ import (
 	gofaster "github.com/go-faster/errors"
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/transport"
 )
 
 // runServerExchange is a gotd server exchange compatibility shim.
@@ -50,9 +50,9 @@ func (s *Server) runServerExchange(ctx context.Context, conn transport.Conn) (ex
 // client is allowed to immediately use the new key, possibly on another TCP
 // connection. Persisting after the response creates a split-brain window when
 // storage fails or the process exits between those two operations.
-func (s *Server) commitExchangeAuthKey(ctx context.Context, result exchange.ServerExchangeResult) error {
+func (s *Server) commitExchangeAuthKey(ctx context.Context, result exchange.ServerExchangeResult, expiresAt int) error {
 	createdAt := s.clock.Now().Unix()
-	if err := s.authKeys.Save(ctx, authKeyData(result.Key, result.ServerSalt, createdAt)); err != nil {
+	if err := s.authKeys.Save(ctx, authKeyData(result.Key, result.ServerSalt, createdAt, expiresAt)); err != nil {
 		return fmt.Errorf("persist auth key before DhGenOk: %w", err)
 	}
 	return nil
@@ -67,7 +67,7 @@ type serverExchangeCompat struct {
 	dc        int
 	log       *zap.Logger
 	rng       compatServerRNG
-	commitKey func(context.Context, exchange.ServerExchangeResult) error
+	commitKey func(context.Context, exchange.ServerExchangeResult, int) error
 }
 
 const pqInnerDataTempTypeID uint32 = 0x3c6a84d4
@@ -129,7 +129,10 @@ SendResPQ:
 		s.log.Debug("Received client ReqDHParamsRequest")
 	}
 
-	var innerData mt.PQInnerData
+	var (
+		innerData        mt.PQInnerData
+		authKeyExpiresAt int
+	)
 	{
 		if dhParams.DH.Nonce != req.Nonce {
 			return exchange.ServerExchangeResult{}, gofaster.New("req_DH_params nonce does not match req_pq")
@@ -161,6 +164,15 @@ SendResPQ:
 		}
 
 		innerData = d.Data
+		if d.Temp {
+			expiresAt := s.clock.Now().Unix() + int64(d.ExpiresIn)
+			// TL timestamps are signed int32 on the wire. Reject an impossible
+			// lifetime instead of wrapping a temporary key into a permanent one.
+			if expiresAt <= 0 || expiresAt > int64(^uint32(0)>>1) {
+				return exchange.ServerExchangeResult{}, gofaster.New("temporary auth key expiry is out of int32 range")
+			}
+			authKeyExpiresAt = int(expiresAt)
+		}
 	}
 
 	dhPrime, err := s.rng.DhPrime()
@@ -251,7 +263,7 @@ SendResPQ:
 	if s.commitKey == nil {
 		return exchange.ServerExchangeResult{}, gofaster.New("auth key commit hook is required before DhGenOk")
 	}
-	if err := s.commitKey(ctx, serverResult); err != nil {
+	if err := s.commitKey(ctx, serverResult, authKeyExpiresAt); err != nil {
 		return exchange.ServerExchangeResult{}, err
 	}
 
@@ -413,7 +425,7 @@ func (s serverExchangeCompat) readUnencrypted(ctx context.Context, b *bin.Buffer
 	if err := msg.Decode(b); err != nil {
 		return err
 	}
-	if proto.MessageID(msg.MessageID).Type() != proto.MessageFromClient {
+	if !validClientMessageIDBits(msg.MessageID) {
 		return gofaster.New("bad msg type")
 	}
 	b.ResetTo(msg.MessageData)

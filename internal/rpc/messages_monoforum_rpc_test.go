@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -73,13 +73,9 @@ func TestMonoforumSavedDialogsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getHistory(monoforum): %v", err)
 	}
-	mainBox, ok := mainEnc.(*tg.MessagesMessagesBox)
+	mainHistory, ok := mainEnc.(*tg.MessagesChannelMessages)
 	if !ok {
-		t.Fatalf("getHistory(monoforum) = %T, want MessagesMessagesBox", mainEnc)
-	}
-	mainHistory, ok := mainBox.Messages.(*tg.MessagesChannelMessages)
-	if !ok {
-		t.Fatalf("getHistory(monoforum) boxed = %T, want MessagesChannelMessages", mainBox.Messages)
+		t.Fatalf("getHistory(monoforum) = %T, want *tg.MessagesChannelMessages", mainEnc)
 	}
 	if len(mainHistory.Messages) != 1 {
 		t.Fatalf("main monoforum history = %d msgs, want only the creation service", len(mainHistory.Messages))

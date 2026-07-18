@@ -11,9 +11,30 @@ import (
 const (
 	PhoneCodePurposeChangePhone        = "change_phone"
 	PhoneCodeChannelPhone              = "phone"
+	PhoneCodeChannelSMS                = "sms"
 	PhoneCodeChannelEmailLogin         = "email_login"
 	PhoneCodeChannelEmailSetupRequired = "email_setup_required"
 )
+
+// LoginCodeChannelVerifiable reports whether a code record belongs to the
+// auth.signIn/auth.signUp state machine. The TL field carrying the proof
+// (phone_code or email_verification) is deliberately not part of this
+// decision: official clients use both fields for an email-delivered login
+// code, while the record channel remains the server-side delivery fact.
+func LoginCodeChannelVerifiable(channel string) bool {
+	switch channel {
+	case PhoneCodeChannelPhone, PhoneCodeChannelSMS, PhoneCodeChannelEmailLogin:
+		return true
+	default:
+		return false
+	}
+}
+
+// LoginCodeChannelTakeable includes the setup-required placeholder because
+// cancel/resend may replace it, although it is never valid auth.signIn proof.
+func LoginCodeChannelTakeable(channel string) bool {
+	return LoginCodeChannelVerifiable(channel) || channel == PhoneCodeChannelEmailSetupRequired
+}
 
 // PhoneCodeVersionCurrent is the only version accepted by the atomic login
 // state machine. Version zero is the pre-state-machine shape and deliberately
@@ -34,8 +55,12 @@ type PhoneCode struct {
 	SignUpVerified bool
 	Phone          string
 	Code           string
-	Channel        string
-	Purpose        string
+	// DeliveryID is the stable, opaque idempotency key used for the outbound
+	// provider call that carries this code. It contains no recipient or secret
+	// material and is rotated whenever a genuinely new code is issued.
+	DeliveryID string
+	Channel    string
+	Purpose    string
 	// UserID is also encoded as a string because scoped verification mutates the
 	// record in Redis Lua and must not round an int64 owner through cjson.
 	UserID    int64 `json:",string"`

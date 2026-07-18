@@ -1,4 +1,4 @@
-// Command telesrv 是基于 gotd/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
+// Command telesrv 是基于 github.com/iamxvbaba/td 的 Telegram-like server（第一兼容目标：Telegram Desktop）。
 package main
 
 import (
@@ -18,9 +18,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/tg"
 
 	adminapp "telesrv/internal/admin"
 	"telesrv/internal/adminapi"
@@ -55,8 +55,10 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
-	mailpkg "telesrv/internal/mail"
 	"telesrv/internal/mtprotoedge"
+	"telesrv/internal/otpdelivery"
+	otpsmtp "telesrv/internal/otpdelivery/smtp"
+	otpwebhook "telesrv/internal/otpdelivery/webhook"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
 	"telesrv/internal/sfu"
@@ -297,7 +299,8 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("parse listen port %q: %w", portStr, err)
 	}
 
-	// tg.Layer 来自 gotd/td v0.158.0（Layer 227），与目标 TDesktop 基线对齐。
+	// tg.Layer 由当前导入的 canonical schema 生成；纳入未来 Layer 后无需
+	// 在 telesrv 另维护一份常量。
 	logger.Info("telesrv 启动",
 		zap.String("listen", cfg.ListenAddr),
 		zap.Int("dc", cfg.DC),
@@ -346,11 +349,6 @@ func run(logger *zap.Logger) error {
 	}
 	defer func() { _ = rdb.Close() }()
 	logger.Info("持久化依赖就绪", zap.String("redis", cfg.RedisAddr))
-
-	ln, err := net.Listen("tcp", cfg.ListenAddr)
-	if err != nil {
-		return fmt.Errorf("listen %q: %w", cfg.ListenAddr, err)
-	}
 
 	authKeyStore := postgres.NewAuthKeyStore(pool)
 	userStore := postgres.NewUserStore(pool)
@@ -483,6 +481,7 @@ func run(logger *zap.Logger) error {
 		cfg.RetentionBatch,
 	).WithDispatchOutboxPoisonPolicy(cfg.OutboxPoisonRetention, cfg.OutboxPoisonCleanupInterval).
 		WithBotAPIUpdateRetention(botAPIUpdateStore, cfg.BotAPIUpdateRetention).
+		WithAuthKeySessionLayerRetention(authKeyStore).
 		WithLoginCodeDeliveryRetention(messageStore).
 		WithUserUpdateRetention(updateEventStore).
 		WithChannelUpdateRetention(channelStore).
@@ -534,18 +533,50 @@ func run(logger *zap.Logger) error {
 		account.WithEmailSignup(cfg.EmailSignupEnable),
 		account.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes),
 	}
-	var loginEmailSender mailpkg.Sender
-	if cfg.LoginEmailEnable || cfg.EmailSignupEnable {
-		loginEmailSender = mailpkg.NewSMTP(mailpkg.Config{
-			Host:     cfg.SMTPHost,
-			Port:     cfg.SMTPPort,
-			Username: cfg.SMTPUsername,
-			Password: cfg.SMTPPassword,
-			From:     cfg.SMTPFrom,
-			FromName: cfg.SMTPFromName,
-			TLSMode:  cfg.SMTPTLSMode,
-			Timeout:  cfg.SMTPTimeout,
+	var webhookSender otpdelivery.Sender
+	// EmailSignupEnable also needs a sender: "email as identity" sign-up/login
+	// codes go out on the same loginEmailSender channel as LoginEmailEnable
+	// (see auth.Service.emailSignupEnabled / account.sendChangePhoneCodeByEmail),
+	// so it must gate provider construction identically or those flows silently
+	// get a nil sender when LoginEmailEnable itself is off.
+	if cfg.PhoneCodeDeliveryProvider == "webhook" ||
+		((cfg.LoginEmailEnable || cfg.EmailSignupEnable) && cfg.EmailCodeDeliveryProvider == "webhook") {
+		configured, err := otpwebhook.New(otpwebhook.Config{
+			URL:     cfg.OTPWebhookURL,
+			Secret:  cfg.OTPWebhookSecret,
+			Timeout: cfg.OTPWebhookTimeout,
+			Logger:  logger.Named("otp").Named("webhook"),
 		})
+		if err != nil {
+			return fmt.Errorf("configure OTP webhook: %w", err)
+		}
+		webhookSender = configured
+		logger.Info("OTP Webhook 投递已启用",
+			zap.Bool("phone", cfg.PhoneCodeDeliveryProvider == "webhook"),
+			zap.Bool("email", (cfg.LoginEmailEnable || cfg.EmailSignupEnable) && cfg.EmailCodeDeliveryProvider == "webhook"))
+	}
+	var phoneCodeSender otpdelivery.Sender
+	if cfg.PhoneCodeDeliveryProvider == "webhook" {
+		phoneCodeSender = webhookSender
+		accountOptions = append(accountOptions, account.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength))
+	}
+	var loginEmailSender otpdelivery.Sender
+	if cfg.LoginEmailEnable || cfg.EmailSignupEnable {
+		switch cfg.EmailCodeDeliveryProvider {
+		case "webhook":
+			loginEmailSender = webhookSender
+		default:
+			loginEmailSender = otpsmtp.New(otpsmtp.Config{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				Username: cfg.SMTPUsername,
+				Password: cfg.SMTPPassword,
+				From:     cfg.SMTPFrom,
+				FromName: cfg.SMTPFromName,
+				TLSMode:  cfg.SMTPTLSMode,
+				Timeout:  cfg.SMTPTimeout,
+			})
+		}
 		accountOptions = append(accountOptions,
 			account.WithLoginEmailVerification(codeStore, loginEmailSender, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength))
 	}
@@ -644,7 +675,9 @@ func run(logger *zap.Logger) error {
 	starsStore := postgres.NewStarsStore(pool)
 	starsService := stars.NewService(starsStore, stars.WithStartingGrant(cfg.StarsStartingGrant))
 	starGiftStore := postgres.NewStarGiftStore(pool)
-	giftsService := stargifts.NewService(starGiftStore, filesService)
+	starGiftUpgradeStore := postgres.NewStarGiftUpgradeStore(pool, messageStore)
+	giftsService := stargifts.NewService(starGiftStore, blobBackend, cfg.DC,
+		stargifts.WithUpgradeStore(starGiftUpgradeStore))
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -701,6 +734,14 @@ func run(logger *zap.Logger) error {
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
+		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
+		auth.WithOTPDeliveryFailureObserver(func(_ context.Context, request otpdelivery.Request, err error) {
+			logger.Named("otp").Warn("附加 OTP provider 投递失败，777000 App-code 保持有效",
+				zap.String("delivery_id", request.DeliveryID),
+				zap.String("purpose", string(request.Purpose)),
+				zap.String("channel", string(request.Channel)),
+				zap.Error(err))
+		}),
 		auth.WithLoginEmail(auth.LoginEmailOptions{
 			Enabled:      cfg.LoginEmailEnable,
 			RequireSetup: cfg.LoginEmailRequireSetup,
@@ -734,39 +775,46 @@ func run(logger *zap.Logger) error {
 		TempKeyResolveCacheTTL:        cfg.TempKeyResolveCacheTTL,
 		TempKeyResolveCacheMaxEntries: cfg.TempKeyResolveCacheMaxEntries,
 	}, rpc.Deps{
-		Auth:             authService,
-		Account:          accountService,
-		Privacy:          privacyService,
-		Help:             help.NewService(helpStore, helpStore, help.WithMapboxToken(cfg.MapboxToken), help.WithEmailSignupEnable(cfg.EmailSignupEnable), help.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes)),
-		AICompose:        aiComposeService,
-		Users:            usersService,
-		Updates:          updatesService,
-		BootstrapUpdates: bootstrapUpdateStore,
-		BotAPIUpdates:    botAPIUpdateStore,
-		Contacts:         contactsService,
-		Dialogs:          dialogsService,
-		Chatlists:        chatlistsService,
-		Messages:         messagesService,
-		Translation:      translationService,
-		Channels:         channelsService,
-		Files:            filesService,
-		Bots:             botsService,
-		Polls:            pollsapp.NewService(pollStore),
-		Stories:          storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService)),
-		Phone:            phoneService,
-		SecretChats:      secretChatService,
-		Stars:            starsService,
-		Gifts:            giftsService,
-		Passkey:          passkeyService,
-		Themes:           themeService,
-		GroupCalls:       groupCallsService,
-		LiveStreams:      liveStreamDep(liveStreamService),
-		SFU:              sfuService,
-		TURN:             turnService,
-		LangPack:         langPackService,
-		Sessions:         activeSessions,
-		Inline:           inlineRegistryStore,
-		Limiter:          rateLimiter,
+		Auth:                 authService,
+		AuthKeySessionLayers: authKeyStore,
+		Account:              accountService,
+		Privacy:              privacyService,
+		Help: help.NewService(helpStore, helpStore,
+			help.WithMapboxToken(cfg.MapboxToken),
+			help.WithEmailSignupEnable(cfg.EmailSignupEnable),
+			help.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes),
+			help.WithAccountFreezeProvider(adminService),
+		),
+		AccountFreeze:        adminService,
+		AICompose:            aiComposeService,
+		Users:                usersService,
+		Updates:              updatesService,
+		BootstrapUpdates:     bootstrapUpdateStore,
+		BotAPIUpdates:        botAPIUpdateStore,
+		Contacts:             contactsService,
+		Dialogs:              dialogsService,
+		Chatlists:            chatlistsService,
+		Messages:             messagesService,
+		Translation:          translationService,
+		Channels:             channelsService,
+		Files:                filesService,
+		Bots:                 botsService,
+		Polls:                pollsapp.NewService(pollStore),
+		Stories:              storiesapp.NewService(storyStore, storiesapp.WithChannelStoryAccess(channelsService)),
+		Phone:                phoneService,
+		SecretChats:          secretChatService,
+		Stars:                starsService,
+		Gifts:                giftsService,
+		Passkey:              passkeyService,
+		Themes:               themeService,
+		GroupCalls:           groupCallsService,
+		LiveStreams:          liveStreamDep(liveStreamService),
+		SFU:                  sfuService,
+		TURN:                 turnService,
+		LangPack:             langPackService,
+		Sessions:             activeSessions,
+		Inline:               inlineRegistryStore,
+		Limiter:              rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{
 		ReadModelVersions:  readModelVersionStore,
@@ -786,6 +834,7 @@ func run(logger *zap.Logger) error {
 		RPCProjections:     router,
 		BaseUsers:          userCache,
 		BotProfiles:        botsService,
+		StarGifts:          giftsService,
 	}, logger.Named("store").Named("read-model-listener"))
 	go readModelListener.Run(ctx)
 	activeSessions.SetLifecycleObserver(router)
@@ -799,6 +848,7 @@ func run(logger *zap.Logger) error {
 		Channels:        channelsService,
 		ChannelNotifier: router,
 		Messages:        messagesService,
+		Gifts:           giftsService,
 	})
 	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
 	// router 创建后注入。
@@ -845,37 +895,48 @@ func run(logger *zap.Logger) error {
 	}
 
 	srv := mtprotoedge.New(mtprotoedge.Options{
-		Logger:                        logger.Named("mtprotoedge"),
-		DC:                            cfg.DC,
-		RSAKey:                        rsaKey,
-		RPC:                           router,
-		AuthKeys:                      authKeyStore,
-		ActiveSessions:                activeSessions,
-		ObfuscatedTCP:                 true,
-		WebSocket:                     cfg.WebSocketEnable,
-		WebSocketAllowedOrigins:       cfg.WebSocketAllowedOrigins,
-		MaxConnections:                cfg.MTProtoMaxConnections,
-		MaxConnectionsPerIP:           cfg.MTProtoMaxConnectionsPerIP,
-		MaxConcurrentHandshakes:       cfg.MTProtoMaxConcurrentHandshakes,
-		RPCMaxInflight:                cfg.MTProtoRPCMaxInflight,
-		RPCQueueSize:                  cfg.MTProtoRPCQueueSize,
-		RPCTimeout:                    cfg.MTProtoRPCTimeout,
-		RPCGlobalWorkers:              cfg.MTProtoRPCGlobalWorkers,
-		RPCGlobalMaxTasks:             cfg.MTProtoRPCGlobalMaxTasks,
-		RPCGlobalMaxBytes:             cfg.MTProtoRPCGlobalMaxBytes,
-		InboundFrameGlobalMaxBytes:    cfg.MTProtoInboundFrameGlobalMaxBytes,
-		OutboundQueueSize:             cfg.MTProtoOutboundQueueSize,
-		OutboundControlQueueSize:      cfg.MTProtoOutboundControlQueueSize,
-		OutboundTrackedGlobalMaxBytes: cfg.MTProtoOutboundTrackedGlobalMaxBytes,
-		OutboundWriteGlobalMaxBytes:   cfg.MTProtoOutboundWriteGlobalMaxBytes,
+		Logger:                          logger.Named("mtprotoedge"),
+		DC:                              cfg.DC,
+		RSAKey:                          rsaKey,
+		LayerRPC:                        router,
+		AuthKeys:                        authKeyStore,
+		ActiveSessions:                  activeSessions,
+		ObfuscatedTCP:                   true,
+		WebSocket:                       cfg.WebSocketEnable,
+		WebSocketAllowedOrigins:         cfg.WebSocketAllowedOrigins,
+		MaxConnections:                  cfg.MTProtoMaxConnections,
+		MaxConnectionsPerIP:             cfg.MTProtoMaxConnectionsPerIP,
+		MaxConcurrentHandshakes:         cfg.MTProtoMaxConcurrentHandshakes,
+		RPCMaxInflight:                  cfg.MTProtoRPCMaxInflight,
+		RPCQueueSize:                    cfg.MTProtoRPCQueueSize,
+		RPCTimeout:                      cfg.MTProtoRPCTimeout,
+		RPCGlobalWorkers:                cfg.MTProtoRPCGlobalWorkers,
+		RPCGlobalMaxTasks:               cfg.MTProtoRPCGlobalMaxTasks,
+		RPCGlobalMaxBytes:               cfg.MTProtoRPCGlobalMaxBytes,
+		RPCResultCacheMaxEntries:        cfg.MTProtoRPCResultCacheMaxEntries,
+		RPCResultCacheMaxBytes:          cfg.MTProtoRPCResultCacheMaxBytes,
+		RPCResultCacheAuthMaxEntries:    cfg.MTProtoRPCResultCacheAuthMaxEntries,
+		RPCResultCacheAuthMaxBytes:      cfg.MTProtoRPCResultCacheAuthMaxBytes,
+		RPCResultCacheSessionMaxEntries: cfg.MTProtoRPCResultCacheSessionMaxEntries,
+		RPCResultCacheSessionMaxBytes:   cfg.MTProtoRPCResultCacheSessionMaxBytes,
+		RPCResultPendingPerAuth:         cfg.MTProtoRPCResultPendingPerAuth,
+		InboundFrameGlobalMaxBytes:      cfg.MTProtoInboundFrameGlobalMaxBytes,
+		OutboundQueueSize:               cfg.MTProtoOutboundQueueSize,
+		OutboundControlQueueSize:        cfg.MTProtoOutboundControlQueueSize,
+		OutboundTrackedGlobalMaxBytes:   cfg.MTProtoOutboundTrackedGlobalMaxBytes,
+		OutboundWriteGlobalMaxBytes:     cfg.MTProtoOutboundWriteGlobalMaxBytes,
+		OnServing: func(_ net.Addr) {
+			logger.Info("telesrv 服务就绪",
+				zap.String("listen", cfg.ListenAddr),
+				zap.String("advertise", net.JoinHostPort(cfg.AdvertiseIP, portStr)),
+				zap.Int("pid", os.Getpid()),
+				zap.String("git_commit", buildMeta.Commit),
+				zap.Uint("schema_version", migrationStatus.Version),
+				zap.String("blob_backend", "localfs"),
+			)
+		},
 	})
-	logger.Info("telesrv 服务就绪",
-		zap.String("listen", cfg.ListenAddr),
-		zap.String("advertise", net.JoinHostPort(cfg.AdvertiseIP, portStr)),
-		zap.Int("pid", os.Getpid()),
-		zap.String("git_commit", buildMeta.Commit),
-		zap.Uint("schema_version", migrationStatus.Version),
-		zap.String("blob_backend", "localfs"),
-	)
-	return srv.Serve(ctx, ln)
+	// This is intentionally the final startup operation. ListenAndServe owns the
+	// public listener so no seed/prewarm work can run after port 2398 is exposed.
+	return srv.ListenAndServe(ctx, cfg.ListenAddr)
 }

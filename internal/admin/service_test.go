@@ -2,15 +2,17 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
 )
 
-func TestSetSendFrozenDryRunExecuteAndIdempotency(t *testing.T) {
+func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryCommandRepo()
 	restrictions := &fakeRestrictionStore{}
@@ -20,10 +22,12 @@ func TestSetSendFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 		Now:          fixedNow,
 	})
 
-	dry, err := svc.SetSendFrozen(ctx, SetSendFrozenRequest{
+	dry, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
 		CommandMeta: CommandMeta{CommandID: "dry-freeze", Actor: "ops", Reason: "test", DryRun: true},
 		UserID:      1001,
 		Frozen:      true,
+		Until:       fixedNow().Add(7 * 24 * time.Hour),
+		AppealURL:   "https://appeals.example.test/account/1001",
 	})
 	if err != nil {
 		t.Fatalf("dry-run freeze: %v", err)
@@ -32,28 +36,129 @@ func TestSetSendFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 		t.Fatalf("dry-run result=%+v setCalls=%d, want completed dry-run without mutation", dry, restrictions.setCalls)
 	}
 
-	execReq := SetSendFrozenRequest{
+	execReq := SetAccountFrozenRequest{
 		CommandMeta: CommandMeta{CommandID: "exec-freeze", Actor: "ops", Reason: "incident", DryRun: false},
 		UserID:      1001,
 		Frozen:      true,
+		Until:       fixedNow().Add(7 * 24 * time.Hour),
+		AppealURL:   "https://appeals.example.test/account/1001",
 	}
-	exec, err := svc.SetSendFrozen(ctx, execReq)
+	exec, err := svc.SetAccountFrozen(ctx, execReq)
 	if err != nil {
 		t.Fatalf("execute freeze: %v", err)
 	}
 	if exec.Status != string(domain.AdminCommandCompleted) || restrictions.setCalls != 1 {
 		t.Fatalf("execute result=%+v setCalls=%d", exec, restrictions.setCalls)
 	}
-	if err := svc.CanSendMessages(ctx, 1001); !errors.Is(err, domain.ErrUserSendRestricted) {
-		t.Fatalf("CanSendMessages err=%v, want ErrUserSendRestricted", err)
+	if err := svc.CanSendMessages(ctx, 1001); !errors.Is(err, domain.ErrUserFrozen) {
+		t.Fatalf("CanSendMessages err=%v, want ErrUserFrozen", err)
+	}
+	freeze, found, err := svc.AccountFreeze(ctx, 1001)
+	if err != nil || !found || !freeze.Frozen || !freeze.Since.Equal(fixedNow()) || freeze.AppealURL != execReq.AppealURL {
+		t.Fatalf("AccountFreeze = %+v found=%v err=%v", freeze, found, err)
 	}
 
-	again, err := svc.SetSendFrozen(ctx, execReq)
+	again, err := svc.SetAccountFrozen(ctx, execReq)
 	if err != nil {
 		t.Fatalf("duplicate freeze: %v", err)
 	}
 	if !again.AlreadyExecuted || restrictions.setCalls != 1 {
 		t.Fatalf("duplicate result=%+v setCalls=%d, want idempotent replay", again, restrictions.setCalls)
+	}
+}
+
+func TestSetAccountFrozenRejectsIncompleteStateAndUnfreezeClearsOverlay(t *testing.T) {
+	ctx := context.Background()
+	restrictions := &fakeRestrictionStore{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Restrictions: restrictions, Now: fixedNow})
+	for _, req := range []SetAccountFrozenRequest{
+		{CommandMeta: CommandMeta{CommandID: "bad-until", Actor: "ops", Reason: "test"}, UserID: 1001, Frozen: true, Until: fixedNow(), AppealURL: "https://appeals.example.test"},
+		{CommandMeta: CommandMeta{CommandID: "too-far", Actor: "ops", Reason: "test"}, UserID: 1001, Frozen: true, Until: time.Unix(1<<31, 0), AppealURL: "https://appeals.example.test"},
+		{CommandMeta: CommandMeta{CommandID: "bad-url", Actor: "ops", Reason: "test"}, UserID: 1001, Frozen: true, Until: fixedNow().Add(time.Hour), AppealURL: "javascript:bad"},
+		{CommandMeta: CommandMeta{CommandID: "long-url", Actor: "ops", Reason: "test"}, UserID: 1001, Frozen: true, Until: fixedNow().Add(time.Hour), AppealURL: "https://appeals.example.test/" + strings.Repeat("x", maxFreezeAppealURLLength)},
+	} {
+		if _, err := svc.SetAccountFrozen(ctx, req); err == nil {
+			t.Fatalf("SetAccountFrozen(%+v) succeeded", req)
+		}
+	}
+	freezeReq := SetAccountFrozenRequest{CommandMeta: CommandMeta{CommandID: "freeze", Actor: "ops", Reason: "test"}, UserID: 1001, Frozen: true, Until: fixedNow().Add(24 * time.Hour), AppealURL: "https://appeals.example.test"}
+	if _, err := svc.SetAccountFrozen(ctx, freezeReq); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{CommandMeta: CommandMeta{CommandID: "unfreeze", Actor: "ops", Reason: "accepted"}, UserID: 1001}); err != nil {
+		t.Fatal(err)
+	}
+	freeze, found, err := svc.AccountFreeze(ctx, 1001)
+	if err != nil || !found || freeze.Frozen || !freeze.Since.IsZero() || !freeze.Until.IsZero() || freeze.AppealURL != "" {
+		t.Fatalf("unfrozen state = %+v found=%v err=%v", freeze, found, err)
+	}
+}
+
+func TestSetAccountFrozenUpdatePreservesOriginalSince(t *testing.T) {
+	ctx := context.Background()
+	now := fixedNow()
+	restrictions := &fakeRestrictionStore{}
+	svc := NewService(Dependencies{
+		Commands:     newMemoryCommandRepo(),
+		Restrictions: restrictions,
+		Now:          func() time.Time { return now },
+	})
+	if _, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
+		CommandMeta: CommandMeta{CommandID: "freeze-initial", Actor: "ops", Reason: "review"},
+		UserID:      1001,
+		Frozen:      true,
+		Until:       now.Add(24 * time.Hour),
+		AppealURL:   "https://appeals.example.test/initial",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	originalSince := now
+	now = now.Add(2 * time.Hour)
+	updatedUntil := now.Add(72 * time.Hour)
+	if _, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
+		CommandMeta: CommandMeta{CommandID: "freeze-update", Actor: "ops", Reason: "extend review"},
+		UserID:      1001,
+		Frozen:      true,
+		Until:       updatedUntil,
+		AppealURL:   "https://appeals.example.test/updated",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	freeze, found, err := svc.AccountFreeze(ctx, 1001)
+	if err != nil || !found || !freeze.Since.Equal(originalSince) || !freeze.Until.Equal(updatedUntil) ||
+		freeze.AppealURL != "https://appeals.example.test/updated" {
+		t.Fatalf("updated freeze = %+v found=%v err=%v", freeze, found, err)
+	}
+}
+
+func TestSetAccountFrozenReplayRemainsIdempotentAfterDeadline(t *testing.T) {
+	ctx := context.Background()
+	now := fixedNow()
+	restrictions := &fakeRestrictionStore{}
+	svc := NewService(Dependencies{
+		Commands:     newMemoryCommandRepo(),
+		Restrictions: restrictions,
+		Now:          func() time.Time { return now },
+	})
+	req := SetAccountFrozenRequest{
+		CommandMeta: CommandMeta{CommandID: "freeze-expiring", Actor: "ops", Reason: "review"},
+		UserID:      1001,
+		Frozen:      true,
+		Until:       now.Add(time.Hour),
+		AppealURL:   "https://appeals.example.test/expiring",
+	}
+	if _, err := svc.SetAccountFrozen(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Hour)
+	replayed, err := svc.SetAccountFrozen(ctx, req)
+	if err != nil || !replayed.AlreadyExecuted || restrictions.setCalls != 1 {
+		t.Fatalf("expired replay = %+v err=%v setCalls=%d", replayed, err, restrictions.setCalls)
+	}
+	stale := req
+	stale.CommandID = "new-stale-freeze"
+	if _, err := svc.SetAccountFrozen(ctx, stale); err == nil || restrictions.setCalls != 1 {
+		t.Fatalf("new stale request err=%v setCalls=%d, want rejection without state mutation", err, restrictions.setCalls)
 	}
 }
 
@@ -365,33 +470,26 @@ func (m *memoryCommandRepo) FinishCommand(_ context.Context, commandID string, s
 }
 
 type fakeRestrictionStore struct {
-	items    map[int64]domain.AccountSendRestriction
+	items    map[int64]domain.AccountFreeze
 	setCalls int
 }
 
-func (f *fakeRestrictionStore) GetSendRestriction(_ context.Context, userID int64) (domain.AccountSendRestriction, bool, error) {
+func (f *fakeRestrictionStore) GetAccountFreeze(_ context.Context, userID int64) (domain.AccountFreeze, bool, error) {
 	if f.items == nil {
-		return domain.AccountSendRestriction{}, false, nil
+		return domain.AccountFreeze{}, false, nil
 	}
 	r, ok := f.items[userID]
 	return r, ok, nil
 }
 
-func (f *fakeRestrictionStore) SetSendRestriction(_ context.Context, r domain.AccountSendRestriction) (domain.AccountSendRestriction, error) {
+func (f *fakeRestrictionStore) SetAccountFreeze(_ context.Context, r domain.AccountFreeze) (domain.AccountFreeze, error) {
 	if f.items == nil {
-		f.items = map[int64]domain.AccountSendRestriction{}
+		f.items = map[int64]domain.AccountFreeze{}
 	}
 	f.setCalls++
 	r.UpdatedAt = fixedNow()
 	f.items[r.UserID] = r
 	return r, nil
-}
-
-func (f *fakeRestrictionStore) IsSendFrozen(_ context.Context, userID int64) (bool, error) {
-	if f.items == nil {
-		return false, nil
-	}
-	return f.items[userID].Frozen, nil
 }
 
 type fakeMessagesService struct {
@@ -596,6 +694,95 @@ func (f *fakeChannelsService) SetVerified(_ context.Context, channelID int64, ve
 
 type fakeChannelNotifier struct {
 	channels []int64
+}
+
+func TestImportStarGiftDryRunThenConfirm(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	base := ImportStarGiftRequest{
+		Title: "Cake", Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 3,
+		FileName: "cake.lottie", Data: []byte(`{"v":"5.7"}`),
+	}
+	base.CommandMeta = CommandMeta{CommandID: "dry-gift", Actor: "ops", Reason: "catalog", DryRun: true}
+	preview, err := svc.ImportStarGift(context.Background(), base)
+	if err != nil || gifts.createCalls != 0 || preview.Details["source_format"] != domain.StarGiftAnimationLottie {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	base.CommandMeta = CommandMeta{CommandID: "exec-gift", Actor: "ops", Reason: "catalog", DryRun: false}
+	result, err := svc.ImportStarGift(context.Background(), base)
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(22) {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+func TestCommandIDConflictRejectsDifferentGiftBytes(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	req := ImportStarGiftRequest{
+		CommandMeta: CommandMeta{CommandID: "same", Actor: "ops", Reason: "catalog", DryRun: true},
+		Title:       "Gift", Stars: 10, ConvertStars: 5, Enabled: true, FileName: "a.lottie", Data: []byte("one"),
+	}
+	if _, err := svc.ImportStarGift(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Data = []byte("two")
+	if _, err := svc.ImportStarGift(context.Background(), req); err == nil || err.Error() != "COMMAND_ID_CONFLICT" {
+		t.Fatalf("conflict err=%v", err)
+	}
+}
+
+func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
+	base := PublishStarGiftCollectiblesRequest{
+		GiftID: 11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
+		Models:    []StarGiftCollectibleAnimationUpload{{Name: "Ruby", RarityPermille: 1000, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")}},
+		Patterns:  []StarGiftCollectibleAnimationUpload{{Name: "Stars", RarityPermille: 1000, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")}},
+		Backdrops: []StarGiftCollectibleBackdropInput{{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 1000}},
+	}
+	base.CommandMeta = CommandMeta{CommandID: "dry-collectibles", Actor: "ops", Reason: "pool", DryRun: true}
+	preview, err := svc.PublishStarGiftCollectibles(context.Background(), base)
+	if err != nil || gifts.createCalls != 0 || preview.Details["models"] == nil {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	base.CommandMeta = CommandMeta{CommandID: "exec-collectibles", Actor: "ops", Reason: "pool", DryRun: false}
+	result, err := svc.PublishStarGiftCollectibles(context.Background(), base)
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(33) || result.Details["published"] != true {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+type fakeGiftsService struct{ createCalls int }
+
+func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
+	sum := sha256.Sum256(data)
+	return domain.StarGiftAnimation{
+		SourceName: name, SourceFormat: domain.StarGiftAnimationLottie,
+		JSON: []byte(`{"v":"5.7"}`), TGS: []byte("tgs"), SHA256: sum[:], Width: 512, Height: 512, FrameRate: 30,
+	}, nil
+}
+func (f *fakeGiftsService) CreateCatalogRevision(_ context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
+	f.createCalls++
+	return domain.StarGiftCatalogEntry{Gift: domain.StarGift{ID: 11, RevisionID: 22, Stars: write.Stars}, Revision: 1}, nil
+}
+func (*fakeGiftsService) SetCatalogEnabled(context.Context, int64, bool) (bool, error) {
+	return true, nil
+}
+func (*fakeGiftsService) SetCatalogSortOrder(context.Context, int64, int) (bool, error) {
+	return true, nil
+}
+func (*fakeGiftsService) AnimationJSON(context.Context, int64) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7"}`), true, nil
+}
+func (f *fakeGiftsService) CreateCollectibleRevision(_ context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
+	f.createCalls++
+	return domain.StarGiftCollectibleRevision{ID: 33, GiftID: write.GiftID, Revision: 2, Published: true}, nil
+}
+func (*fakeGiftsService) CollectiblePreview(context.Context, int64) (domain.StarGiftUpgradePreview, bool, error) {
+	return domain.StarGiftUpgradePreview{}, false, nil
+}
+func (*fakeGiftsService) CollectibleAnimationJSON(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7"}`), true, nil
 }
 
 func (f *fakeChannelNotifier) NotifyChannelChanged(_ context.Context, ch domain.Channel) error {

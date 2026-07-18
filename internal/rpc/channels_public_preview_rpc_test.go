@@ -2,9 +2,9 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	appchannels "telesrv/internal/app/channels"
 	appdialogs "telesrv/internal/app/dialogs"
@@ -102,13 +102,9 @@ func TestPublicChannelPreviewRPCsAllowNonMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch getHistory public preview: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesMessagesBox)
+	history, ok := enc.(*tg.MessagesChannelMessages)
 	if !ok {
-		t.Fatalf("getHistory response = %T, want boxed messages", enc)
-	}
-	history, ok := box.Messages.(*tg.MessagesChannelMessages)
-	if !ok {
-		t.Fatalf("boxed getHistory = %T, want channel messages", box.Messages)
+		t.Fatalf("getHistory response = %T, want *tg.MessagesChannelMessages", enc)
 	}
 	foundPost := false
 	for _, item := range history.Messages {

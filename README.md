@@ -6,14 +6,24 @@
 
 **Your own private messaging server — self-hosted, protocol-compatible, fully yours.**
 
+The protocol stack is built on the published
+[`github.com/iamxvbaba/td`](https://github.com/iamxvbaba/td) module
+(`v1.1.0`), using a canonical Layer 228 schema with sparse `tlprofile`
+exact Layer 225-228 compatibility profiles.
+
+If you are looking for a **Telegram server**, **MTProto server**,
+**Telegram backend**, **Telegram clone server**, or **self-hosted
+Telegram-like chat server**, this repository is the server-side implementation
+to study, run, and improve.
+
 OwpenGram Server is an open-source, Telegram-compatible MTProto backend written
 in Go. Run it on your own network for a private, closed setup, or on a VPS to
 be reachable anywhere in the world. Your data, your keys, your rules — no
 cloud, no lock-in, no censorship.
 
-> 🔗 Implements **MTProto API layer 227**.
+> 🔗 Implements **MTProto API layer 228**.
 
-`gramsrv` is independent and unofficial. It is not affiliated with, endorsed by,
+`OwpenGram Server` is independent and unofficial. It is not affiliated with, endorsed by,
 or sponsored by Telegram or the official Telegram team.
 
 ---
@@ -43,7 +53,7 @@ or sponsored by Telegram or the official Telegram team.
 
 | Status | Feature | What works today |
 |---|---|---|
-| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, and layer compatibility helpers. |
+| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 228, and sparse exact Layer 225-228 compatibility profiles. |
 | ✅ | Login and accounts | Development login code, sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, email/passkey-oriented paths. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
@@ -55,7 +65,7 @@ or sponsored by Telegram or the official Telegram team.
 | ✅ | Supergroups and channels | Create, join, leave, invite links, participants, admins, forum topics, linked discussion guests, history, send/edit/delete/read, reactions, public search, and previews. |
 | ✅ | Media and files | Upload, download, local blob storage, photos, documents, thumbnails, canonical GIFv conversion, external media fetch, web page previews, map tile cache hooks, profile/channel photos. |
 | ✅ | Stickers and reactions | Sticker/reaction catalog, seed support, saved GIFs, recent reactions, top reactions, default reactions, and moderation-oriented reaction paths. |
-| ✅ | Gifts and stars | Star gifts and local stars ledger foundations for compatibility and future feature work. |
+| ✅ | Gifts and stars | Dynamic star gift catalog, admin import tools, collectible/unique gift upgrade flows, prepaid upgrade tracking, and local stars ledger foundations. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
 | ✅ | Admin and operations | Admin API/UI backend, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, and load-test helpers. |
@@ -201,6 +211,11 @@ server-selection screen at login — no source patching or custom build needed:
 
 A stock Telegram client will not connect, since it only trusts Telegram's own
 DC list and RSA keys.
+
+- Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
+- Canonical TL layer: 228
+- Exact compatibility profiles: Layer 225-228
+- Local DC: `127.0.0.1:2398`, DC id `2`
 
 **1. Export your server's public key**
 

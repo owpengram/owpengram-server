@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/iamxvbaba/td/transport"
 )
 
 type failAfterTransport struct {
@@ -26,6 +27,44 @@ type failAfterTransport struct {
 	closes atomic.Int32
 	mu     sync.Mutex
 	last   []byte
+}
+
+func TestRPCResultReplayAttemptHooksArePhysicalConnectionLocal(t *testing.T) {
+	const reqMsgID = int64(771)
+	base := &encodedOutboundMessage{
+		body:     make([]byte, 12),
+		typeID:   proto.ResultTypeID,
+		reqMsgID: reqMsgID,
+		delivery: newRPCResultDelivery(reqMsgID),
+	}
+	var logical, firstAttempt, secondAttempt atomic.Int32
+	base.setDeliveryHook(func() { logical.Add(1) })
+	first, err := cloneRPCResultForRequest(base, reqMsgID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := cloneRPCResultForRequest(base, reqMsgID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.setAttemptDeliveryHook(func() { firstAttempt.Add(1) })
+	second.setAttemptDeliveryHook(func() { secondAttempt.Add(1) })
+	first.markDelivered()
+	deadline := time.Now().Add(time.Second)
+	for (logical.Load() != 1 || firstAttempt.Load() != 1) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if logical.Load() != 1 || firstAttempt.Load() != 1 || secondAttempt.Load() != 0 {
+		t.Fatalf("first delivery hooks = logical:%d first:%d second:%d", logical.Load(), firstAttempt.Load(), secondAttempt.Load())
+	}
+	second.markDelivered()
+	deadline = time.Now().Add(time.Second)
+	for secondAttempt.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if logical.Load() != 1 || firstAttempt.Load() != 1 || secondAttempt.Load() != 1 {
+		t.Fatalf("second delivery hooks = logical:%d first:%d second:%d", logical.Load(), firstAttempt.Load(), secondAttempt.Load())
+	}
 }
 
 type blockingOutboundTransport struct {
@@ -166,7 +205,7 @@ func TestEncodedControlFramesUseIndependentBudgetForQueuedAndPendingLifetime(t *
 	defer cancel()
 
 	// One content frame fills the ordinary body budget and remains pending.
-	if err := c.Send(ctx, proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
+	if err := c.SendEncoded(ctx, proto.MessageFromServer, exactTestUpdatesTooLong(t, c)); err != nil {
 		t.Fatalf("fill body budget: %v", err)
 	}
 	first, err := crypto.NewClientCipher(rand.Reader).DecryptFromBuffer(c.key, &bin.Buffer{Buf: tr.lastFrame()})
@@ -297,7 +336,7 @@ func TestOutboundScratchAdmissionUsesWriteTimeoutWithoutClosingHealthyConnection
 	c.writeTimeout = 25 * time.Millisecond
 
 	start := time.Now()
-	err = c.Send(context.Background(), proto.MessageFromServer, &tg.UpdatesTooLong{})
+	err = c.SendEncoded(context.Background(), proto.MessageFromServer, exactTestUpdatesTooLong(t, c))
 	elapsed := time.Since(start)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("scratch admission err = %v, want deadline exceeded", err)
@@ -319,7 +358,7 @@ func TestOutboundScratchAdmissionUsesWriteTimeoutWithoutClosingHealthyConnection
 
 	pool.release(blocker)
 	c.writeTimeout = time.Second
-	if err := c.Send(context.Background(), proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
+	if err := c.SendEncoded(context.Background(), proto.MessageFromServer, exactTestUpdatesTooLong(t, c)); err != nil {
 		t.Fatalf("send after scratch capacity returned: %v", err)
 	}
 	if got := tr.sends.Load(); got != 1 {
@@ -387,6 +426,7 @@ func newOutboundTestConn(t *testing.T, tr transport.Conn, budget *outboundTracke
 		sessionID:             456,
 		outboundTrackedBudget: budget,
 	}
+	legacyCanonicalTestConn(t, c)
 	c.startOutbound()
 	t.Cleanup(c.Close)
 	return c
@@ -397,8 +437,8 @@ func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
 		c := &Conn{metrics: NopMetrics{}}
 		c.startOutbound()
 		defer c.Close()
-		if got := cap(c.outbound); got != defaultOutboundQueueSize {
-			t.Fatalf("normal queue cap = %d, want %d", got, defaultOutboundQueueSize)
+		if got := cap(c.outbound) + cap(c.outboundCritical) + cap(c.outboundBulk); got != defaultOutboundQueueSize {
+			t.Fatalf("ordinary lane total cap = %d, want %d", got, defaultOutboundQueueSize)
 		}
 		if got := cap(c.outboundControl); got != defaultOutboundControlQueueSize {
 			t.Fatalf("control queue cap = %d, want %d", got, defaultOutboundControlQueueSize)
@@ -413,8 +453,8 @@ func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
 		}
 		c.startOutbound()
 		defer c.Close()
-		if got := cap(c.outbound); got != 7 {
-			t.Fatalf("normal queue cap = %d, want 7", got)
+		if got := cap(c.outbound) + cap(c.outboundCritical) + cap(c.outboundBulk); got != 7 {
+			t.Fatalf("ordinary lane total cap = %d, want 7", got)
 		}
 		if got := cap(c.outboundControl); got != 3 {
 			t.Fatalf("control queue cap = %d, want 3", got)
@@ -446,9 +486,11 @@ func TestServerNewConnectionsShareOutboundBudgetAndQueueLimits(t *testing.T) {
 	defer c1.Close()
 	defer c2.Close()
 
-	if cap(c1.outbound) != 7 || cap(c1.outboundControl) != 3 || cap(c2.outbound) != 7 || cap(c2.outboundControl) != 3 {
+	c1Ordinary := cap(c1.outbound) + cap(c1.outboundCritical) + cap(c1.outboundBulk)
+	c2Ordinary := cap(c2.outbound) + cap(c2.outboundCritical) + cap(c2.outboundBulk)
+	if c1Ordinary != 7 || cap(c1.outboundControl) != 3 || c2Ordinary != 7 || cap(c2.outboundControl) != 3 {
 		t.Fatalf("server queue caps = %d/%d and %d/%d, want 7/3",
-			cap(c1.outbound), cap(c1.outboundControl), cap(c2.outbound), cap(c2.outboundControl))
+			c1Ordinary, cap(c1.outboundControl), c2Ordinary, cap(c2.outboundControl))
 	}
 	if c1.outboundTrackedBudget != srv.outboundTrackedBudget || c2.outboundTrackedBudget != srv.outboundTrackedBudget {
 		t.Fatal("server connections did not receive the shared outbound tracking budget")
@@ -504,6 +546,7 @@ func TestOutboundActorSerializesConcurrentSends(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	sendEncrypted(t, conn, cipher, auth, clientMsgID.New(proto.MessageFromClient), &mt.PingRequest{PingID: 1})
 	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
+	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tlprofile.ProfileCanonical)
 	srv.Conns().SetReceivesUpdates(auth.SessionID, true)
 
 	const sends = 64
@@ -554,7 +597,7 @@ func TestOutboundWriteErrorTerminallyClosesWithoutActorDeadlock(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.Send(ctx, proto.MessageFromServer, &tg.UpdatesTooLong{}); err == nil {
+	if err := c.SendEncoded(ctx, proto.MessageFromServer, exactTestUpdatesTooLong(t, c)); err == nil {
 		t.Fatal("Send unexpectedly succeeded")
 	}
 	select {
@@ -565,7 +608,7 @@ func TestOutboundWriteErrorTerminallyClosesWithoutActorDeadlock(t *testing.T) {
 	if got := tr.closes.Load(); got != 1 {
 		t.Fatalf("transport closes = %d, want 1", got)
 	}
-	if err := c.Send(ctx, proto.MessageFromServer, &tg.UpdatesTooLong{}); !errors.Is(err, ErrConnClosed) {
+	if err := c.SendEncoded(ctx, proto.MessageFromServer, exactTestUpdatesTooLong(t, c)); !errors.Is(err, ErrConnClosed) {
 		t.Fatalf("second Send err = %v, want ErrConnClosed", err)
 	}
 	if got := tr.sends.Load(); got != 1 {
@@ -579,7 +622,7 @@ func TestOutboundResendWriteErrorTerminallyCloses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	if err := c.Send(ctx, proto.MessageFromServer, &tg.UpdatesTooLong{}); err != nil {
+	if err := c.SendEncoded(ctx, proto.MessageFromServer, exactTestUpdatesTooLong(t, c)); err != nil {
 		t.Fatalf("initial Send: %v", err)
 	}
 	data, err := crypto.NewClientCipher(rand.Reader).DecryptFromBuffer(c.key, &bin.Buffer{Buf: tr.lastFrame()})
@@ -606,7 +649,7 @@ func TestOutboundTrackedBudgetSharedAcrossConnections(t *testing.T) {
 	tr2 := &failAfterTransport{}
 	c1 := newOutboundTestConn(t, tr1, budget)
 	c2 := newOutboundTestConn(t, tr2, budget)
-	body := &encodedOutboundMessage{body: make([]byte, 8), typeID: tg.UpdatesTooLongTypeID}
+	body := exactTestUpdatesEncoded(t, c1, make([]byte, 8))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
@@ -685,7 +728,7 @@ func TestOutboundGlobalBudgetIncludesQueuedBodies(t *testing.T) {
 	budget := newOutboundTrackedBudget(24)
 	tr := newBlockingOutboundTransport()
 	c := newOutboundTestConn(t, tr, budget)
-	body := &encodedOutboundMessage{body: make([]byte, 8), typeID: tg.UpdatesTooLongTypeID}
+	body := exactTestUpdatesEncoded(t, c, make([]byte, 8))
 
 	if err := c.SendBestEffortEncoded(context.Background(), proto.MessageFromServer, body, 0); err != nil {
 		t.Fatalf("enqueue writing body: %v", err)
@@ -731,7 +774,7 @@ func TestOutboundOversizedBodyRejectedBeforeEncryption(t *testing.T) {
 	budget := newOutboundTrackedBudget(64 << 20)
 	tr := &failAfterTransport{}
 	c := newOutboundTestConn(t, tr, budget)
-	body := &encodedOutboundMessage{body: make([]byte, maxOutboundBodyBytes+1), typeID: tg.UpdatesTooLongTypeID}
+	body := exactTestUpdatesEncoded(t, c, make([]byte, maxOutboundBodyBytes+1))
 	err := c.SendEncoded(context.Background(), proto.MessageFromServer, body)
 	if !errors.Is(err, ErrOutboundMessageTooLarge) {
 		t.Fatalf("oversized outbound err = %v, want ErrOutboundMessageTooLarge", err)
@@ -747,7 +790,7 @@ func TestOutboundOversizedBodyRejectedBeforeEncryption(t *testing.T) {
 func TestOutboundCloseRaceDrainsEveryProducerReservation(t *testing.T) {
 	budget := newOutboundTrackedBudget(1 << 20)
 	c := newOutboundTestConn(t, &failAfterTransport{}, budget)
-	body := &encodedOutboundMessage{body: make([]byte, 128), typeID: tg.UpdatesTooLongTypeID}
+	body := exactTestUpdatesEncoded(t, c, make([]byte, 128))
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 128; i++ {
@@ -773,7 +816,7 @@ func TestOutboundTrackedBudgetAckAndCloseReturnExactly(t *testing.T) {
 		c := newOutboundTestConn(t, tr, budget)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		body := &encodedOutboundMessage{body: make([]byte, 12), typeID: tg.UpdatesTooLongTypeID}
+		body := exactTestUpdatesEncoded(t, c, make([]byte, 12))
 		if err := c.SendEncoded(ctx, proto.MessageFromServer, body); err != nil {
 			t.Fatalf("send: %v", err)
 		}
@@ -799,7 +842,7 @@ func TestOutboundTrackedBudgetAckAndCloseReturnExactly(t *testing.T) {
 		c := newOutboundTestConn(t, &failAfterTransport{}, budget)
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		body := &encodedOutboundMessage{body: make([]byte, 12), typeID: tg.UpdatesTooLongTypeID}
+		body := exactTestUpdatesEncoded(t, c, make([]byte, 12))
 		if err := c.SendEncoded(ctx, proto.MessageFromServer, body); err != nil {
 			t.Fatalf("send: %v", err)
 		}
@@ -820,7 +863,7 @@ func TestOutboundTrackedBudgetWriteFailureReturnsReservation(t *testing.T) {
 	c := newOutboundTestConn(t, tr, budget)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	body := &encodedOutboundMessage{body: make([]byte, 12), typeID: tg.UpdatesTooLongTypeID}
+	body := exactTestUpdatesEncoded(t, c, make([]byte, 12))
 	if err := c.SendEncoded(ctx, proto.MessageFromServer, body); err == nil {
 		t.Fatal("send unexpectedly succeeded")
 	}
@@ -993,6 +1036,7 @@ func TestOutboundResendAndAckState(t *testing.T) {
 	clientMsgID := proto.NewMessageIDGen(time.Now)
 	sendEncrypted(t, conn, cipher, auth, clientMsgID.New(proto.MessageFromClient), &mt.PingRequest{PingID: 1})
 	collectReplies(t, conn, cipher, auth.AuthKey, mt.MsgsAckTypeID)
+	freezeActiveTestSessionProfile(t, srv.Conns(), auth.AuthKey.ID, auth.SessionID, tlprofile.ProfileCanonical)
 	srv.Conns().SetReceivesUpdates(auth.SessionID, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -4,16 +4,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/hex"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/transport"
-
-	"telesrv/internal/compat/layerwire"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/iamxvbaba/td/transport"
 )
 
 // Conn 是一个已识别 session 的客户端连接，持有向其加密发送消息所需的全部上下文。
@@ -39,6 +39,21 @@ const (
 	connLifecycleRetired
 )
 
+var (
+	// ErrLayerProfileUnsupported means the requested profile has no generated
+	// exact codec. Profiles are never clamped to the nearest supported layer.
+	ErrLayerProfileUnsupported = errors.New("unsupported exact layer profile")
+	// ErrLayerProfileConflict means one admitted request carried contradictory
+	// profile evidence. A later, well-formed invokeWithLayer is allowed to correct
+	// the connection profile and therefore does not use this error.
+	ErrLayerProfileConflict = errors.New("connection layer profile conflict")
+	// ErrLayerProfileEpochExhausted is a defensive terminal guard. Reaching it
+	// would require more than four billion effective layer corrections on one
+	// physical connection, so wrapping the epoch and making stale pushes current
+	// again is never safe.
+	ErrLayerProfileEpochExhausted = errors.New("connection layer profile epoch exhausted")
+)
+
 type Conn struct {
 	transport transport.Conn
 	// transportLease owns exactly one generation of the physical transport.
@@ -50,20 +65,31 @@ type Conn struct {
 	msgID          *proto.MessageIDGen
 	writeTimeout   time.Duration
 	metrics        Metrics
+	// now shares the Server protocol clock with inbound expiry admission. Tests may
+	// advance it without sleeping; construction-only Conns fall back to time.Now.
+	now func() time.Time
 
 	authKeyID [8]byte
 	// authKeyHex 是 authKeyID 的 hex 缓存：每条 RPC 的结构化日志都会带它，
 	// 建连时算一次，避免热路径反复 hex 编码分配。
 	authKeyHex string
-	sessionID  int64
-	salt       int64
-	key        crypto.AuthKey
+	// authKeyExpiresAt=0 表示 permanent key；正值是 temporary/media-temporary
+	// key 在握手时确定的绝对协议失效时间；-1 是仅供迁移的 legacy-unknown
+	// sentinel（edge 会在创建 Conn 前以 -404 拒绝）。Conn 创建后不可变。
+	authKeyExpiresAt int
+	sessionID        int64
+	salt             int64
+	key              crypto.AuthKey
 
 	outbound        chan outboundOp
 	outboundControl chan outboundOp
-	outboundStop    chan struct{}
-	outboundDone    chan struct{}
-	outboundClose   sync.Once
+	// Critical RPC results (session/difference convergence) and large bulk
+	// responses have independent bounded lanes. The actor remains the sole writer.
+	outboundCritical chan outboundOp
+	outboundBulk     chan outboundOp
+	outboundStop     chan struct{}
+	outboundDone     chan struct{}
+	outboundClose    sync.Once
 	// outboundEnqueueMu orders producer registration against terminal close. Close
 	// flips closing under this lock before waiting, so no WaitGroup Add can race Wait.
 	outboundEnqueueMu sync.Mutex
@@ -103,8 +129,22 @@ type Conn struct {
 	rpcRunning       int
 	rpcReady         bool
 	rpcClosed        bool
-	// inflightRPCBytes 跟踪已入队未完成的 inbound RPC body 总字节，配合 maxInflightRPCBytes
-	// 给 RPC 队列设字节预算（不止限条数），防对抗客户端发大请求撑内存。
+	// rpcReplayRestores is a per-physical-connection ordering barrier. An exact
+	// cached/rewrapped init request has already executed its business handler,
+	// but its wrapper/client/readiness state becomes authoritative only after the
+	// replacement rpc_result is physically written. Queued naked RPCs remain
+	// admitted and budgeted, but are not scheduler-runnable until every such
+	// restore finishes or the connection is fenced.
+	rpcReplayRestores int
+	// Rewrap aliasing never delays execution. initialized stops collecting
+	// candidates after the first valid init wrapper on this physical generation.
+	rpcRewrapInitialized atomic.Bool
+	// rpcResultAcked is invoked by the sole outbound actor after it resolves an
+	// acknowledged server frame back to the rpc_result request msg_id.
+	rpcResultAcked func(*Conn, int64)
+	// inflightRPCBytes 跟踪已预留/入队/执行中 inbound RPC 的 memory charge；legacy
+	// 等于 copied body，exact 是 typed materialization 的保守放大值。它配合
+	// maxInflightRPCBytes 给 RPC 队列设内存预算（不止限条数）。
 	inflightRPCBytes atomic.Int64
 	// 单连接只保留并发配额；实际 worker 来自 Server 共享池，避免每连接预留 goroutine。
 	rpcRootCtx     context.Context
@@ -135,9 +175,26 @@ type Conn struct {
 	membershipGen atomic.Int64
 	// createdAt 是连接建立时刻，供同 auth_key session 数触顶时驱逐真正最旧的连接。
 	createdAt time.Time
-	// clientLayer 是本连接协商的 TL layer（invokeWithLayer/initConnection），由 handleRPC
-	// 在每次 Dispatch 后从 RPC 注册表刷新。出站(rpc_result/push)按此把 227 对象降级给老客户端；
-	// 0 表示尚未协商，按 canonical(227) 处理=不降级。
+	// layerProfileState atomically packs profile, provenance and epoch. A profile
+	// inherited from auth-key metadata is only a default; a later well-formed
+	// invokeWithLayer may correct it. The epoch fences proactive updates prepared
+	// before that correction without invalidating request-bound RPC results.
+	layerProfileMu sync.RWMutex
+	// layerProfileEvidenceMsgID is protected by layerProfileMu. Zero means the
+	// selected profile came from inherited/legacy recovery and therefore has no
+	// ordered client-message cursor yet. Positive values are the newest accepted
+	// invokeWithLayer message for this exact MTProto session.
+	layerProfileEvidenceMsgID int64
+	// layerProfileEvidenceLayer retains the raw negotiated Layer even when this
+	// binary has no generated codec for it. In that case the packed profile stays
+	// Unknown, but msg_id ordering can still admit a newer supported correction
+	// and reject an older/same-id rollback.
+	layerProfileEvidenceLayer int
+	layerProfileState         atomic.Uint64
+	// clientLayer is the package-internal mirror used only by legacy state-machine
+	// regression tests. Production application RPC/result/update encoding uses
+	// the structured profile state. Zero is unknown and must fail closed if a legacy
+	// application value reaches an outbound boundary.
 	clientLayer atomic.Int32
 }
 
@@ -219,19 +276,72 @@ func (c *Conn) isPhysicalTransportCurrentOpen() bool {
 	return c != nil && (c.transportLease == nil || c.transportLease.IsCurrentOpen())
 }
 
-// ClientLayer 返回连接协商的 TL layer；未协商时返回 canonical layer（227，不降级）。
-func (c *Conn) ClientLayer() int {
-	if l := c.clientLayer.Load(); l != 0 {
-		return int(l)
-	}
-	return layerwire.CanonicalLayer
+// LayerProfile returns the exact TL profile currently selected for this
+// connection. ok is false until admission or an inherited auth-key default
+// supplies a supported generated profile.
+func (c *Conn) LayerProfile() (profile tlprofile.Profile, ok bool) {
+	state := c.LayerProfileState()
+	return state.Profile, state.Origin != LayerProfileUnknown
 }
 
-// SetClientLayer 记录连接协商的 TL layer。
-func (c *Conn) SetClientLayer(layer int) { c.clientLayer.Store(int32(layer)) }
+// FreezeLayerProfile records explicit protocol evidence observed during ordered
+// admission. Repeating the same value is idempotent. A later well-formed
+// invokeWithLayer may replace either an inherited default or older explicit
+// evidence; already-admitted requests retain their own immutable profile.
+func (c *Conn) FreezeLayerProfile(profile tlprofile.Profile) error {
+	_, err := c.setLayerProfile(profile, LayerProfileExplicit, true)
+	return err
+}
+
+// FreezeLayerProfileAt applies explicit protocol evidence in client msg_id
+// order. A duplicate older than the last accepted evidence is inert; the same
+// msg_id carrying another Layer is a protocol conflict. Advancing the evidence
+// cursor at an unchanged Layer does not rotate the outbound epoch because the
+// wire profile itself did not change.
+func (c *Conn) FreezeLayerProfileAt(profile tlprofile.Profile, msgID int64) (bool, error) {
+	return c.freezeLayerProfileAt(profile, msgID)
+}
+
+// SeedLayerProfile restores explicit evidence previously proven for this exact
+// logical session. It is kept as the compatible same-session restore API;
+// auth-key-wide metadata must use SeedInheritedLayerProfile instead.
+func (c *Conn) SeedLayerProfile(profile tlprofile.Profile) error {
+	_, err := c.setLayerProfile(profile, LayerProfileExplicit, true)
+	return err
+}
+
+// SeedInheritedLayerProfile installs an auth-key-wide default only while the
+// connection is still unknown. It never overwrites explicit evidence or an
+// already selected inherited default; client protocol evidence owns correction.
+func (c *Conn) SeedInheritedLayerProfile(profile tlprofile.Profile) error {
+	_, err := c.setLayerProfile(profile, LayerProfileInherited, false)
+	return err
+}
+
+// legacyClientLayer returns the test-only canonical-transcoder profile. Zero
+// deliberately remains unknown; it must never be converted into an implicit
+// canonical application profile.
+func (c *Conn) legacyClientLayer() int { return int(c.clientLayer.Load()) }
+
+// setLegacyClientLayer records the package-internal legacy mirror.
+func (c *Conn) setLegacyClientLayer(layer int) { c.clientLayer.Store(int32(layer)) }
 
 // AuthKeyID 返回连接的 auth_key_id。
 func (c *Conn) AuthKeyID() [8]byte { return c.authKeyID }
+
+// AuthKeyExpiresAt 返回 raw 协议 key 的失效时间；0 表示 permanent key。
+func (c *Conn) AuthKeyExpiresAt() int { return c.authKeyExpiresAt }
+
+func (c *Conn) authKeyProtocolUnavailableNow() bool {
+	if c == nil {
+		return true
+	}
+	now := time.Now()
+	if c.now != nil {
+		now = c.now()
+	}
+	return authKeyProtocolUnavailable(c.authKeyExpiresAt, now)
+}
 
 // BusinessAuthKeyID 返回业务视角的 auth_key_id。
 //

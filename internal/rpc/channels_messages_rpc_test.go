@@ -2,10 +2,10 @@ package rpc
 
 import (
 	"context"
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 	"strconv"
 	"strings"
@@ -58,13 +58,9 @@ func TestChannelsDeleteChannelReturnsForbiddenChatAndHidesDialogRPC(t *testing.T
 		if err != nil {
 			t.Fatalf("dispatch get dialogs: %v", err)
 		}
-		box, ok := enc.(*tg.MessagesDialogsBox)
+		dialogs, ok := enc.(*tg.MessagesDialogs)
 		if !ok {
-			t.Fatalf("dialogs response = %T, want box", enc)
-		}
-		dialogs, ok := box.Dialogs.(*tg.MessagesDialogs)
-		if !ok {
-			t.Fatalf("dialogs = %T %+v, want messages.dialogs", box.Dialogs, box.Dialogs)
+			t.Fatalf("dialogs response = %T, want *tg.MessagesDialogs", enc)
 		}
 		return dialogs
 	}
@@ -380,7 +376,7 @@ func TestChannelsDeleteHistoryForEveryoneDrainsBatchesAndKeepsDialogVisible(t *t
 		if err != nil {
 			t.Fatalf("dispatch get dialogs: %v", err)
 		}
-		dialogs, ok := enc.(*tg.MessagesDialogsBox).Dialogs.(*tg.MessagesDialogs)
+		dialogs, ok := enc.(*tg.MessagesDialogs)
 		if !ok {
 			t.Fatalf("dialogs response = %T, want messages.dialogs", enc)
 		}

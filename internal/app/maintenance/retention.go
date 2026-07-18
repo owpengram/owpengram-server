@@ -12,9 +12,16 @@ type DispatchOutboxRetentionStore interface {
 	DeleteFailed(ctx context.Context, olderThan time.Duration, limit int) (int, error)
 }
 
-// TempAuthKeyRetentionStore 回收过期的 PFS temp auth key 绑定。
+// TempAuthKeyRetentionStore 回收过期的 PFS temp auth key（含未绑定 key）。
 type TempAuthKeyRetentionStore interface {
 	DeleteExpired(ctx context.Context, expiredBefore int64, limit int) (int, error)
+}
+
+// AuthKeySessionLayerRetentionStore reclaims expired short-lived Layer
+// watermarks. Selector freshness, not retention timing, is the correctness
+// gate; this worker only bounds durable storage.
+type AuthKeySessionLayerRetentionStore interface {
+	DeleteExpiredSessionLayers(ctx context.Context, limit int) (int, error)
 }
 
 // OrphanAuthKeyRetentionStore 回收从未形成授权/temp binding 的旧握手 key。
@@ -64,9 +71,9 @@ type LoginCodeDeliveryRetentionStore interface {
 // getUpdates 读取（fromID 恒 > confirmed），宽限仅防御 offset 回拨调试；回收目标是清堆积。
 const botAPIConfirmedGrace = 15 * time.Minute
 
-// tempAuthKeyExpiryGrace 是 temp key 过期后的回收宽限：ResolveAuthKey 对
-// 「已过期但 perm 已授权」的绑定是容忍的，立即删除会突然断掉这批宽限中的
-// 连接；回收目标是清堆积，晚一天无妨。
+// tempAuthKeyExpiryGrace 只是一段数据库物理回收宽限。MTProto edge 在 expires_at
+// 到点即停止入站 RPC、主动推送和重发，并断开连接；ResolveAuthKey 不容忍过期 key。
+// 晚一天删除用于吸收客户端轮换/诊断窗口，不会延长协议有效期。
 const tempAuthKeyExpiryGrace = 24 * time.Hour
 
 const (
@@ -86,7 +93,8 @@ const (
 // updates 服务通过普通 differenceSlice checkpoint 推进，不发送 differenceTooLong。
 type RetentionWorker struct {
 	outbox                 DispatchOutboxRetentionStore
-	tempKeys               TempAuthKeyRetentionStore  // 可为 nil（不回收 temp key 绑定）
+	tempKeys               TempAuthKeyRetentionStore // 可为 nil（不回收 temp key 绑定）
+	authKeySessionLayers   AuthKeySessionLayerRetentionStore
 	botAPIUpdates          BotAPIUpdateRetentionStore // 可为 nil（不回收 Bot API 队列）
 	userUpdates            UserUpdateEventRetentionStore
 	channelUpdates         ChannelUpdateEventRetentionStore
@@ -176,6 +184,13 @@ func (w *RetentionWorker) WithLoginCodeDeliveryRetention(store LoginCodeDelivery
 	return w
 }
 
+// WithAuthKeySessionLayerRetention enables bounded seek cleanup for expired
+// per-session Layer evidence.
+func (w *RetentionWorker) WithAuthKeySessionLayerRetention(store AuthKeySessionLayerRetentionStore) *RetentionWorker {
+	w.authKeySessionLayers = store
+	return w
+}
+
 // WithOrphanAuthKeyRetention 启用未授权握手 key 的有界回收。active 必须提供 raw key，
 // 不能提供 temp→perm business key；否则未登录或 PFS 连接会被误判为 orphan。
 func (w *RetentionWorker) WithOrphanAuthKeyRetention(store OrphanAuthKeyRetentionStore, active ActiveRawAuthKeyProvider, retention time.Duration) *RetentionWorker {
@@ -243,6 +258,14 @@ func (w *RetentionWorker) runOutboxPoisonOnce(ctx context.Context) {
 }
 
 func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
+	if w.authKeySessionLayers != nil {
+		deleted, err := w.authKeySessionLayers.DeleteExpiredSessionLayers(ctx, w.batch)
+		if err != nil {
+			w.logger.Warn("回收过期 auth-key session Layer 证据失败", zap.Error(err))
+		} else if deleted > 0 {
+			w.logger.Info("回收过期 auth-key session Layer 证据完成", zap.Int("deleted", deleted))
+		}
+	}
 	if w.loginCodeDeliveries != nil {
 		deleted, err := w.loginCodeDeliveries.DeleteExpiredLoginCodeDeliveries(ctx, time.Now(), w.batch)
 		if err != nil {

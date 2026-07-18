@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"
@@ -1533,9 +1533,6 @@ func dispatchMessagesPayload(t *testing.T, r *Router, ctx context.Context, req b
 	out, err := r.Dispatch(ctx, [8]byte{}, 0, &in)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
-	}
-	if box, ok := out.(*tg.MessagesMessagesBox); ok {
-		return box.Messages
 	}
 	return out
 }

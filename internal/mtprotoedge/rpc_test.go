@@ -8,20 +8,21 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
+	"github.com/iamxvbaba/td/transport"
 
+	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/rpc"
 )
 
 // TestRPCGetConfig 验证 M3：握手后 client 加密 help.getConfig，
-// server 经 tg.ServerDispatcher 路由并回 rpc_result（含本地 DC），外加 new_session_created + ack。
+// server 经 tlprofile.Dispatcher 路由并回 rpc_result（含本地 DC），外加 new_session_created + ack。
 func TestRPCGetConfig(t *testing.T) {
 	const (
 		dc      = 2
@@ -29,7 +30,7 @@ func TestRPCGetConfig(t *testing.T) {
 		advPort = 12345
 	)
 	router := rpc.New(rpc.Config{DC: dc, IP: advIP, Port: advPort}, rpc.Deps{}, zaptest.NewLogger(t), clock.System)
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: router})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: router})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
@@ -67,6 +68,56 @@ func TestRPCGetConfig(t *testing.T) {
 	}
 }
 
+func TestLayerRPCGetConfigUsesExactAdmittedProfile(t *testing.T) {
+	const (
+		dc      = 2
+		advIP   = "127.0.0.1"
+		advPort = 12345
+	)
+	router := rpc.New(rpc.Config{DC: dc, IP: advIP, Port: advPort}, rpc.Deps{}, zaptest.NewLogger(t), clock.System)
+	addr, pub, _ := startTestServer(t, Options{DC: dc, LayerRPC: router})
+	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
+
+	clientMsgID := proto.NewMessageIDGen(time.Now)
+	reqMsgID := clientMsgID.New(proto.MessageFromClient)
+	request := &tg.InvokeWithLayerRequest{
+		Layer: int(tlprofile.Profile225),
+		Query: &tg.InitConnectionRequest{
+			APIID:          123,
+			DeviceModel:    "Desktop",
+			SystemVersion:  "Windows",
+			AppVersion:     "test",
+			SystemLangCode: "en",
+			LangPack:       "tdesktop",
+			LangCode:       "en",
+			Query:          &tg.HelpGetConfigRequest{},
+		},
+	}
+	sendEncrypted(t, conn, cipher, auth, reqMsgID, request)
+
+	replies := collectReplies(t, conn, cipher, auth.AuthKey, proto.ResultTypeID)
+	resultBuf := mustHave(t, replies, proto.ResultTypeID, "rpc_result")
+	var result proto.Result
+	if err := result.Decode(resultBuf); err != nil {
+		t.Fatalf("decode rpc_result: %v", err)
+	}
+	if result.RequestMessageID != reqMsgID {
+		t.Fatalf("rpc_result req_msg_id = %d, want %d", result.RequestMessageID, reqMsgID)
+	}
+	exact := &bin.Buffer{Buf: result.Result}
+	configObject, err := tlprofile.DecodeObject(tlprofile.Profile225, exact, tlprofile.Limits{})
+	if err != nil {
+		t.Fatalf("decode layer 225 config: %v", err)
+	}
+	config, ok := configObject.(*tg.Config)
+	if !ok {
+		t.Fatalf("layer 225 config = %T, want *tg.Config", configObject)
+	}
+	if exact.Len() != 0 || config.ThisDC != dc {
+		t.Fatalf("layer 225 config = dc:%d remaining:%d", config.ThisDC, exact.Len())
+	}
+}
+
 func TestInboundRPCQueueFullReturnsFloodWait(t *testing.T) {
 	const dc = 2
 	handler := &blockingRPC{
@@ -75,7 +126,7 @@ func TestInboundRPCQueueFullReturnsFloodWait(t *testing.T) {
 	}
 	addr, pub, _ := startTestServer(t, Options{
 		DC:             dc,
-		RPC:            handler,
+		legacyRPC:      handler,
 		RPCMaxInflight: 1,
 		RPCQueueSize:   1,
 		RPCTimeout:     5 * time.Second,
@@ -115,7 +166,7 @@ func TestInboundRPCQueuedDeadlineReturnsRPCTimeout(t *testing.T) {
 	}
 	addr, pub, _ := startTestServer(t, Options{
 		DC:               dc,
-		RPC:              handler,
+		legacyRPC:        handler,
 		RPCMaxInflight:   1,
 		RPCQueueSize:     2,
 		RPCTimeout:       60 * time.Millisecond,
@@ -168,7 +219,7 @@ func TestInboundRPCRunningDeadlineWaitsForHandlerTerminalResult(t *testing.T) {
 			}
 			addr, pub, _ := startTestServer(t, Options{
 				DC:               dc,
-				RPC:              handler,
+				legacyRPC:        handler,
 				RPCMaxInflight:   1,
 				RPCQueueSize:     1,
 				RPCTimeout:       60 * time.Millisecond,
@@ -215,7 +266,7 @@ func TestInboundRPCRunningDeadlineWaitsForHandlerTerminalResult(t *testing.T) {
 func TestDuplicateRPCResultAcrossReconnectUsesSessionCache(t *testing.T) {
 	const dc = 2
 	handler := &countingConfigRPC{}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)
@@ -253,7 +304,7 @@ func TestCanceledRPCErrorIsNotCachedAcrossReconnect(t *testing.T) {
 		firstStarted: make(chan struct{}),
 		firstDone:    make(chan struct{}),
 	}
-	addr, pub, _ := startTestServer(t, Options{DC: dc, RPC: handler})
+	addr, pub, _ := startTestServer(t, Options{DC: dc, legacyRPC: handler})
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 
 	clientMsgID := proto.NewMessageIDGen(time.Now)

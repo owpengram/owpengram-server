@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/clock"
-	"github.com/gotd/td/tg"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
 	appaccount "telesrv/internal/app/account"
@@ -139,13 +139,9 @@ func TestCustomStickerPackLinkInstallAndSendSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("alice get history: %v", err)
 	}
-	box, ok := enc.(*tg.MessagesMessagesBox)
+	messages, ok := enc.(*tg.MessagesMessages)
 	if !ok {
-		t.Fatalf("history response = %T, want *tg.MessagesMessagesBox", enc)
-	}
-	messages, ok := box.Messages.(*tg.MessagesMessages)
-	if !ok {
-		t.Fatalf("history payload = %T, want *tg.MessagesMessages", box.Messages)
+		t.Fatalf("history response = %T, want *tg.MessagesMessages", enc)
 	}
 	if len(messages.Messages) != 1 {
 		t.Fatalf("history messages = %d, want 1", len(messages.Messages))

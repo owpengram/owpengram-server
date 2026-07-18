@@ -8,12 +8,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/gotd/td/bin"
-	"github.com/gotd/td/crypto"
-	"github.com/gotd/td/exchange"
-	"github.com/gotd/td/mt"
-	"github.com/gotd/td/proto/codec"
-	"github.com/gotd/td/transport"
+	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/crypto"
+	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mt"
+	"github.com/iamxvbaba/td/proto/codec"
+	"github.com/iamxvbaba/td/transport"
 
 	"telesrv/internal/store"
 )
@@ -98,12 +98,13 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 }
 
 // authKeyData 把握手结果转换为 store 记录。
-func authKeyData(key crypto.AuthKey, salt, createdAt int64) store.AuthKeyData {
+func authKeyData(key crypto.AuthKey, salt, createdAt int64, expiresAt int) store.AuthKeyData {
 	return store.AuthKeyData{
 		ID:         key.ID,
 		Value:      [256]byte(key.Value),
 		ServerSalt: salt,
 		CreatedAt:  createdAt,
+		ExpiresAt:  expiresAt,
 	}
 }
 
@@ -118,6 +119,24 @@ func (s *Server) sendProtoError(ctx context.Context, conn transport.Conn, code i
 		return fmt.Errorf("send proto error %d: %w", code, err)
 	}
 	return nil
+}
+
+// sendTerminalProtoError serializes a bare transport error after the authenticated
+// outbound actor has stopped. A direct write while the actor is still draining can
+// otherwise interleave an encrypted update/result after -404 on the same socket.
+func (s *Server) sendTerminalProtoError(ctx context.Context, c *Conn, code int32) error {
+	if c == nil {
+		return errors.New("send terminal protocol error without logical connection")
+	}
+	c.beginTerminalShutdown()
+	if !c.waitOutboundShutdownUntil(forceCloseBatchTimeout) {
+		c.closeTransport()
+		return errors.New("outbound writer did not stop before terminal protocol error")
+	}
+	if c.transport == nil {
+		return ErrConnClosed
+	}
+	return s.sendProtoError(ctx, c.transport, code)
 }
 
 // maxHandshakeReqPQ 是一次密钥交换内允许的 req_pq(_multi) 帧数上界。正常握手只发 1 个

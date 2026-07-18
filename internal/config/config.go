@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,13 +37,23 @@ type Config struct {
 	// MTProtoMaxConcurrentHandshakes 限制昂贵 RSA/DH exchange 并发；负数关闭。
 	MTProtoMaxConcurrentHandshakes int
 	// MTProto RPC 使用 Server 共享公平调度器；per-connection 与 global 预算共同限制
-	// goroutine、排队任务和 request body 内存。
+	// goroutine、排队任务和 request memory charge。legacy charge 等于 copied body，
+	// exact charge 是 typed decode 前的保守 materialization 上界，不等同 wire bytes。
 	MTProtoRPCMaxInflight    int
 	MTProtoRPCQueueSize      int
 	MTProtoRPCTimeout        time.Duration
 	MTProtoRPCGlobalWorkers  int
 	MTProtoRPCGlobalMaxTasks int
 	MTProtoRPCGlobalMaxBytes int64
+	// Pending ownership and completed rpc_result replay state share a three-level
+	// global/raw-auth/session budget over the full MTProto duplicate horizon.
+	MTProtoRPCResultCacheMaxEntries        int
+	MTProtoRPCResultCacheMaxBytes          int64
+	MTProtoRPCResultCacheAuthMaxEntries    int
+	MTProtoRPCResultCacheAuthMaxBytes      int64
+	MTProtoRPCResultCacheSessionMaxEntries int
+	MTProtoRPCResultCacheSessionMaxBytes   int64
+	MTProtoRPCResultPendingPerAuth         int
 	// MTProtoInboundFrameGlobalMaxBytes 是 transport wire + 最大解密 plaintext 的
 	// 进程级在途预算；frame 长度读出后、payload 分配前预留。
 	MTProtoInboundFrameGlobalMaxBytes int64
@@ -104,6 +115,9 @@ type Config struct {
 	DevAuthCode string
 	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
 	AuthCodeTTL time.Duration
+	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
+	// provider 继续使用 DevAuthCode 原样，不受此字段影响。
+	PhoneCodeLength int
 	// AuthCodeMaxAttempts 是同一 phone_code_hash / email verification code 的最大错误次数。
 	// 达到上限后验证码立即失效，用户必须重发。
 	AuthCodeMaxAttempts int
@@ -121,8 +135,9 @@ type Config struct {
 	LoginEmailCodeLength int
 	// EmailSignupEnable 启用「邮箱作为账号身份」模式：客户端用邮箱注册/登录，服务端把邮箱
 	// 编码进一个 888 前缀的合成号码复用现有 phone 全流程（sendCode/signUp/signIn/changePhone
-	// 不变），验证码通过 SMTP 发到解码出的邮箱而非发短信。要求 SMTP 配置可用（与
-	// LoginEmailEnable 共用同一组 TELESRV_SMTP_* 变量）。
+	// 不变），验证码通过登录邮箱同一投递通道（PhoneCodeDeliveryProvider/smtp 或 webhook）
+	// 发到解码出的邮箱而非发短信。要求该通道配置可用（与 LoginEmailEnable 共用同一组
+	// TELESRV_SMTP_* / TELESRV_OTP_WEBHOOK_* 变量）。
 	EmailSignupEnable bool
 	// EmailSignupPhonePrefixes 是账号实际可见的 users.phone 短号码
 	// （domain.NewEmailSignupDisplayPhone）随机选用的号段前缀列表，逗号分隔，
@@ -132,7 +147,18 @@ type Config struct {
 	// help.getAppConfig 的 email_signup_phone_prefixes 下发给客户端，管理员
 	// 改动此列表不需要客户端升级。
 	EmailSignupPhonePrefixes []string
-	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 时必须可用。
+	// PhoneCodeDeliveryProvider 选择普通登录/注册与改号验证码的投递方式：
+	// development 保留固定码与 777000 app-code；webhook 使用随机 SMS code。
+	PhoneCodeDeliveryProvider string
+	// EmailCodeDeliveryProvider 选择登录邮箱与邮箱 setup/change 的投递方式
+	// （login email 与 email-signup 共用同一个开关，见 EmailSignupEnable）。
+	EmailCodeDeliveryProvider string
+	// OTPWebhook* 定义固定 v1 webhook 协议的端点、HMAC secret 与请求超时。
+	OTPWebhookURL     string
+	OTPWebhookSecret  string
+	OTPWebhookTimeout time.Duration
+	// SMTP* 是登录邮箱验证码的出站邮件配置。LoginEmailEnable=true 或
+	// EmailSignupEnable=true 且 provider=smtp 时使用。
 	SMTPHost     string
 	SMTPPort     int
 	SMTPUsername string
@@ -415,18 +441,29 @@ func Load() (Config, error) {
 		// AdvertiseIP 当前不影响 help.getConfig——getConfig 返回空 DCOptions，
 		// 客户端使用其写死的 static DC 地址（见 compat/tdesktop/config.go）。
 		// 字段与默认值保留，供未来需要显式下发 DC 地址时使用。
-		AdvertiseIP:                          envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
-		RSAKeyPath:                           envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
-		DC:                                   envIntOr("TELESRV_DC", 2),
-		MTProtoMaxConnections:                envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
-		MTProtoMaxConnectionsPerIP:           envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
-		MTProtoMaxConcurrentHandshakes:       envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
-		MTProtoRPCMaxInflight:                envIntOr("TELESRV_MTPROTO_RPC_MAX_INFLIGHT", 32),
-		MTProtoRPCQueueSize:                  envIntOr("TELESRV_MTPROTO_RPC_QUEUE_SIZE", 64),
-		MTProtoRPCTimeout:                    envDurationOr("TELESRV_MTPROTO_RPC_TIMEOUT", 30*time.Second),
-		MTProtoRPCGlobalWorkers:              envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", 256),
-		MTProtoRPCGlobalMaxTasks:             envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", 8192),
-		MTProtoRPCGlobalMaxBytes:             envInt64Or("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", 512<<20),
+		AdvertiseIP:                         envOr("TELESRV_ADVERTISE_IP", "127.0.0.1"),
+		RSAKeyPath:                          envOr("TELESRV_RSA_KEY", "data/server_rsa.pem"),
+		DC:                                  envIntOr("TELESRV_DC", 2),
+		MTProtoMaxConnections:               envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS", 200000),
+		MTProtoMaxConnectionsPerIP:          envIntOr("TELESRV_MTPROTO_MAX_CONNECTIONS_PER_IP", 4096),
+		MTProtoMaxConcurrentHandshakes:      envIntOr("TELESRV_MTPROTO_MAX_CONCURRENT_HANDSHAKES", 256),
+		MTProtoRPCMaxInflight:               envIntOr("TELESRV_MTPROTO_RPC_MAX_INFLIGHT", 32),
+		MTProtoRPCQueueSize:                 envIntOr("TELESRV_MTPROTO_RPC_QUEUE_SIZE", 64),
+		MTProtoRPCTimeout:                   envDurationOr("TELESRV_MTPROTO_RPC_TIMEOUT", 30*time.Second),
+		MTProtoRPCGlobalWorkers:             envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", 256),
+		MTProtoRPCGlobalMaxTasks:            envIntOr("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", 8192),
+		MTProtoRPCGlobalMaxBytes:            envInt64Or("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", 512<<20),
+		MTProtoRPCResultCacheMaxEntries:     envIntOr("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", 1<<18),
+		MTProtoRPCResultCacheMaxBytes:       envInt64Or("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES", 64<<20),
+		MTProtoRPCResultCacheAuthMaxEntries: envIntOr("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES", 1<<15),
+		MTProtoRPCResultCacheAuthMaxBytes:   envInt64Or("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", 32<<20),
+		MTProtoRPCResultCacheSessionMaxEntries: envIntOr(
+			"TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES", 1<<14,
+		),
+		MTProtoRPCResultCacheSessionMaxBytes: envInt64Or(
+			"TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", 16<<20,
+		),
+		MTProtoRPCResultPendingPerAuth:       envIntOr("TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", 1<<11),
 		MTProtoInboundFrameGlobalMaxBytes:    envInt64Or("TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES", 512<<20),
 		MTProtoOutboundQueueSize:             envIntOr("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", 128),
 		MTProtoOutboundControlQueueSize:      envIntOr("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", 32),
@@ -460,6 +497,7 @@ func Load() (Config, error) {
 
 		DevAuthCode:                   envOr("TELESRV_DEV_AUTH_CODE", "12345"),
 		AuthCodeTTL:                   envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
+		PhoneCodeLength:               envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
 		AuthCodeMaxAttempts:           envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
 		AuthCodePhoneRateLimit:        envIntOr("TELESRV_AUTH_CODE_PHONE_RATE_LIMIT", 5),
 		AuthCodeAuthKeyRateLimit:      envIntOr("TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT", 20),
@@ -469,6 +507,11 @@ func Load() (Config, error) {
 		EmailSignupEnable:             envBoolOr("TELESRV_EMAIL_SIGNUP_ENABLE", false),
 		EmailSignupPhonePrefixes:      envListOr("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES", []string{"888"}),
 		LoginEmailCodeLength:          envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		PhoneCodeDeliveryProvider:     strings.ToLower(strings.TrimSpace(envOr("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "development"))),
+		EmailCodeDeliveryProvider:     strings.ToLower(strings.TrimSpace(envOr("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "smtp"))),
+		OTPWebhookURL:                 envOr("TELESRV_OTP_WEBHOOK_URL", ""),
+		OTPWebhookSecret:              envOr("TELESRV_OTP_WEBHOOK_SECRET", ""),
+		OTPWebhookTimeout:             envDurationOr("TELESRV_OTP_WEBHOOK_TIMEOUT", 5*time.Second),
 		SMTPHost:                      envOr("TELESRV_SMTP_HOST", ""),
 		SMTPPort:                      envIntOr("TELESRV_SMTP_PORT", 587),
 		SMTPUsername:                  envOr("TELESRV_SMTP_USERNAME", ""),
@@ -576,7 +619,43 @@ func Load() (Config, error) {
 	if err := validateLoginEmailConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateRPCResultCacheConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+const mtProtoRPCResultMinBytes = int64((1 << 24) - (2 << 10))
+
+func validateRPCResultCacheConfig(cfg Config) error {
+	if cfg.MTProtoRPCResultCacheMaxEntries <= 0 || cfg.MTProtoRPCResultCacheAuthMaxEntries <= 0 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries <= 0 {
+		return fmt.Errorf("MTProto rpc_result entry limits must be positive")
+	}
+	if cfg.MTProtoRPCResultCacheMaxEntries < cfg.MTProtoRPCResultCacheAuthMaxEntries ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries < cfg.MTProtoRPCResultCacheSessionMaxEntries {
+		return fmt.Errorf("MTProto rpc_result entry hierarchy must satisfy global >= auth >= session: %d/%d/%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxEntries)
+	}
+	if cfg.MTProtoRPCResultCacheMaxBytes < mtProtoRPCResultMinBytes ||
+		cfg.MTProtoRPCResultCacheAuthMaxBytes < mtProtoRPCResultMinBytes ||
+		cfg.MTProtoRPCResultCacheSessionMaxBytes < mtProtoRPCResultMinBytes {
+		return fmt.Errorf("MTProto rpc_result byte limits must each be at least %d: %d/%d/%d",
+			mtProtoRPCResultMinBytes, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxBytes, cfg.MTProtoRPCResultCacheSessionMaxBytes)
+	}
+	if cfg.MTProtoRPCResultCacheMaxBytes < cfg.MTProtoRPCResultCacheAuthMaxBytes ||
+		cfg.MTProtoRPCResultCacheAuthMaxBytes < cfg.MTProtoRPCResultCacheSessionMaxBytes {
+		return fmt.Errorf("MTProto rpc_result byte hierarchy must satisfy global >= auth >= session: %d/%d/%d",
+			cfg.MTProtoRPCResultCacheMaxBytes, cfg.MTProtoRPCResultCacheAuthMaxBytes, cfg.MTProtoRPCResultCacheSessionMaxBytes)
+	}
+	if cfg.MTProtoRPCGlobalMaxTasks <= 0 || cfg.MTProtoRPCResultPendingPerAuth <= 0 ||
+		cfg.MTProtoRPCResultPendingPerAuth > cfg.MTProtoRPCGlobalMaxTasks ||
+		cfg.MTProtoRPCResultPendingPerAuth > cfg.MTProtoRPCResultCacheAuthMaxEntries {
+		return fmt.Errorf("MTProto rpc_result pending-per-auth %d must be positive and <= global pending %d and auth entries %d",
+			cfg.MTProtoRPCResultPendingPerAuth, cfg.MTProtoRPCGlobalMaxTasks, cfg.MTProtoRPCResultCacheAuthMaxEntries)
+	}
+	return nil
 }
 
 func validateLoginEmailConfig(cfg Config) error {
@@ -588,6 +667,9 @@ func validateLoginEmailConfig(cfg Config) error {
 	}
 	if cfg.AuthCodeMaxAttempts <= 0 {
 		return fmt.Errorf("TELESRV_AUTH_CODE_MAX_ATTEMPTS must be positive")
+	}
+	if cfg.PhoneCodeLength < 4 || cfg.PhoneCodeLength > 10 {
+		return fmt.Errorf("TELESRV_PHONE_CODE_LENGTH must be between 4 and 10")
 	}
 	if cfg.LoginEmailCodeLength < 4 || cfg.LoginEmailCodeLength > 10 {
 		return fmt.Errorf("TELESRV_LOGIN_EMAIL_CODE_LENGTH must be between 4 and 10")
@@ -607,7 +689,33 @@ func validateLoginEmailConfig(cfg Config) error {
 			}
 		}
 	}
-	if !cfg.LoginEmailEnable && !cfg.EmailSignupEnable {
+	switch cfg.PhoneCodeDeliveryProvider {
+	case "development", "webhook":
+	default:
+		return fmt.Errorf("TELESRV_PHONE_CODE_DELIVERY_PROVIDER must be development or webhook")
+	}
+	switch cfg.EmailCodeDeliveryProvider {
+	case "smtp", "webhook":
+	default:
+		return fmt.Errorf("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER must be smtp or webhook")
+	}
+	// EmailSignupEnable shares the same delivery channel as LoginEmailEnable
+	// (see Config.EmailSignupEnable doc), so it must gate the webhook/SMTP
+	// requirement checks identically, or an email-signup-only deployment
+	// (LoginEmailEnable=false) would skip webhook URL validation and SMTP
+	// requiredness below even though it needs one of them configured.
+	webhookEnabled := cfg.PhoneCodeDeliveryProvider == "webhook" ||
+		((cfg.LoginEmailEnable || cfg.EmailSignupEnable) && cfg.EmailCodeDeliveryProvider == "webhook")
+	if webhookEnabled {
+		if cfg.OTPWebhookTimeout <= 0 {
+			return fmt.Errorf("TELESRV_OTP_WEBHOOK_TIMEOUT must be positive")
+		}
+		u, err := url.Parse(strings.TrimSpace(cfg.OTPWebhookURL))
+		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return fmt.Errorf("TELESRV_OTP_WEBHOOK_URL must be an absolute http(s) URL without userinfo")
+		}
+	}
+	if (!cfg.LoginEmailEnable && !cfg.EmailSignupEnable) || cfg.EmailCodeDeliveryProvider == "webhook" {
 		return nil
 	}
 	if strings.TrimSpace(cfg.SMTPHost) == "" {

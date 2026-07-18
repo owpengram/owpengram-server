@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gotd/td/tg"
-	"github.com/gotd/td/tgerr"
+	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 	"go.uber.org/zap"
 	"telesrv/internal/domain"
 )
@@ -174,7 +174,7 @@ func (r *Router) onMessagesUnpinAllMessages(ctx context.Context, req *tg.Message
 // createChatNeedsLegacyChat decides whether messages.createChat returns the
 // legacy chat-shaped response. Old DrKLO/TDesktop clients (and pre-initConnection
 // sessions) expect it; modern clients get the canonical InvitedUsers response.
-// The old createChat#34a818 id now upgrades via layerwire to the canonical id,
+// The old createChat#34a818 id now upgrades via the gotdgen client overlay,
 // and android client metadata is applied during that upgrade, so keying on
 // ClientType (below) is sufficient — no per-request ctx flag is needed.
 func createChatNeedsLegacyChat(ctx context.Context) bool {
@@ -655,7 +655,7 @@ func (r *Router) channelIDFromLegacyInputPeerChecked(ctx context.Context, userID
 
 func channelInvalidErr(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrUserSendRestricted):
+	case errors.Is(err, domain.ErrUserFrozen):
 		return frozenMethodInvalidErr()
 	case errors.Is(err, domain.ErrChannelTitleInvalid):
 		return tgerr400("CHAT_TITLE_EMPTY")

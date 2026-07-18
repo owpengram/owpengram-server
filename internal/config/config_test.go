@@ -35,13 +35,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 	disableDefaultConfigFile(t)
-	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
+	t.Setenv("TELESRV_ADVERTISE_IP", "192.0.2.10")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AdvertiseIP != "203.0.113.10" {
+	if cfg.AdvertiseIP != "192.0.2.10" {
 		t.Fatalf("AdvertiseIP = %q, want explicit env", cfg.AdvertiseIP)
 	}
 }
@@ -57,6 +57,13 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", "33")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", "444")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", "555555")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", "555")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_BYTES", "70000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_ENTRIES", "444")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", "40000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_ENTRIES", "333")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", "20000000")
+	t.Setenv("TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", "222")
 	t.Setenv("TELESRV_MTPROTO_INBOUND_FRAME_GLOBAL_MAX_BYTES", "777777")
 	t.Setenv("TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", "88")
 	t.Setenv("TELESRV_MTPROTO_OUTBOUND_CONTROL_QUEUE_SIZE", "22")
@@ -77,6 +84,16 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 		cfg.MTProtoRPCGlobalWorkers != 33 || cfg.MTProtoRPCGlobalMaxTasks != 444 || cfg.MTProtoRPCGlobalMaxBytes != 555555 {
 		t.Fatalf("rpc budget config = %d/%d/%v/%d/%d/%d", cfg.MTProtoRPCMaxInflight, cfg.MTProtoRPCQueueSize, cfg.MTProtoRPCTimeout, cfg.MTProtoRPCGlobalWorkers, cfg.MTProtoRPCGlobalMaxTasks, cfg.MTProtoRPCGlobalMaxBytes)
 	}
+	if cfg.MTProtoRPCResultCacheMaxEntries != 555 || cfg.MTProtoRPCResultCacheMaxBytes != 70000000 ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries != 444 || cfg.MTProtoRPCResultCacheAuthMaxBytes != 40000000 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries != 333 || cfg.MTProtoRPCResultCacheSessionMaxBytes != 20000000 ||
+		cfg.MTProtoRPCResultPendingPerAuth != 222 {
+		t.Fatalf("rpc result cache config = global:%d/%d auth:%d/%d session:%d/%d pending/auth:%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxBytes,
+			cfg.MTProtoRPCResultCacheSessionMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxBytes,
+			cfg.MTProtoRPCResultPendingPerAuth)
+	}
 	if cfg.MTProtoInboundFrameGlobalMaxBytes != 777777 {
 		t.Fatalf("inbound frame budget config = %d", cfg.MTProtoInboundFrameGlobalMaxBytes)
 	}
@@ -85,6 +102,46 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	}
 	if cfg.TempKeyResolveCacheMaxEntries != 666 || cfg.TempKeyResolveCacheTTL != 17*time.Minute || cfg.OrphanAuthKeyRetention != 36*time.Hour {
 		t.Fatalf("auth key resource config = %d/%v/%v", cfg.TempKeyResolveCacheMaxEntries, cfg.TempKeyResolveCacheTTL, cfg.OrphanAuthKeyRetention)
+	}
+}
+
+func TestLoadRPCResultFairBudgetDefaults(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MTProtoRPCResultCacheMaxEntries != 1<<18 || cfg.MTProtoRPCResultCacheMaxBytes != 64<<20 ||
+		cfg.MTProtoRPCResultCacheAuthMaxEntries != 1<<15 || cfg.MTProtoRPCResultCacheAuthMaxBytes != 32<<20 ||
+		cfg.MTProtoRPCResultCacheSessionMaxEntries != 1<<14 || cfg.MTProtoRPCResultCacheSessionMaxBytes != 16<<20 ||
+		cfg.MTProtoRPCResultPendingPerAuth != 1<<11 {
+		t.Fatalf("rpc_result fair defaults = global:%d/%d auth:%d/%d session:%d/%d pending/auth:%d",
+			cfg.MTProtoRPCResultCacheMaxEntries, cfg.MTProtoRPCResultCacheMaxBytes,
+			cfg.MTProtoRPCResultCacheAuthMaxEntries, cfg.MTProtoRPCResultCacheAuthMaxBytes,
+			cfg.MTProtoRPCResultCacheSessionMaxEntries, cfg.MTProtoRPCResultCacheSessionMaxBytes,
+			cfg.MTProtoRPCResultPendingPerAuth)
+	}
+}
+
+func TestLoadRejectsInvalidRPCResultFairBudgets(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "entry hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_MAX_ENTRIES", value: "1024"},
+		{name: "byte below outbound body", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_SESSION_MAX_BYTES", value: "16700000"},
+		{name: "byte hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_CACHE_AUTH_MAX_BYTES", value: "70000000"},
+		{name: "pending hierarchy", key: "TELESRV_MTPROTO_RPC_RESULT_PENDING_PER_AUTH", value: "9000"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
 	}
 }
 
@@ -142,6 +199,7 @@ func TestLoadLoginEmailDefaultsDisabled(t *testing.T) {
 		t.Fatal("LoginEmailRequireSetup = true, want false")
 	}
 	if cfg.AuthCodeTTL != 5*time.Minute || cfg.AuthCodeMaxAttempts != 5 || cfg.LoginEmailCodeLength != 6 ||
+		cfg.PhoneCodeLength != 5 || cfg.PhoneCodeDeliveryProvider != "development" || cfg.EmailCodeDeliveryProvider != "smtp" ||
 		cfg.AuthCodePhoneRateLimit != 5 || cfg.AuthCodeAuthKeyRateLimit != 20 || cfg.AuthCodeRateWindow != 10*time.Minute {
 		t.Fatalf("auth/login email defaults = ttl=%v attempts=%d length=%d phone_limit=%d key_limit=%d window=%v",
 			cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts, cfg.LoginEmailCodeLength,
@@ -191,6 +249,84 @@ func TestLoadLoginEmailRequiresSMTPWhenEnabled(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with login email enabled but no SMTP host")
+	}
+}
+
+func TestLoadLoginEmailWebhookDoesNotRequireSMTP(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_LOGIN_EMAIL_ENABLE", "true")
+	t.Setenv("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "https://otp.example.test/v1/deliveries")
+	t.Setenv("TELESRV_OTP_WEBHOOK_SECRET", "test-secret")
+	t.Setenv("TELESRV_OTP_WEBHOOK_TIMEOUT", "3s")
+	t.Setenv("TELESRV_SMTP_HOST", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.EmailCodeDeliveryProvider != "webhook" || cfg.OTPWebhookURL != "https://otp.example.test/v1/deliveries" ||
+		cfg.OTPWebhookSecret != "test-secret" || cfg.OTPWebhookTimeout != 3*time.Second {
+		t.Fatalf("webhook config = %#v", cfg)
+	}
+}
+
+// TestLoadEmailSignupAloneRequiresSMTPWhenEnabled asserts that
+// TELESRV_EMAIL_SIGNUP_ENABLE=true still requires a configured delivery
+// channel even when TELESRV_LOGIN_EMAIL_ENABLE is off. Email-signup accounts
+// share the same loginEmailSender/SMTP-or-webhook config as login email (see
+// Config.EmailSignupEnable doc); the two features must gate identically, or
+// an email-signup-only deployment would silently skip this validation and
+// only find out at runtime that sendChangePhoneCodeByEmail/SendCode have a
+// nil sender.
+func TestLoadEmailSignupAloneRequiresSMTPWhenEnabled(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_EMAIL_SIGNUP_ENABLE", "true")
+	t.Setenv("TELESRV_SMTP_HOST", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with email signup enabled but no SMTP host and no webhook provider")
+	}
+}
+
+// TestLoadEmailSignupAloneWebhookDoesNotRequireSMTP mirrors
+// TestLoadLoginEmailWebhookDoesNotRequireSMTP for the email-signup-only case.
+func TestLoadEmailSignupAloneWebhookDoesNotRequireSMTP(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_EMAIL_SIGNUP_ENABLE", "true")
+	t.Setenv("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "https://otp.example.test/v1/deliveries")
+	t.Setenv("TELESRV_OTP_WEBHOOK_SECRET", "test-secret")
+	t.Setenv("TELESRV_OTP_WEBHOOK_TIMEOUT", "3s")
+	t.Setenv("TELESRV_SMTP_HOST", "")
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoadPhoneWebhookRequiresValidURL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "relative/path")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with relative OTP webhook URL")
+	}
+}
+
+func TestLoadPhoneWebhookConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "webhook")
+	t.Setenv("TELESRV_PHONE_CODE_LENGTH", "7")
+	t.Setenv("TELESRV_OTP_WEBHOOK_URL", "http://127.0.0.1:8080/otp")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PhoneCodeDeliveryProvider != "webhook" || cfg.PhoneCodeLength != 7 {
+		t.Fatalf("phone webhook config = %#v", cfg)
 	}
 }
 

@@ -8,8 +8,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/gotd/ige v0.2.2
 	github.com/gotd/log/logzap v0.1.1
-	github.com/gotd/td v0.159.0
-	github.com/gotd/tl v0.4.0
+	github.com/iamxvbaba/td v1.1.0
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/pion/datachannel v1.6.2
@@ -30,6 +29,7 @@ require (
 	golang.org/x/image v0.31.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sync v0.21.0
+	golang.org/x/text v0.38.0
 )
 
 require (
@@ -75,7 +75,6 @@ require (
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
