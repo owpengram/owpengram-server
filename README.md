@@ -54,7 +54,7 @@ or sponsored by Telegram or the official Telegram team.
 | Status | Feature | What works today |
 |---|---|---|
 | ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 228, and sparse exact Layer 225-228 compatibility profiles. |
-| ✅ | Login and accounts | Development login code, sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, email/passkey-oriented paths. |
+| ✅ | Login and accounts | Development login code, configurable external code delivery (SMS webhook or SMTP), login email as a second factor, email-as-identity sign-up (no phone number needed), sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, passkey-oriented paths. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
 | ✅ | Chatlists and public links | Chat folder sharing, exported chatlist invite links, join/import flows, revoked invite handling, public username landing pages, and shared public link landing pages. |
@@ -68,7 +68,7 @@ or sponsored by Telegram or the official Telegram team.
 | ✅ | Gifts and stars | Dynamic star gift catalog, admin import tools, collectible/unique gift upgrade flows, prepaid upgrade tracking, and local stars ledger foundations. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
-| ✅ | Admin and operations | Admin API/UI backend, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, and load-test helpers. |
+| ✅ | Admin and operations | Admin API/UI backend, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, and load-test helpers. |
 | ✅ | Desktop, Android, iOS, and Web focus | Telegram Desktop is the primary target, with Android, iOS, and Web compatibility paths actively covered by the same server. |
 
 Some items are compatibility-first or experimental, but they are real open
@@ -121,10 +121,10 @@ workers in the same process.
 
 ### ⚙️ Configuration
 
-See the complete [English configuration reference](docs/configuration.en.md) or
-the [Chinese configuration reference](docs/configuration.zh-CN.md).
-`.env.example` is a copyable development template, not an exhaustive parameter
-dictionary. Most commonly used variables:
+[`.env.example`](.env.example) is the complete configuration reference — every
+variable is documented there with an explanatory comment, grouped by feature.
+Copy it to `.env` and edit, or set the variables directly as environment
+variables. Most commonly used variables:
 
 | Variable | Default | Meaning |
 |---|---:|---|
@@ -143,7 +143,50 @@ dictionary. Most commonly used variables:
 
 Optional OpenAI-compatible, Kimi/Moonshot, Gemini, and Anthropic AI provider
 variables, login email/SMTP settings, and Business AI settings are documented
-in `.env.example` and the configuration reference.
+in `.env.example`.
+
+### ✉️ Login codes, email login, and email sign-up
+
+By default the server just uses a fixed development code
+(`TELESRV_DEV_AUTH_CODE`, `12345`) for everything and writes it as a durable
+777000 message on the account. Three optional, independent features build on
+top of that:
+
+**1. External code delivery providers** — send the real login/phone-change
+code out via SMS webhook or SMTP instead of only the fixed dev code. An
+existing account's durable 777000 message is always written first; the
+provider is an *additional* delivery channel, never a replacement.
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `TELESRV_PHONE_CODE_DELIVERY_PROVIDER` | `development` | `development` keeps the fixed code; `webhook` generates a random code and posts it to your own SMS webhook (protocol in `TELESRV_OTP_WEBHOOK_URL`/`_SECRET`/`_TIMEOUT`) |
+| `TELESRV_EMAIL_CODE_DELIVERY_PROVIDER` | `smtp` | `smtp` sends via `TELESRV_SMTP_*`; `webhook` reuses the same SMS webhook above |
+
+**2. Login email** — an extra verification factor on top of the phone number
+(not a replacement for it), similar to Telegram's own login-email feature.
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `TELESRV_LOGIN_EMAIL_ENABLE` | `false` | turn the feature on |
+| `TELESRV_LOGIN_EMAIL_REQUIRE_SETUP` | `false` | force accounts without a login email to set one during the phone login flow |
+| `TELESRV_LOGIN_EMAIL_CODE_LENGTH` | `6` | length of the emailed code |
+| `TELESRV_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM` / `_FROM_NAME` / `_TLS` / `_TIMEOUT` | — | outbound SMTP settings, required when the email provider is `smtp` |
+
+**3. Email-as-identity sign-up** — lets patched clients register and log in
+with just an email address, no phone number at all. The client encodes the
+email into a synthetic `888`-prefixed number and drives the ordinary
+`sendCode`/`signUp`/`signIn`/`changePhone` flow unchanged; the server decodes
+that number back to the email and delivers the code over the same channel as
+login email above (`TELESRV_EMAIL_CODE_DELIVERY_PROVIDER`). The account's
+real, visible phone number is a random-looking short number from
+`TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES` — cosmetic only, never used to route the
+code — so admins can make freshly signed-up accounts look locally flavored
+(e.g. `888,380,373`) without any client update.
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `TELESRV_EMAIL_SIGNUP_ENABLE` | `false` | turn the feature on (requires the email delivery channel above to be configured) |
+| `TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES` | `888` | comma-separated prefixes for the account's cosmetic display number |
 
 ## 🔌 Ports to open
 
@@ -235,8 +278,6 @@ On the login screen, open server selection → **Add Server**, and fill in:
 - **Main data center** — the DC id from `TELESRV_DC` (`2` by default)
 - **RSA Public Key** — paste the full contents of `data/server_rsa.pub`
   (the `-----BEGIN RSA PUBLIC KEY-----...` PEM block) into the key field
-
-Current baseline: TL layer `227`.
 
 ## 🧪 Development: multi-device smoke test
 
