@@ -15,7 +15,7 @@ import (
 const EmailPhonePrefix = "888"
 
 // MaxEmailSignupPhoneLen mirrors the users.phone column width (see migration
-// 0087) and ValidPhone's upper bound.
+// widen_phone_for_email_signup) and ValidPhone's upper bound.
 const MaxEmailSignupPhoneLen = 200
 
 // emailPhoneEscape marks a 2-character escape sequence standing in for one

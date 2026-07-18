@@ -38,6 +38,7 @@ func (s *Server) runServerExchange(ctx context.Context, conn transport.Conn) (ex
 		timeout:   exchange.DefaultTimeout,
 		key:       s.key,
 		dc:        s.dc,
+		strictDC:  s.strictDC,
 		log:       s.log.Named("exchange"),
 		rng:       compatServerRNG{rand: s.rand},
 		commitKey: s.commitExchangeAuthKey,
@@ -65,6 +66,7 @@ type serverExchangeCompat struct {
 	timeout   time.Duration
 	key       exchange.PrivateKey
 	dc        int
+	strictDC  bool
 	log       *zap.Logger
 	rng       compatServerRNG
 	commitKey func(context.Context, exchange.ServerExchangeResult, int) error
@@ -345,10 +347,23 @@ func (s serverExchangeCompat) validatePQInnerDataDC(d mt.PQInnerDataClass) error
 	switch innerDataDC := d.(type) {
 	case *mt.PQInnerDataDC:
 		if innerDataDC.DC != s.dc {
+			if !s.strictDC {
+				// Lenient by default (Options.StrictDC doc has the full
+				// rationale): telesrv is a single physical backend, and the
+				// OwpenGram client forks deliberately alias dc_id 1..5 to this
+				// one server, so a client-chosen dc_id that isn't our
+				// configured DC is expected, not an error. dc_id plays no
+				// role in key derivation, so accepting it doesn't weaken the
+				// exchange.
+				s.log.Debug("Accepted permanent auth key DC mismatch (lenient mode)",
+					zap.Int("server_dc", s.dc),
+					zap.Int("client_dc", innerDataDC.DC))
+				return nil
+			}
 			return wrongDCError(s.dc, innerDataDC.DC)
 		}
 	case *mt.PQInnerDataTempDC:
-		if !sameDCByAbs(innerDataDC.DC, s.dc) {
+		if !sameDCByAbs(innerDataDC.DC, s.dc) && s.strictDC {
 			return wrongDCError(s.dc, innerDataDC.DC)
 		}
 		if innerDataDC.DC < 0 {

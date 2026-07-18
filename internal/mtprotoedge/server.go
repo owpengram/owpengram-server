@@ -301,6 +301,22 @@ type Options struct {
 
 	// DC 是本 server 的 DC ID。默认 2。
 	DC int
+	// StrictDC turns on exact DC-ID validation for the permanent-key exchange
+	// (default off = lenient). telesrv is always a single physical backend —
+	// there is no real multi-DC federation behind it — but the OwpenGram
+	// client forks intentionally run in "single-server backend" mode, where
+	// dc_id 1..5 all alias to this one server (see owpengram_servers.cpp /
+	// ApplyServerToDcOptions in the desktop client) so that any old data
+	// referencing a specific dc_id still resolves correctly. When tdesktop
+	// adds a new local account it picks its own starting dc_id (its usual
+	// multi-DC load-spreading behavior, unrelated to which physical server
+	// it's actually talking to) — that choice is not guaranteed to equal our
+	// configured DC. Strict validation would reject those accounts with
+	// "-444 wrong dc_id" even though they are connecting to the right (and
+	// only) server; dc_id is a client-side routing label here, not part of
+	// key derivation, so accepting the mismatch does not weaken the exchange.
+	// The switch exists for a hypothetical future real multi-DC deployment.
+	StrictDC bool
 	// RSAKey 是 server RSA 私钥，用于密钥交换。nil 时无法完成握手。
 	RSAKey *rsa.PrivateKey
 	// AuthKeys 持久化 auth key。默认内存实现。
@@ -480,6 +496,7 @@ type Server struct {
 	outboundScratchPool      *outboundScratchPool
 
 	dc        int
+	strictDC  bool
 	key       exchange.PrivateKey
 	authKeys  store.AuthKeyStore
 	conns     *SessionManager
@@ -531,6 +548,7 @@ func New(opts Options) *Server {
 		outboundControlBudget:    newOutboundTrackedBudget(defaultOutboundControlMaxBytes),
 		outboundScratchPool:      newOutboundScratchPool(opts.OutboundWriteGlobalMaxBytes),
 		dc:                       opts.DC,
+		strictDC:                 opts.StrictDC,
 		key:                      exchange.PrivateKey{RSA: opts.RSAKey},
 		authKeys:                 opts.AuthKeys,
 		conns:                    conns,
