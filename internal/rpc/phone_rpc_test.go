@@ -249,16 +249,12 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("acceptCall result = %T, want PhoneCallWaiting (callee view)", acceptRes.PhoneCall)
 	}
 	pushes = f.sessions.records()
-	// acceptCall 只推一条：phoneCallAccepted 给主叫。曾经还会给被叫其它设备推一条
-	// 合成 phoneCallDiscarded 停振铃，但在本部署（一台真机对同一服务器有多条各自
-	// auth_key 的连接，dc 1..5 别名）里，该 discard 会漏到受理真机的其它连接上、误杀
-	// 刚接起的通话，故已停用。See memory: call-stop-ringing-device-exclude。
-	if len(pushes) != 1 {
-		t.Fatalf("acceptCall pushes = %d, want 1 (caller accepted only; stop-ringing disabled)", len(pushes))
+	if len(pushes) != 2 {
+		t.Fatalf("acceptCall pushes = %d, want 2 (caller accepted + callee stop-ringing)", len(pushes))
 	}
 	accepted, ok := phoneCallPayload(t, pushes[0]).(*tg.PhoneCallAccepted)
 	if !ok || pushes[0].userID != f.caller.ID {
-		t.Fatalf("accept push = %+v payload %T, want PhoneCallAccepted to caller", pushes[0], phoneCallPayload(t, pushes[0]))
+		t.Fatalf("first accept push = %+v payload %T, want PhoneCallAccepted to caller", pushes[0], phoneCallPayload(t, pushes[0]))
 	}
 	if string(accepted.GB) != string(gb) {
 		t.Fatalf("accepted.g_b must be relayed verbatim")
@@ -268,13 +264,16 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 	if got := accepted.Protocol.LibraryVersions; len(got) != 1 || got[0] != "9.0.0" {
 		t.Fatalf("negotiated library_versions = %v, want preferred [9.0.0]", got)
 	}
-	// 绝不能给被叫（受理方）再推任何 phoneCallDiscarded——那会误杀刚接起的通话。
-	for _, p := range pushes {
-		if p.userID == f.callee.ID {
-			if _, isDiscard := phoneCallPayload(t, p).(*tg.PhoneCallDiscarded); isDiscard {
-				t.Fatalf("acceptCall must NOT push any phoneCallDiscarded to the callee, got %+v", p)
-			}
-		}
+	// ⚠ P0-1：被叫其它设备必须收合成 phoneCallDiscarded（无 reason），绝不能是 accepted。
+	stop, ok := phoneCallPayload(t, pushes[1]).(*tg.PhoneCallDiscarded)
+	if !ok || pushes[1].userID != f.callee.ID {
+		t.Fatalf("second accept push = %+v payload %T, want PhoneCallDiscarded to callee devices", pushes[1], phoneCallPayload(t, pushes[1]))
+	}
+	if pushes[1].excludeSession != phoneCalleeSession {
+		t.Fatalf("stop-ringing must exclude the accepting session, got exclude=%d", pushes[1].excludeSession)
+	}
+	if _, hasReason := stop.GetReason(); hasReason || stop.NeedRating || stop.NeedDebug {
+		t.Fatalf("stop-ringing payload = %+v, want reason-less, need_*=false", stop)
 	}
 	f.sessions.reset()
 
@@ -317,11 +316,8 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("sendSignalingData = %v err=%v", okSig, err)
 	}
 	pushes = f.sessions.records()
-	// 信令按 user 级 transient 扇出到对端【全部 ready 连接】，排除发送方 session；
-	// 不再定向到单个「受理设备」锚点（那会在被叫多连接、锚点未 ready 时把 offer 塞进
-	// 死队列、通话一接就断）。See pushPhoneSignalingData / memory: call-signaling-*.
-	if len(pushes) != 1 || pushes[0].userID != f.callee.ID || pushes[0].excludeSession != phoneCallerSession {
-		t.Fatalf("signaling pushes = %+v, want transient fanout to callee excluding caller session", pushes)
+	if len(pushes) != 1 || pushes[0].targetSession != phoneCalleeSession {
+		t.Fatalf("signaling pushes = %+v, want one to callee session", pushes)
 	}
 	sigUpdates := pushes[0].msg.(*tg.Updates)
 	sig, ok := sigUpdates.Updates[0].(*tg.UpdatePhoneCallSignalingData)
