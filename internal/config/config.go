@@ -353,6 +353,10 @@ type Config struct {
 	// TURNAdvertiseIP 是写进 phoneConnectionWebrtc 与 relay 分配的客户端可达
 	// 地址，默认回落 SFUAdvertiseIP → AdvertiseIP。
 	TURNAdvertiseIP string
+	// TURNExtraIPs 是额外下发的 TURN/STUN 候选 IP（逗号分隔）。当客户端与服务器
+	// 同处一个局域网、AdvertiseIP 又是公网 IP 时，把 LAN IP（如 192.168.x.x）列进
+	// 这里，可修复 LAN 端发起通话「Failed to connect」（NAT hairpin）。详见 turnsrv.Config.ExtraIPs。
+	TURNExtraIPs []string
 	// TURNSecret 是 TURN REST 凭据 HMAC 密钥；为空则进程级随机（单实例自洽，
 	// 多实例/外部 coturn 必须显式配置同一值）。
 	TURNSecret string
@@ -607,6 +611,7 @@ func Load() (Config, error) {
 		TURNEnable:            envBoolOr("TELESRV_TURN_ENABLE", true),
 		TURNUDPPort:           envIntOr("TELESRV_TURN_UDP_PORT", 12400),
 		TURNAdvertiseIP:       envOr("TELESRV_TURN_ADVERTISE_IP", ""),
+		TURNExtraIPs:          envListOr("TELESRV_TURN_EXTRA_IPS", nil),
 		TURNSecret:            envOr("TELESRV_TURN_SECRET", ""),
 		TURNRelayMinPort:      envIntOr("TELESRV_TURN_RELAY_MIN_PORT", 12500),
 		TURNRelayMaxPort:      envIntOr("TELESRV_TURN_RELAY_MAX_PORT", 12999),

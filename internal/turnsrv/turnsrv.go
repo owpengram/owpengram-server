@@ -29,6 +29,14 @@ type Config struct {
 	// AdvertiseIP 是写进 phoneConnectionWebrtc 与 relay 分配地址的客户端可达
 	// 地址。⚠ 127.0.0.1 时真机拿到的 relay candidate 不可达（媒体面静默失败）。
 	AdvertiseIP string
+	// ExtraIPs 是额外下发的 TURN/STUN 候选地址（除 AdvertiseIP 外）。典型用途：
+	// 当客户端与服务器同处一个局域网、而 AdvertiseIP 是公网 IP 时，路由器多半不
+	// 支持 NAT 回环（hairpin），LAN 内的客户端无法经公网 IP 触达 TURN 控制通道
+	//（现象：LAN 端发起的通话「Failed to connect」，外网端发起的却正常）。把 LAN
+	// IP（如 192.168.x.x）列进这里，ICE 会一并尝试，LAN 客户端走 LAN 候选、外网
+	// 客户端走公网候选。relay 分配地址仍是 AdvertiseIP（LAN-LAN 通话用 host
+	// 候选直连、不经 relay，故公网 relay 地址不成问题）。
+	ExtraIPs []string
 	// Realm 是 TURN long-term credential 的 realm（任意稳定串即可）。
 	Realm string
 	// SharedSecret 是 REST 凭据的 HMAC 密钥；为空则进程级随机生成
@@ -54,6 +62,8 @@ type Service interface {
 	// IP/Port 返回客户端可达的服务地址。
 	IP() string
 	Port() int
+	// ExtraIPs 返回除 IP() 外额外下发的候选地址（可空）。
+	ExtraIPs() []string
 	Close() error
 }
 
@@ -66,9 +76,10 @@ func (disabled) Enabled() bool { return false }
 func (disabled) Credentials(string) (string, string, error) {
 	return "", "", fmt.Errorf("turnsrv: disabled")
 }
-func (disabled) IP() string   { return "" }
-func (disabled) Port() int    { return 0 }
-func (disabled) Close() error { return nil }
+func (disabled) IP() string         { return "" }
+func (disabled) Port() int          { return 0 }
+func (disabled) ExtraIPs() []string { return nil }
+func (disabled) Close() error       { return nil }
 
 type pionTURN struct {
 	cfg    Config
@@ -150,9 +161,10 @@ func (t *pionTURN) Credentials(user string) (string, string, error) {
 	return username, password, nil
 }
 
-func (t *pionTURN) IP() string   { return t.cfg.AdvertiseIP }
-func (t *pionTURN) Port() int    { return t.cfg.UDPPort }
-func (t *pionTURN) Close() error { return t.server.Close() }
+func (t *pionTURN) IP() string         { return t.cfg.AdvertiseIP }
+func (t *pionTURN) Port() int          { return t.cfg.UDPPort }
+func (t *pionTURN) ExtraIPs() []string { return t.cfg.ExtraIPs }
+func (t *pionTURN) Close() error       { return t.server.Close() }
 
 func randomSecret() (string, error) {
 	buf := make([]byte, 24)
