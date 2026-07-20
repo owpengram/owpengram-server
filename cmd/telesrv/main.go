@@ -573,6 +573,7 @@ func run(logger *zap.Logger) error {
 				Password: cfg.SMTPPassword,
 				From:     cfg.SMTPFrom,
 				FromName: cfg.SMTPFromName,
+				AppName:  cfg.PublicAppName,
 				TLSMode:  cfg.SMTPTLSMode,
 				Timeout:  cfg.SMTPTimeout,
 			})

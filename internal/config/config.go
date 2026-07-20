@@ -525,7 +525,7 @@ func Load() (Config, error) {
 		SMTPUsername:                  envOr("TELESRV_SMTP_USERNAME", ""),
 		SMTPPassword:                  envOr("TELESRV_SMTP_PASSWORD", ""),
 		SMTPFrom:                      envOr("TELESRV_SMTP_FROM", ""),
-		SMTPFromName:                  envOr("TELESRV_SMTP_FROM_NAME", "telesrv"),
+		SMTPFromName:                  envOr("TELESRV_SMTP_FROM_NAME", "OwpenGram"),
 		SMTPTLSMode:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
 		SMTPTimeout:                   envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:               envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),

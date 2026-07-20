@@ -22,8 +22,14 @@ type Config struct {
 	Password string
 	From     string
 	FromName string
-	TLSMode  string
-	Timeout  time.Duration
+	// AppName is the product name shown in the email subject/body (e.g.
+	// "Your <AppName> login code"). Defaults to "telesrv" if empty, matching
+	// this package's other defaults — callers should pass the same brand
+	// name used elsewhere (e.g. Config.PublicAppName), or codes will read as
+	// coming from "telesrv" regardless of the operator's own branding.
+	AppName string
+	TLSMode string
+	Timeout time.Duration
 }
 
 type Sender struct {
@@ -41,6 +47,9 @@ func New(cfg Config) *Sender {
 	if strings.TrimSpace(cfg.From) == "" {
 		cfg.From = cfg.Username
 	}
+	if strings.TrimSpace(cfg.AppName) == "" {
+		cfg.AppName = "telesrv"
+	}
 	return &Sender{cfg: cfg}
 }
 
@@ -52,8 +61,7 @@ func (s *Sender) Deliver(ctx context.Context, req otpdelivery.Request) (otpdeliv
 		return otpdelivery.Result{}, fmt.Errorf("smtp cannot deliver channel %q", req.Channel)
 	}
 	ttl := time.Until(req.ExpiresAt)
-	subject := "Your telesrv login code"
-	body := fmt.Sprintf("Your telesrv login code is %s.\n\nThis code expires in %s. If you did not request it, ignore this email.\n", req.Code, humanTTL(ttl))
+	subject, body := emailContent(s.cfg.AppName, req.Code, ttl)
 	if err := s.send(ctx, req.Recipient, subject, body); err != nil {
 		return otpdelivery.Result{}, err
 	}
@@ -145,6 +153,15 @@ func buildMessage(from, to, subject, body string) []byte {
 	b.WriteString("\r\n")
 	b.WriteString(body)
 	return b.Bytes()
+}
+
+// emailContent builds the login-code email subject/body, branded with the
+// operator's configured product name (Config.AppName) instead of the
+// package's internal "telesrv" fallback.
+func emailContent(appName, code string, ttl time.Duration) (subject, body string) {
+	subject = fmt.Sprintf("Your %s login code", appName)
+	body = fmt.Sprintf("Your %s login code is %s.\n\nThis code expires in %s. If you did not request it, ignore this email.\n", appName, code, humanTTL(ttl))
+	return subject, body
 }
 
 func humanTTL(ttl time.Duration) string {
