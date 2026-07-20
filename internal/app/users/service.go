@@ -225,14 +225,14 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 		}
 	}
 	if self.Username == username {
-		return self, nil
+		return s.projectOne(ctx, self.ID, self)
 	}
 	u, err := s.users.UpdateUsername(ctx, self.ID, username)
 	if err != nil {
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // UpdateProfile 修改当前用户的基础资料。未设置的字段保持原值。
@@ -264,14 +264,14 @@ func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain
 		return domain.User{}, domain.ErrAboutTooLong
 	}
 	if firstName == self.FirstName && lastName == self.LastName && about == self.About {
-		return self, nil
+		return s.projectOne(ctx, self.ID, self)
 	}
 	u, err := s.users.UpdateProfile(ctx, self.ID, firstName, lastName, about)
 	if err != nil {
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // UpdateLastSeen records the latest visible account activity time.
@@ -333,7 +333,7 @@ func (s *Service) GrantPremium(ctx context.Context, userID int64, months int) (d
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, updated)
-	return updated, nil
+	return s.projectOne(ctx, userID, updated)
 }
 
 // SetVerified 设置/取消用户认证标记。认证是账号基础事实，所有 user 投影统一消费该字段。
@@ -349,14 +349,14 @@ func (s *Service) SetVerified(ctx context.Context, userID int64, verified bool) 
 		return domain.User{}, domain.ErrUserNotFound
 	}
 	if u.Verified == verified {
-		return u, nil
+		return s.projectOne(ctx, userID, u)
 	}
 	updated, err := s.users.SetVerified(ctx, userID, verified)
 	if err != nil {
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, updated)
-	return updated, nil
+	return s.projectOne(ctx, userID, updated)
 }
 
 // SweepExpiredPremium 清理到期会员（store 把过期行清 NULL）并失效用户缓存，
@@ -390,7 +390,7 @@ func (s *Service) UpdateEmojiStatus(ctx context.Context, userID int64, documentI
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // UpdateBirthday 设置/清除用户生日（account.updateBirthday）。零值 Birthday 表示清除。
@@ -411,7 +411,7 @@ func (s *Service) UpdateBirthday(ctx context.Context, userID int64, birthday dom
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // UpdatePersonalChannel 设置/清除资料页个人频道（account.updatePersonalChannel）；
@@ -426,7 +426,7 @@ func (s *Service) UpdatePersonalChannel(ctx context.Context, userID int64, chann
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // UpdateColor updates the user's message accent or profile background color.
@@ -440,7 +440,7 @@ func (s *Service) UpdateColor(ctx context.Context, userID int64, forProfile bool
 		return domain.User{}, err
 	}
 	s.refreshCachedUsers(ctx, u)
-	return u, nil
+	return s.projectOne(ctx, self.ID, u)
 }
 
 // ResolveUsername 解析 username 到用户；调用方必须已登录。

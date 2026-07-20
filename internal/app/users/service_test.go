@@ -122,6 +122,82 @@ func TestServiceUpdateBirthday(t *testing.T) {
 	}
 }
 
+// fakePhotoProvider always reports the same current photo for every owner,
+// regardless of owner id — enough to prove a mutation path preserves the
+// photo instead of returning the bare, un-projected store row.
+type fakePhotoProvider struct {
+	ref domain.ProfilePhotoRef
+}
+
+func (f *fakePhotoProvider) CurrentProfilePhotos(ctx context.Context, ownerType domain.PeerType, ownerIDs []int64) (map[int64]domain.ProfilePhotoRef, error) {
+	out := make(map[int64]domain.ProfilePhotoRef, len(ownerIDs))
+	for _, id := range ownerIDs {
+		out[id] = f.ref
+	}
+	return out, nil
+}
+
+// TestServiceMutationsPreservePhoto guards against a class of bug where a
+// profile-mutating method returns the bare store row (users table has no
+// photo columns at all — the current avatar lives only in the profile_photos
+// association, attached via projectOne/Projector.One) instead of the
+// photo-enriched projection, causing the client to wipe its own avatar on
+// name/username/birthday/verified/color/emoji-status updates.
+func TestServiceMutationsPreservePhoto(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewUserStore()
+	owner, err := store.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000099", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	photos := &fakePhotoProvider{ref: domain.ProfilePhotoRef{PhotoID: 555, DCID: 2, Stripped: []byte{1, 2, 3}}}
+	svc := NewService(store, WithPhotoProvider(photos))
+
+	assertHasPhoto := func(t *testing.T, label string, u domain.User) {
+		t.Helper()
+		if u.PhotoID != 555 || u.PhotoDCID != 2 {
+			t.Fatalf("%s: photo = {id:%d dc:%d}, want {id:555 dc:2}", label, u.PhotoID, u.PhotoDCID)
+		}
+	}
+
+	u, err := svc.UpdateProfile(ctx, owner.ID, domain.UserProfileUpdate{FirstName: "New", HasFirstName: true})
+	if err != nil {
+		t.Fatalf("UpdateProfile: %v", err)
+	}
+	assertHasPhoto(t, "UpdateProfile", u)
+
+	// No-op branch (nothing actually changed) must also preserve the photo.
+	u, err = svc.UpdateProfile(ctx, owner.ID, domain.UserProfileUpdate{FirstName: "New", HasFirstName: true})
+	if err != nil {
+		t.Fatalf("UpdateProfile no-op: %v", err)
+	}
+	assertHasPhoto(t, "UpdateProfile no-op", u)
+
+	u, err = svc.UpdateUsername(ctx, owner.ID, "ownerhandle")
+	if err != nil {
+		t.Fatalf("UpdateUsername: %v", err)
+	}
+	assertHasPhoto(t, "UpdateUsername", u)
+
+	u, err = svc.UpdateBirthday(ctx, owner.ID, domain.Birthday{Day: 1, Month: 1, Year: 2000})
+	if err != nil {
+		t.Fatalf("UpdateBirthday: %v", err)
+	}
+	assertHasPhoto(t, "UpdateBirthday", u)
+
+	u, err = svc.SetVerified(ctx, owner.ID, true)
+	if err != nil {
+		t.Fatalf("SetVerified: %v", err)
+	}
+	assertHasPhoto(t, "SetVerified", u)
+
+	u, err = svc.UpdateColor(ctx, owner.ID, false, domain.PeerColor{HasColor: true, Color: 3})
+	if err != nil {
+		t.Fatalf("UpdateColor: %v", err)
+	}
+	assertHasPhoto(t, "UpdateColor", u)
+}
+
 func TestServiceUpdatePersonalChannel(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewUserStore()
