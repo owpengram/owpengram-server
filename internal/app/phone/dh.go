@@ -13,7 +13,14 @@ import (
 
 // DHConfigVersion 是 messages.getDhConfig 的静态版本号。p/g 是编译期常量，
 // 客户端缓存命中（请求 version 相同）时只回 dhConfigNotModified{random}。
-const DHConfigVersion = 1
+//
+// ⚠ 提高此值会让所有客户端在下一次 messages.getDhConfig（每次拨打/接听通话都会调用）
+// 强制重新拉取 p/g，而不是信任本地缓存。用于失效任何账号本地可能缓存的陈旧/错误
+// p/g（例如账号早年间对接过其它后端、缓存版本号恰好等于当时的 DHConfigVersion，
+// 此后再也不会刷新——版本号是纯常量，服务端自己永远不会主动使旧缓存过期）。
+// 本次从 1→2 是为诊断一例「A 拨 B 接通即断（key fingerprint/Ga hash 不合）」而提升，
+// 与本次通话 bug 排查同批次的服务端改动一起看。
+const DHConfigVersion = 2
 
 // DHG 是 DH generator。与官方一致取 3：TDesktop MTP::IsPrimeAndGood 对
 // 「官方 2048-bit prime + g∈{3,4,5,7}」有白名单快速通过路径，DrKLO native 同。
