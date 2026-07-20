@@ -3,10 +3,12 @@ package rpc
 import (
 	"context"
 	"errors"
+	"unicode/utf8"
+
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
+
 	"telesrv/internal/domain"
-	"unicode/utf8"
 )
 
 func (r *Router) onMessagesSaveDraft(ctx context.Context, req *tg.MessagesSaveDraftRequest) (bool, error) {
@@ -159,8 +161,18 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 	if len(req.Entities) > maxMessageEntityCount {
 		return domain.DialogDraft{}, limitInvalidErr()
 	}
-	if !req.SuggestedPost.Zero() {
-		return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+	suggestedInput, hasSuggestedPost := req.GetSuggestedPost()
+	suggestedPost, err := domainSuggestedPost(suggestedInput, hasSuggestedPost)
+	if err != nil {
+		return domain.DialogDraft{}, err
+	}
+	if hasSuggestedPost {
+		if peer.Type != domain.PeerTypeChannel || r.deps.Channels == nil {
+			return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+		}
+		if _, _, resolveErr := r.deps.Channels.ResolveMonoforumSend(ctx, userID, peer.ID); resolveErr != nil {
+			return domain.DialogDraft{}, suggestedPostPeerInvalidErr()
+		}
 	}
 	replyTo, err := r.messageReplyFromInput(ctx, userID, peer, req.ReplyTo)
 	if err != nil {
@@ -182,17 +194,18 @@ func (r *Router) dialogDraftFromSaveDraft(ctx context.Context, userID int64, pee
 		topMessageID = replyTo.TopMessageID
 	}
 	return domain.DialogDraft{
-		Peer:         peer,
-		TopMessageID: topMessageID,
-		Date:         date,
-		NoWebpage:    req.NoWebpage,
-		InvertMedia:  req.InvertMedia,
-		Message:      req.Message,
-		Entities:     domainMessageEntities(req.Entities),
-		ReplyTo:      replyTo,
-		WebPage:      webpage,
-		Effect:       req.Effect,
-		RichMessage:  richMessage,
+		Peer:          peer,
+		TopMessageID:  topMessageID,
+		Date:          date,
+		NoWebpage:     req.NoWebpage,
+		InvertMedia:   req.InvertMedia,
+		Message:       req.Message,
+		Entities:      domainMessageEntities(req.Entities),
+		ReplyTo:       replyTo,
+		WebPage:       webpage,
+		Effect:        req.Effect,
+		SuggestedPost: suggestedPost,
+		RichMessage:   richMessage,
 	}, nil
 }
 
@@ -560,6 +573,50 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	if folderPeer, ok := req.Peer.(*tg.InputDialogPeerFolder); ok {
 		return r.toggleArchiveFolderPin(ctx, userID, folderPeer.FolderID, req.GetPinned())
 	}
+	if community, ok, err := r.communityDialogPeerFromInput(ctx, userID, req.Peer); ok {
+		if err != nil {
+			return false, err
+		}
+		pinned := req.GetPinned()
+		peer := domain.Peer{Type: domain.PeerTypeCommunity, ID: community.Community.ID}
+		if pinned && !community.State.Pinned {
+			if err := r.ensureCombinedPinCapacity(ctx, userID, domain.DialogMainFolderID, peer); err != nil {
+				if errors.Is(err, domain.ErrPinnedDialogsTooMuch) {
+					return false, pinnedTooMuchErr()
+				}
+				return false, internalErr()
+			}
+		}
+		changed, err := r.deps.Communities.SetPinned(ctx, userID, community.Community.ID, pinned)
+		if err != nil {
+			return false, communityErr(err)
+		}
+		if !changed {
+			return true, nil
+		}
+		if pinned {
+			if err := r.promoteCombinedPinnedDialog(ctx, userID, domain.DialogMainFolderID, peer); err != nil {
+				return false, internalErr()
+			}
+		}
+		date := int(r.clock.Now().Unix())
+		var recorded domain.UpdateEvent
+		if r.deps.Updates != nil {
+			authKeyID, _ := AuthKeyIDFrom(ctx)
+			sessionID, _ := SessionIDFrom(ctx)
+			event, state, err := r.deps.Updates.RecordDialogPinned(ctx, authKeyID, userID, peer, pinned, domain.DialogMainFolderID, rawAuthKeyIDForOrigin(ctx), sessionID)
+			if err != nil {
+				return false, internalErr()
+			}
+			date, recorded = state.Date, event
+		}
+		r.bookkeepAuxPtsForCurrentSession(ctx, recorded)
+		r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, &tg.Updates{
+			Updates: appendAuxPtsBookkeeping([]tg.UpdateClass{&tg.UpdateDialogPinned{Pinned: pinned, Peer: tgDialogPeer(peer)}}, recorded),
+			Chats:   []tg.ChatClass{tgCommunityChat(community)}, Date: date,
+		})
+		return true, nil
+	}
 	peers, err := r.dialogPeersFromInput(ctx, userID, []tg.InputDialogPeerClass{req.Peer})
 	if err != nil {
 		return false, err
@@ -571,6 +628,25 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 	if r.deps.Dialogs == nil {
 		return true, nil
 	}
+	if pinned {
+		folderID := domain.DialogMainFolderID
+		current, err := r.deps.Dialogs.GetPeerDialogs(ctx, userID, peers)
+		if err != nil {
+			return false, internalErr()
+		}
+		for _, dialog := range current.Dialogs {
+			if dialog.Peer == peers[0] {
+				folderID = dialog.FolderID
+				break
+			}
+		}
+		if err := r.ensureCombinedPinCapacity(ctx, userID, folderID, peers[0]); err != nil {
+			if errors.Is(err, domain.ErrPinnedDialogsTooMuch) {
+				return false, pinnedTooMuchErr()
+			}
+			return false, internalErr()
+		}
+	}
 	changed, folderID, err := r.deps.Dialogs.TogglePinned(ctx, userID, peers[0], pinned)
 	if err != nil {
 		if errors.Is(err, domain.ErrPinnedDialogsTooMuch) {
@@ -579,6 +655,11 @@ func (r *Router) onMessagesToggleDialogPin(ctx context.Context, req *tg.Messages
 		return false, internalErr()
 	}
 	if changed {
+		if pinned {
+			if err := r.promoteCombinedPinnedDialog(ctx, userID, folderID, peers[0]); err != nil {
+				return false, internalErr()
+			}
+		}
 		date := int(r.clock.Now().Unix())
 		var recorded domain.UpdateEvent
 		if r.deps.Updates != nil {
@@ -667,12 +748,36 @@ func (r *Router) onMessagesReorderPinnedDialogs(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return false, err
 	}
-	if r.deps.Dialogs == nil {
+	seen := make(map[domain.Peer]struct{}, len(peers))
+	for _, peer := range peers {
+		if _, duplicate := seen[peer]; duplicate {
+			return false, peerIDInvalidErr()
+		}
+		seen[peer] = struct{}{}
+		if req.FolderID != domain.DialogMainFolderID && peer.Type == domain.PeerTypeCommunity {
+			return false, folderIDInvalidErr()
+		}
+	}
+	if len(peers) > domain.PinnedDialogsLimit(req.FolderID, r.userIsPremium(ctx, userID)) {
+		return false, pinnedTooMuchErr()
+	}
+	if r.deps.Dialogs == nil && r.deps.Communities == nil {
 		return true, nil
 	}
-	changed, err := r.deps.Dialogs.ReorderPinned(ctx, userID, req.FolderID, peers, req.GetForce())
-	if err != nil {
-		return false, internalErr()
+	changed := false
+	if r.deps.Dialogs != nil {
+		dialogsChanged, err := r.deps.Dialogs.ReorderPinned(ctx, userID, req.FolderID, peers, req.GetForce())
+		if err != nil {
+			return false, internalErr()
+		}
+		changed = dialogsChanged
+	}
+	if r.deps.Communities != nil && req.FolderID == domain.DialogMainFolderID {
+		communitiesChanged, err := r.deps.Communities.ReorderPinned(ctx, userID, peers, req.GetForce())
+		if err != nil {
+			return false, communityErr(err)
+		}
+		changed = changed || communitiesChanged
 	}
 	if !changed {
 		return true, nil
@@ -871,6 +976,15 @@ func (r *Router) dialogPeersFromInput(ctx context.Context, userID int64, items [
 	hasFolder := false
 	for _, item := range items {
 		switch p := item.(type) {
+		case *tg.InputDialogPeerCommunity:
+			view, ok, err := r.communityDialogPeerFromInput(ctx, userID, p)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, inputConstructorInvalidErr()
+			}
+			peers = append(peers, domain.Peer{Type: domain.PeerTypeCommunity, ID: view.Community.ID})
 		case *tg.InputDialogPeer:
 			peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, p.Peer)
 			if err != nil {

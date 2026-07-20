@@ -508,6 +508,15 @@ func (s *Service) ListAdminedPublicChannels(ctx context.Context, userID int64) (
 	return s.channels.ListAdminedPublicChannels(ctx, userID)
 }
 
+// ListCommunityLinkableChannels returns owned/administered channels that are not
+// already linked to another Community. Private megagroups are valid candidates.
+func (s *Service) ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
+	if s == nil || s.channels == nil || userID == 0 {
+		return nil, nil
+	}
+	return s.channels.ListCommunityLinkableChannels(ctx, userID)
+}
+
 // ListStoryPostableChannels returns channels where user can publish stories.
 func (s *Service) ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 {
@@ -1276,6 +1285,9 @@ func (s *Service) SendMessage(ctx context.Context, userID int64, req domain.Send
 	if req.UserID != userID {
 		return domain.SendChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+		return domain.SendChannelMessageResult{}, err
+	}
 	if req.RandomID != 0 && !req.IdempotencyPreflighted {
 		fingerprint, err := store.ChannelSendFingerprint(req)
 		if err != nil {
@@ -1343,6 +1355,11 @@ func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.Edit
 	if req.UserID != userID || req.ChannelID == 0 || req.ID <= 0 {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
+	if req.SetReplyMarkup {
+		if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
+	}
 	return s.channels.EditChannelMessage(ctx, req)
 }
 
@@ -1358,6 +1375,11 @@ func (s *Service) GetInlineBotMessage(ctx context.Context, botID, channelID int6
 func (s *Service) EditInlineBotMessage(ctx context.Context, botID int64, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
 	if s == nil || s.channels == nil || botID == 0 || req.ChannelID == 0 || req.ID <= 0 || req.UserID == 0 {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
+	}
+	if req.SetReplyMarkup {
+		if err := domain.ValidateReplyMarkup(req.ReplyMarkup); err != nil {
+			return domain.EditChannelMessageResult{}, err
+		}
 	}
 	req.ViaBotEditBotID = botID
 	return s.channels.EditChannelMessage(ctx, req)

@@ -377,6 +377,20 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 	if err != nil {
 		return nil, err
 	}
+	parentIDs := make([]int64, 0, len(channels))
+	for _, channel := range channels {
+		if channel.Monoforum && channel.LinkedMonoforumID != 0 {
+			parentIDs = append(parentIDs, channel.LinkedMonoforumID)
+		}
+	}
+	parents, err := listChannelsByIDs(ctx, s.db, parentIDs)
+	if err != nil {
+		return nil, err
+	}
+	parentsByID := make(map[int64]domain.Channel, len(parents))
+	for _, parent := range parents {
+		parentsByID[parent.ID] = parent
+	}
 	linkedGuests, err := s.listLinkedDiscussionGuests(ctx, s.db, viewerUserID, remaining)
 	if err != nil {
 		return nil, err
@@ -401,6 +415,17 @@ WHERE c.id = ANY($2::bigint[]) AND NOT c.deleted`, viewerUserID, ids)
 				SelfBoostsApplied: 0,
 			}
 			continue
+		}
+		if channel.Monoforum && channel.LinkedMonoforumID != 0 {
+			if parent, ok := parentsByID[channel.LinkedMonoforumID]; ok && parent.BroadcastMessagesAllowed && parent.LinkedMonoforumID == channel.ID {
+				member := syntheticMonoforumUserMember(channel, viewerUserID)
+				views[channel.ID] = domain.ChannelView{
+					Channel: channel,
+					Self:    member,
+					Dialog:  previewChannelDialog(viewerUserID, channel, member),
+				}
+				continue
+			}
 		}
 		if !publicPreviewableChannel(channel) {
 			continue
@@ -472,7 +497,7 @@ func scanChannel(row rowScanner) (domain.Channel, error) {
 func channelScanDest(ch *domain.Channel, rights, reactionPolicy *string, wallpaper **string) []any {
 	return []any{
 		&ch.ID, &ch.AccessHash, &ch.CreatorUserID, &ch.Title, &ch.About, &ch.Username, &ch.Verified,
-		&ch.Broadcast, &ch.Megagroup, &ch.Forum, &ch.ForumTabs, &ch.Autotranslation, &ch.RestrictedSponsored, &ch.BroadcastMessagesAllowed, &ch.SendPaidMessagesStars, &ch.NoForwards, &ch.JoinToSend, &ch.JoinRequest, &ch.Signatures, &ch.PreHistoryHidden, &ch.ParticipantsHidden, &ch.AntiSpam, &ch.HasLink, &ch.LinkedChatID, &ch.Monoforum, &ch.LinkedMonoforumID, &ch.SlowmodeSeconds, &ch.BoostsUnrestrict, rights,
+		&ch.Broadcast, &ch.Megagroup, &ch.Forum, &ch.ForumTabs, &ch.Autotranslation, &ch.RestrictedSponsored, &ch.BroadcastMessagesAllowed, &ch.SendPaidMessagesStars, &ch.NoForwards, &ch.JoinToSend, &ch.JoinRequest, &ch.Signatures, &ch.PreHistoryHidden, &ch.ParticipantsHidden, &ch.AntiSpam, &ch.HasLink, &ch.LinkedChatID, &ch.LinkedCommunityID, &ch.Monoforum, &ch.LinkedMonoforumID, &ch.SlowmodeSeconds, &ch.BoostsUnrestrict, rights,
 		reactionPolicy, &ch.Color.HasColor, &ch.Color.Color, &ch.Color.BackgroundEmojiID, &ch.ProfileColor.HasColor, &ch.ProfileColor.Color, &ch.ProfileColor.BackgroundEmojiID, &ch.EmojiStatus.DocumentID, &ch.EmojiStatus.Until,
 		wallpaper, &ch.ParticipantsCount, &ch.AdminsCount, &ch.KickedCount, &ch.BannedCount, &ch.TopMessageID,
 		&ch.PinnedMessageID, &ch.Pts, &ch.TTLPeriod, &ch.Date, &ch.Deleted,

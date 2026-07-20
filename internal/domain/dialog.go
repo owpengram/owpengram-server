@@ -6,6 +6,9 @@ type PeerType string
 const (
 	PeerTypeUser    PeerType = "user"
 	PeerTypeChannel PeerType = "channel"
+	// PeerTypeCommunity identifies a Layer 228 Community container. Communities
+	// have dialog pin/notify state but never own messages, read boundaries or pts.
+	PeerTypeCommunity PeerType = "community"
 	// PeerTypeFolder 仅用于 dialog 置顶事件中表达 dialogPeerFolder
 	// （archive folder 行本身被置顶/取消置顶），ID 为 folder_id。
 	PeerTypeFolder PeerType = "folder"
@@ -101,19 +104,42 @@ type DialogDraftWebPage struct {
 	Optional        bool
 }
 
+type SuggestedPostPriceKind string
+
+const (
+	SuggestedPostPriceStars SuggestedPostPriceKind = "stars"
+	SuggestedPostPriceTON   SuggestedPostPriceKind = "ton"
+)
+
+// SuggestedPostPrice is either a decimal Stars amount or a nanotons amount.
+type SuggestedPostPrice struct {
+	Kind   SuggestedPostPriceKind
+	Amount int64
+	Nanos  int
+}
+
+// SuggestedPost is the domain-only snapshot shared by a monoforum message and its cloud draft.
+type SuggestedPost struct {
+	Accepted     bool
+	Rejected     bool
+	Price        *SuggestedPostPrice
+	ScheduleDate int
+}
+
 // DialogDraft is a cloud draft for one peer/topic, expressed only in domain types.
 type DialogDraft struct {
-	Peer         Peer
-	TopMessageID int
-	Date         int
-	NoWebpage    bool
-	InvertMedia  bool
-	Message      string
-	Entities     []MessageEntity
-	ReplyTo      *MessageReply
-	WebPage      *DialogDraftWebPage
-	Effect       int64
-	RichMessage  *MessageRichMessage
+	Peer          Peer
+	TopMessageID  int
+	Date          int
+	NoWebpage     bool
+	InvertMedia   bool
+	Message       string
+	Entities      []MessageEntity
+	ReplyTo       *MessageReply
+	WebPage       *DialogDraftWebPage
+	Effect        int64
+	SuggestedPost *SuggestedPost
+	RichMessage   *MessageRichMessage
 }
 
 // Empty reports whether this draft should clear the cloud draft slot.
@@ -126,6 +152,7 @@ func (d DialogDraft) Empty() bool {
 		(d.ReplyTo == nil || replyOnlyTopic) &&
 		d.WebPage == nil &&
 		d.Effect == 0 &&
+		d.SuggestedPost == nil &&
 		d.RichMessage.IsZero()
 }
 
@@ -151,6 +178,7 @@ type DialogList struct {
 	ChannelMessages []ChannelMessage
 	Users           []User
 	Channels        []Channel
+	Communities     []CommunityView
 	State           UpdateState
 	Hash            int64
 	Count           int

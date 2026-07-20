@@ -109,6 +109,9 @@ func (s *ChannelStore) JoinChannel(_ context.Context, channelID, userID int64, d
 	if !ok || channel.Deleted {
 		return domain.CreateChannelResult{}, domain.ErrChannelInvalid
 	}
+	if channel.Monoforum {
+		return domain.CreateChannelResult{}, domain.ErrChannelMonoforumUnsupported
+	}
 	preJoinTopID := channel.TopMessageID
 	if existing, ok := s.members[channelID][userID]; ok {
 		if existing.Status == domain.ChannelMemberActive {
@@ -652,6 +655,31 @@ func (s *ChannelStore) ListAdminedPublicChannels(_ context.Context, userID int64
 	return append([]domain.Channel(nil), out...), nil
 }
 
+func (s *ChannelStore) ListCommunityLinkableChannels(_ context.Context, userID int64) ([]domain.Channel, error) {
+	if userID == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.Channel, 0)
+	for channelID, members := range s.members {
+		member := members[userID]
+		if member.Status != domain.ChannelMemberActive || !isChannelAdmin(member) {
+			continue
+		}
+		channel, ok := s.channels[channelID]
+		if !ok || channel.Deleted || channel.Monoforum || channel.LinkedCommunityID != 0 {
+			continue
+		}
+		out = append(out, channel)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if len(out) > domain.MaxCommunityPeers {
+		out = out[:domain.MaxCommunityPeers]
+	}
+	return append([]domain.Channel(nil), out...), nil
+}
+
 func (s *ChannelStore) ListStoryPostableChannels(_ context.Context, userID int64) ([]domain.Channel, error) {
 	if userID == 0 {
 		return nil, nil
@@ -1048,6 +1076,15 @@ func syntheticMonoforumAdminMember(mono domain.Channel, parentMember domain.Chan
 	member.UnreadMark = false
 	member.SlowmodeLastSendDate = 0
 	return member
+}
+
+func syntheticMonoforumUserMember(mono domain.Channel, userID int64) domain.ChannelMember {
+	return domain.ChannelMember{
+		ChannelID: mono.ID,
+		UserID:    userID,
+		Role:      domain.ChannelRoleMember,
+		Status:    domain.ChannelMemberActive,
+	}
 }
 
 func publicChannelSearchRank(channel domain.Channel, queryLower string) (int, bool) {

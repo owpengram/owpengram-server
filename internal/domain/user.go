@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // UserIDSequenceBase 是普通用户 ID 的起始值。
 //
 // 取 2026-06-01 00:00:00 Asia/Shanghai 的 Unix 秒级时间戳。
@@ -12,6 +14,73 @@ type PeerColor struct {
 	HasColor          bool
 	Color             int
 	BackgroundEmojiID int64
+}
+
+// EmojiStatusCollectible is the immutable projection needed to render a
+// collectible gift as an emoji status.  The source of truth remains the owned
+// UniqueStarGift; users store an immutable snapshot so every user projection,
+// online update and offline difference observes the same shape without an
+// RPC-layer lookup.
+type EmojiStatusCollectible struct {
+	CollectibleID     int64  `json:"collectible_id"`
+	DocumentID        int64  `json:"document_id"`
+	Title             string `json:"title"`
+	Slug              string `json:"slug"`
+	PatternDocumentID int64  `json:"pattern_document_id"`
+	CenterColor       int    `json:"center_color"`
+	EdgeColor         int    `json:"edge_color"`
+	PatternColor      int    `json:"pattern_color"`
+	TextColor         int    `json:"text_color"`
+}
+
+// Empty reports whether no collectible status is present.
+func (s EmojiStatusCollectible) Empty() bool {
+	return s == (EmojiStatusCollectible{})
+}
+
+// Valid enforces the complete collectible status shape.  Partial snapshots
+// are forbidden because clients would otherwise render a gradient without its
+// model/pattern or be unable to resolve the collectible link.
+func (s EmojiStatusCollectible) Valid() bool {
+	if s.CollectibleID <= 0 || s.DocumentID <= 0 || s.PatternDocumentID <= 0 ||
+		s.Title == "" || s.Slug == "" {
+		return false
+	}
+	for _, color := range []int{s.CenterColor, s.EdgeColor, s.PatternColor, s.TextColor} {
+		if color < 0 || color > 0xffffff {
+			return false
+		}
+	}
+	return true
+}
+
+// UserEmojiStatus is the protocol-neutral mutation value accepted by the user
+// service/store boundary.  Exactly one of a normal document or a complete
+// collectible snapshot may be active; the zero value clears the status.
+type UserEmojiStatus struct {
+	DocumentID  int64                  `json:"document_id"`
+	Until       int                    `json:"until,omitempty"`
+	Collectible EmojiStatusCollectible `json:"collectible,omitempty"`
+}
+
+func (s UserEmojiStatus) Empty() bool {
+	return s.DocumentID == 0 && s.Collectible.Empty()
+}
+
+func (s UserEmojiStatus) Valid() bool {
+	if s.Until < 0 {
+		return false
+	}
+	if s.Empty() {
+		return s.Until == 0
+	}
+	if s.DocumentID <= 0 {
+		return false
+	}
+	if s.Collectible.Empty() {
+		return true
+	}
+	return s.Collectible.Valid() && s.DocumentID == s.Collectible.DocumentID
 }
 
 // Empty reports whether no explicit color/profile color state is set.
@@ -50,14 +119,19 @@ type User struct {
 	PremiumUntil int
 	// EmojiStatusDocumentID / EmojiStatusUntil 是用户自定义 emoji status
 	//（premium 专属，account.updateEmojiStatus）。DocumentID==0 表示未设置；
-	// Until==0 表示永久。
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int
+	// Until==0 表示永久。EmojiStatusCollectible 非零时 DocumentID 必须等于
+	// collectible 的 model document id。
+	EmojiStatusDocumentID  int64
+	EmojiStatusUntil       int
+	EmojiStatusCollectible EmojiStatusCollectible
 	// Birthday 是用户公开生日（account.updateBirthday）。零值表示未设置。
 	Birthday Birthday
 	// PersonalChannelID 是资料页展示的「个人频道」（account.updatePersonalChannel）；
 	// 0 表示未设置。资料投影时按它取频道对象与最新一帖。
 	PersonalChannelID int64
+	// LinkedCommunityID is the single Community containing this bot. Ordinary
+	// users must keep it zero; the community aggregate enforces that invariant.
+	LinkedCommunityID int64
 	Color             PeerColor
 	ProfileColor      PeerColor
 	// Profile photo fields are filled by app-layer user projection. PhotoID==0 表示无头像。
@@ -68,6 +142,15 @@ type User struct {
 	PhotoHasVideo bool
 	LastSeenAt    int
 	Status        UserStatus
+	// Deleted is the durable tombstone state. Deleted users remain addressable by
+	// ID so historical messages can render "Deleted Account", but all profile
+	// and reusable identity fields are cleared at the store boundary.
+	Deleted         bool
+	DeletedAt       int64
+	DeletionSource  AccountDeletionSource
+	DeletionReason  string
+	CreatedAt       time.Time
+	AccountDeleteAt time.Time
 }
 
 // PremiumActiveAt 报告用户在 now（Unix 秒）时刻是否为有效会员。
@@ -80,10 +163,38 @@ func (u User) PremiumActiveAt(now int64) bool {
 // （已设置且未过期；Until==0 表示永久）。emoji status 是 premium 专属，到期
 // 降级后即便列仍有残值也不再下发。
 func (u User) EmojiStatusActiveAt(now int64) bool {
-	if !u.PremiumActiveAt(now) || u.EmojiStatusDocumentID == 0 {
+	if !u.PremiumActiveAt(now) || !u.EmojiStatus().Valid() || u.EmojiStatusDocumentID == 0 {
 		return false
 	}
 	return u.EmojiStatusUntil == 0 || int64(u.EmojiStatusUntil) > now
+}
+
+// EmojiStatus returns the complete status snapshot carried by this user.
+func (u User) EmojiStatus() UserEmojiStatus {
+	return UserEmojiStatus{
+		DocumentID:  u.EmojiStatusDocumentID,
+		Until:       u.EmojiStatusUntil,
+		Collectible: u.EmojiStatusCollectible,
+	}
+}
+
+// DeletedTombstone strips every viewer-dependent or personally identifying
+// field while preserving the immutable id and lifecycle audit facts.
+func (u User) DeletedTombstone() User {
+	if !u.Deleted {
+		return u
+	}
+	return User{
+		ID:              u.ID,
+		AccessHash:      u.AccessHash,
+		Deleted:         true,
+		DeletedAt:       u.DeletedAt,
+		DeletionSource:  u.DeletionSource,
+		DeletionReason:  u.DeletionReason,
+		CreatedAt:       u.CreatedAt,
+		AccountDeleteAt: u.AccountDeleteAt,
+		Status:          UserStatus{Kind: UserStatusEmpty},
+	}
 }
 
 // UserStatusKind is a protocol-neutral account presence state.

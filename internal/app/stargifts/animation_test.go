@@ -68,7 +68,7 @@ func TestCreateCatalogRevisionPreservesHistoricalRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := svc.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
-		Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 1, Title: "First", Animation: animation,
+		Stars: 50, ConvertStars: 25, Enabled: true, SortOrder: 1, Title: "Telegram Pin", Animation: animation,
 	})
 	if err != nil {
 		t.Fatalf("create first: %v", err)
@@ -84,10 +84,86 @@ func TestCreateCatalogRevisionPreservesHistoricalRevision(t *testing.T) {
 		t.Fatalf("current=%+v found=%v", current, found)
 	}
 	historical, found, _ := svc.GiftRevisionByID(ctx, first.Gift.RevisionID)
-	if !found || historical.Stars != 50 || historical.Title != "First" {
+	if !found || historical.Stars != 50 || historical.Title != "Telesrv Pin" {
 		t.Fatalf("historical=%+v found=%v", historical, found)
 	}
 	if _, err := svc.SetCatalogEnabled(ctx, first.Gift.ID+999, false); !errors.Is(err, domain.ErrStarGiftNotFound) {
 		t.Fatalf("disable missing err=%v, want ErrStarGiftNotFound", err)
+	}
+}
+
+func TestCreateCatalogBundleRejectsMismatchedOfficialProvenance(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStarGiftStore()
+	svc := NewService(store, &testGiftBlob{data: map[string][]byte{}}, 2)
+	animation, err := svc.PrepareAnimation("gift.json", []byte(validGiftLottie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := make([]byte, sha256.Size)
+	_, err = svc.CreateCatalogBundle(ctx, domain.StarGiftCatalogBundleWrite{
+		Catalog: domain.StarGiftCatalogWrite{
+			Stars: 50, ConvertStars: 25, Enabled: true, Title: "Official", Animation: animation,
+			OfficialGiftID: 10, SourceManifestSHA256: hash, OfficialSourceJSON: []byte(`{"id":10}`),
+		},
+		Collectible: &domain.StarGiftCollectibleWrite{
+			OfficialGiftID: 11, SourceManifestSHA256: hash,
+		},
+	})
+	if !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("mismatched provenance err=%v, want ErrStarGiftCollectibleInvalid", err)
+	}
+}
+
+func TestCreateCatalogBundleMaterializesPublishableCollectibleDocuments(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStarGiftStore()
+	svc := NewService(store, &testGiftBlob{data: map[string][]byte{}}, 2)
+	animation, err := svc.PrepareOfficialAnimation("official.json", []byte(validGiftLottie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestSHA := make([]byte, sha256.Size)
+	result, err := svc.CreateCatalogBundle(ctx, domain.StarGiftCatalogBundleWrite{
+		Catalog: domain.StarGiftCatalogWrite{
+			Title: "Official", Stars: 50, ConvertStars: 25, Enabled: true, Animation: animation,
+			Actor: "test", CommandID: "official-catalog", OfficialGiftID: 10,
+			SourceManifestSHA256: manifestSHA, OfficialSourceJSON: []byte(`{"id":10}`),
+		},
+		Collectible: &domain.StarGiftCollectibleWrite{
+			UpgradeStars: 100, SupplyTotal: 1000, SlugPrefix: "official-10",
+			Models: []domain.StarGiftCollectibleAttribute{{
+				Kind: domain.StarGiftCollectibleModel, Name: "Model", RarityKind: domain.StarGiftRarityPermille,
+				RarityPermille: 1000, Animation: &animation,
+			}},
+			Patterns: []domain.StarGiftCollectibleAttribute{{
+				Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille,
+				RarityPermille: 1000, Animation: &animation,
+			}},
+			Backdrops: []domain.StarGiftCollectibleAttribute{{
+				Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", RarityKind: domain.StarGiftRarityPermille,
+				RarityPermille: 1000,
+			}},
+			Actor: "test", CommandID: "official-pool", OfficialGiftID: 10,
+			SourceManifestSHA256: manifestSHA,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create official collectible bundle: %v", err)
+	}
+	if result.Collectible == nil || len(result.Collectible.Models) != 1 || len(result.Collectible.Patterns) != 1 {
+		t.Fatalf("collectible result = %+v", result.Collectible)
+	}
+	model := result.Collectible.Models[0].Document
+	pattern := result.Collectible.Patterns[0].Document
+	if model == nil || !model.IsSticker() || model.IsCustomEmoji() {
+		t.Fatalf("model document = %+v, want ordinary sticker", model)
+	}
+	if pattern == nil || pattern.IsSticker() || !pattern.IsCustomEmoji() || len(pattern.Thumbs) != 1 ||
+		pattern.Thumbs[0].Kind != domain.PhotoSizeKindPath || len(pattern.Thumbs[0].Bytes) == 0 {
+		t.Fatalf("pattern document = %+v, want text-color custom emoji with inline path", pattern)
+	}
+	if !pattern.Attributes[1].TextColor {
+		t.Fatalf("pattern render attribute = %+v, want text_color", pattern.Attributes[1])
 	}
 }

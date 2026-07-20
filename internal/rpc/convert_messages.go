@@ -112,7 +112,7 @@ func tgMessage(m domain.Message) tg.MessageClass {
 			msg.SetInvertMedia(true)
 		}
 	}
-	// reply_markup（bot inline keyboard）：仅普通 tg.Message 携带（service 消息不带）。
+	// reply_markup（bot reply/inline keyboard）：仅普通 tg.Message 携带（service 消息不带）。
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
@@ -211,7 +211,7 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		if msg.Out {
 			return &tg.MessageActionRequestedPeerSentMe{
 				ButtonID: shared.ButtonID,
-				Peers:    tgRequestedPeers(shared.Peers),
+				Peers:    tgRequestedPeers(shared),
 			}
 		}
 		return &tg.MessageActionRequestedPeer{
@@ -221,27 +221,67 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 	case domain.MessageServiceActionStarGift:
 		return tgMessageActionStarGift(m.ServiceAction.StarGift)
 	case domain.MessageServiceActionStarGiftUnique:
-		action := m.ServiceAction.StarGiftUnique
+		return tgMessageActionStarGiftUnique(m.ServiceAction.StarGiftUnique)
+	case domain.MessageServiceActionStarGiftOffer:
+		action := m.ServiceAction.StarGiftOffer
 		if action == nil {
 			return &tg.MessageActionEmpty{}
 		}
-		out := &tg.MessageActionStarGiftUnique{
-			Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
-			Gift: tgUniqueStarGift(action.Gift),
+		return &tg.MessageActionStarGiftPurchaseOffer{Accepted: action.Accepted, Declined: action.Declined,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price), ExpiresAt: action.ExpiresAt}
+	case domain.MessageServiceActionStarGiftOfferDeclined:
+		action := m.ServiceAction.StarGiftOfferDeclined
+		if action == nil {
+			return &tg.MessageActionEmpty{}
 		}
-		if action.FromUserID != 0 {
-			out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
-		}
-		if peer := tgPeer(action.Peer); peer != nil {
-			out.SetPeer(peer)
-		}
-		if action.SavedID != 0 {
-			out.SetSavedID(action.SavedID)
-		}
-		return out
+		return &tg.MessageActionStarGiftPurchaseOfferDeclined{Expired: action.Expired,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price)}
 	default:
 		return &tg.MessageActionEmpty{}
 	}
+}
+
+func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) tg.MessageActionClass {
+	if action == nil {
+		return &tg.MessageActionEmpty{}
+	}
+	out := &tg.MessageActionStarGiftUnique{
+		Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
+		Transferred: action.Transferred, Refunded: action.Refunded, Assigned: action.Assigned,
+		FromOffer: action.FromOffer, Craft: action.Craft,
+		Gift: tgUniqueStarGift(action.Gift),
+	}
+	if action.CanExportAt > 0 {
+		out.SetCanExportAt(action.CanExportAt)
+	}
+	if action.TransferStars > 0 {
+		out.SetTransferStars(action.TransferStars)
+	}
+	if action.ResaleAmount != nil {
+		out.SetResaleAmount(tgStarGiftAmount(*action.ResaleAmount))
+	}
+	if action.CanTransferAt > 0 {
+		out.SetCanTransferAt(action.CanTransferAt)
+	}
+	if action.CanResellAt > 0 {
+		out.SetCanResellAt(action.CanResellAt)
+	}
+	if action.DropOriginalDetailsStars > 0 {
+		out.SetDropOriginalDetailsStars(action.DropOriginalDetailsStars)
+	}
+	if action.CanCraftAt > 0 {
+		out.SetCanCraftAt(action.CanCraftAt)
+	}
+	if action.FromUserID != 0 {
+		out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
+	}
+	if peer := tgPeer(action.Peer); peer != nil {
+		out.SetPeer(peer)
+	}
+	if action.SavedID != 0 {
+		out.SetSavedID(action.SavedID)
+	}
+	return out
 }
 
 func tgPeerList(peers []domain.Peer) []tg.PeerClass {
@@ -254,14 +294,43 @@ func tgPeerList(peers []domain.Peer) []tg.PeerClass {
 	return out
 }
 
-func tgRequestedPeers(peers []domain.Peer) []tg.RequestedPeerClass {
-	out := make([]tg.RequestedPeerClass, 0, len(peers))
-	for _, peer := range peers {
+func tgRequestedPeers(action *domain.MessageRequestedPeerAction) []tg.RequestedPeerClass {
+	if action == nil {
+		return nil
+	}
+	details := make(map[domain.Peer]domain.MessageRequestedPeerDetails, len(action.Details))
+	for _, detail := range action.Details {
+		details[detail.Peer] = detail
+	}
+	out := make([]tg.RequestedPeerClass, 0, len(action.Peers))
+	for _, peer := range action.Peers {
+		detail := details[peer]
 		switch peer.Type {
 		case domain.PeerTypeUser:
-			out = append(out, &tg.RequestedPeerUser{UserID: peer.ID})
+			item := &tg.RequestedPeerUser{UserID: peer.ID}
+			if action.NameRequested {
+				item.SetFirstName(detail.FirstName)
+				item.SetLastName(detail.LastName)
+			}
+			if action.UsernameRequested {
+				item.SetUsername(detail.Username)
+			}
+			if action.PhotoRequested && detail.Photo != nil {
+				item.SetPhoto(tgPhoto(*detail.Photo))
+			}
+			out = append(out, item)
 		case domain.PeerTypeChannel:
-			out = append(out, &tg.RequestedPeerChannel{ChannelID: peer.ID})
+			item := &tg.RequestedPeerChannel{ChannelID: peer.ID}
+			if action.NameRequested {
+				item.SetTitle(detail.Title)
+			}
+			if action.UsernameRequested {
+				item.SetUsername(detail.Username)
+			}
+			if action.PhotoRequested && detail.Photo != nil {
+				item.SetPhoto(tgPhoto(*detail.Photo))
+			}
+			out = append(out, item)
 		}
 	}
 	return out

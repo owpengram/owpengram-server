@@ -12,6 +12,9 @@ const (
 	UpdateEventReadChannelDiscussionOutbox UpdateEventType = "read_channel_discussion_outbox"
 	UpdateEventReadMessageContents         UpdateEventType = "read_message_contents"
 	UpdateEventEditMessage                 UpdateEventType = "edit_message"
+	// UpdateEventBotCallbackQuery 仅用于 Bot API 专用 update_id 队列投影；不写账号
+	// pts/difference/outbox。
+	UpdateEventBotCallbackQuery UpdateEventType = "bot_callback_query"
 	// UpdateEventWebPage 映射 updateWebPage：异步解析完成后把消息里的 pending 链接预览
 	// 占位就地替换为已解析卡片。携带账号 pts（非 LacksWirePts），消息快照经 box JOIN 重建，
 	// 故 difference/dispatch 与 edit_message 同走通用消息事件路径，仅 tg 投影构造器不同。
@@ -29,8 +32,11 @@ const (
 	UpdateEventPeerStoryBlocked UpdateEventType = "peer_story_blocked"
 	// UpdateEventUserPhone 映射 updateUserPhone。它是账号绝对状态更新，TL
 	// 构造器不携 pts；事件仍占账号 pts，以便其它设备在线/离线保持同一水位。
-	UpdateEventUserPhone      UpdateEventType = "user_phone"
-	UpdateEventDeleteMessages UpdateEventType = "delete_messages"
+	UpdateEventUserPhone UpdateEventType = "user_phone"
+	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
+	// It consumes account pts even though updateUserEmojiStatus has no pts.
+	UpdateEventUserEmojiStatus UpdateEventType = "user_emoji_status"
+	UpdateEventDeleteMessages  UpdateEventType = "delete_messages"
 	// UpdateEventPinnedMessages 映射 updatePinnedMessages（私聊置顶/取消
 	// 置顶；MessageIDs 是该 owner 自己视角的 box id，Bool 为 pinned）。
 	// TL 构造器自带账号 pts/pts_count，不属于 LacksWirePts。
@@ -81,6 +87,7 @@ type UpdateEvent struct {
 	Peers            []Peer
 	Bool             bool
 	Phone            string
+	EmojiStatus      UserEmojiStatus
 	Settings         PeerSettings
 	MessageIDs       []int
 	MaxID            int
@@ -106,6 +113,11 @@ type UpdateEvent struct {
 	QuickReplies      []QuickReply
 	QuickReply        QuickReply
 	QuickReplyMessage QuickReplyMessage
+	BotCallbackQuery  *BotCallbackQuery
+	// BotAPIUpdateID is the HTTP Bot API update_id. It is intentionally separate
+	// from MTProto Pts: Bot API ephemeral envelopes never advance account state.
+	BotAPIUpdateID   int64
+	EphemeralMessage *EphemeralMessage
 }
 
 // LacksWirePts 表示该事件占用了账号 pts，但它对应的 TL update 构造器没有
@@ -127,6 +139,7 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventPeerSettings,
 		UpdateEventPeerStoryBlocked,
 		UpdateEventUserPhone,
+		UpdateEventUserEmojiStatus,
 		UpdateEventDialogFilter,
 		UpdateEventDialogFilterOrder,
 		UpdateEventDialogFilters,

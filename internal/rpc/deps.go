@@ -180,6 +180,15 @@ type AuthKeyTargetedSessionBinder interface {
 	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
+// ExactLayerTransientSessionBinder is the admission boundary for updates whose
+// constructors do not exist in older profiles. Implementations must filter the
+// live session index before encoding, skip unknown/not-ready profiles, and must
+// never queue the transient payload for later delivery.
+type ExactLayerTransientSessionBinder interface {
+	PushToUserTransientAtLeastLayer(ctx context.Context, userID int64, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+	PushToUserAuthKeyTransientAtLeastLayer(ctx context.Context, userID int64, businessAuthKeyID [8]byte, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+}
+
 // OnlineUserProvider exposes a bounded runtime snapshot for best-effort fanout.
 type OnlineUserProvider interface {
 	IsUserOnline(userID int64) bool
@@ -298,7 +307,14 @@ type UserIdentityService interface {
 type UserPremiumService interface {
 	GrantPremium(ctx context.Context, userID int64, months int) (domain.User, error)
 	SweepExpiredPremium(ctx context.Context, now int64, limit int) ([]domain.User, error)
-	UpdateEmojiStatus(ctx context.Context, userID int64, documentID int64, until int) (domain.User, error)
+	UpdateEmojiStatus(ctx context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error)
+}
+
+// UserEmojiStatusDurableService exposes the aggregate state+event write used
+// by account.updateEmojiStatus. The bool is false for lightweight stores that
+// require the RPC Updates service to append the event separately.
+type UserEmojiStatusDurableService interface {
+	UpdateEmojiStatusWithEvent(ctx context.Context, userID int64, status domain.UserEmojiStatus, date int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.User, domain.UpdateEvent, bool, error)
 }
 
 // UserColorService 是 UsersService 的个人色板扩展能力。用于 account.updateColor
@@ -427,6 +443,13 @@ type UpdatesService interface {
 	RecordChannelViewForumAsMessages(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, enabled bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordChannelDiscussionInbox(ctx context.Context, stateAuthKeyID [8]byte, userID, channelID int64, topicID, maxID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 	RecordDraftMessage(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topMsgID int, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
+}
+
+// UserEmojiStatusUpdatesService is the optional durable settings-update
+// extension used by account.updateEmojiStatus. Keeping it separate preserves
+// lightweight test/service implementations of the core UpdatesService.
+type UserEmojiStatusUpdatesService interface {
+	RecordUserEmojiStatus(ctx context.Context, stateAuthKeyID [8]byte, userID int64, status domain.UserEmojiStatus, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error)
 }
 
 // ContactsService 抽象通讯录查询。
@@ -597,6 +620,7 @@ type ChannelsService interface {
 	CheckUsername(ctx context.Context, userID, channelID int64, username string) (bool, error)
 	UpdateUsername(ctx context.Context, userID int64, req domain.UpdateChannelUsernameRequest) (domain.Channel, error)
 	ListAdminedPublicChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
+	ListCommunityLinkableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListStoryPostableChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ListSendAsChannels(ctx context.Context, userID int64) ([]domain.Channel, error)
 	ResolvePublicUsername(ctx context.Context, userID int64, username string) (domain.Channel, bool, error)
@@ -710,6 +734,32 @@ type ChannelsService interface {
 	FilterActiveMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
 }
 
+// CommunitiesService abstracts the Layer 228 Community aggregation domain.
+// Community containers never expose tg types and never own message/read/pts state.
+type CommunitiesService interface {
+	Create(ctx context.Context, userID int64, req domain.CreateCommunityRequest) (domain.CommunityView, error)
+	Get(ctx context.Context, userID, communityID int64) (domain.CommunityView, error)
+	GetMany(ctx context.Context, userID int64, ids []int64) ([]domain.CommunityView, error)
+	ListJoined(ctx context.Context, userID int64) ([]domain.CommunityView, error)
+	TogglePeerLink(ctx context.Context, userID int64, req domain.CommunityTogglePeerLinkRequest) (domain.CommunityTogglePeerLinkResult, error)
+	SetCollapsed(ctx context.Context, userID, communityID int64, collapsed bool) (domain.CommunityView, bool, error)
+	ListPeerLinkRequests(ctx context.Context, userID, communityID int64, offset string, limit int) (domain.CommunityPeerLinkRequestPage, error)
+	DecidePeerLinkRequest(ctx context.Context, userID, communityID int64, peer domain.Peer, reject bool, date int) (domain.CommunityTogglePeerLinkResult, error)
+	DecideAllPeerLinkRequests(ctx context.Context, userID, communityID int64, reject bool, date int) ([]domain.CommunityTogglePeerLinkResult, error)
+	ToggleParticipantBanned(ctx context.Context, userID, communityID, participantUserID int64, unban bool, date int) (domain.CommunityParticipantBanResult, error)
+	ParticipantJoinedChats(ctx context.Context, userID, communityID, participantUserID int64) (domain.CommunityParticipantJoinedChats, error)
+	Participants(ctx context.Context, userID, communityID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.CommunityParticipantList, error)
+	EditTitle(ctx context.Context, userID, communityID int64, title string) (domain.CommunityView, bool, error)
+	EditAbout(ctx context.Context, userID, communityID int64, about string) (domain.CommunityView, bool, error)
+	EditAdmin(ctx context.Context, userID int64, req domain.CommunityEditAdminRequest) (domain.CommunityView, bool, error)
+	EditDefaultBannedRights(ctx context.Context, userID, communityID int64, rights domain.ChannelBannedRights) (domain.CommunityView, bool, error)
+	SetPhoto(ctx context.Context, userID, communityID int64, photo *domain.Photo, date int) (domain.CommunityView, bool, error)
+	Delete(ctx context.Context, userID, communityID int64, date int) (domain.CommunityView, []domain.Peer, error)
+	SetPinned(ctx context.Context, userID, communityID int64, pinned bool) (bool, error)
+	ReorderPinned(ctx context.Context, userID int64, order []domain.Peer, force bool) (bool, error)
+	SearchScope(ctx context.Context, userID, communityID int64) (domain.CommunitySearchScope, error)
+}
+
 // FilesService 抽象文件上传分片、下载与媒体（document/photo）组装。
 // 方法只用 domain 类型；rpc 层负责 tg.InputFileLocation / InputMedia ↔ domain 转换。
 type FilesService interface {
@@ -791,6 +841,22 @@ type AIComposeService interface {
 	Compose(ctx context.Context, req domain.AIComposeRequest) (domain.AIComposeResult, error)
 }
 
+// EphemeralService owns Layer 228 short-lived bot/member state. It must never
+// write ordinary messages, dialogs, pts/qts/seq logs or durable update outbox.
+type EphemeralService interface {
+	SendFromClient(ctx context.Context, request domain.SendClientEphemeralRequest) (domain.EphemeralMessage, bool, error)
+	SendFromBot(ctx context.Context, request domain.SendBotEphemeralRequest) (domain.EphemeralMessage, bool, error)
+	SendFromBotLazy(ctx context.Context, request domain.SendBotEphemeralRequest, build func(context.Context) (domain.EphemeralContent, error)) (domain.EphemeralMessage, bool, error)
+	EditFromBot(ctx context.Context, botUserID int64, peer domain.Peer, id int, content domain.EphemeralContent) (domain.EphemeralMessage, error)
+	EditFieldsFromBot(ctx context.Context, botUserID, receiverUserID int64, peer domain.Peer, id int, mode domain.EphemeralEditMode, fields domain.EditEphemeralFields) (domain.EphemeralMessage, error)
+	EditFieldsFromBotLazy(ctx context.Context, botUserID, receiverUserID int64, peer domain.Peer, id int, mode domain.EphemeralEditMode, build func(context.Context) (domain.EditEphemeralFields, error)) (domain.EphemeralMessage, error)
+	Delete(ctx context.Context, actorUserID, receiverUserID int64, peer domain.Peer, id int) (domain.EphemeralMessage, bool, error)
+	DeleteFromDevice(ctx context.Context, actorUserID, receiverUserID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, bool, error)
+	Callback(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int, data []byte) (domain.EphemeralCallback, error)
+	PutCallbackAction(ctx context.Context, action domain.EphemeralCallbackAction) (bool, error)
+	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
+}
+
 // Deps 按业务域注入服务接口。各域的 handler 注册见对应文件（auth.go / users.go / updates.go）。
 type Deps struct {
 	Auth AuthService
@@ -803,10 +869,14 @@ type Deps struct {
 	Help                 HelpService
 	AccountFreeze        AccountFreezeService
 	AICompose            AIComposeService
+	Ephemeral            EphemeralService
+	EphemeralPush        store.EphemeralPushBroker
+	EphemeralReports     store.EphemeralReportStore
 	Users                UsersService
 	Updates              UpdatesService
 	BootstrapUpdates     store.BootstrapUpdateJobStore
 	BotAPIUpdates        store.BotAPIUpdateStore
+	BotCallbacks         store.BotCallbackRegistryStore
 	Contacts             ContactsService
 	Dialogs              DialogsService
 	Chatlists            ChatlistsService
@@ -814,6 +884,7 @@ type Deps struct {
 	Translation          TranslationService
 	Stories              StoriesService
 	Channels             ChannelsService
+	Communities          CommunitiesService
 	Files                FilesService
 	Bots                 BotsService
 	Polls                PollsService
@@ -871,7 +942,9 @@ type GiftsService interface {
 	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
 	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
 	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
+	ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error)
 	Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
+	UpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
 	RecordSavedGift(ctx context.Context, gift domain.SavedStarGift) (int64, error)
 	ListSaved(ctx context.Context, owner domain.Peer, excludeUnsaved bool, offset string, limit int) (domain.SavedStarGiftPage, error)
 	ListSavedFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
@@ -879,13 +952,36 @@ type GiftsService interface {
 	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
 	CountSaved(ctx context.Context, owner domain.Peer) (int, error)
 	ToggleSaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
-	Convert(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, error)
+	ConvertAggregate(ctx context.Context, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error)
 	ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error)
 	CreateCollection(ctx context.Context, owner domain.Peer, title string, savedGiftIDs []int64) (domain.StarGiftCollection, error)
 	UpdateCollection(ctx context.Context, owner domain.Peer, collectionID int, patch domain.StarGiftCollectionPatch) (domain.StarGiftCollection, error)
 	DeleteCollection(ctx context.Context, owner domain.Peer, collectionID int) (bool, error)
 	ReorderCollections(ctx context.Context, owner domain.Peer, collectionIDs []int) error
 	SetPinned(ctx context.Context, owner domain.Peer, savedGiftIDs []int64) error
+	ListResale(ctx context.Context, filter domain.StarGiftResaleFilter) (domain.StarGiftResalePage, error)
+	ValueInfo(ctx context.Context, uniqueGiftID int64) (domain.StarGiftValueInfo, error)
+	SetListing(ctx context.Context, req domain.StarGiftListingRequest) (domain.UniqueStarGift, error)
+	Transfer(ctx context.Context, req domain.StarGiftTransferRequest) (domain.StarGiftTransferResult, error)
+	PurchaseResale(ctx context.Context, req domain.StarGiftResalePurchaseRequest) (domain.StarGiftTransferResult, error)
+	SendOffer(ctx context.Context, req domain.StarGiftOfferRequest) (domain.StarGiftOfferResult, error)
+	ResolveOffer(ctx context.Context, req domain.StarGiftResolveOfferRequest) (domain.StarGiftOfferResult, error)
+	ListCraft(ctx context.Context, userID, giftID int64, offset string, limit int) (domain.SavedStarGiftPage, error)
+	Craft(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, error)
+	AuctionState(ctx context.Context, userID, giftID int64, slug string, now int) (domain.StarGiftAuction, error)
+	ActiveAuctions(ctx context.Context, userID int64, now int) ([]domain.StarGiftAuction, error)
+	AuctionAcquired(ctx context.Context, userID, giftID int64) ([]domain.StarGiftAuctionAcquired, error)
+	BidAuction(ctx context.Context, req domain.StarGiftAuctionBidRequest) (domain.StarGiftAuction, domain.StarsBalance, error)
+	PrepaidUpgradeTarget(ctx context.Context, owner domain.Peer, hash string) (domain.SavedStarGift, int64, error)
+	PrepayUpgrade(ctx context.Context, req domain.StarGiftPrepaidUpgradeRequest) (domain.StarGiftPrepaidUpgradeResult, error)
+	DropOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
+	SetNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
+	Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error)
+	TonBalance(ctx context.Context, userID int64) (int64, error)
+	TonTransactions(ctx context.Context, userID int64, offset string, limit int) (domain.TonTransactionPage, error)
+	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
+	ValidatePurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
+	Purchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error)
 }
 
 // StarsService 抽象 Stars 本地账本（app/stars）：余额查询、贷记/借记、流水分页。

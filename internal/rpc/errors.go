@@ -129,6 +129,10 @@ func effectIDInvalidErr() error { return tgerr.New(400, "EFFECT_ID_INVALID") }
 
 func paymentUnsupportedErr() error { return tgerr.New(406, "PAYMENT_UNSUPPORTED") }
 
+func allowPaymentRequiredErr(stars int64) error {
+	return tgerr.New(403, fmt.Sprintf("ALLOW_PAYMENT_REQUIRED_%d", stars))
+}
+
 func balanceTooLowErr() error { return tgerr.New(400, "BALANCE_TOO_LOW") }
 
 func starsAmountInvalidErr() error { return tgerr.New(400, "STARS_AMOUNT_INVALID") }
@@ -136,6 +140,10 @@ func starsAmountInvalidErr() error { return tgerr.New(400, "STARS_AMOUNT_INVALID
 func starsFormAmountMismatchErr() error { return tgerr.New(406, "STARS_FORM_AMOUNT_MISMATCH") }
 
 func formIDEmptyErr() error { return tgerr.New(400, "FORM_ID_EMPTY") }
+
+func formExpiredErr() error { return tgerr.New(400, "FORM_EXPIRED") }
+
+func purposeInvalidErr() error { return tgerr.New(400, "PURPOSE_INVALID") }
 
 func suggestedPostPeerInvalidErr() error { return tgerr.New(400, "SUGGESTED_POST_PEER_INVALID") }
 

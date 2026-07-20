@@ -7,6 +7,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/branding"
 	androidcompat "telesrv/internal/compat/android"
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
@@ -21,7 +22,10 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return tdesktop.NearestDC(r.cfg.DC), nil
 	})
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
-		return &tg.HelpInviteText{Message: "Join me on Telegram."}, nil
+		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName + "."}, nil
+	})
+	registerRPC[*tg.HelpSaveAppLogRequest](d, tlprofile.SemanticMethodHelpSaveAppLog, func(ctx context.Context, _ *tg.HelpSaveAppLogRequest) (any, error) {
+		return r.onHelpSaveAppLog(ctx)
 	})
 	registerRPC[*tg.HelpGetAppUpdateRequest](d, tlprofile.SemanticMethodHelpGetAppUpdate, func(ctx context.Context, layerRequest *tg.HelpGetAppUpdateRequest) (any, error) {
 		source := layerRequest.
@@ -113,6 +117,21 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 	})
 }
 
+// onHelpSaveAppLog 为官方客户端的 fire-and-forget 应用遥测提供有界兼容应答。
+// telesrv 当前不运营遥测产品，因此不读取、记录或持久化事件内容；请求已在 exact
+// Layer admission 处受 wire/vector/aggregate/depth 限制。该方法按 TL 访问约束允许
+// 未授权连接调用，但已登录 bot 必须拒绝。
+func (r *Router) onHelpSaveAppLog(ctx context.Context) (bool, error) {
+	userID, authorized, err := r.currentUserID(ctx)
+	if err != nil {
+		return false, internalErr()
+	}
+	if authorized && r.userIsBot(ctx, userID) {
+		return false, botMethodInvalidErr()
+	}
+	return true, nil
+}
+
 func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
 	config := tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL)
 	userID, authorized, err := r.currentUserID(ctx)
@@ -164,7 +183,7 @@ func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismis
 // 六个字段全是 TL 必填项，空值也必须给出空集合而非缺失。
 func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumPromo, error) {
 	promo := &tg.HelpPremiumPromo{
-		StatusText:     "Telegram Premium is not active on this account.",
+		StatusText:     branding.PremiumName + " is not active on this account.",
 		StatusEntities: []tg.MessageEntityClass{},
 		VideoSections:  []string{},
 		Videos:         []tg.DocumentClass{},
@@ -181,7 +200,7 @@ func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumProm
 	}
 	if u.PremiumActiveAt(r.clock.Now().Unix()) {
 		until := time.Unix(int64(u.PremiumUntil), 0)
-		promo.StatusText = "Telegram Premium is active until " + until.Format("2006-01-02") + "."
+		promo.StatusText = branding.PremiumName + " is active until " + until.Format("2006-01-02") + "."
 	}
 	return promo, nil
 }

@@ -25,7 +25,12 @@ func (s *ChannelStore) ListChannelHistory(ctx context.Context, viewerUserID int6
 	base := "channel_id = $1 AND NOT deleted"
 	extraChannels := []domain.Channel(nil)
 	if channel.Monoforum {
-		base += " AND saved_peer_id = 0"
+		if isChannelAdmin(member) {
+			base += " AND saved_peer_id = 0"
+		} else {
+			baseArgs = append(baseArgs, viewerUserID)
+			base += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(baseArgs))
+		}
 		if channel.LinkedMonoforumID != 0 {
 			if parent, parentErr := s.channelByID(ctx, s.db, channel.LinkedMonoforumID); parentErr == nil {
 				extraChannels = append(extraChannels, parent)
@@ -216,8 +221,12 @@ func (s *ChannelStore) SearchJoinedMessages(ctx context.Context, viewerUserID in
 	if limit <= 0 || limit > domain.MaxChannelGlobalSearchLimit {
 		limit = domain.MaxChannelGlobalSearchLimit
 	}
-	args := []any{viewerUserID}
+	args := []any{viewerUserID, req.AllowPublicPreview}
 	where := `NOT deleted`
+	if req.RestrictChannelIDs {
+		args = append(args, req.ChannelIDs)
+		where += fmt.Sprintf("\nAND channel_id = ANY($%d::bigint[])", len(args))
+	}
 	if query != "" {
 		args = append(args, "%"+escapeLike(query)+"%")
 		where += fmt.Sprintf(`
@@ -237,15 +246,18 @@ AND EXISTS (
 	where += `
 AND EXISTS (
   SELECT 1
-  FROM channels c
-  JOIN channel_members cm ON cm.channel_id = c.id
-    AND cm.user_id = $1
-    AND cm.status = 'active'
-    AND NOT COALESCE((cm.banned_rights->>'ViewMessages')::boolean, false)
+	FROM channels c
+	LEFT JOIN channel_members cm ON cm.channel_id = c.id AND cm.user_id = $1
   LEFT JOIN channel_dialogs d ON d.channel_id = c.id AND d.user_id = $1
-  WHERE c.id = channel_messages.channel_id
-    AND NOT c.deleted
-    AND (cm.available_min_id <= 0 OR channel_messages.id > cm.available_min_id)`
+	WHERE c.id = channel_messages.channel_id
+	  AND NOT c.deleted
+	  AND (
+	    (cm.status = 'active' AND NOT COALESCE((cm.banned_rights->>'ViewMessages')::boolean, false))
+	    OR ($2::boolean AND COALESCE(c.username,'') <> ''
+	      AND COALESCE(cm.status,'') <> 'kicked'
+	      AND NOT COALESCE((cm.banned_rights->>'ViewMessages')::boolean, false))
+	  )
+	  AND (COALESCE(cm.status,'') <> 'active' OR cm.available_min_id <= 0 OR channel_messages.id > cm.available_min_id)`
 	if req.BroadcastsOnly {
 		where += `
     AND c.broadcast AND NOT c.megagroup`

@@ -45,6 +45,15 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 			addDomainPeerRef(peer, 0, userIDs, channelIDs)
 		}
 		collectMessagePeerRefs(out[i].Message, 0, userIDs, channelIDs)
+		if message := out[i].EphemeralMessage; message != nil {
+			collectEphemeralMessagePeerRefs(*message, userIDs, channelIDs)
+			if message.BotAPIReply != nil {
+				collectEphemeralMessagePeerRefs(*message.BotAPIReply, userIDs, channelIDs)
+			}
+		}
+		if out[i].BotCallbackQuery != nil && out[i].BotCallbackQuery.UserID != 0 {
+			userIDs[out[i].BotCallbackQuery.UserID] = struct{}{}
+		}
 		removeKnownChannelRefs(channelIDs, out[i].Channels)
 		refs[i] = updateEventPeerRefs{userIDs: userIDs, channelIDs: channelIDs}
 		for id := range userIDs {
@@ -61,6 +70,24 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 		out[i].Channels = mergeDomainChannels(out[i].Channels, cache.channelsForIDs(ctx, viewerUserID, mapKeys(refs[i].channelIDs))...)
 	}
 	return out
+}
+
+func collectEphemeralMessagePeerRefs(message domain.EphemeralMessage, userIDs, channelIDs map[int64]struct{}) {
+	if message.SenderUserID != 0 {
+		userIDs[message.SenderUserID] = struct{}{}
+	}
+	if message.ReceiverUserID != 0 {
+		userIDs[message.ReceiverUserID] = struct{}{}
+	}
+	addDomainPeerRef(message.Peer, 0, userIDs, channelIDs)
+	for _, entity := range message.Content.Entities {
+		if entity.UserID != 0 {
+			userIDs[entity.UserID] = struct{}{}
+		}
+	}
+	if message.Content.Media != nil && message.Content.Media.Contact != nil && message.Content.Media.Contact.UserID != 0 {
+		userIDs[message.Content.Media.Contact.UserID] = struct{}{}
+	}
 }
 
 type updateEventPeerRefs struct {
@@ -219,6 +246,11 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
+	}
+	if msg.Media != nil && msg.Media.ServiceAction != nil && msg.Media.ServiceAction.RequestedPeer != nil {
+		for _, peer := range msg.Media.ServiceAction.RequestedPeer.Peers {
+			addDomainPeerRef(peer, currentChannelID, userIDs, channelIDs)
+		}
 	}
 	collectPollMediaUserRefs(msg.Media, userIDs)
 	collectTodoMediaUserRefs(msg.Media, userIDs)

@@ -35,6 +35,33 @@ func (s *MessageStore) GetByIDs(_ context.Context, userID int64, ids []int) (dom
 	return out, nil
 }
 
+// GetByUID resolves one owner's box row by the shared private message id. Callback delivery
+// uses it to translate the clicker's box id to the bot's box id without scanning history.
+func (s *MessageStore) GetByUID(_ context.Context, userID, uid int64) (domain.Message, bool, error) {
+	if userID == 0 || uid == 0 {
+		return domain.Message{}, false, nil
+	}
+	s.mu.RLock()
+	var found domain.Message
+	for _, msg := range s.m[userID] {
+		if msg.UID == uid {
+			found = cloneMessage(msg)
+			reactions := s.privateMessageReactionsForMessageLocked(found)
+			if len(reactions.Results) > 0 || len(reactions.Recent) > 0 {
+				found.Reactions = cloneChannelMessageReactionsPtr(&reactions)
+			}
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if found.ID == 0 {
+		return domain.Message{}, false, nil
+	}
+	items := []domain.Message{found}
+	s.enrichPrivateMessagePolls(items, int(time.Now().Unix()))
+	return items[0], true, nil
+}
+
 func (s *MessageStore) ListByUser(_ context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
 	s.mu.RLock()
 	messages := cloneMessages(s.m[userID])
@@ -235,10 +262,22 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 	})
 
 	query := strings.ToLower(filter.Query)
+	peerIDs := make(map[int64]struct{}, len(filter.PeerIDs))
+	for _, id := range filter.PeerIDs {
+		peerIDs[id] = struct{}{}
+	}
 	base := make([]domain.Message, 0, len(messages))
 	for _, msg := range messages {
 		if filter.HasPeer && msg.Peer != filter.Peer {
 			continue
+		}
+		if filter.RestrictPeerIDs {
+			if msg.Peer.Type != domain.PeerTypeUser {
+				continue
+			}
+			if _, ok := peerIDs[msg.Peer.ID]; !ok {
+				continue
+			}
 		}
 		if query != "" && !strings.Contains(strings.ToLower(msg.Body), query) {
 			continue

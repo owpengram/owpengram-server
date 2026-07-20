@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (access_hash, phone, signup_email, first_name, last_name, username, country_code, premium_expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type CreateUserParams struct {
@@ -70,13 +70,20 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email FROM users WHERE id = $1
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -112,13 +119,20 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email FROM users WHERE phone = $1
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email FROM users WHERE phone = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -154,13 +168,20 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
 }
 
 const getUserBySignupEmail = `-- name: GetUserBySignupEmail :one
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email FROM users WHERE lower(signup_email) = lower($1) AND signup_email <> ''
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email FROM users WHERE lower(signup_email) = lower($1) AND signup_email <> ''
 `
 
 func (q *Queries) GetUserBySignupEmail(ctx context.Context, lower string) (User, error) {
@@ -196,13 +217,20 @@ func (q *Queries) GetUserBySignupEmail(ctx context.Context, lower string) (User,
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email FROM users WHERE lower(username) = lower($1) AND username <> ''
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email FROM users WHERE lower(username) = lower($1) AND username <> '' AND deleted_at IS NULL
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, error) {
@@ -238,13 +266,20 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
 }
 
 const getUsersByIDs = `-- name: GetUsersByIDs :many
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 FROM users
 WHERE id = ANY($1::bigint[])
 ORDER BY id
@@ -289,6 +324,13 @@ func (q *Queries) GetUsersByIDs(ctx context.Context, ids []int64) ([]User, error
 			&i.BirthdayMonth,
 			&i.BirthdayYear,
 			&i.PersonalChannelID,
+			&i.DeletedAt,
+			&i.DeletionSource,
+			&i.DeletionReason,
+			&i.AccountDeleteAt,
+			&i.EmojiStatusCollectibleID,
+			&i.EmojiStatusCollectible,
+			&i.LinkedCommunityID,
 			&i.SignupEmail,
 		); err != nil {
 			return nil, err
@@ -302,9 +344,9 @@ func (q *Queries) GetUsersByIDs(ctx context.Context, ids []int64) ([]User, error
 }
 
 const getUsersByPhones = `-- name: GetUsersByPhones :many
-SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+SELECT id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 FROM users
-WHERE phone = ANY($1::text[])
+WHERE phone = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
 
@@ -347,6 +389,13 @@ func (q *Queries) GetUsersByPhones(ctx context.Context, phones []string) ([]User
 			&i.BirthdayMonth,
 			&i.BirthdayYear,
 			&i.PersonalChannelID,
+			&i.DeletedAt,
+			&i.DeletionSource,
+			&i.DeletionReason,
+			&i.AccountDeleteAt,
+			&i.EmojiStatusCollectibleID,
+			&i.EmojiStatusCollectible,
+			&i.LinkedCommunityID,
 			&i.SignupEmail,
 		); err != nil {
 			return nil, err
@@ -377,12 +426,15 @@ WITH matched AS (
     u.premium_expires_at,
     u.emoji_status_document_id,
     u.emoji_status_until,
+    u.emoji_status_collectible_id,
+    u.emoji_status_collectible,
     u.color_set,
     u.color,
     u.color_background_emoji_id,
     u.profile_color_set,
     u.profile_color,
     u.profile_color_background_emoji_id,
+	 u.linked_community_id,
     u.last_seen_at,
     (c.contact_user_id IS NOT NULL)::boolean AS contact,
     COALESCE(c.mutual, false)::boolean AS mutual,
@@ -397,6 +449,7 @@ WITH matched AS (
   FROM users u
   LEFT JOIN contacts c ON c.user_id = $4::bigint AND c.contact_user_id = u.id
   WHERE u.id <> $4::bigint
+    AND u.deleted_at IS NULL
     AND $3::text <> ''
     AND (
       ($2::text <> '' AND u.phone LIKE $2::text || '%')
@@ -425,12 +478,15 @@ SELECT
   premium_expires_at,
   emoji_status_document_id,
   emoji_status_until,
+  emoji_status_collectible_id,
+  emoji_status_collectible,
   color_set,
   color,
   color_background_emoji_id,
   profile_color_set,
   profile_color,
   profile_color_background_emoji_id,
+	linked_community_id,
   last_seen_at,
   contact,
   mutual
@@ -463,12 +519,15 @@ type SearchUsersRow struct {
 	PremiumExpiresAt              pgtype.Timestamptz
 	EmojiStatusDocumentID         int64
 	EmojiStatusUntil              int64
+	EmojiStatusCollectibleID      *int64
+	EmojiStatusCollectible        []byte
 	ColorSet                      bool
 	Color                         int32
 	ColorBackgroundEmojiID        int64
 	ProfileColorSet               bool
 	ProfileColor                  int32
 	ProfileColorBackgroundEmojiID int64
+	LinkedCommunityID             int64
 	LastSeenAt                    int64
 	Contact                       bool
 	Mutual                        bool
@@ -505,12 +564,15 @@ func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]Sea
 			&i.PremiumExpiresAt,
 			&i.EmojiStatusDocumentID,
 			&i.EmojiStatusUntil,
+			&i.EmojiStatusCollectibleID,
+			&i.EmojiStatusCollectible,
 			&i.ColorSet,
 			&i.Color,
 			&i.ColorBackgroundEmojiID,
 			&i.ProfileColorSet,
 			&i.ProfileColor,
 			&i.ProfileColorBackgroundEmojiID,
+			&i.LinkedCommunityID,
 			&i.LastSeenAt,
 			&i.Contact,
 			&i.Mutual,
@@ -529,8 +591,8 @@ const setUserPremiumUntil = `-- name: SetUserPremiumUntil :one
 UPDATE users
 SET premium_expires_at = $1::timestamptz,
     updated_at = now()
-WHERE id = $2::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $2::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type SetUserPremiumUntilParams struct {
@@ -571,6 +633,13 @@ func (q *Queries) SetUserPremiumUntil(ctx context.Context, arg SetUserPremiumUnt
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -580,8 +649,8 @@ const setUserVerified = `-- name: SetUserVerified :one
 UPDATE users
 SET verified = $1::boolean,
     updated_at = now()
-WHERE id = $2::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $2::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type SetUserVerifiedParams struct {
@@ -622,6 +691,13 @@ func (q *Queries) SetUserVerified(ctx context.Context, arg SetUserVerifiedParams
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -634,11 +710,12 @@ SET premium_expires_at = NULL,
 WHERE id IN (
   SELECT id FROM users
   WHERE premium_expires_at IS NOT NULL
+    AND deleted_at IS NULL
     AND premium_expires_at <= $1::timestamptz
   ORDER BY premium_expires_at
   LIMIT $2::int
 )
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type SweepExpiredPremiumParams struct {
@@ -685,6 +762,13 @@ func (q *Queries) SweepExpiredPremium(ctx context.Context, arg SweepExpiredPremi
 			&i.BirthdayMonth,
 			&i.BirthdayYear,
 			&i.PersonalChannelID,
+			&i.DeletedAt,
+			&i.DeletionSource,
+			&i.DeletionReason,
+			&i.AccountDeleteAt,
+			&i.EmojiStatusCollectibleID,
+			&i.EmojiStatusCollectible,
+			&i.LinkedCommunityID,
 			&i.SignupEmail,
 		); err != nil {
 			return nil, err
@@ -703,8 +787,8 @@ SET birthday_day = $1::int,
     birthday_month = $2::int,
     birthday_year = $3::int,
     updated_at = now()
-WHERE id = $4::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $4::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserBirthdayParams struct {
@@ -752,6 +836,13 @@ func (q *Queries) UpdateUserBirthday(ctx context.Context, arg UpdateUserBirthday
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -763,8 +854,8 @@ SET color_set = $1::boolean,
     color = $2::int,
     color_background_emoji_id = $3::bigint,
     updated_at = now()
-WHERE id = $4::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $4::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserColorParams struct {
@@ -812,6 +903,13 @@ func (q *Queries) UpdateUserColor(ctx context.Context, arg UpdateUserColorParams
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -821,19 +919,29 @@ const updateUserEmojiStatus = `-- name: UpdateUserEmojiStatus :one
 UPDATE users
 SET emoji_status_document_id = $1::bigint,
     emoji_status_until = $2::bigint,
+    emoji_status_collectible_id = $3::bigint,
+    emoji_status_collectible = $4::jsonb,
     updated_at = now()
-WHERE id = $3::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $5::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserEmojiStatusParams struct {
-	EmojiStatusDocumentID int64
-	EmojiStatusUntil      int64
-	ID                    int64
+	EmojiStatusDocumentID    int64
+	EmojiStatusUntil         int64
+	EmojiStatusCollectibleID *int64
+	EmojiStatusCollectible   []byte
+	ID                       int64
 }
 
 func (q *Queries) UpdateUserEmojiStatus(ctx context.Context, arg UpdateUserEmojiStatusParams) (User, error) {
-	row := q.db.QueryRow(ctx, updateUserEmojiStatus, arg.EmojiStatusDocumentID, arg.EmojiStatusUntil, arg.ID)
+	row := q.db.QueryRow(ctx, updateUserEmojiStatus,
+		arg.EmojiStatusDocumentID,
+		arg.EmojiStatusUntil,
+		arg.EmojiStatusCollectibleID,
+		arg.EmojiStatusCollectible,
+		arg.ID,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -865,6 +973,13 @@ func (q *Queries) UpdateUserEmojiStatus(ctx context.Context, arg UpdateUserEmoji
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -874,7 +989,7 @@ const updateUserLastSeen = `-- name: UpdateUserLastSeen :exec
 UPDATE users
 SET last_seen_at = GREATEST(last_seen_at, $1::bigint),
     updated_at = now()
-WHERE id = $2::bigint
+WHERE id = $2::bigint AND deleted_at IS NULL
 `
 
 type UpdateUserLastSeenParams struct {
@@ -891,8 +1006,8 @@ const updateUserPersonalChannel = `-- name: UpdateUserPersonalChannel :one
 UPDATE users
 SET personal_channel_id = $1::bigint,
     updated_at = now()
-WHERE id = $2::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $2::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserPersonalChannelParams struct {
@@ -933,6 +1048,13 @@ func (q *Queries) UpdateUserPersonalChannel(ctx context.Context, arg UpdateUserP
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -942,8 +1064,8 @@ const updateUserPhone = `-- name: UpdateUserPhone :one
 UPDATE users
 SET phone = $1::text,
     updated_at = now()
-WHERE id = $2::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $2::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserPhoneParams struct {
@@ -984,6 +1106,13 @@ func (q *Queries) UpdateUserPhone(ctx context.Context, arg UpdateUserPhoneParams
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -995,7 +1124,7 @@ SET phone = $1::text,
     signup_email = $2::text,
     updated_at = now()
 WHERE id = $3::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserPhoneAndSignupEmailParams struct {
@@ -1037,6 +1166,13 @@ func (q *Queries) UpdateUserPhoneAndSignupEmail(ctx context.Context, arg UpdateU
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -1048,8 +1184,8 @@ SET first_name = $2,
     last_name = $3,
     about = $4,
     updated_at = now()
-WHERE id = $1
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserProfileParams struct {
@@ -1097,6 +1233,13 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -1108,8 +1251,8 @@ SET profile_color_set = $1::boolean,
     profile_color = $2::int,
     profile_color_background_emoji_id = $3::bigint,
     updated_at = now()
-WHERE id = $4::bigint
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $4::bigint AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserProfileColorParams struct {
@@ -1157,6 +1300,13 @@ func (q *Queries) UpdateUserProfileColor(ctx context.Context, arg UpdateUserProf
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err
@@ -1166,8 +1316,8 @@ const updateUserUsername = `-- name: UpdateUserUsername :one
 UPDATE users
 SET username = $2,
     updated_at = now()
-WHERE id = $1
-RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, signup_email
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, access_hash, phone, first_name, last_name, username, country_code, created_at, updated_at, verified, support, about, last_seen_at, default_history_ttl_period, is_bot, bot_info_version, premium_expires_at, emoji_status_document_id, emoji_status_until, color_set, color, color_background_emoji_id, profile_color_set, profile_color, profile_color_background_emoji_id, birthday_day, birthday_month, birthday_year, personal_channel_id, deleted_at, deletion_source, deletion_reason, account_delete_at, emoji_status_collectible_id, emoji_status_collectible, linked_community_id, signup_email
 `
 
 type UpdateUserUsernameParams struct {
@@ -1208,6 +1358,13 @@ func (q *Queries) UpdateUserUsername(ctx context.Context, arg UpdateUserUsername
 		&i.BirthdayMonth,
 		&i.BirthdayYear,
 		&i.PersonalChannelID,
+		&i.DeletedAt,
+		&i.DeletionSource,
+		&i.DeletionReason,
+		&i.AccountDeleteAt,
+		&i.EmojiStatusCollectibleID,
+		&i.EmojiStatusCollectible,
+		&i.LinkedCommunityID,
 		&i.SignupEmail,
 	)
 	return i, err

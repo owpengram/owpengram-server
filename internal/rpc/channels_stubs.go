@@ -61,12 +61,28 @@ func (r *Router) onChannelsSetMainProfileTab(ctx context.Context, req *tg.Channe
 }
 
 func (r *Router) onChannelsDeleteChannel(ctx context.Context, input tg.InputChannelClass) (tg.UpdatesClass, error) {
-	if r.deps.Channels == nil {
+	if r.deps.Channels == nil && r.deps.Communities == nil {
 		return nil, notImplementedErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
+	}
+	if community, ok, err := r.maybeCommunityFromInput(ctx, userID, input); ok {
+		if err != nil {
+			return nil, err
+		}
+		view, _, err := r.deps.Communities.Delete(ctx, userID, community.Community.ID, int(r.clock.Now().Unix()))
+		if err != nil {
+			return nil, communityErr(err)
+		}
+		for _, serviceMessage := range view.ServiceMessages {
+			r.enqueueChannelMessageFanout(ctx, userID, serviceMessage, nil)
+		}
+		return r.communityMutationUpdates(ctx, userID, view, true), nil
+	}
+	if r.deps.Channels == nil {
+		return nil, channelInvalidErr(domain.ErrChannelInvalid)
 	}
 	channelID, err := r.channelIDFromInput(ctx, userID, input)
 	if err != nil {
@@ -669,6 +685,8 @@ func channelInvalidErr(err error) error {
 		return tgerr400("CHAT_WRITE_FORBIDDEN")
 	case errors.Is(err, domain.ErrChannelAdminRequired):
 		return tgerr400("CHAT_ADMIN_REQUIRED")
+	case errors.Is(err, domain.ErrChannelMonoforumUnsupported):
+		return tgerr400("CHANNEL_MONOFORUM_UNSUPPORTED")
 	case errors.Is(err, domain.ErrUserAlreadyParticipant):
 		return tgerr400("USER_ALREADY_PARTICIPANT")
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):

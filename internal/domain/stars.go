@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strconv"
 )
 
@@ -20,13 +21,20 @@ type StarsBalance struct {
 type StarsTransactionReason string
 
 const (
-	StarsReasonGrant       StarsTransactionReason = "grant"        // 起始余额自动授予
-	StarsReasonTopup       StarsTransactionReason = "topup"        // 充值（本地铸造）
-	StarsReasonReaction    StarsTransactionReason = "reaction"     // 付费 reaction 花费
-	StarsReasonGift        StarsTransactionReason = "gift"         // 星礼花费/收取
-	StarsReasonGiftUpgrade StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
-	StarsReasonPaidMedia   StarsTransactionReason = "paid_media"   // 付费媒体解锁
-	StarsReasonAdjust      StarsTransactionReason = "adjust"       // 兜底/人工调整
+	StarsReasonGrant        StarsTransactionReason = "grant"        // 起始余额自动授予
+	StarsReasonTopup        StarsTransactionReason = "topup"        // 充值（本地铸造）
+	StarsReasonReaction     StarsTransactionReason = "reaction"     // 付费 reaction 花费
+	StarsReasonGift         StarsTransactionReason = "gift"         // 星礼花费/收取
+	StarsReasonGiftUpgrade  StarsTransactionReason = "gift_upgrade" // 普通礼物升级为唯一礼物
+	StarsReasonGiftTransfer StarsTransactionReason = "gift_transfer"
+	StarsReasonGiftResale   StarsTransactionReason = "gift_resale"
+	StarsReasonGiftOffer    StarsTransactionReason = "gift_offer"
+	StarsReasonGiftAuction  StarsTransactionReason = "gift_auction"
+	StarsReasonGiftPrepaid  StarsTransactionReason = "gift_prepaid_upgrade"
+	StarsReasonGiftDrop     StarsTransactionReason = "gift_drop_original_details"
+	StarsReasonPaidMedia    StarsTransactionReason = "paid_media"   // 付费媒体解锁
+	StarsReasonPaidMessage  StarsTransactionReason = "paid_message" // 频道 Direct Message 花费
+	StarsReasonAdjust       StarsTransactionReason = "adjust"       // 兜底/人工调整
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。
@@ -52,6 +60,28 @@ type StarsTransactionPage struct {
 	Users        []User // History 中提到的对手方用户，供 tg Users 富化
 }
 
+// TonTransaction is an entry in telesrv's internal nanoton ledger. It models
+// the Telegram TON-denominated gift UI without contacting a wallet, Fragment,
+// a TON node, or any blockchain service.
+type TonTransaction struct {
+	ID          int64
+	UserID      int64
+	Peer        Peer
+	GiftID      int64
+	Amount      int64 // signed nanoton amount
+	Date        int
+	Reason      StarsTransactionReason
+	Title       string
+	Description string
+}
+
+type TonTransactionPage struct {
+	Balance      int64
+	Transactions []TonTransaction
+	NextOffset   string
+	Users        []User
+}
+
 // Stars 账本边界常量。
 const (
 	// DefaultStarsStartingGrant 是惰性首读授予的起始 Stars 余额（本地测试用）。
@@ -69,6 +99,17 @@ var (
 	// ErrStarsInvalidAmount 表示金额非法（<=0）。
 	ErrStarsInvalidAmount = errors.New("stars: invalid amount")
 )
+
+// StarsPaymentRequiredError reports the minimum paid-message authorization the
+// sender must include in allow_paid_stars. The authorization is a ceiling; the
+// ledger debits only the channel's current configured price.
+type StarsPaymentRequiredError struct {
+	Stars int64
+}
+
+func (e *StarsPaymentRequiredError) Error() string {
+	return fmt.Sprintf("stars: allow payment required: %d", e.Stars)
+}
 
 // EncodeStarsCursor 把 keyset 游标（最后一条流水 id）编码为客户端不透明字符串。
 func EncodeStarsCursor(id int64) string {

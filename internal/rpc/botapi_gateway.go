@@ -8,7 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/iamxvbaba/td/tg"
+
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 var botAPIAuthKeyID = [8]byte{'B', 'O', 'T', 'A', 'P', 'I', 0, 1}
@@ -61,6 +64,114 @@ func (r *Router) BotAPIUpdates(ctx context.Context, botID int64, offset int64) (
 	return r.enrichUpdateEvents(ctx, botID, diff.Events), nil
 }
 
+func (r *Router) BotAPISetAllowedUpdates(ctx context.Context, botID int64, allowed []domain.BotAPIUpdateKind) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.SetBotAPIAllowedUpdates(ctx, botID, allowed)
+}
+
+func (r *Router) BotAPIDropPendingUpdates(ctx context.Context, botID int64) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.DropPendingBotAPIUpdates(ctx, botID)
+}
+
+func (r *Router) BotAPIPendingUpdateCount(ctx context.Context, botID int64) (int, error) {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID == 0 {
+		return 0, nil
+	}
+	return r.deps.BotAPIUpdates.PendingBotAPIUpdateCount(ctx, botID)
+}
+
+func (r *Router) AcquireBotAPIPollLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error) {
+	leases, ok := r.deps.BotAPIUpdates.(store.BotAPIPollLeaseStore)
+	if !ok || botID <= 0 {
+		return true, nil
+	}
+	return leases.AcquireBotAPIPollLease(ctx, botID, owner, ttl)
+}
+
+func (r *Router) ReleaseBotAPIPollLease(ctx context.Context, botID int64, owner string) error {
+	leases, ok := r.deps.BotAPIUpdates.(store.BotAPIPollLeaseStore)
+	if !ok || botID <= 0 {
+		return nil
+	}
+	return leases.ReleaseBotAPIPollLease(ctx, botID, owner)
+}
+
+func (r *Router) BotAPISetWebhook(ctx context.Context, config domain.BotAPIWebhook, dropPending bool) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return errors.New("WEBHOOK_UNSUPPORTED")
+	}
+	return webhooks.SetBotAPIWebhook(ctx, config, dropPending)
+}
+
+func (r *Router) BotAPIDeleteWebhook(ctx context.Context, botID int64, dropPending bool) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return errors.New("WEBHOOK_UNSUPPORTED")
+	}
+	return webhooks.DeleteBotAPIWebhook(ctx, botID, dropPending)
+}
+
+func (r *Router) BotAPIWebhook(ctx context.Context, botID int64) (domain.BotAPIWebhook, bool, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return domain.BotAPIWebhook{}, false, nil
+	}
+	return webhooks.BotAPIWebhook(ctx, botID)
+}
+
+func (r *Router) ListDueBotAPIWebhooks(ctx context.Context, limit int) ([]domain.BotAPIWebhook, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil, nil
+	}
+	return webhooks.ListDueBotAPIWebhooks(ctx, limit)
+}
+
+func (r *Router) AcquireBotAPIWebhookLease(ctx context.Context, botID int64, owner string, ttl time.Duration) (bool, error) {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return false, nil
+	}
+	return webhooks.AcquireBotAPIWebhookLease(ctx, botID, owner, ttl)
+}
+
+func (r *Router) ReleaseBotAPIWebhookLease(ctx context.Context, botID int64, owner string) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.ReleaseBotAPIWebhookLease(ctx, botID, owner)
+}
+
+func (r *Router) RecordBotAPIWebhookFailure(ctx context.Context, botID int64, owner string, nextAttempt time.Time, message string) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.RecordBotAPIWebhookFailure(ctx, botID, owner, nextAttempt, message)
+}
+
+func (r *Router) RecordBotAPIWebhookSuccess(ctx context.Context, botID int64, owner string, nextAttempt time.Time) error {
+	webhooks, ok := r.deps.BotAPIUpdates.(store.BotAPIWebhookStore)
+	if !ok {
+		return nil
+	}
+	return webhooks.RecordBotAPIWebhookSuccess(ctx, botID, owner, nextAttempt)
+}
+
+func (r *Router) ConfirmBotAPIWebhookDelivery(ctx context.Context, botID, updateID int64) error {
+	if r == nil || r.deps.BotAPIUpdates == nil || botID <= 0 || updateID <= 0 {
+		return nil
+	}
+	return r.deps.BotAPIUpdates.ConfirmBotAPIUpdates(ctx, botID, updateID)
+}
+
 // BotAPISendMessage sends a text message as a bot through the normal private
 // or channel message state machine. Positive chat_id is a user private chat;
 // -1000000000000-channel_id is a supergroup/channel chat.
@@ -71,6 +182,12 @@ func (r *Router) BotAPISendMessage(ctx context.Context, botID, chatID int64, tex
 	peer, ok := botAPIPeerFromChatID(chatID)
 	if !ok {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
 	}
 	if text == "" {
 		return domain.Message{}, errors.New("MESSAGE_EMPTY")
@@ -122,6 +239,12 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 	if !ok {
 		return domain.Message{}, errors.New("CHAT_ID_INVALID")
 	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return domain.Message{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, botID, peer, replyMarkup); err != nil {
+		return domain.Message{}, err
+	}
 	if utf8.RuneCountInString(caption) > domain.MaxMessageTextLength {
 		return domain.Message{}, errors.New("MESSAGE_TOO_LONG")
 	}
@@ -162,6 +285,275 @@ func (r *Router) BotAPISendMedia(ctx context.Context, botID, chatID int64, kind,
 		return domain.Message{}, err
 	}
 	return res.SenderMessage, nil
+}
+
+func (r *Router) BotAPISendEphemeral(ctx context.Context, input domain.BotAPIEphemeralSendInput) (domain.EphemeralMessage, error) {
+	if r == nil || r.deps.Ephemeral == nil || input.BotUserID <= 0 || input.ReceiverUserID <= 0 {
+		return domain.EphemeralMessage{}, errors.New("BOT_INVALID")
+	}
+	peer, ok := botAPIPeerFromChatID(input.ChatID)
+	if !ok || peer.Type != domain.PeerTypeChannel {
+		return domain.EphemeralMessage{}, errors.New("CHAT_ID_INVALID")
+	}
+	if err := domain.ValidateReplyMarkup(input.ReplyMarkup); err != nil {
+		return domain.EphemeralMessage{}, replyMarkupErr(err)
+	}
+	if err := r.validateReplyMarkupForPeer(ctx, input.BotUserID, peer, input.ReplyMarkup); err != nil {
+		return domain.EphemeralMessage{}, err
+	}
+	baseContent := domain.EphemeralContent{
+		Message: input.Text, Entities: append([]domain.MessageEntity(nil), input.Entities...), ReplyMarkup: input.ReplyMarkup,
+	}
+	if !utf8.ValidString(baseContent.Message) || utf8.RuneCountInString(baseContent.Message) > domain.MaxMessageTextLength || len(baseContent.Entities) > domain.MaxMessageEntityCount ||
+		!validEphemeralEntityBounds(baseContent.Message, baseContent.Entities) {
+		return domain.EphemeralMessage{}, errors.New("ENTITY_BOUNDS_INVALID")
+	}
+	message, _, err := r.deps.Ephemeral.SendFromBotLazy(ctx, domain.SendBotEphemeralRequest{
+		BotUserID: input.BotUserID, ReceiverUserID: input.ReceiverUserID, Peer: peer,
+		TopMessageID: input.TopMessageID, ReplyToEphemeralID: input.ReplyToEphemeralID,
+		ActionMessageID: input.ReplyToEphemeralID, CallbackQueryID: input.CallbackQueryID,
+	}, func(buildCtx context.Context) (domain.EphemeralContent, error) {
+		content := baseContent
+		if input.DirectMedia != nil {
+			content.Media = input.DirectMedia
+			if content.Media.Geo != nil && content.Media.Geo.AccessHash == 0 {
+				content.Media.Geo.AccessHash, _ = randomGeoAccessHash()
+			}
+			if content.Media.Venue != nil && content.Media.Venue.Geo.AccessHash == 0 {
+				content.Media.Venue.Geo.AccessHash, _ = randomGeoAccessHash()
+			}
+		} else if input.Kind != "message" {
+			media, err := r.botAPIEphemeralMedia(buildCtx, input.BotUserID, input.Kind, input.File, input.SecondaryFile)
+			if err != nil {
+				return domain.EphemeralContent{}, err
+			}
+			content.Media = media
+		}
+		return content, nil
+	})
+	if err != nil {
+		return domain.EphemeralMessage{}, ephemeralBotAPIError(err)
+	}
+	r.publishEphemeralPush(ctx, store.EphemeralPush{
+		Kind: store.EphemeralPushNew, TargetUserID: message.ReceiverUserID,
+		TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
+	})
+	return message, nil
+}
+
+func (r *Router) BotAPIEditEphemeral(ctx context.Context, input domain.BotAPIEphemeralEditInput) (bool, error) {
+	if r == nil || r.deps.Ephemeral == nil || input.BotUserID <= 0 || input.ReceiverUserID <= 0 || input.MessageID <= 0 {
+		return false, errors.New("MESSAGE_ID_INVALID")
+	}
+	peer, ok := botAPIPeerFromChatID(input.ChatID)
+	if !ok || peer.Type != domain.PeerTypeChannel {
+		return false, errors.New("CHAT_ID_INVALID")
+	}
+	fields := input.Fields
+	if fields.SetReplyMarkup {
+		if err := domain.ValidateReplyMarkup(fields.ReplyMarkup); err != nil {
+			return false, replyMarkupErr(err)
+		}
+		if err := r.validateReplyMarkupForPeer(ctx, input.BotUserID, peer, fields.ReplyMarkup); err != nil {
+			return false, err
+		}
+	}
+	if fields.SetMessage && (!utf8.ValidString(fields.Message) || !validEphemeralEntityBounds(fields.Message, fields.Entities) || utf8.RuneCountInString(fields.Message) > domain.MaxMessageTextLength) {
+		return false, errors.New("ENTITY_BOUNDS_INVALID")
+	}
+	message, err := r.deps.Ephemeral.EditFieldsFromBotLazy(ctx, input.BotUserID, input.ReceiverUserID, peer, input.MessageID, input.Mode, func(buildCtx context.Context) (domain.EditEphemeralFields, error) {
+		built := fields
+		if input.MediaKind != "" {
+			media, err := r.botAPIEphemeralMedia(buildCtx, input.BotUserID, input.MediaKind, input.File, input.SecondaryFile)
+			if err != nil {
+				return domain.EditEphemeralFields{}, err
+			}
+			built.SetMedia = true
+			built.Media = media
+		}
+		return built, nil
+	})
+	if err != nil {
+		return false, ephemeralBotAPIError(err)
+	}
+	r.publishEphemeralPush(ctx, store.EphemeralPush{
+		Kind: store.EphemeralPushEdit, TargetUserID: message.ReceiverUserID,
+		TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
+	})
+	return true, nil
+}
+
+func (r *Router) BotAPIDeleteEphemeral(ctx context.Context, botUserID, chatID, receiverUserID int64, messageID int) (bool, error) {
+	peer, ok := botAPIPeerFromChatID(chatID)
+	if r == nil || r.deps.Ephemeral == nil || !ok || peer.Type != domain.PeerTypeChannel {
+		return false, errors.New("CHAT_ID_INVALID")
+	}
+	message, deleted, err := r.deps.Ephemeral.Delete(ctx, botUserID, receiverUserID, peer, messageID)
+	if err != nil {
+		return false, ephemeralBotAPIError(err)
+	}
+	if deleted {
+		r.publishEphemeralPush(ctx, store.EphemeralPush{
+			Kind: store.EphemeralPushDelete, TargetUserID: receiverUserID,
+			TargetBusinessAuthKey: message.OriginDevice.BusinessAuthKeyID, Message: message,
+		})
+	}
+	return true, nil
+}
+
+func ephemeralBotAPIError(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrEphemeralNotFound), errors.Is(err, domain.ErrEphemeralExpired), errors.Is(err, domain.ErrEphemeralDeleted):
+		return errors.New("EPHEMERAL_MESSAGE_ID_INVALID")
+	case errors.Is(err, domain.ErrEphemeralReplyExpired):
+		return errors.New("EPHEMERAL_ACTION_EXPIRED")
+	case errors.Is(err, domain.ErrEphemeralPeerInvalid):
+		return errors.New("CHAT_ID_INVALID")
+	case errors.Is(err, domain.ErrEphemeralReceiverInvalid):
+		return errors.New("USER_ID_INVALID")
+	case errors.Is(err, domain.ErrEphemeralForbidden), errors.Is(err, domain.ErrEphemeralDeviceMismatch):
+		return errors.New("CHAT_WRITE_FORBIDDEN")
+	case errors.Is(err, domain.ErrEphemeralVersionConflict):
+		return errors.New("MESSAGE_NOT_MODIFIED")
+	default:
+		return err
+	}
+}
+
+func (r *Router) botAPIEphemeralMedia(ctx context.Context, botID int64, kind string, file, secondary domain.BotAPIFileInput) (*domain.MessageMedia, error) {
+	if kind == "live_photo" {
+		photo, err := r.botAPIMedia(ctx, botID, "photo", file.LocationKey, file.RemoteURL, file.FileName, file.MimeType, file.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		video, err := r.botAPIDocumentMedia(ctx, botID, "video", secondary)
+		if err != nil {
+			return nil, err
+		}
+		photo.LivePhotoVideo = video.Document
+		return photo, nil
+	}
+	if kind == "photo" {
+		return r.botAPIMedia(ctx, botID, kind, file.LocationKey, file.RemoteURL, file.FileName, file.MimeType, file.Bytes)
+	}
+	return r.botAPIDocumentMedia(ctx, botID, kind, file)
+}
+
+func (r *Router) botAPIDocumentMedia(ctx context.Context, botID int64, kind string, file domain.BotAPIFileInput) (*domain.MessageMedia, error) {
+	if r.deps.Files == nil {
+		return nil, errors.New("MEDIA_INVALID")
+	}
+	attrs, forceFile, ok := botAPIDocumentKindAttributes(kind, file)
+	if !ok {
+		return nil, errors.New("MEDIA_INVALID")
+	}
+	var document domain.Document
+	var err error
+	switch {
+	case len(file.Bytes) > 0:
+		document, err = r.deps.Files.CreateDocumentFromBytes(ctx, file.Bytes, domain.DocumentSpec{MimeType: file.MimeType, Attributes: attrs, ForceFile: forceFile})
+	case file.RemoteURL != "":
+		document, err = r.deps.Files.CreateDocumentFromURL(ctx, file.RemoteURL)
+		document.Attributes = mergeDocumentAttributes(document.Attributes, attrs)
+	case file.LocationKey != "":
+		id, valid := botAPIDocumentID(file.LocationKey)
+		if !valid {
+			return nil, errors.New("FILE_ID_INVALID")
+		}
+		var found bool
+		document, found, err = r.deps.Files.GetDocument(ctx, id)
+		if err == nil && !found {
+			err = errors.New("FILE_ID_INVALID")
+		}
+	default:
+		err = errors.New("FILE_ID_INVALID")
+	}
+	if err != nil {
+		return nil, botAPIMediaErr(err)
+	}
+	if !botAPIDocumentMatchesKind(document, kind) {
+		return nil, errors.New("MEDIA_INVALID")
+	}
+	return messageMediaFromDocument(document, false, 0), nil
+}
+
+func botAPIDocumentKindAttributes(kind string, file domain.BotAPIFileInput) ([]domain.DocumentAttribute, bool, bool) {
+	filename := botAPIDocumentAttributes(file.FileName)
+	w, h, duration := file.Width, file.Height, file.Duration
+	if w <= 0 {
+		w = 1
+	}
+	if h <= 0 {
+		h = 1
+	}
+	if duration <= 0 {
+		duration = 1
+	}
+	switch kind {
+	case "document":
+		return filename, true, true
+	case "animation":
+		return append(filename,
+			domain.DocumentAttribute{Kind: domain.DocAttrAnimated},
+			domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), NoSound: true}), false, true
+	case "audio":
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrAudio, AudioDuration: duration, Title: file.Title, Performer: file.Performer}), false, true
+	case "sticker":
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrSticker, W: w, H: h, Alt: file.Emoji}), false, true
+	case "video":
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), SupportsStreaming: true}), false, true
+	case "video_note":
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrVideo, W: w, H: h, Duration: float64(duration), RoundMessage: true, SupportsStreaming: true}), false, true
+	case "voice":
+		return append(filename, domain.DocumentAttribute{Kind: domain.DocAttrAudio, AudioDuration: duration, Voice: true}), false, true
+	default:
+		return nil, false, false
+	}
+}
+
+func mergeDocumentAttributes(base, additional []domain.DocumentAttribute) []domain.DocumentAttribute {
+	out := append([]domain.DocumentAttribute(nil), base...)
+	seen := make(map[domain.DocumentAttributeKind]struct{}, len(base)+len(additional))
+	for _, attribute := range base {
+		seen[attribute.Kind] = struct{}{}
+	}
+	for _, attribute := range additional {
+		if _, exists := seen[attribute.Kind]; exists {
+			continue
+		}
+		seen[attribute.Kind] = struct{}{}
+		out = append(out, attribute)
+	}
+	return out
+}
+
+func botAPIDocumentMatchesKind(document domain.Document, kind string) bool {
+	has := func(target domain.DocumentAttributeKind, predicate func(domain.DocumentAttribute) bool) bool {
+		for _, attribute := range document.Attributes {
+			if attribute.Kind == target && (predicate == nil || predicate(attribute)) {
+				return true
+			}
+		}
+		return false
+	}
+	switch kind {
+	case "document":
+		return document.ID > 0
+	case "animation":
+		return has(domain.DocAttrAnimated, nil)
+	case "audio":
+		return has(domain.DocAttrAudio, func(a domain.DocumentAttribute) bool { return !a.Voice })
+	case "sticker":
+		return document.IsSticker()
+	case "video":
+		return has(domain.DocAttrVideo, func(a domain.DocumentAttribute) bool { return !a.RoundMessage })
+	case "video_note":
+		return has(domain.DocAttrVideo, func(a domain.DocumentAttribute) bool { return a.RoundMessage })
+	case "voice":
+		return has(domain.DocAttrAudio, func(a domain.DocumentAttribute) bool { return a.Voice })
+	default:
+		return false
+	}
 }
 
 func botAPIPeerFromChatID(chatID int64) (domain.Peer, bool) {
@@ -400,6 +792,37 @@ func (r *Router) BotAPIEditMessageText(ctx context.Context, botID, chatID int64,
 	return self.Message, nil
 }
 
+func (r *Router) BotAPIEditInlineMessageText(ctx context.Context, botID int64, inlineMessageID domain.BotInlineMessageID, text string, entities []domain.MessageEntity, setReplyMarkup bool, replyMarkup *domain.MessageReplyMarkup, disableWebPagePreview bool) (bool, error) {
+	if r == nil || botID == 0 || !r.userIsBot(ctx, botID) {
+		return false, errors.New("BOT_INVALID")
+	}
+	if text == "" {
+		return false, errors.New("MESSAGE_EMPTY")
+	}
+	if utf8.RuneCountInString(text) > domain.MaxMessageTextLength {
+		return false, errors.New("MESSAGE_TOO_LONG")
+	}
+	if err := domain.ValidateReplyMarkup(replyMarkup); err != nil {
+		return false, replyMarkupErr(err)
+	}
+	req := &tg.MessagesEditInlineBotMessageRequest{
+		ID:        tgInputBotInlineMessageID(inlineMessageID),
+		NoWebpage: disableWebPagePreview,
+	}
+	req.SetMessage(text)
+	if len(entities) > 0 {
+		req.SetEntities(tgMessageEntities(entities))
+	}
+	if setReplyMarkup {
+		wire := tgReplyMarkup(replyMarkup)
+		if wire == nil {
+			wire = &tg.ReplyInlineMarkup{}
+		}
+		req.SetReplyMarkup(wire)
+	}
+	return r.onMessagesEditInlineBotMessage(WithUserID(ctx, botID), req)
+}
+
 // BotAPIDeleteMessage deletes a bot-owned private message with revoke=true so
 // the target user's MTProto clients observe the normal delete update.
 func (r *Router) BotAPIDeleteMessage(ctx context.Context, botID, chatID int64, messageID int) (bool, error) {
@@ -440,12 +863,18 @@ func (r *Router) BotAPIAnswerCallbackQuery(ctx context.Context, botID int64, cal
 	if cacheTime < 0 {
 		cacheTime = 0
 	}
-	r.callbacks.resolve(botID, queryID, domain.BotCallbackAnswer{
+	resolved, resolveErr := r.callbacks.resolveContext(ctx, botID, queryID, domain.BotCallbackAnswer{
 		Alert:     showAlert,
 		Message:   text,
 		URL:       url,
 		CacheTime: cacheTime,
 	})
+	if resolveErr != nil {
+		return false, resolveErr
+	}
+	if !resolved {
+		return false, errors.New("QUERY_ID_INVALID")
+	}
 	return true, nil
 }
 

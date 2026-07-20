@@ -1,15 +1,20 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	stargiftapp "telesrv/internal/app/stargifts"
 	"telesrv/internal/domain"
+	"telesrv/internal/officialgifts"
+	"telesrv/internal/store/memory"
 )
 
 func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
@@ -710,7 +715,7 @@ func TestImportStarGiftDryRunThenConfirm(t *testing.T) {
 	}
 	base.CommandMeta = CommandMeta{CommandID: "exec-gift", Actor: "ops", Reason: "catalog", DryRun: false}
 	result, err := svc.ImportStarGift(context.Background(), base)
-	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(22) {
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != "22" {
 		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
 	}
 }
@@ -747,12 +752,161 @@ func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
 	}
 	base.CommandMeta = CommandMeta{CommandID: "exec-collectibles", Actor: "ops", Reason: "pool", DryRun: false}
 	result, err := svc.PublishStarGiftCollectibles(context.Background(), base)
-	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != int64(33) || result.Details["published"] != true {
+	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != "33" || result.Details["published"] != true {
 		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
 	}
 }
 
-type fakeGiftsService struct{ createCalls int }
+func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testing.T) {
+	permille := 922
+	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
+		ManifestSHA256: bytesOf(0x42, 32),
+		SourceJSON:     []byte(`{"id":5170145012310081615,"limited":true,"sold_out":true,"availability_total":10,"availability_resale":4}`),
+		Gift: officialgifts.Gift{
+			ID: 5170145012310081615, Stars: 50, ConvertStars: 25, UpgradeStars: 100, DocumentID: 1,
+			Limited: true, SoldOut: true, AvailabilityTotal: 10, AvailabilityRemains: 0,
+			AvailabilityResale: 4, FirstSaleDate: 100, LastSaleDate: 200, ResellMinStars: 75,
+		},
+		BaseDocument: officialgifts.Document{ID: 1, FileName: "gift.tgs", SHA256: strings.Repeat("a", 64), Data: []byte("gift")},
+		Collectible: &officialgifts.CollectibleSet{
+			Models: []officialgifts.Model{
+				{Name: "Regular", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 2, FileName: "regular.tgs", SHA256: strings.Repeat("b", 64), Data: []byte("regular")}},
+				{Name: "Crafted", DocumentID: 3, Crafted: true, Rarity: officialgifts.Rarity{Kind: "legendary"}, Document: officialgifts.Document{ID: 3, FileName: "crafted.tgs", SHA256: strings.Repeat("c", 64), Data: []byte("crafted")}},
+			},
+			Patterns:  []officialgifts.Pattern{{Name: "Pattern", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 4, FileName: "pattern.tgs", SHA256: strings.Repeat("d", 64), Data: []byte("pattern")}}},
+			Backdrops: []officialgifts.Backdrop{{Name: "Black", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}}},
+		},
+	}}
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, OfficialGifts: source, Now: fixedNow})
+	req := ImportOfficialStarGiftRequest{SourceGiftID: "5170145012310081615", Enabled: true, IncludeCollectible: true}
+	req.CommandMeta = CommandMeta{CommandID: "dry-official", Actor: "ops", Reason: "official snapshot", DryRun: true}
+	preview, err := svc.ImportOfficialStarGift(context.Background(), req)
+	if err != nil || gifts.createCalls != 0 || preview.Details["crafted_models"] != 1 {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	req.CommandMeta = CommandMeta{CommandID: "exec-official", Actor: "ops", Reason: "official snapshot", DryRun: false}
+	result, err := svc.ImportOfficialStarGift(context.Background(), req)
+	if err != nil || gifts.createCalls != 1 || result.Details["collectible_revision_id"] != "33" {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+	models := gifts.lastBundle.Collectible.Models
+	if len(models) != 2 || !models[1].Crafted || models[1].RarityKind != domain.StarGiftRarityLegendary || models[1].RarityPermille != 0 ||
+		models[0].RarityPermille != 922 || gifts.lastBundle.Collectible.Backdrops[0].BackdropID != 0 {
+		t.Fatalf("imported models=%+v backdrops=%+v", models, gifts.lastBundle.Collectible.Backdrops)
+	}
+	catalog := gifts.lastBundle.Catalog
+	if catalog.Limited || catalog.SoldOut || catalog.AvailabilityTotal != 0 || catalog.AvailabilityRemains != 0 ||
+		catalog.AvailabilityResale != 0 || catalog.FirstSaleDate != 0 || catalog.LastSaleDate != 0 || catalog.ResellMinStars != 0 {
+		t.Fatalf("official global market state leaked into local catalog: %+v", catalog)
+	}
+	if catalog.OfficialGiftID != source.bundle.Gift.ID || !bytes.Equal(catalog.OfficialSourceJSON, source.bundle.SourceJSON) ||
+		!bytes.Equal(catalog.SourceManifestSHA256, source.bundle.ManifestSHA256) {
+		t.Fatalf("official provenance was not preserved: %+v", catalog)
+	}
+}
+
+func TestImportOfficialStarGiftPublishesThroughRealGiftService(t *testing.T) {
+	const lottie = `{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":512,"h":512,"layers":[{"ty":4}],"assets":[]}`
+	document := func(id int64, name string) officialgifts.Document {
+		raw := []byte(lottie)
+		sum := sha256.Sum256(raw)
+		return officialgifts.Document{ID: id, FileName: name, SHA256: hex.EncodeToString(sum[:]), Data: raw}
+	}
+	permille := 1000
+	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
+		ManifestSHA256: bytesOf(0x24, sha256.Size),
+		SourceJSON:     []byte(`{"id":6003643167683903930,"title":"Party Sparkler"}`),
+		Gift: officialgifts.Gift{
+			ID: 6003643167683903930, Title: "Party Sparkler", Stars: 15, ConvertStars: 13,
+			UpgradeStars: 25, AvailabilityTotal: 400000, DocumentID: 1,
+		},
+		BaseDocument: document(1, "gift.json"),
+		Collectible: &officialgifts.CollectibleSet{
+			Models: []officialgifts.Model{{
+				Name: "Model", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+				Document: document(2, "model.json"),
+			}},
+			Patterns: []officialgifts.Pattern{{
+				Name: "Pattern", DocumentID: 3, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+				Document: document(3, "pattern.json"),
+			}},
+			Backdrops: []officialgifts.Backdrop{{
+				Name: "Backdrop", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
+			}},
+		},
+	}}
+	ctx := context.Background()
+	giftService := stargiftapp.NewService(memory.NewStarGiftStore(), &adminGiftBlob{data: map[string][]byte{}}, 2)
+	svc := NewService(Dependencies{
+		Commands: newMemoryCommandRepo(), Gifts: giftService, OfficialGifts: source, Now: fixedNow,
+	})
+	req := ImportOfficialStarGiftRequest{
+		SourceGiftID: "6003643167683903930", Enabled: true, IncludeCollectible: true,
+		CommandMeta: CommandMeta{CommandID: "exec-official-real-service", Actor: "ops", Reason: "regression", DryRun: false},
+	}
+	result, err := svc.ImportOfficialStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("import official collectible through real service: result=%+v err=%v", result, err)
+	}
+	catalog, err := giftService.Catalog(ctx)
+	if err != nil || len(catalog) != 1 {
+		t.Fatalf("catalog=%+v err=%v, want one imported gift", catalog, err)
+	}
+	preview, ok, err := giftService.CollectiblePreview(ctx, catalog[0].ID)
+	if err != nil || !ok || len(preview.Models) != 1 || len(preview.Patterns) != 1 {
+		t.Fatalf("preview=%+v ok=%v err=%v", preview, ok, err)
+	}
+	model := preview.Models[0].Document
+	pattern := preview.Patterns[0].Document
+	if model == nil || !model.IsSticker() || model.IsCustomEmoji() || pattern == nil ||
+		pattern.IsSticker() || !pattern.IsCustomEmoji() || len(pattern.Thumbs) != 1 ||
+		pattern.Thumbs[0].Kind != domain.PhotoSizeKindPath || len(pattern.Thumbs[0].Bytes) == 0 {
+		t.Fatalf("materialized model=%+v pattern=%+v", model, pattern)
+	}
+}
+
+type adminGiftBlob struct{ data map[string][]byte }
+
+func (b *adminGiftBlob) Name() string { return "localfs" }
+func (b *adminGiftBlob) Put(_ context.Context, data []byte) (string, error) {
+	sum := sha256.Sum256(data)
+	key := hex.EncodeToString(sum[:])
+	b.data[key] = append([]byte(nil), data...)
+	return key, nil
+}
+func (b *adminGiftBlob) Get(_ context.Context, key string) ([]byte, error) {
+	return append([]byte(nil), b.data[key]...), nil
+}
+
+func bytesOf(value byte, count int) []byte {
+	out := make([]byte, count)
+	for i := range out {
+		out[i] = value
+	}
+	return out
+}
+
+type fakeOfficialGiftsSource struct{ bundle officialgifts.Bundle }
+
+func (f *fakeOfficialGiftsSource) List(context.Context) ([]officialgifts.GiftSummary, error) {
+	return nil, nil
+}
+func (f *fakeOfficialGiftsSource) Bundle(_ context.Context, giftID int64, include bool) (officialgifts.Bundle, error) {
+	if giftID != f.bundle.Gift.ID {
+		return officialgifts.Bundle{}, officialgifts.ErrNotFound
+	}
+	out := f.bundle
+	if !include {
+		out.Collectible = nil
+	}
+	return out, nil
+}
+
+type fakeGiftsService struct {
+	createCalls int
+	lastBundle  domain.StarGiftCatalogBundleWrite
+}
 
 func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
 	sum := sha256.Sum256(data)
@@ -761,9 +915,23 @@ func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.St
 		JSON: []byte(`{"v":"5.7"}`), TGS: []byte("tgs"), SHA256: sum[:], Width: 512, Height: 512, FrameRate: 30,
 	}, nil
 }
+func (f *fakeGiftsService) PrepareOfficialAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
+	return f.PrepareAnimation(name, data)
+}
 func (f *fakeGiftsService) CreateCatalogRevision(_ context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error) {
 	f.createCalls++
 	return domain.StarGiftCatalogEntry{Gift: domain.StarGift{ID: 11, RevisionID: 22, Stars: write.Stars}, Revision: 1}, nil
+}
+func (f *fakeGiftsService) CreateCatalogBundle(_ context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error) {
+	f.createCalls++
+	f.lastBundle = write
+	entry := domain.StarGiftCatalogEntry{Gift: domain.StarGift{ID: 11, RevisionID: 22, Stars: write.Catalog.Stars}, Revision: 1}
+	result := domain.StarGiftCatalogBundleResult{Catalog: entry}
+	if write.Collectible != nil {
+		revision := domain.StarGiftCollectibleRevision{ID: 33, GiftID: 11, Revision: 1, Published: true}
+		result.Collectible = &revision
+	}
+	return result, nil
 }
 func (*fakeGiftsService) SetCatalogEnabled(context.Context, int64, bool) (bool, error) {
 	return true, nil

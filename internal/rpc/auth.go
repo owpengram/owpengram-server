@@ -18,6 +18,7 @@ import (
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/app/auth"
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -589,6 +590,19 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 	if err := r.checkAuthCodeRateLimit(ctx, req.PhoneNumber); err != nil {
 		return nil, err
 	}
+	if userID, authorized, err := r.currentUserID(ctx); err == nil && authorized && userID != 0 {
+		if svc, ok := r.deps.Account.(accountDeletionService); ok {
+			authKeyID, _ := AuthKeyIDFrom(ctx)
+			sessionID, _ := SessionIDFrom(ctx)
+			hash, delivery, handled, err := svc.ResendConfirmPhoneCode(ctx, userID, authKeyID, sessionID, req.PhoneNumber, req.PhoneCodeHash)
+			if handled {
+				if err != nil {
+					return nil, accountDeletionErr(err)
+				}
+				return tgSMSSentCode(hash, delivery.Length), nil
+			}
+		}
+	}
 	var hash string
 	var err error
 	if scoped, ok := r.deps.Auth.(interface {
@@ -606,6 +620,18 @@ func (r *Router) onAuthResendCode(ctx context.Context, req *tg.AuthResendCodeReq
 }
 
 func (r *Router) onAuthCancelCode(ctx context.Context, req *tg.AuthCancelCodeRequest) (bool, error) {
+	if userID, authorized, err := r.currentUserID(ctx); err == nil && authorized && userID != 0 {
+		if svc, ok := r.deps.Account.(accountDeletionService); ok {
+			authKeyID, _ := AuthKeyIDFrom(ctx)
+			handled, err := svc.CancelConfirmPhoneCode(ctx, userID, authKeyID, req.PhoneNumber, req.PhoneCodeHash)
+			if handled {
+				if err != nil {
+					return false, accountDeletionErr(err)
+				}
+				return true, nil
+			}
+		}
+	}
 	var err error
 	if scoped, ok := r.deps.Auth.(interface {
 		CancelCodeForAuthKey(context.Context, [8]byte, string, string) error
@@ -1000,13 +1026,13 @@ func (r *Router) tgSignInServiceNotification(ctx context.Context, u domain.User,
 	if ci, ok := ClientInfoFrom(ctx); ok {
 		parts := []string{}
 		if ci.DeviceModel != "" {
-			parts = append(parts, ci.DeviceModel)
+			parts = append(parts, branding.UserVisibleText(ci.DeviceModel, ""))
 		}
 		if ci.SystemVersion != "" {
-			parts = append(parts, ci.SystemVersion)
+			parts = append(parts, branding.UserVisibleText(ci.SystemVersion, ""))
 		}
 		if ci.AppVersion != "" {
-			parts = append(parts, ci.AppVersion)
+			parts = append(parts, branding.UserVisibleText(ci.AppVersion, ""))
 		}
 		if len(parts) > 0 {
 			client = strings.Join(parts, " / ")

@@ -82,7 +82,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 		return nil
 	}
 	peer := &tg.PeerChannel{ChannelID: m.ChannelID}
-	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && m.From.Type != domain.PeerTypeChannel
+	outgoing := m.SenderUserID == viewerUserID && viewerUserID != 0 && (m.SavedPeer.ID != 0 || m.From.Type != domain.PeerTypeChannel)
 	from := tg.PeerClass(nil)
 	if !m.Post && m.SendAs != nil && m.SendAs.ID != 0 {
 		from = tgPeer(*m.SendAs)
@@ -138,6 +138,12 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if m.SavedPeer.ID != 0 {
 		// 频道私信(monoforum):saved_peer_id 让客户端把消息归入对应订阅者子会话。
 		msg.SetSavedPeerID(tgPeer(m.SavedPeer))
+	}
+	if suggested, ok := tgSuggestedPost(m.SuggestedPost); ok {
+		msg.SetSuggestedPost(suggested)
+	}
+	if m.PaidMessageStars > 0 {
+		msg.SetPaidMessageStars(m.PaidMessageStars)
 	}
 	if m.Pinned {
 		msg.SetPinned(true)
@@ -284,11 +290,19 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 		}
 	case domain.ChannelActionStarGift:
 		return tgMessageActionStarGift(action.StarGift)
+	case domain.ChannelActionStarGiftUnique:
+		return tgMessageActionStarGiftUnique(action.StarGiftUnique)
 	case domain.ChannelActionSetChatWallpaper:
 		if wallpaper := tgWallpaper(action.Wallpaper); wallpaper != nil {
 			return &tg.MessageActionSetChatWallPaper{Wallpaper: wallpaper}
 		}
 		return nil
+	case domain.ChannelActionChangeCommunity:
+		out := &tg.MessageActionChangeCommunity{}
+		if action.CommunityID != 0 {
+			out.SetCommunityID(action.CommunityID)
+		}
+		return out
 	default:
 		return nil
 	}
@@ -422,6 +436,9 @@ func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember
 	// 内部关联行仍保留以便重新开启复用。
 	if ch.LinkedMonoforumID != 0 && ch.BroadcastMessagesAllowed {
 		out.SetLinkedMonoforumID(ch.LinkedMonoforumID)
+	}
+	if ch.LinkedCommunityID != 0 {
+		out.SetLinkedCommunityID(ch.LinkedCommunityID)
 	}
 	if ch.Username != "" {
 		out.SetUsername(ch.Username)
@@ -792,21 +809,23 @@ func tgAdminLogMessage(viewerUserID, channelID int64, msg *domain.ChannelMessage
 
 func tgChatAdminRights(rights domain.ChannelAdminRights) tg.ChatAdminRights {
 	return tg.ChatAdminRights{
-		ChangeInfo:     rights.ChangeInfo,
-		PostMessages:   rights.PostMessages,
-		EditMessages:   rights.EditMessages,
-		DeleteMessages: rights.DeleteMessages,
-		PostStories:    rights.PostStories,
-		EditStories:    rights.EditStories,
-		DeleteStories:  rights.DeleteStories,
-		BanUsers:       rights.BanUsers,
-		InviteUsers:    rights.InviteUsers,
-		PinMessages:    rights.PinMessages,
-		AddAdmins:      rights.AddAdmins,
-		Anonymous:      rights.Anonymous,
-		ManageCall:     rights.ManageCall,
-		Other:          true,
-		ManageRanks:    rights.ManageRanks,
+		ChangeInfo:        rights.ChangeInfo,
+		PostMessages:      rights.PostMessages,
+		EditMessages:      rights.EditMessages,
+		DeleteMessages:    rights.DeleteMessages,
+		PostStories:       rights.PostStories,
+		EditStories:       rights.EditStories,
+		DeleteStories:     rights.DeleteStories,
+		BanUsers:          rights.BanUsers,
+		InviteUsers:       rights.InviteUsers,
+		PinMessages:       rights.PinMessages,
+		AddAdmins:         rights.AddAdmins,
+		Anonymous:         rights.Anonymous,
+		ManageCall:        rights.ManageCall,
+		Other:             true,
+		ManageTopics:      rights.ManageTopics,
+		ManageRanks:       rights.ManageRanks,
+		ManageLinkedPeers: rights.ManageLinkedPeers,
 		// manage_direct_messages(flags.17):客户端据此在母频道上判定 canAccessMonoforum,
 		// 从而为关联 monoforum 派生 MonoforumAdmin(Direct-Messages 容器渲染所需)。
 		ManageDirectMessages: rights.ManageDirectMessages,
@@ -832,36 +851,40 @@ func domainChannelAdminRights(rights tg.ChatAdminRights) domain.ChannelAdminRigh
 		AddAdmins:            rights.AddAdmins,
 		Anonymous:            rights.Anonymous,
 		ManageCall:           rights.ManageCall,
+		ManageChat:           rights.Other,
+		ManageTopics:         rights.ManageTopics,
 		ManageRanks:          rights.ManageRanks,
+		ManageLinkedPeers:    rights.ManageLinkedPeers,
 		ManageDirectMessages: rights.ManageDirectMessages,
 	}
 }
 
 func tgChatBannedRights(rights domain.ChannelBannedRights) tg.ChatBannedRights {
 	return tg.ChatBannedRights{
-		ViewMessages:    rights.ViewMessages,
-		SendMessages:    rights.SendMessages,
-		SendMedia:       rights.SendMedia,
-		SendStickers:    rights.SendStickers,
-		SendGifs:        rights.SendGifs,
-		SendGames:       rights.SendGames,
-		SendInline:      rights.SendInline,
-		EmbedLinks:      rights.EmbedLinks,
-		SendPolls:       rights.SendPolls,
-		ChangeInfo:      rights.ChangeInfo,
-		InviteUsers:     rights.InviteUsers,
-		PinMessages:     rights.PinMessages,
-		ManageTopics:    rights.ManageTopics,
-		SendPhotos:      rights.SendPhotos,
-		SendVideos:      rights.SendVideos,
-		SendRoundvideos: rights.SendRoundvideos,
-		SendAudios:      rights.SendAudios,
-		SendVoices:      rights.SendVoices,
-		SendDocs:        rights.SendDocs,
-		SendPlain:       rights.SendPlain,
-		EditRank:        rights.EditRank,
-		SendReactions:   rights.SendReactions,
-		UntilDate:       rights.UntilDate,
+		ViewMessages:      rights.ViewMessages,
+		SendMessages:      rights.SendMessages,
+		SendMedia:         rights.SendMedia,
+		SendStickers:      rights.SendStickers,
+		SendGifs:          rights.SendGifs,
+		SendGames:         rights.SendGames,
+		SendInline:        rights.SendInline,
+		EmbedLinks:        rights.EmbedLinks,
+		SendPolls:         rights.SendPolls,
+		ChangeInfo:        rights.ChangeInfo,
+		InviteUsers:       rights.InviteUsers,
+		PinMessages:       rights.PinMessages,
+		ManageTopics:      rights.ManageTopics,
+		SendPhotos:        rights.SendPhotos,
+		SendVideos:        rights.SendVideos,
+		SendRoundvideos:   rights.SendRoundvideos,
+		SendAudios:        rights.SendAudios,
+		SendVoices:        rights.SendVoices,
+		SendDocs:          rights.SendDocs,
+		SendPlain:         rights.SendPlain,
+		EditRank:          rights.EditRank,
+		SendReactions:     rights.SendReactions,
+		ManageLinkedPeers: rights.ManageLinkedPeers,
+		UntilDate:         rights.UntilDate,
 	}
 }
 
@@ -875,29 +898,30 @@ func tgDefaultChatBannedRights(rights domain.ChannelBannedRights) tg.ChatBannedR
 
 func domainChannelBannedRights(rights tg.ChatBannedRights) domain.ChannelBannedRights {
 	return domain.ChannelBannedRights{
-		ViewMessages:    rights.ViewMessages,
-		SendMessages:    rights.SendMessages,
-		SendMedia:       rights.SendMedia,
-		SendStickers:    rights.SendStickers,
-		SendGifs:        rights.SendGifs,
-		SendGames:       rights.SendGames,
-		SendInline:      rights.SendInline,
-		EmbedLinks:      rights.EmbedLinks,
-		SendPolls:       rights.SendPolls,
-		ChangeInfo:      rights.ChangeInfo,
-		InviteUsers:     rights.InviteUsers,
-		PinMessages:     rights.PinMessages,
-		ManageTopics:    rights.ManageTopics,
-		SendPhotos:      rights.SendPhotos,
-		SendVideos:      rights.SendVideos,
-		SendRoundvideos: rights.SendRoundvideos,
-		SendAudios:      rights.SendAudios,
-		SendVoices:      rights.SendVoices,
-		SendDocs:        rights.SendDocs,
-		SendPlain:       rights.SendPlain,
-		EditRank:        rights.EditRank,
-		SendReactions:   rights.SendReactions,
-		UntilDate:       rights.UntilDate,
+		ViewMessages:      rights.ViewMessages,
+		SendMessages:      rights.SendMessages,
+		SendMedia:         rights.SendMedia,
+		SendStickers:      rights.SendStickers,
+		SendGifs:          rights.SendGifs,
+		SendGames:         rights.SendGames,
+		SendInline:        rights.SendInline,
+		EmbedLinks:        rights.EmbedLinks,
+		SendPolls:         rights.SendPolls,
+		ChangeInfo:        rights.ChangeInfo,
+		InviteUsers:       rights.InviteUsers,
+		PinMessages:       rights.PinMessages,
+		ManageTopics:      rights.ManageTopics,
+		SendPhotos:        rights.SendPhotos,
+		SendVideos:        rights.SendVideos,
+		SendRoundvideos:   rights.SendRoundvideos,
+		SendAudios:        rights.SendAudios,
+		SendVoices:        rights.SendVoices,
+		SendDocs:          rights.SendDocs,
+		SendPlain:         rights.SendPlain,
+		EditRank:          rights.EditRank,
+		SendReactions:     rights.SendReactions,
+		ManageLinkedPeers: rights.ManageLinkedPeers,
+		UntilDate:         rights.UntilDate,
 	}
 }
 
