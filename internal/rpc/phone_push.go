@@ -60,18 +60,18 @@ func (r *Router) pushPhoneCallDiscardedBoth(ctx context.Context, call domain.Pho
 
 // pushPhoneSignalingData 把信令字节透传给对端。
 //
-// ⚠ 信令是【瞬时】数据（有效期秒级：tgcalls 的 offer/answer/candidate 交换）。
-// 绝不能定向推给单个「受理设备」的 session 锚点——本部署里被叫真机把 dc 1..5 别名到
-// 同一服务器，故一台真机对本服务器有多条连接/session，而它【接收 update 的那条】
-// 未必就是承载 acceptCall RPC 的那条。若锚点指向一条尚未 updates-ready 的 session，
-// PushToSessionForAuthKey 会把信令【塞进 pending 队列并返回 nil】（不是错误），于是
-// 旧代码误以为已投递、不再回退——offer 被积压在死队列里、被叫的 tgcalls 永远收不到，
-// 通话一接就断（且只在被叫是多连接的一侧发生，故 A→B 断、B→A 通的方向不对称）。
+// ⚠ 绝不能定向推给单个「受理设备」的 session 锚点——本部署里被叫真机把 dc 1..5 别名到
+// 同一服务器，故一台真机对本服务器有多条连接/session，而它【接收 update 的那条】未必
+// 就是承载 acceptCall RPC 的那条。若锚点指向一条尚未 updates-ready 的 session，
+// PushToSessionForAuthKey 会把信令【塞进 pending 队列并返回 nil】（不是错误），旧代码
+// 误以为已投递、不再回退——offer 被积压在死队列里、被叫 tgcalls 永远收不到，一接就断。
 //
-// 正确做法：按 user 级【transient】扇出到该用户【全部 updates-ready 的连接】——未就绪
-// 的连接直接跳过、不入 pending（瞬时信令 getDifference 也补不回，积压有害无益）。
-// 运行 tgcalls 的那条 ready 连接必收到；非参与设备按 phone_call_id 不匹配静默丢弃
-// （TDesktop/DrKLO handleSignalingData 行为），扇出无害。device 锚点已不再使用。
+// 用 user 级 durable 扇出（pushUserMessage，与本文件顶部设计一致）到该用户全部连接：
+// 已 updates-ready 的连接【实时收到】；尚在预热（刚切到该账号、还没 getState/getDifference）
+// 的连接把这几条【短暂入 pending】，等它一 ready 就补发——避免了 transient 直接丢弃导致
+// 「切账号后头一两次通话丢 ICE candidate、一接就断，重拨几次预热完才通」的现象。stale
+// 信令按 phone_call_id 不匹配被客户端静默丢弃（TDesktop/DrKLO handleSignalingData），无害。
+// device 锚点已不再使用。
 func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64, device domain.SessionRef, callID int64, data []byte) {
 	upd := &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdatePhoneCallSignalingData{
@@ -83,5 +83,5 @@ func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64,
 		Date:  int(r.clock.Now().Unix()),
 		Seq:   0,
 	}
-	r.pushUserMessageTransient(ctx, targetUserID, "phone call signaling", upd)
+	r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)
 }
