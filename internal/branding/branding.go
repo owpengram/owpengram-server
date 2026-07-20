@@ -12,17 +12,17 @@ import (
 )
 
 const (
-	ProductName      = "Telesrv"
-	ProductUsername  = "telesrv"
-	DesktopAppName   = "Telesrv Desktop"
-	AndroidAppName   = "Telesrv Android"
-	IOSAppName       = "Telesrv iOS"
-	MacOSAppName     = "Telesrv macOS"
-	WebAAppName      = "Telesrv Web A"
-	WebKAppName      = "Telesrv Web K"
-	PremiumName      = "Telesrv Premium"
-	StarsName        = "Telesrv Stars"
-	DefaultPublicURL = "https://telesrv.net"
+	ProductName      = "OwpenGram"
+	ProductUsername  = "owpengram"
+	DesktopAppName   = "OwpenGram Desktop"
+	AndroidAppName   = "OwpenGram Android"
+	IOSAppName       = "OwpenGram iOS"
+	MacOSAppName     = "OwpenGram macOS"
+	WebAAppName      = "OwpenGram Web A"
+	WebKAppName      = "OwpenGram Web K"
+	PremiumName      = "OwpenGram Premium"
+	StarsName        = "OwpenGram Stars"
+	DefaultPublicURL = "https://owpengram.org"
 )
 
 // ClientAppName returns the branded display name for a stored client platform.

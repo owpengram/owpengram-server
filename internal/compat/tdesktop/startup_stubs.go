@@ -318,7 +318,7 @@ func StickerSet(req *tg.MessagesGetStickerSetRequest) tg.MessagesStickerSetClass
 	if req != nil && req.Hash == emptyStickerSetHash {
 		return &tg.MessagesStickerSetNotModified{}
 	}
-	title, shortName := "Telesrv Empty Sticker Set", "telesrv_empty"
+	title, shortName := "OwpenGram Empty Sticker Set", "owpengram_empty"
 	if req != nil {
 		switch set := req.Stickerset.(type) {
 		case *tg.InputStickerSetAnimatedEmoji:

@@ -1,5 +1,7 @@
 package domain
 
+import "telesrv/internal/branding"
+
 const (
 	// OfficialSystemUserID 是 Telegram 兼容客户端识别的官方系统账号。
 	OfficialSystemUserID int64 = 777000
@@ -47,8 +49,8 @@ func OfficialSystemUser() User {
 		ID:         OfficialSystemUserID,
 		AccessHash: 6599886787491911851,
 		Phone:      "42777",
-		FirstName:  "OwpenGram",
-		Username:   "owpengram",
+		FirstName:  branding.ProductName,
+		Username:   branding.ProductUsername,
 		Verified:   true,
 		Support:    true,
 	}

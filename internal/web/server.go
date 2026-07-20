@@ -1035,6 +1035,10 @@ func safePublicImageType(value string) bool {
 	}
 }
 
+func legacyTgURL(kind, key, value string) string {
+	return schemeURL("tg", kind, key, value)
+}
+
 func schemeURLValues(scheme, kind string, values url.Values) string {
 	return (&url.URL{Scheme: scheme, Host: kind, RawQuery: values.Encode()}).String()
 }
@@ -1182,6 +1186,8 @@ type pageData struct {
 	CanonicalURL string
 	DownloadURL  string
 	AppURL       template.URL
+	LegacyTgURL  template.URL
+	AppURLJS     template.JS
 }
 
 type usernamePageData struct {
@@ -1576,8 +1582,14 @@ var landingTemplate = template.Must(template.New("landing").Parse(`<!doctype htm
       {{if .Subtitle}}<div class="sub">{{.Subtitle}}</div>{{end}}
       {{if .Description}}<div class="about">{{.Description}}</div>{{end}}
       <div class="actions"><a class="btn btn-primary" href="{{.AppURL}}">Open in {{.AppName}}</a></div>
+      {{if .LegacyTgURL}}<div class="sub">Old test clients only: <a href="{{.LegacyTgURL}}" style="color:inherit;text-decoration:underline">open with tg://</a></div>{{end}}
     </div>
   </main>` + publicBgIconsScript + `
+  {{if .AppURLJS}}<script>
+    window.setTimeout(function () {
+      window.location.href = {{.AppURLJS}};
+    }, 250);
+  </script>{{end}}
 </body>
 </html>
 `))
