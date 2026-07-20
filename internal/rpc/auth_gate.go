@@ -24,6 +24,13 @@ func rpcAllowedWithoutAuthorization(id uint32) bool {
 		tg.AuthSignInRequestTypeID,
 		tg.AuthSignUpRequestTypeID,
 		tg.AuthImportBotAuthorizationRequestTypeID,
+		// auth.importAuthorization authenticates a FRESH connection (e.g. the
+		// client opening a second connection for what it believes is a
+		// different data-center, typically to fetch media/files) by proving
+		// the identity exported from an already-authorized connection via
+		// auth.exportAuthorization — it must be reachable before this
+		// connection's own auth_key has been bound to a user.
+		tg.AuthImportAuthorizationRequestTypeID,
 		tg.AuthCheckPasswordRequestTypeID,
 		tg.AuthRequestPasswordRecoveryRequestTypeID,
 		tg.AuthRecoverPasswordRequestTypeID,
