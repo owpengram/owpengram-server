@@ -238,8 +238,9 @@ func TestFrozenCalleeCompletesPrivateCallLifecycle(t *testing.T) {
 	if value, ok := dispatchCanonicalValue(signaled).(bool); !ok || !value {
 		t.Fatalf("sendSignalingData = %#v, want true", dispatchCanonicalValue(signaled))
 	}
-	if pushes := f.sessions.records(); len(pushes) != 1 || pushes[0].targetSession != phoneCallerSession {
-		t.Fatalf("signaling pushes = %+v, want caller device", pushes)
+	// 信令走 user 级 transient 扇出到对端全部 ready 连接、排除发送方 session。
+	if pushes := f.sessions.records(); len(pushes) != 1 || pushes[0].userID != f.caller.ID || pushes[0].excludeSession != phoneCalleeSession {
+		t.Fatalf("signaling pushes = %+v, want transient fanout to caller excluding callee session", pushes)
 	}
 	f.sessions.reset()
 

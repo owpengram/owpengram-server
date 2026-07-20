@@ -317,8 +317,11 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("sendSignalingData = %v err=%v", okSig, err)
 	}
 	pushes = f.sessions.records()
-	if len(pushes) != 1 || pushes[0].targetSession != phoneCalleeSession {
-		t.Fatalf("signaling pushes = %+v, want one to callee session", pushes)
+	// 信令按 user 级 transient 扇出到对端【全部 ready 连接】，排除发送方 session；
+	// 不再定向到单个「受理设备」锚点（那会在被叫多连接、锚点未 ready 时把 offer 塞进
+	// 死队列、通话一接就断）。See pushPhoneSignalingData / memory: call-signaling-*.
+	if len(pushes) != 1 || pushes[0].userID != f.callee.ID || pushes[0].excludeSession != phoneCallerSession {
+		t.Fatalf("signaling pushes = %+v, want transient fanout to callee excluding caller session", pushes)
 	}
 	sigUpdates := pushes[0].msg.(*tg.Updates)
 	sig, ok := sigUpdates.Updates[0].(*tg.UpdatePhoneCallSignalingData)
