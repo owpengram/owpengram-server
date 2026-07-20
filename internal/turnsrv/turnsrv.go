@@ -111,6 +111,10 @@ func New(cfg Config) (Service, error) {
 		return nil, fmt.Errorf("turnsrv: listen udp %d: %w", cfg.UDPPort, err)
 	}
 	pionLog := logging.NewDefaultLoggerFactory()
+	// pion 默认只记 Error：分配/鉴权/权限请求全部静默，媒体面连不上时服务端日志
+	// 一片空白、无法判断包是否到达。调到 Debug 以便区分「客户端根本没到」与
+	// 「到了但被拒」。
+	pionLog.DefaultLogLevel = logging.LogLevelDebug
 	server, err := turn.NewServer(turn.ServerConfig{
 		Realm:         cfg.Realm,
 		LoggerFactory: pionLog,
