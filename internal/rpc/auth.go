@@ -2,6 +2,9 @@ package rpc
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -38,14 +41,10 @@ func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
 			Token)
 	})
 	registerRPC[*tg.AuthExportAuthorizationRequest](d, tlprofile.SemanticMethodAuthExportAuthorization, func(ctx context.Context, layerRequest *tg.AuthExportAuthorizationRequest) (any, error) {
-		dcid := layerRequest.
-			DCID
-		_ = dcid
-
-		return nil, dcIDInvalidErr()
+		return r.onAuthExportAuthorization(ctx, layerRequest)
 	})
 	registerRPC[*tg.AuthImportAuthorizationRequest](d, tlprofile.SemanticMethodAuthImportAuthorization, func(ctx context.Context, req *tg.AuthImportAuthorizationRequest) (any, error) {
-		return nil, dcIDInvalidErr()
+		return r.onAuthImportAuthorization(ctx, req)
 	})
 	registerRPC[*tg.AuthDropTempAuthKeysRequest](d, tlprofile.SemanticMethodAuthDropTempAuthKeys, func(ctx context.Context, layerRequest *tg.AuthDropTempAuthKeysRequest) (any, error) {
 		exceptauthkeys := layerRequest.
@@ -104,6 +103,98 @@ func (r *Router) registerAuth(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.AuthResetLoginEmailRequest](d, tlprofile.SemanticMethodAuthResetLoginEmail, func(ctx context.Context, layerRequest *tg.AuthResetLoginEmailRequest) (any, error) {
 		return r.onAuthResetLoginEmail(ctx, layerRequest)
 	})
+}
+
+// exportAuthTokenTTL is how long an auth.exportAuthorization token stays
+// valid. Clients use it within seconds (open a second connection to fetch
+// media/files believed to live on a different dc_id, then immediately call
+// auth.importAuthorization), so a short window is plenty.
+const exportAuthTokenTTL = 5 * time.Minute
+
+// exportAuthSecret HMAC-signs auth.exportAuthorization tokens. It is
+// process-lifetime random (not persisted): every dc_id this server hands out
+// aliases the SAME physical process (see owpengram_servers single-server
+// backend + memory "lenient DC key exchange"), so export and import always
+// happen against the same running instance within the token's short TTL —
+// a restart between the two would just make the client redo the export,
+// same as if the token had expired.
+var exportAuthSecret = func() []byte {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return b
+}()
+
+// signExportAuthToken binds userID+expiry into an opaque, tamper-evident
+// token: 8 bytes user_id big-endian, 8 bytes expiry unix big-endian, 32 bytes
+// HMAC-SHA256 tag over the first 16.
+func signExportAuthToken(userID int64) []byte {
+	payload := make([]byte, 16, 48)
+	binary.BigEndian.PutUint64(payload[0:8], uint64(userID))
+	binary.BigEndian.PutUint64(payload[8:16], uint64(time.Now().Add(exportAuthTokenTTL).Unix()))
+	mac := hmac.New(sha256.New, exportAuthSecret)
+	mac.Write(payload)
+	return mac.Sum(payload)
+}
+
+// verifyExportAuthToken checks the HMAC tag and expiry and returns the
+// embedded user_id.
+func verifyExportAuthToken(token []byte) (int64, error) {
+	if len(token) != 48 {
+		return 0, errors.New("export auth token: bad length")
+	}
+	payload, tag := token[:16], token[16:]
+	mac := hmac.New(sha256.New, exportAuthSecret)
+	mac.Write(payload)
+	if !hmac.Equal(tag, mac.Sum(nil)) {
+		return 0, errors.New("export auth token: bad signature")
+	}
+	expiry := int64(binary.BigEndian.Uint64(payload[8:16]))
+	if time.Now().Unix() > expiry {
+		return 0, errors.New("export auth token: expired")
+	}
+	return int64(binary.BigEndian.Uint64(payload[0:8])), nil
+}
+
+// onAuthExportAuthorization issues a short-lived signed token proving the
+// current connection's logged-in identity, so a second connection the client
+// opens for what it believes is a different data-center (typically to fetch
+// media/files) can prove the same user via auth.importAuthorization without
+// repeating the phone/code login flow. Every dc_id this server advertises
+// aliases the same physical backend (see Owpengram::ApplyServerToDcOptions /
+// OwpengramServers.applyServerConfig on the clients), so req.DCID carries no
+// real routing meaning here and is intentionally not validated.
+func (r *Router) onAuthExportAuthorization(ctx context.Context, req *tg.AuthExportAuthorizationRequest) (*tg.AuthExportedAuthorization, error) {
+	userID, ok, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !ok || userID == 0 {
+		return nil, dcIDInvalidErr()
+	}
+	return &tg.AuthExportedAuthorization{
+		ID:    userID,
+		Bytes: signExportAuthToken(userID),
+	}, nil
+}
+
+// onAuthImportAuthorization is the counterpart consumed on the second
+// connection: verifies the token minted by onAuthExportAuthorization and, on
+// success, binds THIS connection's auth_key/session to that user — the same
+// effect a normal auth.signIn has once it succeeds.
+func (r *Router) onAuthImportAuthorization(ctx context.Context, req *tg.AuthImportAuthorizationRequest) (tg.AuthAuthorizationClass, error) {
+	userID, err := verifyExportAuthToken(req.Bytes)
+	if err != nil || userID == 0 || userID != req.ID {
+		return nil, dcIDInvalidErr()
+	}
+	u, err := r.deps.Users.Self(ctx, userID)
+	if err != nil {
+		return nil, dcIDInvalidErr()
+	}
+	if authKeyID, ok := AuthKeyIDFrom(ctx); ok {
+		r.setAuthUserCache(authKeyID, userID, true)
+	}
+	r.bindSessionUser(ctx, userID)
+	return &tg.AuthAuthorization{User: r.tgSelfUser(u)}, nil
 }
 
 func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTempAuthKeyRequest) (bool, error) {
