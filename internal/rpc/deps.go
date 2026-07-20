@@ -165,14 +165,6 @@ type BestEffortSessionBinder interface {
 	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
-// DeviceExcludingSessionPusher 按【设备】（perm/business auth_key）整体排除后 fan-out。
-// 与按单个 (raw auth_key, session) 排除的区别：一台设备可能有多条连接（OwpenGram
-// 客户端把 dc 1..5 都指向同一服务器 → 多连接），只排除受理那一条会让 phoneCall
-// "stop ringing" 的 discarded 漏到该设备的其它连接上、误杀它刚接起的通话。
-type DeviceExcludingSessionPusher interface {
-	PushToUserExceptBusinessAuthKey(ctx context.Context, userID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
-}
-
 // TransientSessionBinder 推送短命、不写 durable log 的 update（typing / presence）。
 // 与普通推送的关键区别：目标 session 未就绪时直接跳过、不进 pending——transient 数据
 // getDifference 无法补，就绪后由 getState 快照/下次状态变化重建，囤积过期 transient 无意义。

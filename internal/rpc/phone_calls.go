@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	appphone "telesrv/internal/app/phone"
 	"telesrv/internal/domain"
@@ -220,6 +221,15 @@ func (r *Router) onPhoneDiscardCall(ctx context.Context, req *tg.PhoneDiscardCal
 		} else if !found || !call.Conference() || !call.Active() {
 			return nil, groupCallInvalidErr()
 		}
+	}
+	// 诊断：记录被叫/主叫挂断的 reason 与时机（相对 confirm）。用于定位「接听即断」类问题——
+	// hangup 通常是用户主动挂断或客户端 tgcalls 失败；disconnect/missed 是媒体/振铃超时。
+	if r.log != nil {
+		r.log.Info("phone discardCall",
+			zap.Int64("user_id", userID),
+			zap.Int64("call_id", req.Peer.ID),
+			zap.String("reason", string(reason)),
+		)
 	}
 	call, already, err := r.deps.Phone.DiscardCallWithSlug(ctx, userID, req.Peer.ID, req.Peer.AccessHash, reason, reasonSlug, req.Duration)
 	if err != nil {
