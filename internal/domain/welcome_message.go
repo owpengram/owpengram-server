@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const officialWelcomeMessageTemplate = "👋 Welcome to OwpenGram!\n\nYou just signed in via %s.\n\nIf this wasn't you, revoke this session from Settings → Devices immediately."
+const officialWelcomeMessageTemplate = "👋 Welcome to OwpenGram!\n\nYou just signed in via %s.\n\nIf this wasn't you, revoke this session from \"Settings > Privacy and Security > Active sessions\" immediately."
 
 // OfficialWelcomeMessage builds the account-visible incoming message sent
 // from the official system account on every completed sign-in (SignUp and
