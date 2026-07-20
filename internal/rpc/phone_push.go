@@ -2,9 +2,10 @@ package rpc
 
 import (
 	"context"
+	"encoding/hex"
 
-	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -31,7 +32,18 @@ func (r *Router) phoneCallUpdatesWith(ctx context.Context, view tg.PhoneCallClas
 // pushPhoneCall 把 call 当前状态按 targetUserID 视角推给其全部在线设备
 // （ctx 携带的发起设备会被 pushUserMessage 的 except 语义排除）。
 func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call domain.PhoneCall, logMessage string) int {
-	return r.pushUserMessage(ctx, targetUserID, logMessage, r.phoneCallUpdates(ctx, call, targetUserID))
+	sent := r.pushUserMessage(ctx, targetUserID, logMessage, r.phoneCallUpdates(ctx, call, targetUserID))
+	// 诊断：确认服务端把 phoneCall 状态推给了对端【几条】连接。sent==0 说明对端
+	// 全部连接都没收到（一接就断类问题的关键判据）。
+	if r.log != nil {
+		r.log.Info("push phoneCall",
+			zap.String("stage", logMessage),
+			zap.Int64("target_user_id", targetUserID),
+			zap.Int64("call_id", call.ID),
+			zap.Int("sent", sent),
+		)
+	}
+	return sent
 }
 
 // pushPhoneCallStopRinging 向被叫其它设备推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
@@ -63,10 +75,21 @@ func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64,
 		Date:  int(r.clock.Now().Unix()),
 		Seq:   0,
 	}
-	if !device.Zero() && r.deps.Sessions != nil {
-		if err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd); err == nil {
-			return
-		}
+	// ⚠ 诊断轮：暂时【绕过 device 锚点】，强制 user 级扇出并记录实际命中的连接数
+	// （sent）。PushToSessionForAuthKey 对未就绪 session 会「入队并返回 nil」，无法
+	// 区分"真送达"与"塞进死队列"；而扇出的 sent 计数是硬事实——sent==0 说明对端此刻
+	// 没有任何一条 updates-ready 连接可收，服务端根本送不出去（客户端 dc-aliasing 多
+	// 连接、承载 update 的那条未 ready）；sent>=1 说明服务端送到了 N 条，问题在客户端
+	// 消费侧。据此一刀切分服务端/客户端责任。
+	sent := r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)
+	if r.log != nil {
+		r.log.Info("push phone signaling",
+			zap.Int64("target_user_id", targetUserID),
+			zap.Int64("call_id", callID),
+			zap.String("callee_anchor_auth_key", hex.EncodeToString(device.RawAuthKeyID[:])),
+			zap.Int64("callee_anchor_session", device.SessionID),
+			zap.Int("sent", sent),
+			zap.Int("data_len", len(data)),
+		)
 	}
-	r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)
 }
