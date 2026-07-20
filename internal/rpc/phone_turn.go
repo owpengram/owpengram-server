@@ -50,22 +50,8 @@ func (r *Router) phoneCallConnections(callerID int64) []domain.PhoneCallConnecti
 	// stun flag——单条目 stun+turn 在 Android 上只会产出 TURN server、丢失 STUN
 	//（org_telegram_messenger_voip_Instance.cpp:848-884）。TDesktop 两种写法都认。
 	// TURN username 是 REST 格式 "<expiry>:<uid>"，天然避开 "reflector" 劫持禁区。
-	//
-	// 每个可达 IP（AdvertiseIP + ExtraIPs）都下发一对 STUN/TURN 候选，ICE 逐一
-	// 尝试并选可达者：LAN 客户端走 LAN IP、外网客户端走公网 IP。id 必须全局唯一
-	// 且从 1 递增（DrKLO 用 id 做 reflector 映射）。凭据与 IP 无关（TURN REST 只
-	// 校验 HMAC），同一份 username/password 对所有 IP 有效。
-	ips := append([]string{t.IP()}, t.ExtraIPs()...)
-	conns := make([]domain.PhoneCallConnection, 0, len(ips)*2)
-	id := int64(1)
-	for _, ip := range ips {
-		if ip == "" {
-			continue
-		}
-		conns = append(conns, domain.PhoneCallConnection{ID: id, IP: ip, Port: t.Port(), Stun: true})
-		id++
-		conns = append(conns, domain.PhoneCallConnection{ID: id, IP: ip, Port: t.Port(), Username: username, Password: password, Turn: true})
-		id++
+	return []domain.PhoneCallConnection{
+		{ID: 1, IP: t.IP(), Port: t.Port(), Stun: true},
+		{ID: 2, IP: t.IP(), Port: t.Port(), Username: username, Password: password, Turn: true},
 	}
-	return conns
 }

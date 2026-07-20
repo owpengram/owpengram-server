@@ -201,7 +201,7 @@ func (m *SessionManager) PushToUserExceptSession(ctx context.Context, userID, ex
 }
 
 func (m *SessionManager) PushToUserExceptSessionBestEffort(ctx context.Context, userID, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
-	return m.pushToUserBestEffort(ctx, userID, nil, excludeSessionID, t, msg, timeout)
+	return m.pushToUserBestEffort(ctx, userID, nil, excludeSessionID, [8]byte{}, t, msg, timeout)
 }
 
 func (m *SessionManager) Online() int {

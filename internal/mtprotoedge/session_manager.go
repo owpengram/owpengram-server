@@ -1476,7 +1476,7 @@ func (m *SessionManager) pushToBusinessAuthKey(ctx context.Context, userID int64
 
 func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass) (int, error) {
 	getUpdates := onceLayerUpdatesFanout(ctx, msg)
-	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, getUpdates, true, func(c *Conn) error {
+	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, [8]byte{}, t, getUpdates, true, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
@@ -1499,7 +1499,7 @@ func (m *SessionManager) pushToUser(ctx context.Context, userID int64, excludeAu
 // 「durable 兜底」丢弃。走 best-effort 发送，不阻塞调用方。
 func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	getUpdates := onceLayerUpdatesFanout(ctx, msg)
-	return m.pushToUserWithSender(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, getUpdates, false, func(c *Conn) error {
+	return m.pushToUserWithSender(ctx, userID, &excludeAuthKeyID, excludeSessionID, [8]byte{}, t, getUpdates, false, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
@@ -1516,10 +1516,38 @@ func (m *SessionManager) PushToUserTransientExceptAuthKeySession(ctx context.Con
 }
 
 func (m *SessionManager) PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
-	return m.pushToUserBestEffort(ctx, userID, &excludeAuthKeyID, excludeSessionID, t, msg, timeout)
+	return m.pushToUserBestEffort(ctx, userID, &excludeAuthKeyID, excludeSessionID, [8]byte{}, t, msg, timeout)
 }
 
-func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
+// PushToUserExceptBusinessAuthKey fans msg out to every ready connection of
+// userID EXCEPT those belonging to the device identified by
+// excludeBusinessAuthKeyID (perm/business auth key) — i.e. it excludes the
+// whole accepting DEVICE, all of its connections/sessions, not just the one
+// session that carried the request. Used for phone-call "stop ringing": see
+// shouldExcludeDevice. Falls back to durable (non-best-effort) fan-out when no
+// outbound push timeout is configured.
+func (m *SessionManager) PushToUserExceptBusinessAuthKey(ctx context.Context, userID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
+	if timeout > 0 {
+		return m.pushToUserBestEffort(ctx, userID, nil, 0, excludeBusinessAuthKeyID, t, msg, timeout)
+	}
+	getUpdates := onceLayerUpdatesFanout(ctx, msg)
+	return m.pushToUserWithSender(ctx, userID, nil, 0, excludeBusinessAuthKeyID, t, getUpdates, true, func(c *Conn) error {
+		if c.outbound == nil || c.outboundControl == nil {
+			return ErrConnClosed
+		}
+		updates, err := getUpdates()
+		if err != nil {
+			return err
+		}
+		encoded, err := updates.prepareForConn(ctx, c)
+		if err != nil {
+			return err
+		}
+		return c.SendEncoded(ctx, t, encoded)
+	})
+}
+
+func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error) {
 	if ctx != nil && ctx.Err() != nil {
 		return 0, ctx.Err()
 	}
@@ -1545,7 +1573,7 @@ func (m *SessionManager) pushToUserBestEffort(ctx context.Context, userID int64,
 		defer cancel()
 	}
 	getUpdates := onceLayerUpdatesFanout(sendCtx, msg)
-	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, t, getUpdates, true, func(c *Conn) error {
+	return m.pushToUserWithSender(ctx, userID, excludeAuthKeyID, excludeSessionID, excludeBusinessAuthKeyID, t, getUpdates, true, func(c *Conn) error {
 		if c.outbound == nil || c.outboundControl == nil {
 			return ErrConnClosed
 		}
@@ -1592,7 +1620,7 @@ func onceLayerUpdatesFanout(ctx context.Context, msg tg.UpdatesClass) func() (*l
 	}
 }
 
-func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, t proto.MessageType, getUpdates func() (*layerUpdatesFanout, error), queueWhenNotReady bool, send func(*Conn) error) (int, error) {
+func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64, excludeAuthKeyID *[8]byte, excludeSessionID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, getUpdates func() (*layerUpdatesFanout, error), queueWhenNotReady bool, send func(*Conn) error) (int, error) {
 	// push fan-out 是连接层最热路径之一：debug 日志的字段构造（含 auth_key hex 格式化）
 	// 在关闭 debug 时也会求值，先查级别一次、按需记日志。
 	debug := m.log.Core().Enabled(zapcore.DebugLevel)
@@ -1608,7 +1636,7 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 	skipped := 0
 	needQueue := false
 	for _, c := range m.byUser[userID] {
-		if shouldExcludeSession(c, excludeAuthKeyID, excludeSessionID) {
+		if shouldExcludeSession(c, excludeAuthKeyID, excludeSessionID) || shouldExcludeDevice(c, excludeBusinessAuthKeyID) {
 			excluded++
 			continue
 		}
@@ -2476,6 +2504,22 @@ func shouldExcludeSession(c *Conn, excludeAuthKeyID *[8]byte, excludeSessionID i
 		return true
 	}
 	return c.authKeyID == *excludeAuthKeyID
+}
+
+// shouldExcludeDevice reports whether c belongs to the device identified by
+// excludeBusinessAuthKeyID (the perm/business auth key). Unlike the per-session
+// exclusion above, this matches EVERY connection of that device regardless of
+// session_id or raw temp-key. Required for signals like phone-call "stop
+// ringing": a device that aliases dc 1..5 onto one server (the OwpenGram
+// client) holds several connections, so excluding only the one session that
+// carried the accept would let the stop/discard leak onto the device's other
+// connections and kill the call it just accepted.
+func shouldExcludeDevice(c *Conn, excludeBusinessAuthKeyID [8]byte) bool {
+	if excludeBusinessAuthKeyID == ([8]byte{}) {
+		return false
+	}
+	id, resolved := c.BusinessAuthKeyID()
+	return resolved && id == excludeBusinessAuthKeyID
 }
 
 func sessionKeyLog(id [8]byte) string {

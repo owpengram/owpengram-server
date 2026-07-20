@@ -644,7 +644,6 @@ func run(logger *zap.Logger) error {
 		t, err := turnsrv.New(turnsrv.Config{
 			UDPPort:       cfg.TURNUDPPort,
 			AdvertiseIP:   turnAdvertise,
-			ExtraIPs:      cfg.TURNExtraIPs,
 			SharedSecret:  cfg.TURNSecret,
 			RelayMinPort:  cfg.TURNRelayMinPort,
 			RelayMaxPort:  cfg.TURNRelayMaxPort,

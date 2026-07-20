@@ -5,6 +5,7 @@ import (
 
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 )
@@ -34,10 +35,29 @@ func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call dom
 	return r.pushUserMessage(ctx, targetUserID, logMessage, r.phoneCallUpdates(ctx, call, targetUserID))
 }
 
-// pushPhoneCallStopRinging 向被叫其它设备推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
-// ctx 必须是接听设备的请求上下文：except 语义恰好把赢家排除在外。
+// pushPhoneCallStopRinging 向被叫【其它设备】推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
+// ctx 必须是接听设备的请求上下文。
+//
+// ⚠ 排除必须按【设备】（perm/business auth_key）整体做，而不是按单个
+// (raw auth_key, session)。接听设备可能有多条到本服务器的连接——OwpenGram 客户端
+// 把 dc 1..5 都指向同一服务器，故一台真机常有数条连接/会话。若只排除受理 accept 的
+// 那一条 session，停振铃的 phoneCallDiscarded 会漏到同一台设备的其它连接上，客户端
+// 的 update 处理器按 call_id 匹配后当作"通话被挂断"、立即杀掉它刚接起的通话
+//（现象：被叫按下接听后立刻 Failed to connect；主叫方/被叫单连接侧无此问题——故表现
+// 为「A 打 B 正常、B 打 A 一接就断」的方向不对称）。按 business auth_key 排除可覆盖该
+// 设备的全部连接。See memory: call-*.
 func (r *Router) pushPhoneCallStopRinging(ctx context.Context, call domain.PhoneCall) int {
 	upd := r.phoneCallUpdatesWith(ctx, tgPhoneCallStopRinging(call), call, call.ParticipantID)
+	if pusher, ok := r.deps.Sessions.(DeviceExcludingSessionPusher); ok {
+		if businessAuthKeyID, has := AuthKeyIDFrom(ctx); has {
+			sent, err := pusher.PushToUserExceptBusinessAuthKey(ctx, call.ParticipantID, businessAuthKeyID, proto.MessageFromServer, upd, r.cfg.OutboundPushTimeout)
+			if err != nil {
+				r.log.Debug("phone call stop ringing", zap.Int64("user_id", call.ParticipantID), zap.Int("sent", sent), zap.Error(err))
+			}
+			return sent
+		}
+	}
+	// 回退：能力不可用时退回按 session 排除（旧行为）。
 	return r.pushUserMessage(ctx, call.ParticipantID, "phone call stop ringing", upd)
 }
 
