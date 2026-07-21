@@ -685,9 +685,6 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	peerUser := contact.User
 	peerUser.Contact = true
 	peerUser.Mutual = contact.Mutual || contact.User.Mutual
-	if contact.Phone != "" {
-		peerUser.Phone = contact.Phone
-	}
 	if contact.FirstName != "" || contact.LastName != "" {
 		peerUser.FirstName = contact.FirstName
 		peerUser.LastName = contact.LastName
@@ -742,9 +739,6 @@ func (r *Router) onContactsAcceptContact(ctx context.Context, id tg.InputUserCla
 	peerUser := contact.User
 	peerUser.Contact = true
 	peerUser.Mutual = contact.Mutual || contact.User.Mutual
-	if contact.Phone != "" {
-		peerUser.Phone = contact.Phone
-	}
 	if contact.FirstName != "" || contact.LastName != "" {
 		peerUser.FirstName = contact.FirstName
 		peerUser.LastName = contact.LastName
