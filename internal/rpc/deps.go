@@ -165,6 +165,18 @@ type BestEffortSessionBinder interface {
 	PushToUserExceptAuthKeySessionBestEffort(ctx context.Context, userID int64, excludeAuthKeyID [8]byte, excludeSessionID int64, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
+// PushSessionRegistrar 登记/撤销 account.registerDevice(token_type=7，MTProto 内部
+// 推送通道) 的 session。登记后该 session 在推送 fan-out 中被视为永久就绪，绕过
+// receivesUpdates 门槛——它只发 ping、永远不会调 updates.getState，但在账号后台/
+// 未选中（客户端把主连接 setAppPaused 挂起）时是唯一还连着服务器的连接，是官方
+// Telegram 在无 FCM/APNs 场景（大陆、去 Google 化设备）下仍能收到来电、消息等实时
+// 推送的机制。SessionManager 实现；未装配时 registerDevice 静默跳过登记（只影响
+// 后台唤醒，不影响功能正确性）。See memory: call-inactive-account-network-pause。
+type PushSessionRegistrar interface {
+	MarkPushSession(rawAuthKeyID [8]byte, sessionID int64)
+	UnmarkPushSession(rawAuthKeyID [8]byte, sessionID int64)
+}
+
 // TransientSessionBinder 推送短命、不写 durable log 的 update（typing / presence）。
 // 与普通推送的关键区别：目标 session 未就绪时直接跳过、不进 pending——transient 数据
 // getDifference 无法补，就绪后由 getState 快照/下次状态变化重建，囤积过期 transient 无意义。

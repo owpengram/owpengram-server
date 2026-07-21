@@ -2,10 +2,13 @@ package rpc
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/branding"
@@ -13,6 +16,12 @@ import (
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )
+
+// mtprotoPushTokenType 是 account.registerDevice/unregisterDevice 的 token_type=7：
+// 客户端在没有 FCM/APNs 的场景下（自建 owpg:// 服务器、大陆/去 Google 化设备）自己
+// 建立的「MTProto 内部推送」通道——一条独立、常驻、只发 ping 的连接，用自己的
+// session_id 作为 token 上报。见 PushSessionRegistrar。
+const mtprotoPushTokenType = 7
 
 // registerAccount 注册 account.* RPC handler。
 func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
@@ -26,9 +35,11 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 		return r.onAccountConfirmPhone(ctx, req)
 	})
 	registerRPC[*tg.AccountRegisterDeviceRequest](d, tlprofile.SemanticMethodAccountRegisterDevice, func(ctx context.Context, req *tg.AccountRegisterDeviceRequest) (any, error) {
+		r.registerPushSession(ctx, req.TokenType, req.Token)
 		return true, nil
 	})
 	registerRPC[*tg.AccountUnregisterDeviceRequest](d, tlprofile.SemanticMethodAccountUnregisterDevice, func(ctx context.Context, req *tg.AccountUnregisterDeviceRequest) (any, error) {
+		r.unregisterPushSession(ctx, req.TokenType, req.Token)
 		return true, nil
 	})
 	registerRPC[*tg.AccountUpdateDeviceLockedRequest](d, tlprofile.SemanticMethodAccountUpdateDeviceLocked, func(ctx context.Context, layerRequest *tg.AccountUpdateDeviceLockedRequest) (any, error) {
@@ -458,6 +469,65 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 			Offline)
 	})
 
+}
+
+// registerPushSession 把 token_type=7 的 registerDevice 登记为发起本次 RPC 的连接
+// （raw auth_key_id + session_id）的推送通道身份，见 mtprotoPushTokenType 与
+// PushSessionRegistrar。其它 token_type（FCM/APNs/…）本服务器不发外部推送，忽略。
+func (r *Router) registerPushSession(ctx context.Context, tokenType int, token string) {
+	if tokenType != mtprotoPushTokenType {
+		return
+	}
+	registrar, ok := r.deps.Sessions.(PushSessionRegistrar)
+	if !ok {
+		return
+	}
+	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
+	if !ok {
+		return
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return
+	}
+	// token 上报的是客户端自己的 pushSessionId（ConnectionsManager.cpp 的
+	// to_string_uint64((uint64_t) pushSessionId)），理论上应与本次 RPC 所在的
+	// session_id 一致（registerDevice 走主连接发起，携带 push 连接自己的 session_id
+	// 作为 token）。以 token 解析出的 session_id 为准登记——若客户端将来在别的连接上
+	// 上报，仍能正确登记到「那条」连接，而不是发起 RPC 的这条。
+	if parsed, err := strconv.ParseInt(token, 10, 64); err == nil && parsed != 0 {
+		sessionID = parsed
+	}
+	registrar.MarkPushSession(rawAuthKeyID, sessionID)
+	if r.log != nil {
+		r.log.Info("registered MTProto push session",
+			zap.String("auth_key_id", hex.EncodeToString(rawAuthKeyID[:])),
+			zap.Int64("push_session_id", sessionID),
+		)
+	}
+}
+
+// unregisterPushSession 撤销 registerPushSession 的登记。
+func (r *Router) unregisterPushSession(ctx context.Context, tokenType int, token string) {
+	if tokenType != mtprotoPushTokenType {
+		return
+	}
+	registrar, ok := r.deps.Sessions.(PushSessionRegistrar)
+	if !ok {
+		return
+	}
+	rawAuthKeyID, ok := RawAuthKeyIDFrom(ctx)
+	if !ok {
+		return
+	}
+	sessionID, ok := SessionIDFrom(ctx)
+	if !ok {
+		return
+	}
+	if parsed, err := strconv.ParseInt(token, 10, 64); err == nil && parsed != 0 {
+		sessionID = parsed
+	}
+	registrar.UnmarkPushSession(rawAuthKeyID, sessionID)
 }
 
 func (r *Router) onAccountGetPassword(ctx context.Context) (*tg.AccountPassword, error) {

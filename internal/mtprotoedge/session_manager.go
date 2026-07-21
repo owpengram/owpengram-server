@@ -176,6 +176,15 @@ type SessionManager struct {
 	pending           map[sessionKey][]queuedPush // updates-ready 前暂存的主动推送
 	flushing          map[sessionKey]bool         // 置位时暂存正在排空的 session；排空完成前推送继续进 pending 保序
 	pendingBudget     *outboundTrackedBudget      // 未就绪 session 暂存 encoded body 的进程级上限
+	// pushSessions 记录经 account.registerDevice(token_type=7) 登记的「MTProto 内部
+	// 推送通道」session：raw auth_key_id → 该 auth_key 下已登记的 session_id 集合。
+	// 这类连接只发 ping，永远不会调 updates.getState（receivesUpdates 恒 false），
+	// 但它是账号切到后台/未选中（主连接被客户端 setAppPaused 挂起）时唯一还连着
+	// 服务器的连接——官方 Telegram 客户端正是靠它，在无 FCM/APNs 的场景（大陆、
+	// 去 Google 化设备）下仍能收到来电、消息等实时推送。登记后在 pushToUserWithSender
+	// 中被视为【永久就绪】，绕过 receivesUpdates 门槛直接投递，而不是排队等一个永远
+	// 不会到来的 getState。See memory: call-inactive-account-network-pause。
+	pushSessions map[[8]byte]map[int64]struct{}
 
 	lifecycle SessionLifecycleObserver
 	log       *zap.Logger
@@ -200,8 +209,48 @@ func NewSessionManager(log *zap.Logger) *SessionManager {
 		pending:           make(map[sessionKey][]queuedPush),
 		flushing:          make(map[sessionKey]bool),
 		pendingBudget:     newOutboundTrackedBudget(defaultPendingPushMaxBytes),
+		pushSessions:      make(map[[8]byte]map[int64]struct{}),
 		log:               log,
 	}
+}
+
+// MarkPushSession 把 (rawAuthKeyID, sessionID) 登记为该 auth_key 的 MTProto 内部推送
+// 通道，使其在 pushToUserWithSender 中跳过 receivesUpdates 门槛、始终被视为可投递。
+// 由 account.registerDevice(token_type=7) 处理器调用；幂等，与是否已有活跃 Conn 无关
+// （连接可能晚于此调用才建立，或断线重连复用同一 session_id）。
+func (m *SessionManager) MarkPushSession(rawAuthKeyID [8]byte, sessionID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	set, ok := m.pushSessions[rawAuthKeyID]
+	if !ok {
+		set = make(map[int64]struct{})
+		m.pushSessions[rawAuthKeyID] = set
+	}
+	set[sessionID] = struct{}{}
+}
+
+// UnmarkPushSession 撤销登记（account.unregisterDevice(token_type=7)）。
+func (m *SessionManager) UnmarkPushSession(rawAuthKeyID [8]byte, sessionID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	set, ok := m.pushSessions[rawAuthKeyID]
+	if !ok {
+		return
+	}
+	delete(set, sessionID)
+	if len(set) == 0 {
+		delete(m.pushSessions, rawAuthKeyID)
+	}
+}
+
+// isPushSessionLocked 报告 key 是否登记为推送通道。调用方须已持有 m.mu（读锁或写锁均可）。
+func (m *SessionManager) isPushSessionLocked(key sessionKey) bool {
+	set, ok := m.pushSessions[key.authKeyID]
+	if !ok {
+		return false
+	}
+	_, ok = set[key.sessionID]
+	return ok
 }
 
 // SetLifecycleObserver installs a best-effort active session lifecycle observer.
@@ -1636,7 +1685,7 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 	excluded := 0
 	skipped := 0
 	needQueue := false
-	for _, c := range m.byUser[userID] {
+	for key, c := range m.byUser[userID] {
 		if shouldExcludeSession(c, excludeAuthKeyID, excludeSessionID) {
 			excluded++
 			continue
@@ -1645,7 +1694,10 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 			skipped++
 			continue
 		}
-		if !c.receivesUpdates.Load() {
+		// 已登记的推送通道（registerDevice token_type=7）永久视为就绪：它只发 ping，
+		// receivesUpdates 恒 false，但绕过门槛直接投递才是它存在的意义——排队等一个
+		// 永远不会到来的 getState 毫无价值。
+		if !c.receivesUpdates.Load() && !m.isPushSessionLocked(key) {
 			if !queueWhenNotReady {
 				// transient（typing/presence）：未就绪即丢，不进 pending。这些 update 不写
 				// durable log，getDifference 无法补；就绪后由 getState 快照/下次状态变化重建。
@@ -1677,7 +1729,7 @@ func (m *SessionManager) pushToUserWithSender(ctx context.Context, userID int64,
 				skipped++
 				continue
 			}
-			if !c.receivesUpdates.Load() {
+			if !c.receivesUpdates.Load() && !m.isPushSessionLocked(key) {
 				if !queueWhenNotReady {
 					skipped++
 					continue
