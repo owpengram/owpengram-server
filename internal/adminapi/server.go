@@ -25,6 +25,7 @@ type Config struct {
 }
 
 type Service interface {
+	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
@@ -93,6 +94,7 @@ func (s *Server) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
+	mux.HandleFunc("GET /v1/accounts/{id}/avatar", s.authenticated(s.handleAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
 	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
@@ -123,6 +125,28 @@ func (s *Server) authenticated(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+func (s *Server) handleAccountAvatar(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	data, mimeType, found, err := s.svc.AccountAvatar(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleSetAccountFrozen(w http.ResponseWriter, r *http.Request) {

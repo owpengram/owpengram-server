@@ -46,6 +46,7 @@ type AccountRow struct {
 	PremiumUntil int64
 	LastActiveAt time.Time
 	DeviceCount  int
+	LoginEmail   string
 }
 
 type AccountDetail struct {
@@ -209,11 +210,13 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), COALESCE(a.device_count, 0)::int,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(ap.login_email, '')
 FROM users u
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
 LEFT JOIN auth a ON a.user_id = u.id
+LEFT JOIN account_passwords ap ON ap.user_id = u.id
 WHERE u.id = $1 OR u.phone = $2 OR u.phone = $3 OR lower(u.username) = $4 OR p.username_lower = $4
 ORDER BY u.id
 LIMIT $5`, id, phone, phoneRaw, username, accountSearchLimit)
@@ -224,7 +227,7 @@ LIMIT $5`, id, phone, phoneRaw, username, accountSearchLimit)
 	out := make([]AccountRow, 0)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.LoginEmail); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -382,11 +385,13 @@ SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.upd
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
 	auth.last_active_at, auth.device_count,
-	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(ap.login_email, '')
 FROM users u
 JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id
+LEFT JOIN account_passwords ap ON ap.user_id = u.id
 WHERE NOT u.is_bot
 	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
 ORDER BY auth.last_active_at DESC, u.id DESC
@@ -398,7 +403,7 @@ LIMIT $3`, beforeActiveUS, beforeID, limit+1)
 	out := make([]AccountRow, 0, limit+1)
 	for rows.Next() {
 		var item AccountRow
-		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username); err != nil {
+		if err := rows.Scan(&item.ID, &item.Phone, &item.Username, &item.FirstName, &item.LastName, &item.CreatedAt, &item.UpdatedAt, &item.Frozen, &item.Reason, &item.Verified, &item.PremiumUntil, &item.LastActiveAt, &item.DeviceCount, &item.Username, &item.LoginEmail); err != nil {
 			return nil, false, err
 		}
 		out = append(out, item)

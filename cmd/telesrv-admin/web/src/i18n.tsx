@@ -106,6 +106,7 @@ const translations: Record<string, string> = {
   "account.searchPlaceholder": "User ID / phone / username",
   "account.userID": "User ID",
   "account.phone": "Phone",
+  "account.loginEmail": "Login email",
   "account.lastActive": "Last active",
   "account.notVerified": "Not verified",
   "account.notPremium": "Not premium",

@@ -1,6 +1,7 @@
 import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { Avatar } from "../components/Avatar";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix } from "../lib/format";
@@ -88,10 +89,12 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
         <table className="data-table">
           <thead>
             <tr>
+              <th className="avatar-col"></th>
               <th>{t("account.userID")}</th>
               <th>{t("account.phone")}</th>
               <th>{t("common.username")}</th>
               <th>{t("common.name")}</th>
+              <th>{t("account.loginEmail")}</th>
               <th>{t("common.device")}</th>
               <th>{t("account.lastActive")}</th>
               <th>{t("account.premium")}</th>
@@ -104,10 +107,12 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
           <tbody>
             {data?.rows.map((row) => (
               <tr key={row.ID}>
+                <td className="avatar-col"><Avatar userID={row.ID} firstName={row.FirstName} lastName={row.LastName} username={row.Username} /></td>
                 <td className="mono">{row.ID}</td>
                 <td>{displayPhone(row.Phone)}</td>
                 <td>{displayUsername(row.Username)}</td>
                 <td>{displayName(row)}</td>
+                <td>{row.LoginEmail || <span className="muted-cell">{t("common.none")}</span>}</td>
                 <td>{row.DeviceCount}</td>
                 <td>{formatDate(row.LastActiveAt)}</td>
                 <td>{row.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")} {formatUnix(row.PremiumUntil)}</Badge> : <Badge>{t("common.none")}</Badge>}</td>
@@ -117,7 +122,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
                 <td><button className="row-link" onClick={() => navigate(`/accounts/${row.ID}`)}>{t("common.detail")} <ChevronRight size={14} /></button></td>
               </tr>
             ))}
-            {(!data || data.rows.length === 0) && <EmptyRow colSpan={11} />}
+            {(!data || data.rows.length === 0) && <EmptyRow colSpan={12} />}
           </tbody>
         </table>
       </div>

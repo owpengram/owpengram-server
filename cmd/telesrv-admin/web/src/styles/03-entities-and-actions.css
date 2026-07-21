@@ -413,6 +413,22 @@
 .gift-select-col { width: 34px; text-align: center; }
 .gift-select-col input { width: 15px; height: 15px; }
 
+.avatar-col { width: 44px; }
+.muted-cell { color: var(--muted); }
+.avatar-photo-img,
+.avatar-fallback {
+  display: block;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar-fallback {
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
 .gift-bulk-toolbar {
   display: flex;
   align-items: center;

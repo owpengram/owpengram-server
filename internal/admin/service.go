@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"reflect"
 	"sort"
@@ -115,6 +116,14 @@ type OfficialGiftsSource interface {
 	Bundle(ctx context.Context, giftID int64, includeCollectible bool) (officialgifts.Bundle, error)
 }
 
+// AvatarResolver is the same shape as internal/web's ProfilePhotoResolver, kept as its
+// own local interface (rather than importing internal/web) since only this narrow slice
+// is needed to serve an account's current profile photo in the admin console.
+type AvatarResolver interface {
+	CurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (domain.Photo, bool, error)
+	GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error)
+}
+
 type Dependencies struct {
 	Commands        CommandRepository
 	Restrictions    RestrictionStore
@@ -129,6 +138,7 @@ type Dependencies struct {
 	Messages        MessagesService
 	Gifts           GiftsService
 	OfficialGifts   OfficialGiftsSource
+	Photos          AvatarResolver
 	Now             func() time.Time
 }
 
@@ -146,6 +156,7 @@ type Service struct {
 	messages        MessagesService
 	gifts           GiftsService
 	officialGifts   OfficialGiftsSource
+	photos          AvatarResolver
 	now             func() time.Time
 }
 
@@ -193,6 +204,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.OfficialGifts != nil {
 		s.officialGifts = deps.OfficialGifts
+	}
+	if deps.Photos != nil {
+		s.photos = deps.Photos
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -860,6 +874,106 @@ func (s *Service) OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSu
 		return nil, officialgifts.ErrUnavailable
 	}
 	return s.officialGifts.List(ctx)
+}
+
+const maxAccountAvatarBytes = 4 << 20
+
+// AccountAvatar returns an account's current profile photo bytes and detected
+// MIME type, mirroring internal/web's public avatar serving (same size
+// selection and safe-image-type checks) so the admin console shows exactly
+// what a public preview card would show for the same account.
+func (s *Service) AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error) {
+	if s == nil || s.photos == nil || userID <= 0 {
+		return nil, "", false, nil
+	}
+	photo, found, err := s.photos.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, userID, domain.ProfilePhotoKindProfile)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !found {
+		return nil, "", false, nil
+	}
+	size, inline, ok := bestAccountPhotoSize(photo.Sizes)
+	if !ok {
+		return nil, "", false, nil
+	}
+	data := inline
+	if len(data) == 0 {
+		chunk, found, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{
+			LocationKey: fmt.Sprintf("photo:%d:%s", photo.ID, size.Type),
+			Limit:       maxAccountAvatarBytes + 1,
+		})
+		if err != nil {
+			return nil, "", false, err
+		}
+		if !found || chunk.Total <= 0 || chunk.Total > maxAccountAvatarBytes || int64(len(chunk.Bytes)) != chunk.Total {
+			return nil, "", false, nil
+		}
+		data = chunk.Bytes
+	}
+	if len(data) == 0 || len(data) > maxAccountAvatarBytes {
+		return nil, "", false, nil
+	}
+	detected := http.DetectContentType(data)
+	if !safeAccountImageType(detected) {
+		return nil, "", false, nil
+	}
+	return data, detected, true, nil
+}
+
+func bestAccountPhotoSize(sizes []domain.PhotoSize) (domain.PhotoSize, []byte, bool) {
+	var (
+		best      domain.PhotoSize
+		bestBytes []byte
+		bestScore int64 = -1
+	)
+	for _, size := range sizes {
+		if !validAccountPhotoSizeType(size.Type) {
+			continue
+		}
+		var inline []byte
+		switch size.Kind {
+		case domain.PhotoSizeKindCached:
+			if len(size.Bytes) == 0 || len(size.Bytes) > maxAccountAvatarBytes {
+				continue
+			}
+			inline = size.Bytes
+		case domain.PhotoSizeKindDefault, domain.PhotoSizeKindProgressive:
+			// Downloadable static raster size.
+		default:
+			continue
+		}
+		score := int64(size.W) * int64(size.H)
+		if score <= 0 {
+			score = int64(size.Size)
+		}
+		if score > bestScore {
+			best, bestBytes, bestScore = size, inline, score
+		}
+	}
+	return best, bestBytes, bestScore >= 0
+}
+
+func validAccountPhotoSizeType(value string) bool {
+	if value == "" || len(value) > 8 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func safeAccountImageType(value string) bool {
+	switch value {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error) {

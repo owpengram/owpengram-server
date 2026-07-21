@@ -271,6 +271,10 @@ func (fakeService) ImportAllOfficialStarGifts(_ context.Context, req admin.Impor
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) AccountAvatar(context.Context, int64) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+
 func (fakeService) OfficialStarGifts(context.Context) ([]officialgifts.GiftSummary, error) {
 	return nil, nil
 }

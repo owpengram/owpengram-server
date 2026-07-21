@@ -12,6 +12,7 @@ export type AccountRow = {
   PremiumUntil: number;
   LastActiveAt: string;
   DeviceCount: number;
+  LoginEmail: string;
 };
 
 export type RestrictionRow = {

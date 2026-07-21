@@ -884,6 +884,7 @@ func run(logger *zap.Logger) error {
 		ChannelNotifier: router,
 		Messages:        messagesService,
 		Gifts:           giftsService,
+		Photos:          filesService,
 	})
 	// bot session 撤销、在线通知与 @ChatBot 流式草稿推送经 router 实现（需 tg.* 边界），
 	// router 创建后注入。

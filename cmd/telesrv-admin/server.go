@@ -51,6 +51,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/session", s.requireAuthAPI(http.HandlerFunc(s.handleSession)))
 	mux.Handle("GET /api/accounts", s.requireAuthAPI(http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleAccountDetailAPI)))
+	mux.Handle("GET /api/accounts/{id}/avatar", s.requireAuthAPI(http.HandlerFunc(s.handleAccountAvatarAPI)))
 	mux.Handle("GET /api/channels", s.requireAuthAPI(http.HandlerFunc(s.handleChannelsAPI)))
 	mux.Handle("GET /api/channels/{id}", s.requireAuthAPI(http.HandlerFunc(s.handleChannelDetailAPI)))
 	mux.Handle("GET /api/messages", s.requireAuthAPI(http.HandlerFunc(s.handleMessagesAPI)))
@@ -345,6 +346,47 @@ func (s *server) handleAccountDetailAPI(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// handleAccountAvatarAPI streams the account's current profile photo straight
+// through from the real telesrv admin API (/v1/accounts/{id}/avatar) — unlike
+// every other /api/* handler here, the response is raw image bytes, not JSON,
+// so it can't reuse callAdminAPI/writeJSON.
+func (s *server) handleAccountAvatarAPI(w http.ResponseWriter, r *http.Request) {
+	userID, err := parseInt64(r.PathValue("id"))
+	if err != nil || userID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	apiPath := fmt.Sprintf("/v1/accounts/%d/avatar", userID)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil || len(data) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *server) handleChannelsAPI(w http.ResponseWriter, r *http.Request) {
