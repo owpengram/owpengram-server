@@ -614,7 +614,7 @@ func applyPrivacy(ctx context.Context, privacy PrivacyEvaluator, viewerUserID in
 	if err != nil {
 		return domain.User{}, err
 	}
-	if !phoneAllowed && !isContact {
+	if !phoneAllowed {
 		user.Phone = ""
 	}
 	statusAllowed, err := canSee(domain.PrivacyKeyStatusTimestamp)
