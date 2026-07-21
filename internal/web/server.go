@@ -157,6 +157,14 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
+	// links.ValidateBaseURL above guarantees cfg.PublicBaseURL parses with a
+	// non-empty host; publicHost is the bare "host[:port]" used to build
+	// owpg://<host>/<path> deep links (the client reinterprets those as
+	// https://<host>/<path>, see LaunchActivity's "owpg" scheme case).
+	publicHost := cfg.PublicBaseURL
+	if u, err := url.Parse(cfg.PublicBaseURL); err == nil {
+		publicHost = u.Host
+	}
 	h := &handler{
 		stickerSets:     cfg.StickerSets,
 		users:           cfg.Users,
@@ -166,6 +174,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		uniqueGifts:     cfg.UniqueGifts,
 		giftWithdrawals: cfg.GiftWithdrawals,
 		publicBaseURL:   cfg.PublicBaseURL,
+		publicHost:      publicHost,
 		appScheme:       cfg.AppScheme,
 		webBaseURL:      cfg.WebBaseURL,
 		appName:         cfg.AppName,
@@ -199,6 +208,7 @@ type handler struct {
 	uniqueGifts     UniqueStarGiftResolver
 	giftWithdrawals StarGiftWithdrawalResolver
 	publicBaseURL   string
+	publicHost      string
 	appScheme       string
 	webBaseURL      string
 	appName         string
@@ -284,7 +294,7 @@ func (h *handler) addList(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	app := h.appURL("addlist", "slug", slug)
+	app := h.appURL("addlist", slug)
 	data := pageData{
 		AppName:      h.appName,
 		Title:        "Shared Folder",
@@ -340,7 +350,7 @@ func (h *handler) uniqueGift(w http.ResponseWriter, r *http.Request) {
 	if unique.AvailabilityIssued > 0 && unique.AvailabilityTotal >= unique.AvailabilityIssued {
 		subtitle += fmt.Sprintf(" · %s/%s issued", groupedDecimal(unique.AvailabilityIssued), groupedDecimal(unique.AvailabilityTotal))
 	}
-	app := h.appURL("nft", "slug", canonicalSlug)
+	app := h.appURL("nft", canonicalSlug)
 	data := pageData{
 		AppName:      h.appName,
 		Title:        title,
@@ -385,8 +395,10 @@ func (h *handler) usernameLink(w http.ResponseWriter, r *http.Request) {
 		h.serveUsernameNotFound(w, username)
 		return
 	}
+	// owpg://<host>/<username> — built from params BEFORE "domain" is added
+	// below, since owpg encodes the username in the path, not as a query key.
+	app := h.appUsernameURL(peer.username, params)
 	params.Set("domain", peer.username)
-	app := schemeURLValues(h.appScheme, "resolve", params)
 	description := peer.about
 	if description == "" {
 		description = peer.fallbackDescription(h.appName)
@@ -455,7 +467,7 @@ func (h *handler) inviteLink(w http.ResponseWriter, r *http.Request, hash string
 	if title == "" {
 		title = strings.TrimSpace(invite.Title)
 	}
-	app := h.appURL("join", "invite", hash)
+	app := h.appInviteURL(hash)
 	description := peer.about
 	if description == "" {
 		description = peer.fallbackDescription(h.appName)
@@ -618,7 +630,7 @@ func (h *handler) serveSet(w http.ResponseWriter, r *http.Request, pathKind stri
 	if count == 0 {
 		count = len(docs)
 	}
-	app := h.appURL(canonicalKind, "set", set.ShortName)
+	app := h.appURL(canonicalKind, set.ShortName)
 	data := pageData{
 		AppName:      h.appName,
 		Title:        fallbackTitle(set),
@@ -1169,10 +1181,32 @@ func itemNoun(set domain.StickerSet, count int) string {
 	return "stickers"
 }
 
-func (h *handler) appURL(kind, key, value string) string {
-	return schemeURL(h.appScheme, kind, key, value)
+// appURL/appInviteURL/appUsernameURL build owpg://<host>/<path> deep links —
+// mirrors publicURL/publicInviteURL/publicUsernameURL (https://<host>/<path>)
+// but with the app scheme instead. The client's "owpg" URI handler reinterprets
+// owpg://<host>/<path>?<query> as https://<host>/<path>?<query> and falls
+// through to the normal t.me-style path router (LaunchActivity.java), which
+// expects a path, not a tg://-style "resolve?domain=" query. Do NOT use
+// schemeURL here — that format is only valid for the real tg:// scheme.
+func (h *handler) appURL(kind, value string) string {
+	return h.appScheme + "://" + h.publicHost + "/" + kind + "/" + url.PathEscape(value)
 }
 
+func (h *handler) appInviteURL(hash string) string {
+	return h.appScheme + "://" + h.publicHost + "/+" + url.PathEscape(hash)
+}
+
+func (h *handler) appUsernameURL(username string, extraQuery url.Values) string {
+	u := h.appScheme + "://" + h.publicHost + "/" + url.PathEscape(username)
+	if len(extraQuery) > 0 {
+		u += "?" + extraQuery.Encode()
+	}
+	return u
+}
+
+// schemeURL/schemeURLValues build the real tg:// deep-link format
+// (tg://resolve?domain=X) — used only for the legacy-client fallback link
+// (LegacyTgURL), never for the app's own owpg:// scheme.
 func schemeURL(scheme, kind, key, value string) string {
 	return scheme + "://" + kind + "?" + key + "=" + url.QueryEscape(value)
 }

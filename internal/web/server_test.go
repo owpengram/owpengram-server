@@ -88,7 +88,7 @@ func TestHandlerServesUniqueGiftLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"Official Gift", "Collectible #7", "7/1 000 issued",
 		"http://127.0.0.1:2401/nft/" + slug,
-		"telesrv://nft?slug=" + slug,
+		"telesrv://127.0.0.1:2401/nft/" + slug,
 		"tg://nft?slug=" + slug,
 		"Open it in the app to view its current details.",
 	} {
@@ -219,7 +219,7 @@ func TestHandlerServesStickerSetLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"Fresh Pack",
 		"https://telesrv.net/addstickers/fresh_pack",
-		"telesrv://addstickers?set=fresh_pack",
+		"telesrv://telesrv.net/addstickers/fresh_pack",
 		"Files are still fetched by the app through MTProto.",
 	} {
 		if !strings.Contains(body, want) {
@@ -257,7 +257,7 @@ func TestHandlerServesEmojiLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"custom emoji set",
 		"https://example.test/base/addemoji/emoji_pack",
-		"telesrv://addemoji?set=emoji_pack",
+		"telesrv://example.test/addemoji/emoji_pack",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -278,7 +278,7 @@ func TestHandlerServesChatlistLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"Shared Folder",
 		"http://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
-		"telesrv://addlist?slug=zNhytIbwRwjaC2GH",
+		"telesrv://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
 		"preview and add this shared folder",
 	} {
 		if !strings.Contains(body, want) {
@@ -313,11 +313,11 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 		"bot",
 		"@TetrisBot",
 		"http://127.0.0.1:2401/TetrisBot",
-		"telesrv://resolve?domain=TetrisBot",
+		"telesrv://127.0.0.1:2401/TetrisBot",
 		"Start Bot",
 		"Open telesrv to start a chat with this bot.",
 		`property="og:title" content="Tetris Bot"`,
-		`property="al:android:url" content="telesrv://resolve?domain=TetrisBot"`,
+		`property="al:android:url" content="telesrv://127.0.0.1:2401/TetrisBot"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -353,7 +353,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		"example-chat://resolve?domain=Alice&amp;start=hello",
+		"example-chat://links.example.test/Alice?start=hello",
 		"https://web.example.test/client/#?tgaddr=",
 		"Example Chat",
 		"Open Example Chat to send a message to @Alice.",
@@ -369,10 +369,10 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		path string
 		want string
 	}{
-		{path: "/addstickers/stickers_pack", want: "example-chat://addstickers?set=stickers_pack"},
-		{path: "/addemoji/emoji_pack", want: "example-chat://addemoji?set=emoji_pack"},
-		{path: "/addlist/shared-folder", want: "example-chat://addlist?slug=shared-folder"},
-		{path: "/nft/gift-1", want: "example-chat://nft?slug=gift-1"},
+		{path: "/addstickers/stickers_pack", want: "example-chat://links.example.test/addstickers/stickers_pack"},
+		{path: "/addemoji/emoji_pack", want: "example-chat://links.example.test/addemoji/emoji_pack"},
+		{path: "/addlist/shared-folder", want: "example-chat://links.example.test/addlist/shared-folder"},
+		{path: "/nft/gift-1", want: "example-chat://links.example.test/nft/gift-1"},
 	} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -447,14 +447,14 @@ func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
 			path: "/aLiCe/",
 			wants: []string{
 				"Alice Example", "Public bio", "@Alice", "Send Message", "Verified",
-				"https://telesrv.net/Alice", "telesrv://resolve?domain=Alice",
+				"https://telesrv.net/Alice", "telesrv://telesrv.net/Alice",
 			},
 		},
 		{
 			path: "/NewsRoom",
 			wants: []string{
 				"News Room", "Public channel description", "12 001 subscribers", "View Channel",
-				"https://telesrv.net/NewsRoom", "telesrv://resolve?domain=NewsRoom",
+				"https://telesrv.net/NewsRoom", "telesrv://telesrv.net/NewsRoom",
 				"/_public/avatar/NewsRoom/301",
 			},
 		},
@@ -497,7 +497,7 @@ func TestHandlerPreservesBoundedResolveQueryAndOverridesDomain(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		"telesrv://resolve?domain=TetrisBot&amp;ref=campaign&amp;start=hello",
+		"telesrv://telesrv.net/TetrisBot?ref=campaign&amp;start=hello",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing sanitized query %q:\n%s", want, body)
