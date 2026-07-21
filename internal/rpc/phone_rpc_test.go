@@ -226,8 +226,11 @@ func TestPhoneCallRPCHappyPath(t *testing.T) {
 		t.Fatalf("receivedCall = %v err=%v", ok, err)
 	}
 	pushes = f.sessions.records()
-	if len(pushes) != 1 || pushes[0].userID != f.caller.ID {
-		t.Fatalf("receivedCall pushes = %+v, want one to caller", pushes)
+	// ⚠ ringing(receive_date) 只定向到【发起呼叫的那台设备】(CallerDevice=主叫
+	// requestCall 的 session)，绝不广播到主叫账号所有会话——否则同账号登录在被叫手机上
+	// 时会覆写来电 g_a_hash。See memory: call-ga-hash-multiaccount-clobber。
+	if len(pushes) != 1 || pushes[0].targetSession != phoneCallerSession {
+		t.Fatalf("receivedCall pushes = %+v, want one to caller device (session %d)", pushes, phoneCallerSession)
 	}
 	ringing, ok := phoneCallPayload(t, pushes[0]).(*tg.PhoneCallWaiting)
 	if !ok || ringing.ReceiveDate == 0 {

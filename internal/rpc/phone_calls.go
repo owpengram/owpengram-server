@@ -136,7 +136,11 @@ func (r *Router) onPhoneReceivedCall(ctx context.Context, peer tg.InputPhoneCall
 	if transitioned {
 		// ⚠ P1-2：receiveDate 推送必须在 P1 就位。主叫只有收到带 receive_date 的
 		// phoneCallWaiting 才会把 20s receive 定时器换成 90s ring 定时器。
-		r.pushPhoneCall(ctx, call.AdminID, call, "phone call ringing")
+		// ⚠ 只推给【发起呼叫的那台设备】(CallerDevice)，绝不广播到主叫账号的所有会话：
+		// 该账号可能同时登录在被叫手机上(多账号同机)，广播会让手机上的呼叫方副本收到
+		// phoneCallWaiting 并覆写来电的 g_a_hash，导致被叫一接就断。
+		// See memory: call-ga-hash-multiaccount-clobber。
+		r.pushPhoneCallToDevice(ctx, call.AdminID, call.CallerDevice, call, "phone call ringing")
 	}
 	return true, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 
+	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
@@ -46,6 +47,44 @@ func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call dom
 	return sent
 }
 
+// pushPhoneCallToDevice 只把 phoneCall 状态推给【发起呼叫的那台设备】(originating
+// session)，不广播到该用户的其它会话。
+//
+// ⚠ 为什么必须定向：一个「呼出」通话只属于发起它的那台设备。若把呼叫方视角的
+// phoneCallWaiting(receive_date) 广播到该账号的所有会话，而【同一账号又登录在被叫
+// 的那台手机上】(多账号同机)，手机上这份呼叫方副本会收到 phoneCallWaiting——它与
+// 来电是同一个 call_id，于是覆写 VoIPService.callIShouldHavePutIntoIntent 这个
+// 【静态全局】pending 来电（stock DrKLO：MessagesController 只按 call.id 匹配、不校验
+// 账号），把带 g_a_hash 的 phoneCallRequested 换成不含 g_a_hash 的 phoneCallWaiting。
+// 被叫接听后 SHA256(g_a)!=g_a_hash → 「Ga hash doesn't match」→ callFailed → 一接就断。
+// 定向到 CallerDevice 后，手机上的呼叫方副本收不到该更新，pending 来电不被污染。
+// See memory: call-ga-hash-multiaccount-clobber。
+//
+// 呼叫方发起会话在 requestCall 时已发过 RPC、必然 ready；PushToSessionForAuthKey 对
+// 暂未 ready 的会话也会入队补发，不丢。CallerDevice 未知(理论上不会)时回退广播。
+func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, device domain.SessionRef, call domain.PhoneCall, logMessage string) {
+	if device.Zero() || r.deps.Sessions == nil {
+		r.pushPhoneCall(ctx, targetUserID, call, logMessage)
+		return
+	}
+	upd := r.phoneCallUpdates(ctx, call, targetUserID)
+	err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd)
+	if r.log != nil {
+		r.log.Info("push phoneCall to device",
+			zap.String("stage", logMessage),
+			zap.Int64("target_user_id", targetUserID),
+			zap.Int64("call_id", call.ID),
+			zap.String("device_auth_key", hex.EncodeToString(device.RawAuthKeyID[:])),
+			zap.Int64("device_session", device.SessionID),
+			zap.Error(err),
+		)
+	}
+	if err != nil {
+		// 定向失败(会话已不存在)才回退广播——正常路径不会走到，故不会重新引入污染。
+		r.pushPhoneCall(ctx, targetUserID, call, logMessage)
+	}
+}
+
 // pushPhoneCallStopRinging 向被叫其它设备推合成 phoneCallDiscarded 停振铃（P0-1 修正）。
 // ctx 必须是接听设备的请求上下文：except 语义恰好把赢家排除在外。
 func (r *Router) pushPhoneCallStopRinging(ctx context.Context, call domain.PhoneCall) int {
@@ -75,21 +114,10 @@ func (r *Router) pushPhoneSignalingData(ctx context.Context, targetUserID int64,
 		Date:  int(r.clock.Now().Unix()),
 		Seq:   0,
 	}
-	// ⚠ 诊断轮：暂时【绕过 device 锚点】，强制 user 级扇出并记录实际命中的连接数
-	// （sent）。PushToSessionForAuthKey 对未就绪 session 会「入队并返回 nil」，无法
-	// 区分"真送达"与"塞进死队列"；而扇出的 sent 计数是硬事实——sent==0 说明对端此刻
-	// 没有任何一条 updates-ready 连接可收，服务端根本送不出去（客户端 dc-aliasing 多
-	// 连接、承载 update 的那条未 ready）；sent>=1 说明服务端送到了 N 条，问题在客户端
-	// 消费侧。据此一刀切分服务端/客户端责任。
-	sent := r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)
-	if r.log != nil {
-		r.log.Info("push phone signaling",
-			zap.Int64("target_user_id", targetUserID),
-			zap.Int64("call_id", callID),
-			zap.String("callee_anchor_auth_key", hex.EncodeToString(device.RawAuthKeyID[:])),
-			zap.Int64("callee_anchor_session", device.SessionID),
-			zap.Int("sent", sent),
-			zap.Int("data_len", len(data)),
-		)
+	if !device.Zero() && r.deps.Sessions != nil {
+		if err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd); err == nil {
+			return
+		}
 	}
+	r.pushUserMessage(ctx, targetUserID, "phone call signaling", upd)
 }
