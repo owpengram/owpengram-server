@@ -1,0 +1,5594 @@
+{
+  "api_call": "messages.getStickerSet",
+  "sticker_set_id": 63200997811421198,
+  "input_params": {
+    "stickerset": {
+      "id": 63200997811421198,
+      "access_hash": 6930103799411034779
+    },
+    "hash": 0
+  },
+  "timestamp": "2025-08-01T00:26:18.003440",
+  "result": {
+    "_": "StickerSet",
+    "set": {
+      "_": "StickerSet",
+      "id": 63200997811421198,
+      "access_hash": 6930103799411034779,
+      "title": "Gestos LoL",
+      "short_name": "GestosLol",
+      "count": 106,
+      "hash": 1352640283,
+      "archived": false,
+      "official": false,
+      "masks": false,
+      "emojis": false,
+      "text_color": false,
+      "channel_emoji_status": false,
+      "creator": false,
+      "installed_date": "2023-01-05T17:27:28+00:00",
+      "thumbs": [],
+      "thumb_dc_id": null,
+      "thumb_version": null,
+      "thumb_document_id": null
+    },
+    "packs": [
+      {
+        "_": "StickerPack",
+        "emoticon": "😄",
+        "documents": [
+          63200997811422464,
+          63200997811422468,
+          63200997811422473,
+          63200997811422481,
+          63200997811422562
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😃",
+        "documents": [
+          63200997811422464,
+          63200997811422562,
+          63200997811422573
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "☕",
+        "documents": [
+          63200997811422465
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "☠",
+        "documents": [
+          63200997811422466
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "💀",
+        "documents": [
+          63200997811422466
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😒",
+        "documents": [
+          63200997811422467
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😁",
+        "documents": [
+          63200997811422468,
+          63200997811422473,
+          63200997811422497,
+          63200997811422499
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😡",
+        "documents": [
+          63200997811422469,
+          63200997811422494,
+          63200997811422511,
+          63200997811422546,
+          63200997811422565,
+          63200997811422568
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👋",
+        "documents": [
+          63200997811422470,
+          63200997811422479
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👍",
+        "documents": [
+          63200997811422472,
+          63200997811422486,
+          63200997811422493,
+          63200997811422498,
+          63200997811422533,
+          63200997811422535,
+          63200997811422559
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😎",
+        "documents": [
+          63200997811422474,
+          63200997811422480
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😌",
+        "documents": [
+          63200997811422475,
+          63200997811422481,
+          63200997811422548
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😍",
+        "documents": [
+          63200997811422476,
+          63200997811422487,
+          63200997811422501,
+          63200997811422552
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😶",
+        "documents": [
+          63200997811422477
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤔",
+        "documents": [
+          63200997811422478,
+          63200997811422488,
+          63200997811422500,
+          63200997811422512
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😮",
+        "documents": [
+          63200997811422482,
+          63200997811422495
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😦",
+        "documents": [
+          63200997811422482,
+          63200997811422495,
+          63200997811422532
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😧",
+        "documents": [
+          63200997811422482,
+          63200997811422560
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😭",
+        "documents": [
+          63200997811422483,
+          63200997811422521,
+          63200997811422530,
+          63200997811422536,
+          63200997811422555,
+          63200997811422557
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "☹",
+        "documents": [
+          63200997811422483,
+          63200997811422485,
+          63200997811422506
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👌",
+        "documents": [
+          63200997811422484,
+          63200997811422508
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🙁",
+        "documents": [
+          63200997811422485
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😘",
+        "documents": [
+          63200997811422487
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😊",
+        "documents": [
+          63200997811422489
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🙂",
+        "documents": [
+          63200997811422490
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🙃",
+        "documents": [
+          63200997811422490,
+          63200997811422519
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😱",
+        "documents": [
+          63200997811422491,
+          63200997811422528,
+          63200997811422571
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😋",
+        "documents": [
+          63200997811422492
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😠",
+        "documents": [
+          63200997811422494,
+          63200997811422514
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😈",
+        "documents": [
+          63200997811422496,
+          63200997811422504,
+          63200997811422537
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😏",
+        "documents": [
+          63200997811422497,
+          63200997811422516,
+          63200997811422527,
+          63200997811422550,
+          63200997811422570
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😬",
+        "documents": [
+          63200997811422499,
+          63200997811422531,
+          63200997811422572
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👊",
+        "documents": [
+          63200997811422502,
+          63200997811422534
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "✊",
+        "documents": [
+          63200997811422502,
+          63200997811422515
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🙄",
+        "documents": [
+          63200997811422503
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "❤",
+        "documents": [
+          63200997811422505
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🎊",
+        "documents": [
+          63200997811422507,
+          63200997811422563
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🎉",
+        "documents": [
+          63200997811422507,
+          63200997811422554,
+          63200997811422563
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤐",
+        "documents": [
+          63200997811422509
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "❄",
+        "documents": [
+          63200997811422510
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "💪",
+        "documents": [
+          63200997811422513,
+          63200997811422522,
+          63200997811422567
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😅",
+        "documents": [
+          63200997811422517
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤚",
+        "documents": [
+          63200997811422518
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😜",
+        "documents": [
+          63200997811422520,
+          63200997811422542,
+          63200997811422553
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😝",
+        "documents": [
+          63200997811422520
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👉",
+        "documents": [
+          63200997811422523,
+          63200997811422569
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤘",
+        "documents": [
+          63200997811422524
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👏",
+        "documents": [
+          63200997811422525
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🎃",
+        "documents": [
+          63200997811422526
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😉",
+        "documents": [
+          63200997811422529
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😢",
+        "documents": [
+          63200997811422530,
+          63200997811422555,
+          63200997811422557
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😣",
+        "documents": [
+          63200997811422538
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🏳",
+        "documents": [
+          63200997811422539
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "☺",
+        "documents": [
+          63200997811422540,
+          63200997811422545
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😂",
+        "documents": [
+          63200997811422543
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤣",
+        "documents": [
+          63200997811422543
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "💑",
+        "documents": [
+          63200997811422544
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👨‍❤‍💋‍👨",
+        "documents": [
+          63200997811422544
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😺",
+        "documents": [
+          63200997811422547
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🍰",
+        "documents": [
+          63200997811422549
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🎂",
+        "documents": [
+          63200997811422549
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🤝",
+        "documents": [
+          63200997811422551
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😙",
+        "documents": [
+          63200997811422552
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😴",
+        "documents": [
+          63200997811422558
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😪",
+        "documents": [
+          63200997811422558
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "🦀",
+        "documents": [
+          63200997811422560
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "💔",
+        "documents": [
+          63200997811422561
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "💘",
+        "documents": [
+          63200997811422561
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👙",
+        "documents": [
+          63200997811422564
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👒",
+        "documents": [
+          63200997811422564
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "👈",
+        "documents": [
+          63200997811422569
+        ]
+      },
+      {
+        "_": "StickerPack",
+        "emoticon": "😀",
+        "documents": [
+          63200997811422573
+        ]
+      }
+    ],
+    "keywords": [],
+    "documents": [
+      {
+        "_": "Document",
+        "id": 63200997811422464,
+        "access_hash": 1584427795750232818,
+        "file_reference": "00688b9929fb0544b5804076d5e7d4fc2ab9822585",
+        "date": "2018-07-24T01:14:58+00:00",
+        "mime_type": "image/webp",
+        "size": 61266,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😄",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1d01af08dc7e424d014951035e4d47525b56664448564b5c54494e48684c7a424948534a5d434f445f447080464357835382818485868281424d4348498647914b9853814143444144814185828580424651815184808284838385448b4b844a8485488645884b82464e8f518a44478d4f8e5381444248424c425982799547068b4c8798889d869782558b4e858484a18d9e84424549444e834a8a858a8482454547464b41518a4605984705ac5e8806818d01448b41994aa44cb6498c054690019b8c8bb8b4b9b787af808b0780900680a3848703808a078083599e5ca14b8a628d7392728f48099b4e029c"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8130
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422465,
+        "access_hash": 1111856438774857029,
+        "file_reference": "00688b99299230a3de3c14d7eec0cab0f43974da28",
+        "date": "2018-07-24T01:46:10+00:00",
+        "mime_type": "image/webp",
+        "size": 62758,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "☕️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1806b208dc59427d4247054e5d5966796b490581448148414b8041848184424245538455844941524a5a4e4b46578162814742894f8c4f8380918094428242464744498c4e86818c54808093818c4c4245458247814544494b4b4e4e5c4354088c560591548802778a01779580b14c87074c8806808906918a09bd848c428c41908081848584878081438242839e9ba9a2a98701809682ad42860641894691469c8088828a828b80814384438491969e90b39d878491929393838286bb8387034bba6e87014a0387024c8059456580498351905793568f7690470991"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7638
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422466,
+        "access_hash": -3775192869379058933,
+        "file_reference": "00688b9929ed3991259665052a6ee41bf69d7c6631",
+        "date": "2018-07-24T01:47:13+00:00",
+        "mime_type": "image/webp",
+        "size": 57050,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "☠️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a02b203dc4a02854c0952520946096f6846074a0346075007805781778147008042874b884e81448049814f804286468749907887034a088d004d09984dbc4b89004ba4808708468a06888707a78c0188068d088e04808181448243828041848085818184838584899b8bb28b89008189035a8e07490794034a8853915f9843824f8251844282808444865e8a7e89490489"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7104
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422467,
+        "access_hash": -3150733173117976969,
+        "file_reference": "00688b9929aa81545dbcdee54f49610d6dc88e6ba6",
+        "date": "2018-07-24T01:48:30+00:00",
+        "mime_type": "image/webp",
+        "size": 68428,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😒",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "0e02b302dc52434d07854e02804242804580488058437380470480418281828281898093809d808e43a281b08083958196819e41bb81880981838046424943484450475a4a4d4560576c674e5249734e4703424b5254545f4561444d0280500681479551965a835744788f47018d4a9c48ab4c9244aa56bc5886819f83a480818144414443434488838c828380854488449444b2438700809b83b98c87029781814b8346858181ba45870585958d96a3a5b48384444c8846938b97b2918809429345a450b241824f944d958f8d9b8fa0a282894794489d8185874b894b868042bb4d8606508a708679944a904fa15ead45844801aa4805aa6e854905804e0280"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7884
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422468,
+        "access_hash": 6682635213428169959,
+        "file_reference": "00688b9929f37a3c5782e640c4bdd416735de0aed9",
+        "date": "2018-07-24T01:49:16+00:00",
+        "mime_type": "image/webp",
+        "size": 65704,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😄",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4904844d03545208470457567a48017e4b06424f8060806f8056436e8046078257a04709b04a0086488e4f92568142965699578281858187808141814480458446b35ebb619d4b8607478a00478808808b0297910586068181448342848583814283848183908c938e82818b96919a81814383418483819399949e8289879288988185464245818082848683858080464947478181888c888e879585b384880081994186044c880464860548048a094e028d065a8c460689490589"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7824
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422469,
+        "access_hash": -9167090638754525030,
+        "file_reference": "00688b992989b9847130349950cc53dbef5e5cc5b6",
+        "date": "2018-07-24T01:50:06+00:00",
+        "mime_type": "image/webp",
+        "size": 68142,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a07b204dc4905834e0052530947076f6f7e4a057e5100806a827f8a4905834c8f5b97658343854f89548f539f64b17381818682878081418144804582438e479249a558be5f8b025f9b808903448b0589958cae9a8609ab818144844284978c9a9ba8a280808188818881828b898b8a8386878c8c938081438243838383878289878fac978709918f088087828e809345944dab5a86054a9062a066b2818177aa7eae43814f8251844283808445865d8a7b8a48088a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8086
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422470,
+        "access_hash": 4581879509175302839,
+        "file_reference": "00688b9929ee7ce75dd34ae1faf39928c26932788e",
+        "date": "2018-07-24T01:51:13+00:00",
+        "mime_type": "image/webp",
+        "size": 82434,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👋",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1603af00dc57816b477c4e8080484a4d4c514667457550524e5a636b73606056676148014146544a554f4460444a00804d028149a951ae4e8080479442958080424480448180895a895c8855bc4805890146078c8656945a98508f63b25d87038182834e89509447a15fb569aa5587075f8d00598b819c80a58687838e8294848c859b8ba8979e9a9caca9b48181448343848986898e8f9080804985458585818c839088828342874488428149414882818688808c8081804183418382848282858880828f8c928e848489888c8c8181438342848f8d919b9aa2828183be818701418b4296459f51ab4909bf4e00bb5042674975464781509452984d8f6b8f7d8f"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8006
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422472,
+        "access_hash": 536061550498545322,
+        "file_reference": "00688b9929faf73e2fcc6055d282d2eb728d50f303",
+        "date": "2018-07-24T01:52:16+00:00",
+        "mime_type": "image/webp",
+        "size": 74472,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4701844e0455520246084e525859606a42444744484546484555495d80414482458144444452435580464a524b5a4a4804845000aa540886489450995882449058985b82818581878081418144804582448e479249a155bf5f8a015f9a808909458c02898f89a590b59d918e9597a8a08683858b899083838783898483818086818885878e8d9396878d889592a38080808a808b8f928cb98c880980a5808807598b044787808f46838142818441868187818e459543844f8f508f8181444446814487499154994c8a4608ab4609ac4183814343425b9146078d49098e"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8360
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422473,
+        "access_hash": 846687257614907771,
+        "file_reference": "00688b9929b30d8ff64d188f5ba7719e2f7e2c6f44",
+        "date": "2018-07-24T01:53:09+00:00",
+        "mime_type": "image/webp",
+        "size": 79004,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😄",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1907b200dc4708814c06505107460778784702490947025107804802984c09890352009952bb6b8803708804519103439701af888792909998818244834384828288838b8681824483438483828681898581814383438381808681878381824383438381808681878381814482438387878486878c81828683858541824d474c46848789868f878381448a418980808444844387958ea394b58183448742898b8986a586b6808983a181a7458c46984ba6468d4f95539e8181848283837787094b088b0755098b07"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7612
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422474,
+        "access_hash": -6834096284845829979,
+        "file_reference": "00688b9929ef3513e556cfdc5dbd91f31d46ca7d27",
+        "date": "2018-07-24T01:53:54+00:00",
+        "mime_type": "image/webp",
+        "size": 75276,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😎",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4903854d045452084704545475460673490080464a524b5942538067807a8053436780798044864a874e85598c699a7c8343854f895488499353985c8080975599578181868287808141814480458447b25dbb619648ae48870348a6808802468b03898f86bfa18608ae8182938a958c8f929ba9aaba81824485428686878588899680818143824382804184808580818583858483898797889c8697868d06499003488f519f5bad4284454346424181469b57aa48874d8a578c4480448647894a8c61916f984181808544865f8a4606894a0089"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8374
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422475,
+        "access_hash": 8879335607914592693,
+        "file_reference": "00688b99298aad8c6644b6dac4c0320f4e707e160f",
+        "date": "2018-07-24T01:55:01+00:00",
+        "mime_type": "image/webp",
+        "size": 76520,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😌",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1900b200dc46048049084c4e016c43424a434d464948565b5f6052496646096b48047a51058a0164049d065f07b58c8b09b68d05890080818b888d8b8181838684888082438243838e8b8c9d99ac81824384438681828b9d8b9d8182429181978cb6518b0870900659a64605bc4906880359934706944a0694"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7712
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422476,
+        "access_hash": -5214615279494816214,
+        "file_reference": "00688b9929413dd0ee8fe972c95cbaa968b7bd4753",
+        "date": "2018-07-24T01:56:08+00:00",
+        "mime_type": "image/webp",
+        "size": 81950,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "2604b008dc658e4708564a045265867d944a00904a4159436246494352515d525f457f8148034e4946605762654355806d8046068070804905804e03804900454d0488064f009744b48d8703868c448c5aa15e984586074889018488848f8a9c8c87088d8d06949207870882824383438381818580868382828389838a41848441848280814482438383818682878586ab808902808d05809e85860780890641864b954d9e438a439746a04ba74706af4a09af"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8930
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422477,
+        "access_hash": 2356262859777280181,
+        "file_reference": "00688b99292eddd55cf553411ce3b01351860ed733",
+        "date": "2018-07-24T02:06:06+00:00",
+        "mime_type": "image/webp",
+        "size": 61320,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😶",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1903b203dc4901844d0154520547044704470447075405625d078a55a26db646048c4d9a58a96286449a469d4a824387478b489744ad47870547a4808704458a05889287b499b9a4818387808a828885979398949997aa8606b4890283888b968c9e84a4878803808c0044954ea552b44590579b5ca74790569d65a84f8b5a9968a0468351845788808047874c885d877d87490287"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7724
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422478,
+        "access_hash": -4360133792896060490,
+        "file_reference": "00688b9929e70caa45cbfea008e64e845aa4d9cae8",
+        "date": "2018-07-24T02:06:30+00:00",
+        "mime_type": "image/webp",
+        "size": 66480,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤔",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b203dc4809834d0254520847066a6a7d49087d50018056857782460980428d628e65906fb849028a074c06874596479d4b818189478a479845b147880047a1808703438a0189a4908a0686078a08880781838f8e9192878e8c9c95a9808144834383808183418480868e89bf8a8806808980be458607818158b95c860750ae4a048a044e088b0357846f83470083"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8112
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422479,
+        "access_hash": -608356170129259782,
+        "file_reference": "00688b992925d3bcf5ca53922e5c9a7b42412c7674",
+        "date": "2018-07-24T02:07:37+00:00",
+        "mime_type": "image/webp",
+        "size": 69996,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👋",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1701b109dc4605424c095650094801494e5774584609414c825981658044454b454f80569477944607814e4a5b42678c529d4eaa638e579a78b347068a479046994887418f539b568c439f869f8481454152835581428580888087428c4e9450ab468807838c009187829993a59886838086808782829389978b81814483438485838342848480829b9d9ca2899999b98b8904418383a282a7449a55b9628805458c839e81ab4285498a4a90469649ab5ebc6fa84a09ad5106ae"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8142
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422480,
+        "access_hash": 8857583743221913937,
+        "file_reference": "00688b992967e50309bb45e2d6d14babd6fbb90ea4",
+        "date": "2018-07-24T02:15:04+00:00",
+        "mime_type": "image/webp",
+        "size": 63798,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😎",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4900844d0557520847065757646f6c470542485165506b8356814803804a0680438f67906b8d7587074b098d064d0682818a478d489545ad47870247a0808702438a00898382b498b79d838689868d8a83838282858481814484428485838c84918a878885878c8e8281428681868c81a0a7a5b68182898c8a8e80814484438480818341848081824485428685848a978c9e85a2838704808a08428d49aa50ad8080428c428e47945ba867b8569f4703b749088700588d460787490387"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7550
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422481,
+        "access_hash": 3358333331252450237,
+        "file_reference": "00688b9929ad16991d86e664d49cfdcfbdaf6fa337",
+        "date": "2018-07-24T02:15:38+00:00",
+        "mime_type": "image/webp",
+        "size": 71060,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😌",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b204dc4900824d035552094707696a7d49097d5000805781778147008044884f89538a74b44a008a054d068d499c55aa5a9a49bb47880947a2808608448907888b849d8aa7928181448343848d86a893a8a0808487848b848180878d8b9280808681898382848086818982858f8f919282838188828a8a898a94929f8182438342838b988db48d880781b64589015c8c094b9360a366b781825b935f97528e6a9f4606a55a877a86480686"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8930
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422482,
+        "access_hash": 531554555226134559,
+        "file_reference": "00688b992924019060d929564f9cf8b3d3f48bc879",
+        "date": "2018-07-24T02:18:25+00:00",
+        "mime_type": "image/webp",
+        "size": 68442,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😮",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "2406b105dc474653425e454742625766514284728c758b4a44694e754a5b8974904703904580594363484442894384465b5048016e48084702485d444b09804f018144874188438545414f87548845994c9f5182414646854b8944aa46aa548146424d45524446914604aa47088181424f85508d42a452b75694448a05448b008881828244834683438a818e82878294889a838544b39b8607a88c8a889a8da6808088808a8083828188828c81828a838b84818246854486928a999e94ac4183a6af9f87088182938e9393818d818b07808b0845854247464442828288818848456394739e49865aa065a454876481758b"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7750
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422483,
+        "access_hash": -3901259522280616008,
+        "file_reference": "00688b992906733b4d5dd2e9b3d0e8820d524a240f",
+        "date": "2018-07-24T02:19:32+00:00",
+        "mime_type": "image/webp",
+        "size": 58102,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😭",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a07b203dc4905844e00515309470659597a48017e4b044252806680798053426780798044854b864d8249824f845881438748884a967186074a058c094d029449b64b88004b9b808808468b02898a85b294b69b8081448143828384918a968d81814484428586829087968e81814483428484828d84928c8c8f94a19fb08384818a828e8182898a898a868d89bb898801809683af41860847a252b0638802478e5a9a5ea8818276aa7eae43814f8251844282808445865d897b89480889"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7412
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422484,
+        "access_hash": -9198514538424783492,
+        "file_reference": "00688b99295a5054011660a69aecc238599f0b4242",
+        "date": "2018-07-24T02:19:47+00:00",
+        "mime_type": "image/webp",
+        "size": 58328,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👌",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a02b203dc4900844c0151520246054443484b494e81445555595b4b4f506258756c4a07825a018b065f008a44954ea0529847b247870847a1808703438a01898a8491899e8e848284898889828189818d8484848e89928e81814484428486828f87968c818144834284938b8f99a2a685848fa398af8282438342838a9d8dac8d890081bc468909648e01468753905697458c549b60a54a87779f79a24182814443425a907f8c49038d"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7046
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422485,
+        "access_hash": -3665750979765325464,
+        "file_reference": "00688b99291e99096ef3520054289ac46ef7ef5f09",
+        "date": "2018-07-24T02:21:02+00:00",
+        "mime_type": "image/webp",
+        "size": 66062,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🙁",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1308b302dc57426f8347008044814b464e486a55784609784b0780678947054c4a09484c535d5c6746464e4a52524345804c80528063444704804a09814696499a4a9446ac438700468b419a52a4549643b0828609808f419754a75a9848b480880044a34589065e8d064582818a838b848081448143828081838184808281438781889a90809004519501499958b25d870746a04387025b8a01498953925c9c4384458a498e43844809ac4900ac57826f80470080"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7214
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422486,
+        "access_hash": 6379605229883773937,
+        "file_reference": "00688b9929f003018e74f8e013a61d6c78d216a192",
+        "date": "2018-07-24T02:22:00+00:00",
+        "mime_type": "image/webp",
+        "size": 72336,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a07b204dc4803814d044c52057f626278460946084b098041474b474d845a804807804b028042874b884e8c66927aaf490481428e508e5085428683898280804345814784438481814342438b8589824c4f84478a4d81418044804582448d47914aa054bb5e8a025e98808905448b0689958db69a8706ad9391a2a3afb28182438443848080858187838182438343838080858187838182438580878282868088848283808a808a8b858c9995a88284448a808c81818341848082834589428a85838598889d838742b444bf48b559890346058d074889558f5f96498852915f9843814e8251844282818445865d8a7a89480889"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7928
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422487,
+        "access_hash": -3276763851841491185,
+        "file_reference": "00688b99291167f25f523746ae64e55c1d8b5f0b3b",
+        "date": "2018-07-24T02:24:29+00:00",
+        "mime_type": "image/webp",
+        "size": 66848,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😘",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a00b200dc7e834906444d07604644544a5b504b4a5054595a5c526f4702754a034662464609804a018145874e8854954a0588015302960153029d8087024289098b968cb99f8706b092909baaaab4818144834284868584888a8c81814483428482828b8f8a9181824484428581818341858081814483438480818341848081824484428681818da48ba880814481438280818341838082874299419a808183418380848d47b048be44a044b050870559b949008b074f048c02538166807980"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7242
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422488,
+        "access_hash": 504770032312232989,
+        "file_reference": "00688b9929550d803f71a5b5ed918a9987fd5ac6d7",
+        "date": "2018-07-24T02:26:04+00:00",
+        "mime_type": "image/webp",
+        "size": 70832,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤔",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b300dc0609808d07809405808780ac84b1808243805a805e804607844d06805404804142814382488980a244ad448b459a4aa244875ead5eb280865496599b65ae490986095006860963804702814a0445514474594604664647584b5e564a51585c606d4143484548455971654b015c53008357aa4809aa490280479c5da2608542a461ae67b16192036a97094b968ba496b4a783839187938a8282438741889f91bf880386068a09839481a685b681848248824d804c805980668072804a00804f018043816880685c437a804806804604804c088053028077804a098050038055806e43460681458041aa81af81b9808b05809102808905489303819c088082b781bc818605808d0080930580"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8522
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422489,
+        "access_hash": -9182966288316401322,
+        "file_reference": "00688b99297427f82d1ab156b3a38754e00f32c5c3",
+        "date": "2018-07-24T02:26:32+00:00",
+        "mime_type": "image/webp",
+        "size": 68530,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😊",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1901b200dc75844901474c055881804247444845424d42504645455152555441818245804543804681498142808742864481814e444e444a44504850538044884c844c44804486458547475358576381438049424b4f52544700504907845b8270864701886986054d048c044f04884397519e52a84789094e8e034695848b04ac8b068701808489828b86858a929c969e8582838d848e81818b8e8c8e8084808a808a8e89978700978a09808a83a381a9469c52b85a87074386508f508f83a34590509d4182838283848187438f4794478a5b816584438188848686428148814a8149895b946b9b5c8d47038a4a058a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8124
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422490,
+        "access_hash": 4262107773725414212,
+        "file_reference": "00688b9929ecbbb7fe3db76f2b8af827911c6f134e",
+        "date": "2018-07-24T02:27:26+00:00",
+        "mime_type": "image/webp",
+        "size": 59432,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🙂",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc60424807864a044f43434f42524441818243814441414a464d48504b615270655b6171747a49078044474b484e44524266427a8056436e804607814e8d5c9168917b89004d0590044e098f439f41ae41b0808907448d048f85829087958b81814484428486848f84968a81814483428481818781898288859793999498979bb4acbe8181448342848b878c9b92a68182448542868282858186878299429d81ba829b8288014c8a07488f509e59ac44854b854b86478a42a04da84b885880628841818885848744834a88518c42814448444580848083818682824781478143804483478550896193779757836f81460981"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7672
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422491,
+        "access_hash": -4853085158571890827,
+        "file_reference": "00688b99298535f36394f70c4bc3bdef0b64fb8e90",
+        "date": "2018-07-24T02:28:16+00:00",
+        "mime_type": "image/webp",
+        "size": 64934,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😱",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b06b006dc48804842514267416d567d5875474b008a4e05546e676b52055f5702834d925b96689546044b4605870049088542924e9a4e84808e4692469242a180b4429e448b095a8f03468c879c9aa19d82814483428483828a968a9880824483428489859d8ba7929d92a6beac8804848c428c419080868691889282814484428685878c8e8e928284819482969690838b05578d095d9a48088b4c02904a814f9956a04c8c6e8d7f8e"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7428
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422492,
+        "access_hash": 4224378963606243423,
+        "file_reference": "00688b992909679737d9825060b8131ff3b44bbaad",
+        "date": "2018-07-24T02:29:13+00:00",
+        "mime_type": "image/webp",
+        "size": 66106,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😋",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1904b200dc4609804a034d4f016f424150475149484a4953595c50497148056e4909804346554759435d414605844900824a88548c5ea94a078d0752059c054f09ba8a8906a98c048702828387818984898f98a99eac808081878188858a889691a0818144834384828184418580828580938194828286868788839081a381b5809f81b34787014286818c43924ea66988014705890946844d8e549361974901a34e02a3"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7666
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422493,
+        "access_hash": -7286204941541974025,
+        "file_reference": "00688b9929a63580b62388c67b6afb72bf474c0ad4",
+        "date": "2018-07-24T02:30:02+00:00",
+        "mime_type": "image/webp",
+        "size": 67008,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1908b203dc4904834d0655530047044d054d0275690990096a0099808901448b02898d88a38fb39b908c9592a69e818144834284858387898b8e84848a858a8c818588858b898a8f8fa19ab28182438243838da390b18e8902419483af42860449a064880646068b05508e4705b04709b78081424443435b9146068d49078d"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7648
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422494,
+        "access_hash": -1804703816635933556,
+        "file_reference": "00688b99298d7daec13171f1c2052f82e5ac87bc00",
+        "date": "2018-07-24T02:30:52+00:00",
+        "mime_type": "image/webp",
+        "size": 67738,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a07b203dc4708814d0948520746064748535258575454637f6a49028041474b464d825c804806804b0280458d608f669346068a024e0993034f00a0808a08468d03898d88a28fb29b8c898f8f969484828f88918a8c8d99a3a4b082828387868a8181448442858182888488858284818b818f8081824283418380828584878080808a808b8d8f8cb48c880280b84788095d8c0644885193549943884c96549e4d8c4706b24709b6418281434342588f7b8d48088d"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7732
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422495,
+        "access_hash": -3332697266827212761,
+        "file_reference": "00688b99291c7b53edf77c5bb47e132397d17da16e",
+        "date": "2018-07-24T02:32:00+00:00",
+        "mime_type": "image/webp",
+        "size": 66014,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😮",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1909b108dc60866e5546095a4d425a8166425e4473524704694b4b505958644b5257605e6d576d484d048451028652b16fb27487628279a14800a85c8804498d0550b4478a00428e018f85828f8192839c91a9a4acbf8186429042908390899587a08080858486848383839184928383868588888182448542869697a38c0587910558aa470487094b088901498354825c8549844f9059974b89628a6f8b"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6834
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422496,
+        "access_hash": 432983329873328294,
+        "file_reference": "00688b9929a1e1e92fbef84d704d8e7799c24bd24c",
+        "date": "2018-07-24T02:32:59+00:00",
+        "mime_type": "image/webp",
+        "size": 67006,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😈",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1908b203dc4902834d05545300470457577a48027e4b06424f8060806f8056436e80460780448d6c8e6e81418480854281424145414780808d508f538343854f8954b17e8b0149069300490699808900448b0189918bae978607a79a93b986048609880682838189828e808385848787818243834383858e8aa590b382834298429e808701478b08709008488a61a36caa4c88739c77a38081424443435b9146068d49078d"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7548
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422497,
+        "access_hash": -8101636720666653778,
+        "file_reference": "00688b99290000fcd903ae2442f8ac5657e925c2c5",
+        "date": "2018-07-24T02:34:59+00:00",
+        "mime_type": "image/webp",
+        "size": 68884,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a00b203dc614146078149034747434c49514a43814681488041818243814443434a424e44434245464848464455475b4e44455153555656537a470178490580464a524b5a424f8060806f8056436e8046078044864a874e8454865f926e864889589162b27e8a094906930049069a808900448b01898d88a28fb39b84838a8b8b8c8784978a9c9080814481438280818341848087868d939296818094a49aa88181448342848482878f889081808341848081828eba8dbb4386439742a08c8c01460493094f0498065a8d460489490289"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7972
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422498,
+        "access_hash": 1895181631369217626,
+        "file_reference": "00688b9929c9107c02618ec7d46735977a2826a3aa",
+        "date": "2018-07-24T02:36:12+00:00",
+        "mime_type": "image/webp",
+        "size": 66916,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1407b107dc6f424d08445001694a504c7256460644464a4d50534344804d454e4180438243814769804a07804f0080694549088a4c088d5bb85687085c9846b6638706689b47b6488809488e80ae42ba868885918f9a95928c9d83b199828242858187918f899d96ac8182448542869790b78187069b8281438342838284878588868281448342848b8786a58eaa8281448442868283848186848a8b88be88890180a083860580890681854a8f4d93428148904c955fa34708a04c04a05d807a9548069b57866e86470087"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8634
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422499,
+        "access_hash": -7012236517540027417,
+        "file_reference": "00688b99292138ed0c85acb37a0a91287ce1db3bd2",
+        "date": "2018-07-24T02:36:29+00:00",
+        "mime_type": "image/webp",
+        "size": 64964,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😁",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b203dc5f417f8148084746424c49514a43814681488041818243814443434a424e44434245464848464455495b5044454e525458474755505a5853606647086a4b04435e834607824809804284438445834b815686608142864586469448018b094f0194064f0199808908448b09898d88a38fb39b84848e89928e81814484428485829187968c8282868e8992808086818782818143814382818184818580828180868188818189878b8981814383438385858c8d8f908181448443868181888389848284818b818f8081824283418380838484868184448a808e8d8f8cad8c8701809682b343860957880147068e024f0291075b8c460689490689"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7168
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422500,
+        "access_hash": 3899863091582218289,
+        "file_reference": "00688b992970d9fab63a1b643b7f0b41649815a6c2",
+        "date": "2018-07-24T02:37:44+00:00",
+        "mime_type": "image/webp",
+        "size": 68770,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤔",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1c08b001dc548755645e624280428444854681504255427f494b00474f02716a6a5f4c065351038452925f92788045814a814f80428544834455477044755f814489428a4180804288418981838286858881814349424c824387448848804149504a55815c9f74bb6f8a828b87908980814948474b8d53ae64bf6aa34c8a024a8e024686818d859087888591859a8a9a8eb0bfb186088386849a849a958bb8908704a0a6a29db19d8b05809a83b780880180824788498a509765ab79b9488554875b8d4686804841474181438643848043834b814947864c93539a5e9d4703a74a09b0"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7784
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422501,
+        "access_hash": 2203796444756681004,
+        "file_reference": "00688b9929b465f8dc56b668e4c5ca425448fd5b05",
+        "date": "2018-07-24T02:38:27+00:00",
+        "mime_type": "image/webp",
+        "size": 72256,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1602b302dc6f414804434b046542424a514a5380818146824683808a818942424256835a514559955b87724b53635975676d645d4e01515108844c9a5e9e6a8b61417b9d48029853b44988034e82808a448e448d80a248b04a8e439f82ad82a88089004d8c088285829189958d8181448342849a978bad9abe8182448542868c899e90a89d81824383428382848785888682814483428483828788888a8182448442868f90ae8a00818e084a8a51a460b159957b9e4805b0508b57ac61be58a84707ae4b09ae"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7390
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422502,
+        "access_hash": -1091606845971210711,
+        "file_reference": "00688b9929ca9e250821854cb87078f66e8449eb59",
+        "date": "2018-07-24T02:40:27+00:00",
+        "mime_type": "image/webp",
+        "size": 80078,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👊",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1403b102dc5280634474464700494b03884c0746094b7e4a4d08b04f079c49895f867b425641738246098870414709a94b00864493489b4c8945924a9e4a9d808b03488d03848f8aa692b9a88181438242838989898e909282814483428485848c8f8e94848e82a788b0878cb48d86069c8181448342849191979899a881844388418c80818341838081838386828880814481438280818381848082814484428682838585888881814483428492908ca78c870780a58187045b8a0064a04c008650018c4e8154895d905b9576a54902a6"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8156
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422503,
+        "access_hash": -5586903388704819032,
+        "file_reference": "00688b99293a97196421980c117b526dd88281dbdf",
+        "date": "2018-07-24T02:41:29+00:00",
+        "mime_type": "image/webp",
+        "size": 70916,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🙄",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1e03b302dc7d814a00474d08644d4a585563585f494700424a004c4642534f55504442414c464d418043824381455d45500988520890578e6c94470484558d6b944604844b935c9f68b4748a066e91096e9e80bd438901809982b38f86089d8b898c9191948181448343848a868994919a82824388808aa09dac8903a1920942944aa34eb6449443a946be4c89077c8b084f088b08"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7718
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422504,
+        "access_hash": -1010526194635542255,
+        "file_reference": "00688b992970a8938fc042038ddeecaa8aedfac261",
+        "date": "2018-07-24T02:42:28+00:00",
+        "mime_type": "image/webp",
+        "size": 72996,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😈",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1909b103dc4709424e0356530446057069460947077d4e038251825d88698952b05fb67086508364867683568b6e92460682448a549259954dab57bc688343844a894b9f448a03458d04808d82aca4b3a7858293839785948a9ea8a5b98184448b808e8181848184828083818c808e80818341848082868091809481838685858841838190829482834488418a8d88ada3bab3838381848587818144834384818184418580848581ad83b18d9a48b95388006688004e018b0356068b04"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8234
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422505,
+        "access_hash": -1812689002245723417,
+        "file_reference": "00688b9929fdf0a35755056d5a2693491383eb359c",
+        "date": "2018-07-24T02:42:55+00:00",
+        "mime_type": "image/webp",
+        "size": 75944,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "❤️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a03b006dc47034752014956077772727051035056058f57aa67bc7d8445844b8651854e9c5aa860a8558900568e06568a80a386a3868082428541878183884e8a4f8e43a384b187a687a88eb5b18387499348928341854589468b448903a58903a681838086808a80a9878a05808e0347a64c088c0651038e04588a728b47068b"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7990
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422506,
+        "access_hash": -474818470223831302,
+        "file_reference": "00688b9929258cc5f42142b593b2bd15a3d9d86a46",
+        "date": "2018-07-24T06:26:03+00:00",
+        "mime_type": "image/webp",
+        "size": 60898,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "☹️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1908b203dc604146058149014747434c49514a43814681488041818243814442434c424e44434245464848464455495b504546505357585c537c48087c4b078043454445474362824804824a0980458d608f668a64af480688074b028b47b057b057824387478b489745b04787094797808801448a018989869789a39182818086828683818a818e8484838e89918e8281438442849989bcbd8700880082838089828e81848488888a8282438642888d8f8cb48c8803818b087d93034f059706598c7f89490289"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7620
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422507,
+        "access_hash": 2072756559167513770,
+        "file_reference": "00688b99294e8e2cc5211025eb9a446ff0b987cc97",
+        "date": "2018-07-24T06:26:43+00:00",
+        "mime_type": "image/webp",
+        "size": 71376,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🎊",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4809844d04565208470658587b48037e4b044355806d80460680534369837a81448049814d80808a4588464341468149804281865d886286499d4ea15680814445804abf47038b004905950449059b80bb808802898e86a890b79b84848e89928e81814484428482819486978a8081448143828081834184808b8b8f98979e84838986898b80824882468386839d8ba1928386438e4393818f9346819e818186808787808b829284978183438905458a084c870348098e084f0491025a8a460487490387"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8860
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422508,
+        "access_hash": 9097298457201511009,
+        "file_reference": "00688b99291b0f0767651fb0678d816df1e9f8ceba",
+        "date": "2018-07-24T06:27:08+00:00",
+        "mime_type": "image/webp",
+        "size": 59758,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👌",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4609834903474d0561464455495b504545515457585c537d49007d4b068043444544484360874807814a0981438e6190668a64af480688074b028b47b057b057824387478b489844b04787094797808801448a01898d88a38fb39b948fb8aeb9bc81838f8e9192878f8b9a94a98181438242838081834184808790898604898900809482a941bc4ab57b8c074b048f054e875c936d985c877b87480987"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6376
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422509,
+        "access_hash": -6357744186585027592,
+        "file_reference": "00688b9929bffd1b7306bcc87793b144a58fc5e54d",
+        "date": "2018-07-24T06:27:43+00:00",
+        "mime_type": "image/webp",
+        "size": 66502,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤐",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a07b203dc4800834d044d52017c66667b460747024c018142474c464d814a824a05804b0280428443844586588a6d967f83458a498b4c844aa77ab47f82818581878082418144804582448e47924aa557bd5e8a075e9b808907458c00898d87a28fb29b8f8b94919f9c8282878388868183878d89908180878188828081448143828181838084808381868f8c928080818881898283898c8d918181448342848281858286848b9e988606918c098188829b819d428b46a14db0418356a057a541885bac5fae4c845894619a44824f82518441808382828443844e865288599275954a0495"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7314
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422510,
+        "access_hash": -8058832131916530373,
+        "file_reference": "00688b99296104631d0ff6135421b9fd9b44a50ce0",
+        "date": "2018-07-24T06:28:01+00:00",
+        "mime_type": "image/webp",
+        "size": 63844,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "❄️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a04b200dc62434703854a014a418181438044484555455c4a41818143814441446458695c4242444a454c414245844582434951555a5e48485a755e4605454f4a654a758043824682498042434541478242878086424750564d5171824d95619e668080868286808045458144438351a36cae7d8b529365a47884448d47904ab1778f036d95056083818a878e89898493859b8a8181448442848a84948c9e90818085878689808143824282888091449a8086848c8a90908c938295849f82858a898c8c8387858f8796848d91a493b0829380a780b9809384ab81bd4eb56b8a0749028e01558f68a14604a65d867a86490086"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7718
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422511,
+        "access_hash": 6778472615769467938,
+        "file_reference": "00688b992986835114c4c5b7b1bf3dbca4cd4e658e",
+        "date": "2018-07-24T06:28:14+00:00",
+        "mime_type": "image/webp",
+        "size": 65720,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1900b006dc4805444e0651540347046262676a6d4805435642748447018754a05da07d8069494d07a44f039547ac428700468f42a25bb05e964489004a8b01848986928da28e9482b4458700869a909bac9fbf8083858485868083428c418e81838684858641834484438680848688858c80824585438681818541848341888599839d8182458543868181834184808182448542869e90b0aeb3b88184828e82918082438541878b88828604438706489559a96aba79ba4c03880454098804"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7376
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422512,
+        "access_hash": 4673584162611464024,
+        "file_reference": "00688b9929c81c6fb8c776be1379cd7b2e1c8be0f0",
+        "date": "2018-07-24T06:28:24+00:00",
+        "mime_type": "image/webp",
+        "size": 71722,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤔",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b203dc4604824b09474f016b4647544d5954464a8780864244475b5f6360484146584d544382888881854542577b587f4652476e474702805342678179814d8e5d91688e7287014b068d074d0585418f49944a9644ac458609459680b2458702829a87b9918709a284848d89918e818143834284918a9d90a09e818289858a8c8081959696a4808182438342818283848486848b91ac92b486b3828b054b8f04459052a95fb946885494579e81825b935f97498753905f9743814f825184428380844586608b4606894a008a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8466
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422513,
+        "access_hash": -585959302608798574,
+        "file_reference": "00688b992941ebaedcc3b62faf0828acf6ffb09a3f",
+        "date": "2018-07-24T06:28:42+00:00",
+        "mime_type": "image/webp",
+        "size": 76082,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "💪",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1409b202dc74814607514a046c4443518058424b444b48554a428183418343804442504354434e5c5b5c6b80585746045a4808424c817b8447008145894c8a538351815d846f83538f65947c8555b5418607528d4e84608f6b9a5a9009679303599089998ea8998d8aa089ae9288859a84a088858488a28fa88b8a92a79cae8482448a818c8885959b98ac83974eb74b8606828890a18ab64ba6628704788b0143869399939981844486448980838582888383824189438a4b845245625043424680498080808146424442824687468480428146424741814d894d8b42828981878348875e8370914282818544874f846389748746815347584656866d86470186"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8338
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422514,
+        "access_hash": 6657807947418915186,
+        "file_reference": "00688b9929a7ff0fd3ac30f280492bee7991260a35",
+        "date": "2018-07-24T06:28:55+00:00",
+        "mime_type": "image/webp",
+        "size": 77016,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😠",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1901b200dc768448034b4b075c46424c4251464a464f51585643425751575380436471687e47555674544709804c8465847980568d699279a44a088e0151029a074f08a3848704948908a6848385898a8b8e85918d9d9482818389848a838389878c8883818185818882858d8e91928082448343848b888f9392a48183858587888182438443868182889089928183448643888686828f849a8aaf498a00608e024f9b65b07b860772ac4806bc4f07bc"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7828
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422515,
+        "access_hash": -8953895721645395309,
+        "file_reference": "00688b9929aaf73e6accc1a00424f5cceba5f2c395",
+        "date": "2018-07-24T06:29:10+00:00",
+        "mime_type": "image/webp",
+        "size": 67034,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "✊️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b01b204dc64444708824a09484c4447076847097781444880494344468043474a4b4b5357596342444744484546484555495d80414482458144444452435580464a524b5a424c80598066805943748047068044854b864d8c6fa0470787014b0583448a4f8e518281858187808141814480458a4f8804678a006895418a01478b068187838f8395868d85998da6928883928d9a928a87978ca1978282868e8992808086818782818143814382868681438688818189878b8981814482438392929aa9a086088081868a878c829681ad818608809181a342b343925c870868880868a1470087064b078809508547038a47058b"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7060
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422516,
+        "access_hash": -3827484218483283627,
+        "file_reference": "00688b99293c08c9e729c830fe3fda479ee22d3b01",
+        "date": "2018-07-24T06:29:25+00:00",
+        "mime_type": "image/webp",
+        "size": 64036,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1506b301dc4903834e067a53004d024a514e69517d4e4803454f07b356039d62b86688097c924ca460bb63bc478d0542930198b3998a0688058b028e05839647a547b28086838c8292418b54985aa04689929196988488458700498802448c4e94539f448a47974b9f5db64b0188075009870544814a474e4948437388460488"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 9242
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422517,
+        "access_hash": -6755754326569960680,
+        "file_reference": "00688b9929120349aff718661600c8b11abb9b0407",
+        "date": "2018-07-24T06:29:34+00:00",
+        "mime_type": "image/webp",
+        "size": 67366,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😅",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1001b101dc58824a04714b08460450526174654705445c454a05804d03866186084d0489054f059651b0558702608e48a158b25aa1438607818a0083a6858807418b06a0a9adad8f01a4940844994fb15587034bb0558a037a8d096cac4709424b02824a815189598d598947028e49088f"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 9106
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422518,
+        "access_hash": 3094159800703137497,
+        "file_reference": "00688b9929f3a171c93fc0a983c40d7fa165876cdf",
+        "date": "2018-07-24T06:29:45+00:00",
+        "mime_type": "image/webp",
+        "size": 67890,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤚",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1f01b100dc61817f4548094e4943514d5d4e72474804474b075a735d6d79744b05424d4f5754644a5f474708814a0785539c5fac73864784558a5c9257ae5686065d8f459d5db3649848b8438807468681974c9e4ea3498902508d02429587999a9aa780848687858a8081829a839c8080858184838082438342858181838184808281438342848b929b8905958f0342984fad528608449a80b24487044c8702480589034f008903"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7666
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422519,
+        "access_hash": -5503646503814344131,
+        "file_reference": "00688b9929de4dffd0cebd4416fd426c153fcd61fe",
+        "date": "2018-07-24T06:29:59+00:00",
+        "mime_type": "image/webp",
+        "size": 73824,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🙃",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a00b200dc4604824a02464e03624a464f5158564543544e5752424280464248424248444a464c4d647b684705624d078f5c0190085f09a24988034d8c054887819088948885818c8090829388ae9a8605a782818a8d8a8e82808d868e8884878a89909281814483438485838e8d9192878e8f9c97ae8182438542868281848185808281438443868181888e8990838e839a83ae808a065991014b0697014f89689a46079c538167807a80"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8380
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422520,
+        "access_hash": 219178756491361191,
+        "file_reference": "00688b9929c8e5c65b544c08e8a58c4418a8323774",
+        "date": "2018-07-24T06:30:18+00:00",
+        "mime_type": "image/webp",
+        "size": 79284,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😜",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1409b108dc678047014648056c43494357485d4e51645072624f536b627278495c484606444905824d8a568868414b49594a6643644248028e4a03a9788e086b92064e89869b85a5899288a494b8a78887a184ab859e83b68e8701998885918d9794818144834384828286828985818242858087828285808783818243834383848695929c989d9aaa87059a8d0150b84a058a004f078b067d9379be4d07be"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7398
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422521,
+        "access_hash": -5844097858617279266,
+        "file_reference": "00688b9929ee3543fafca850b32037aea70497c700",
+        "date": "2018-07-24T06:30:32+00:00",
+        "mime_type": "image/webp",
+        "size": 80616,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😭",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1407b302dc4d475945654c534b7249086c4b028042478046428448586e527b82435c475e4a4242544b5a59444a4b5c4a6480414483448242448249824a414b4850485b80468442804a4242868284804e5a954902a64c019360a4460786084708828141458145ae49b588890083884189054f8a004a8a89948aa58b88818a89948d8883929b969d9f91ad8707a88a09438b49914b99459185ae80bf42875297549f438a87a18cac818285818583838a44a946ae438581a980b381884eb255b5478481854a894180434443438082838942894e435e895e894c445d4c5d4c418349964a9672897f4147025c80428085428643824a854b884286578c5d8e"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6220
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422522,
+        "access_hash": 2378327974374814254,
+        "file_reference": "00688b99296de464fccb5db69fcf491b57ec12ee4d",
+        "date": "2018-07-24T06:30:45+00:00",
+        "mime_type": "image/webp",
+        "size": 78824,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "💪",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1908b203dc4900834d0454530047066c6c7e4a027e50048055826e827c80459065916a9647088b034d0793054e09a6468902818c058e8a08b08f088e058f099705809a80ac49be4285828b8090428a57ba60860546855192569873bc4908870552038705"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7442
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422523,
+        "access_hash": -2601348951108021266,
+        "file_reference": "00688b99290d4f598b4006a4264dcc91891b43c94a",
+        "date": "2018-07-24T15:15:07+00:00",
+        "mime_type": "image/webp",
+        "size": 64046,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👉",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1002b300dc0e004fa2088608a2084909814b374935890962088909f3cc1a09b203dc4a01854e045154014704545475460973490080464a524b5a424f8060806f8056436e8046078044864a864e8f460486074d008e015005a04f87034c8b004c9480a942bc808d829f8dac9083819389958b81814484438482818f869185818043464346838288858b87858446814742454288898e8e8483928c9590828243874188938aa9abaabb8081824283418182838484868388838c889281824383438482828685878887a5908a02808f0241844198459f4a9155a261b24486519d57a04984568f5d944e8b5c93709c4181458749885a887687480287"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7826
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422524,
+        "access_hash": 6406719488801603861,
+        "file_reference": "00688b992924af807a64757b7a08d826b299cbc063",
+        "date": "2018-07-24T15:17:02+00:00",
+        "mime_type": "image/webp",
+        "size": 65556,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤘",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b204dc4902834d045552084705545475460673490080454a524b5a42528066807980534267807982559c4707aa490488499353985c808097559957818186828780814181448045884c8609658803679544ad41860641a3808608428906889085b59bb8a4828488808b8283828386858883839088928a8182448741889c90b38706b48706818183418480879188ad8ebb8082449a43a086bd488b046d90004485549f57a04984548d5d954c8966a2739942424886458680808a8086825d8e47008a4a028a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8642
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422525,
+        "access_hash": -4131881158907487029,
+        "file_reference": "00688b9929a2584a00f09e9cb058ce387339c901f7",
+        "date": "2018-07-24T15:17:19+00:00",
+        "mime_type": "image/webp",
+        "size": 65002,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b204dc57434900824a044c4646544f5f56464455495b504545515457585c537d49007d4b068043444544484462814804814a0980818645864685558b629272844a895a916487499353985c82448643894586428b4e905281818681878081418144804582448e479149b15f8801608e04609380a842ba818b8186059b8706a485848f89928e8181438442849b8aacabbbbc8182839083908b8d97a99a8604828a4194809e89ae468a02528d07458e589c5ca647915aa56ab24c895892669a44824f8251844282808445865e8b46068a49098a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7296
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422526,
+        "access_hash": 4491680187561327319,
+        "file_reference": "00688b9929fd6affaea5372d0dc7b2030959626595",
+        "date": "2018-07-24T15:17:57+00:00",
+        "mime_type": "image/webp",
+        "size": 73554,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🎃",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1807ab04dc5b807b4247094c4944485548544e92449e548a4b4c5051545e454c6494649450827750736581488d89948c838199829645434b4701535e46048343839285958181969a9b9281414c554c5d804747824b4a544706565001985503854692509455884f874608a74704a7479000449402808581838a878d85848d8b94908f8ea49bb6ae888a8c99949e8281448342848c8891ac92ac828287928794458c82b4808703449d819a4f9c47809286908d818351a64fa78381918391894192809686a7818357825a828180544b544a81858a85898781834b07b34d06b94e8565847484"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8156
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422527,
+        "access_hash": 5511782190564919385,
+        "file_reference": "00688b99299da795f97d04f8d03e768cea2af438d4",
+        "date": "2018-07-24T15:18:13+00:00",
+        "mime_type": "image/webp",
+        "size": 67172,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1907b203dc63414607824908484441424c474c4a805c8a64814546824b8451804347844a8342424e4b504c44465d6263644342424644484245454347444444444b4650424347434844474a526b517280454a524b594464824809824b06804587508853896db2490789064d01884692499a4e884697509e51ab498a054e8f05488f82ae91ba9883818a868a898182428680868380824b88458886888f8890818183478546848289888b8a8d8b92969ca1818185438782848b93a39aa78181448442848f8a92b2998703848c439942a5878708558e05480593074b895495609d478557875c8b428380844586608b46058a49088a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8018
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422528,
+        "access_hash": 5009628823745043395,
+        "file_reference": "00688b992960c9248d7505b87e21ee380df1d2519c",
+        "date": "2018-07-24T15:18:24+00:00",
+        "mime_type": "image/webp",
+        "size": 74354,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😱",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1d07b203dc4709864c098151055f44425144524a8043504d54514646514c545141428444824545434b445047464443504556814148824b46485b59705c47054b4806855002aa5408884a9353985c81429857995784418b818e42824248414544984eb761880166a7488806428c06429980b89087059b818144844284858289838f858481458d418b8a44415391458787908d989382824a89498981828541888181808a8f8d929190b08609b3890686bd888e005b93074b915fa066b1418449854c894283448b46884242414a424781814189468b80804a804982808184808584808448834c856897729d4a00a2"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 9214
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422529,
+        "access_hash": -6505530901341443516,
+        "file_reference": "00688b9929c6ad306675ee08eb46d62ad997c6c388",
+        "date": "2018-07-24T15:18:35+00:00",
+        "mime_type": "image/webp",
+        "size": 71054,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😉",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1907b203dc4908854c06535204460955527c470379490681434a534a59424e805d806b805881798147038042874b884e81448049814f804185478648906fb849028a074c06864495469a49854388488e499844b147880147a3808703428909898e86a290b39b84838e89918e8281438342849088a99eaaaa81868a878c8b888f92ac9bb381814483438494968e89028a8d0544a95a8905738b06468541474644428181828184808043844284818085438442478a4f91569845854f89538c71a64800ab4f01ab"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8876
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422530,
+        "access_hash": 3648218616099787396,
+        "file_reference": "00688b992952217a7b67f025e93a4456b4314dc920",
+        "date": "2018-07-24T15:18:51+00:00",
+        "mime_type": "image/webp",
+        "size": 69034,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😢",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a05b203dc5842718247034166464904654b0846074e525859606a424447444845464745544a5b81424380448044454451445581444a534a594b4804845001aa54098647944f995882449058985b82818582878081418143804582438e479149a356bd5f8a055fa9808809458c03898b85a591b39b84848e89918e8281438442859788948fa09d808186818782818143814382868781438688868b8c8c919282838188818a99969e88049e8d0280b4468901638d00488a57a65eaa41814385488481808042814481414442448180848b92859546834e445245428082868286418147814b864687568f5e9444824f825184569346068f49068f"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8506
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422531,
+        "access_hash": 6971857876364457435,
+        "file_reference": "00688b992971a1a8b90074bdfc0798d495dabd1299",
+        "date": "2018-07-24T15:19:13+00:00",
+        "mime_type": "image/webp",
+        "size": 67630,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😬",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b06b203dc4802844d094953007c57576f6c7c4706464f4c6552714243427b42470180528267827280448d618e658b60aa470787024a028a489750a25784439e4b9e4b824387478b489744ad47870247a5808800438a0889be9b8c0788068e008e038183868387868284808b818f828b879c8aa28182439c42a28a8a077b93054f049804558b7488470589"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7538
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422532,
+        "access_hash": 8934062303625546536,
+        "file_reference": "00688b992911dd35458aab9e48063bd608ba263146",
+        "date": "2018-07-24T15:19:29+00:00",
+        "mime_type": "image/webp",
+        "size": 63364,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😦",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b04b302dc574675884705805347566c5a7a45516d557968444744534a5b4d4e5c4d645e4f61484808444c018255896c947d84468c4d8d4a81824483438582818580878082808786858442454d4a4e4d4a54617f5a48078144958e958e8f88b59487019a858251494c4c9f4c8e7387047c8b41a043ab808482868c89868347435c895e828192a2a1ab8181834184418642808045454241464744468181868686878280844286428a83988da3938c879693a19a87859288988c89878a8d8d8e8181448442848282888788888181418e818e8a8a998c0485910948955ca166b64a9544a954bc4a8d4cbf60860855867481470581"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6778
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422533,
+        "access_hash": 3514695237342172647,
+        "file_reference": "00688b99296c1f256e268b732853ff7dfaa1f1ae3b",
+        "date": "2018-07-24T15:19:42+00:00",
+        "mime_type": "image/webp",
+        "size": 70212,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1804b203dc554148008149024b81418143804446434d8052444181824381448141504a514a47445248584e45465c6063644c466c47016a480180454b544b5a4562444800804b048044854b864d8249824f84588555ba480887084a049450ab58860463818189478a47aa488a054d8f054794828908ac8a03b78385554850458a868e8e969583834750434d8986428688858180858d868e908b9eaca9b38181448343848483889088908281844185808183428680888ba08cb08c890280a14286054a890541844688498d488d4c9e58ab418259a05aa0498455905d984f8e4605a44808a659827281470581"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8842
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422534,
+        "access_hash": -9059426530099339515,
+        "file_reference": "00688b99290b593fbc0bf2aa784cf66e740f36f27a",
+        "date": "2018-07-24T15:19:52+00:00",
+        "mime_type": "image/webp",
+        "size": 60368,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👊",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc60424807864a044f43434f42524441818243814442414f49514a43414c434e4681418243814580804a424b43494c56546061535867716e48058044474b484e435042634276805882798247038042864b874e81458048814f804186478648927787004b008d014e00984cb84c88054cae808904438c099085839187958b818144834284a08fb9a888028704888c95b29bb6848288a68db1838844870345880844ad578804788c014181488e4a8f498357905e9847886c956f9845844a88528a59877b85480685"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7196
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422535,
+        "access_hash": -3562444817911589363,
+        "file_reference": "00688b9929f14c77114460c46ae0b8aed7db992105",
+        "date": "2018-07-24T15:20:04+00:00",
+        "mime_type": "image/webp",
+        "size": 67110,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4608844904474d0561464455495b504545515457585d547d49007d4b078080444744474461444705804a078044864b864d8249824f845881438747884a9b7b88054c0490074e0397458a08448d02808281848487858e859e88a98d83818e86918981814483428487838f84968a8181448342848181878189828e8897989ca082818585878781818442858081854589468d41898f5b915381884596439d81828481858182428184828582838684888785854a424a418080928e9192818143824383808286808682838e8f9f90ae84a3858d034a9000478c728800798803498456905e9846866e986f98438444854b885a8a7f87490387"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8476
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422536,
+        "access_hash": -5918032948379765246,
+        "file_reference": "00688b9929da3a1c33ab4d1f6971d954a91ad1cd5c",
+        "date": "2018-07-24T15:20:17+00:00",
+        "mime_type": "image/webp",
+        "size": 64762,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😭",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1f09b302dc5c4746058a4902804a43504e595067494a00474b06714349494e4c53454a47584c644f655c7e624a054a46088d5108b25600bf4703960947079e0464ac99bb8704860889088388839a849a9393a38909a38e0280ac4488025a8c004a91549a5cac458b4aaf58b35487470080490280"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7058
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422537,
+        "access_hash": 6305191208661205833,
+        "file_reference": "00688b9929fac78ffad16f46a8bed90933b59ce987",
+        "date": "2018-07-24T15:20:28+00:00",
+        "mime_type": "image/webp",
+        "size": 70694,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😈",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1605b004dc4605804904524e0076534f5461646c47447046714f445a80778048028061444608804a00814cad67b97098518e4605bb49038543934d984eb44b8f06509403868482a594a5998181438143828181848185808181448343848c8b8f929e9c88869989a38e8f88a699b4a8818144834384838288838b8781814382438384848b868b87828f848e06808f0547905f9063a2489e5087087489055d8d500299540099"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8466
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422538,
+        "access_hash": 5647426964772618642,
+        "file_reference": "00688b99292c90d4f9fa6397155c6ee465b7687b38",
+        "date": "2018-07-24T15:20:43+00:00",
+        "mime_type": "image/webp",
+        "size": 65066,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😣",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4902844d045452084704545475460973490080464a524b5a4352806680798053436780798044864b874e865d917aa34800884a9353985c8080975599578181868187808141814480458447b25dbb619849b548880248a4808703448a04889388b99e8701ae83839188938b8182448741889c90a1b2b0bc81814483428483838388868c80818341848081834288808c858e89a38eaf8082439943a0839e4187034a8a0441844688488c448646924a9859a777860649008900468456865b8a44844988528a59877b85480685"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8386
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422539,
+        "access_hash": 1276745619582823429,
+        "file_reference": "00688b99293197284d6ab6b652d3f16e2e83de5d45",
+        "date": "2018-07-24T15:21:17+00:00",
+        "mime_type": "image/webp",
+        "size": 68072,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🏳",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a06b302dc5a4376844800804481485b495e43485154515e804f607b68470448504c68527c4551506658765c7946044804765101825382618c6e955b8c01618f075d9984a38e86058eac808e046091074387868d8c939381814482428384848e86928c8081448342848b8a8c909294828244844286868689a28ba981824386418785848289848a848485868888828244858085818083428441808244844386818186828685849980b5808709809d828707518908599c49088a4c088947805c465e844394859e89a18282448581858180824283418182878609858700448482a747a957867880480080"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6810
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422540,
+        "access_hash": -7479092494097699909,
+        "file_reference": "00688b9929d52159e4c20573751b3c05e296abb02b",
+        "date": "2018-07-24T15:36:41+00:00",
+        "mime_type": "image/webp",
+        "size": 62636,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "☺️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "2008b103dc5d8377484805464605864c098650095744434a464e4b494b5c4a035e4c004846078b4909964e03875b8f48019c4a02b0470791064902990546049b8abd998807b78182438342848b8a8c9091a18182438541878282858683874382858684898081428a418a80818341838082854289418a8080858184838083808f82938080878e86908181438143828181848185808281438443868183848587888182448443868c8d9687018f8c02418f48a24ab1429381b24b86065aa14804a54c05a5"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7254
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422542,
+        "access_hash": 6188569214368705329,
+        "file_reference": "00688b99292b6e64cd63646912462cb6da47f9d4a4",
+        "date": "2018-07-24T15:37:07+00:00",
+        "mime_type": "image/webp",
+        "size": 71152,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😜",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "0e05ab07dc4d4f604e6356444d87649269818199479649685f49004605480847018348a689a1855b5b6962677f81509456a35287828a998e928e578d48019c4a089160890246058c0075848188928a93a787b68087089e8e918eab998605878d4e7c447d984492a797b384894779837c9b488eb791bf879182718c74994786bb88bb9947437d9a53868847658f52838382ad80b241845381544142458152424e509744b95b8705518d6d446d42818cb0a6b6bb869a4e8802648904588c904e02704c034180898b8a92818781a244aa458899819a8a80854bb256bc62a44c6a4e74424b4b9455985f8b7f81480849765175b04804b6"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6492
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422543,
+        "access_hash": -8801499193857471093,
+        "file_reference": "00688b992952ee78fec950f88ced4f78d1a68bca6f",
+        "date": "2018-07-25T03:26:07+00:00",
+        "mime_type": "image/webp",
+        "size": 58078,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😂",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4903854d04545208470464647949037e4d07435b844604824803804384448447855a8e68944604834ca373af46048949994fa1588a4aab5fb8629a45b647880647a3808606438905888983b99ebba08181448342848986978ba0948585848c87928181814382438180888d888e818189858d8c82828185828980818342848082834188828a8885888e8b9881848588888a8382438641888e928cb98c890180b24788065f8b06418283848285478d549f5ea94181498c4a8c43814741498381818285808541804147414542888294489949854e42564343808784858545834a854f884885598d60905f8b460589490989"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7490
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422544,
+        "access_hash": 7441048730127684637,
+        "file_reference": "00688b9929a019525c91ab345890e7ab0c66993b1a",
+        "date": "2018-07-25T03:26:37+00:00",
+        "mime_type": "image/webp",
+        "size": 62428,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "💑",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b204dc4801814d084f52024609464757545a5b495763796848044d4605804d029051098247884a8b5180808581858084484543824ea070880849028e094a058d439e80ab80af808907448d038f84829087958b818144844284bc9587098806890889088181448342848684838b8890808183418480858a828e869681824485428682828583858687a0878809818d0343924ba353b281814388478841808046814541838187808b41834485478741814342434180848e80428e44844a904f9444834e494b4693974785478f808087428741818182838184458658905e9471a64802ac4f02ac"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8482
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422545,
+        "access_hash": 3309570658464370185,
+        "file_reference": "00688b99298c1a7ddb8b7342d78f0985082cb5e8e5",
+        "date": "2018-07-25T03:27:15+00:00",
+        "mime_type": "image/webp",
+        "size": 60576,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "☺️",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4807854c08565203460955527c4704794906814349534a59425180648076805181628073814585828541414e855f8b6a81428581874281434781498342834488458342469568986b844586508a55b27f8b004906930049069c808902448b058b8d88a18fae99928d9593a79e828144834284978da4b2b0ba8281448342848482868f889081808341848084888fb58d860581834586448d84a186ba808808818547a349a580804949494881838587858f8194539f60aa4282828780884383549655974a8458905e98438349844c866b9e4801a04d09a1"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7942
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422546,
+        "access_hash": 8198911937573334217,
+        "file_reference": "00688b9929a94ff802fdf7479af8124bb8eca88510",
+        "date": "2018-07-25T03:27:26+00:00",
+        "mime_type": "image/webp",
+        "size": 61512,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1902b203dc4901844d0055520447046c6b7e49037e50038056436e8046078044864a864e8f460486054c088e0150059b4d92055494018187889889a28f81814484428489848c88918a8c849aa09a9f808056654b598383858288868182448343848884a3a0a3a1818580848587828043834284828185808682878b919795a28183869487948380828d8291808180438244814280858087818284838486849c888804818b01459242a94bb8498f53a45eb246885694589e8081488449855c994609b64b00bb56826e81460881"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7916
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422547,
+        "access_hash": -5114126145193277691,
+        "file_reference": "00688b9929d678dc8800dde2970271c3a8039474f3",
+        "date": "2018-07-25T03:27:41+00:00",
+        "mime_type": "image/webp",
+        "size": 65858,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😺",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1704b203dc4800824b095b50064704545475460673490080464a524b5a4251806480768052426580768044864a864e8e77ac4a098a064e0789469e57a65481808b488c489845b047870647a4808705468a05889e8ebc9f8809b886858088808d81889251964a838549924a96808187428742818180848789888684918e9683824188828a908f91ac9b8707848a42860844890044b3648b0148038e044886509258964a85528c5b90448149804c82808047864c8863894704874b0187"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8362
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422548,
+        "access_hash": 2959200193932141290,
+        "file_reference": "00688b9929437d38503bb0d2bc88ce794d37800b15",
+        "date": "2018-07-25T03:28:14+00:00",
+        "mime_type": "image/webp",
+        "size": 54622,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😌",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1808b203dc4809834c09575200470447074707480656075a5e088a4d9769a76f8542894d8d508b489850a3589d538607598a015999808908458b098989869789a39182818086828683818a818e8484838e89918e828143844284a48da0a5b7b6868488968f9a818186908994818243834384818184418580879089860489890080b74588085c8c0645885293549949945ea571b2569068a07fa65f88460587490787"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7076
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422549,
+        "access_hash": 3316649794148485420,
+        "file_reference": "00688b992924f8835239dac40318fcdefdf6058e67",
+        "date": "2018-07-25T03:29:11+00:00",
+        "mime_type": "image/webp",
+        "size": 62242,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🍰",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b09b302dc60454608864a01805a4546057a480248044a4e5c615c6f804848514a58454e5149064a490881818185828483495c4958538750a34ca14d818049814a4143488f7f91460485438b8590868481604f595c874f9b84a58886824d494c4b82478e50924e82804285808582808683858146568f5599698d5b8346059f4806904cac468605468a07808700468901b18183858388848380864288808281428880888480845289549146989c999a844e8242434a42439f839f838c86929c94a18285ada9b3af82828087818985888c8b8f90808142864286898a8ea291ae848c428c4290898803418e087095014c906c86064607860861844608804a0180"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8166
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422550,
+        "access_hash": 1914380613971481839,
+        "file_reference": "00688b99293acaf133df0732e65aae6be1b28268b1",
+        "date": "2018-07-25T03:30:01+00:00",
+        "mime_type": "image/webp",
+        "size": 57732,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a03b302dc584371854702804f43726d7b7a474c4a5757625e595f4700694a0842495077537e464c4f58516d46798a4b09b14f038948984da4548a469752a154a3478801448c0180a4848808478b098b8f898c9292968282809c839c82808294839a808189b088b08182448543868181864185838184809280938991958ea1988887939a939a8488819a82a48a89035b90044a0895094a87589c63a053877480470280"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6740
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422551,
+        "access_hash": 4998800734901895793,
+        "file_reference": "00688b9929fa4b6f700d9d5fdabb844d8ea3dfd533",
+        "date": "2018-07-25T03:30:22+00:00",
+        "mime_type": "image/webp",
+        "size": 68616,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🤝",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b202dc4807824d035352084705525277460673480880444b534b5a435280668079805342678079814c8e5d91688e7187054b078d074d0581808b488c489545ae47870247a1808703438a01898c85bf9b8703aa81824383438383839489978c8282878d89928081918e95958384899a8d9d8181834284818181838e848e8181844184808283448642888e918eb28e880781aa4186064a8a0041844688498d468a4ca457ab4b8850945a9e5e9c4804bd4c088604518263807580"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8168
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422552,
+        "access_hash": -5212618949439791187,
+        "file_reference": "00688b992954c697c697df62fad2633cf991d4b650",
+        "date": "2018-07-25T03:30:41+00:00",
+        "mime_type": "image/webp",
+        "size": 60636,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a08b203dc7b814d044650036a42424b444b458141824381444344514d55515b6271757a49078044474b484e4453426a427f8055827382460480458d618f669947098b024f0095004f00a7808809448b078e8281898089818c87b195bba481814283428382839388968c8282878d89928080918e9594898f91a49ab28183438342848da58daa8d8900809483b14286064daf6e8a0348088d054c895892669a43814f8251844283808445865c897a89480789"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7570
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422553,
+        "access_hash": 2340527816233956932,
+        "file_reference": "00688b9929ce7db57e925af570000a7a80a6d08ef1",
+        "date": "2018-07-25T03:30:53+00:00",
+        "mime_type": "image/webp",
+        "size": 60132,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😜",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1605b202dc4700844e024c5105480141424c584a598141858183444b575a6e5e47034667804804804c0480494254805c886f89024a028d064a05898092829b828c809748a24b8942a383a9428c48855f9b5b9383819c9ca5958789089b8b04a6918b86098800870289088c86045490087e95075092679e7aaf6da64809a94e06a9"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6724
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422554,
+        "access_hash": 5542795059119175286,
+        "file_reference": "00688b99292335ca04447c9ad4c7916a1c070ddb1f",
+        "date": "2018-07-25T03:31:13+00:00",
+        "mime_type": "image/webp",
+        "size": 58692,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🎉",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b203dc5f424806864a034f43434f42524441818243814441414a464d4845434e4352484849545961625c537c48097c4b078043454445474360874807824a098043937296779e7c89014b0290034d029546b0418700419480a943bc808f828800a28804a9848790909a998281868387858384468542859986aab8acb88f8998be97890081988587004289024caa69890548028c0544834588488a4b88569161964583518556884383538d618e57836f82460982"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7744
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422555,
+        "access_hash": 4549128418413829614,
+        "file_reference": "00688b9929ece81430bae7b2d804b5df9de34220a9",
+        "date": "2018-07-25T03:44:25+00:00",
+        "mime_type": "image/webp",
+        "size": 63346,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😢",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b202dc544168827b80584248055e4a027441415e565e5c8044454347454c4c58625f71546a544706544d048071914907aa4c098647944f995883449057985b82418581878182814143814482458605618605619945b348880348a38087008289058c92878607a08801b28182828783888282868186828082448143838080938b958d808244814382828389888e8f81814382428383838a888c8d83898a9792a28080808b808b9093928a058a8e02428b48944ba04183818742894584549c56a5438c4f91559a468c51945b9b43834488488a75a44807ad4f08ac"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7088
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422557,
+        "access_hash": -3416018385715084930,
+        "file_reference": "00688b99292719552b85c0f5667c66da9663a2a6c8",
+        "date": "2018-07-25T14:59:25+00:00",
+        "mime_type": "image/webp",
+        "size": 61484,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😢",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b202dc4807824d0254520747056b6a7e49097e50008057827782470080458d608f668d6cb749008a054c04884596489e4c828189478a479644ab478700479a808900448b01898a8691899e8e8682a396a79b81814484428486839088968c828144834284938baabcb1860482818086818881838789888d81814382428381818341848088918a86058a890080a28086084d89055abe4a018e0452008f00538267807a80"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7208
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422558,
+        "access_hash": 7210927515166062606,
+        "file_reference": "00688b9929e46692441a234c24cf05f37050412313",
+        "date": "2018-07-25T14:59:38+00:00",
+        "mime_type": "image/webp",
+        "size": 63050,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😴",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc60424807854a044f43434f42524441818243814441414a464d4846444d45514b42424b444b454346524e5452424249524d5246804b4f4c5180814e4c4f4f4a535c7d5c48048062444701804a058044864b864d8249824f8458834daf4802860648088441894d8c508a489750a25784439e4b9e4b824387478b48aa488a044d8f04478f81b59386059a81814484428483818c828f868182458543859b828981918c80819488988c8384428541878081938e9390848681848688828043834284948a9db0a68706879488ba868807448803598d0249079209498753905f9743814f8251844383808446865f8b46058949098a"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8420
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422559,
+        "access_hash": 3020345662807984091,
+        "file_reference": "00688b9929888e7cbbdad63876f7a8c44fcee962a4",
+        "date": "2018-07-25T14:59:49+00:00",
+        "mime_type": "image/webp",
+        "size": 67638,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👍",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b203dc4809834d0255520747064d064d066c69079009690898808902448b02898c87a390b09a8f8c9d9ca9a3818144834284858387818c888182448442848d81969a9da781818785898a8ba6998605938e008188839f42a447895587006688044e8c5b9d66aa68ac4a06b95100b9"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7470
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422560,
+        "access_hash": -88024139318753286,
+        "file_reference": "00688b99294ba6f063e936731e45efb5638b7ca6c6",
+        "date": "2018-07-25T15:00:11+00:00",
+        "mime_type": "image/webp",
+        "size": 61352,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🦀",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b03b204dc65434706824a0648574868544604664745554c5d544949575a596380814e4c4f4f464b58785a46044b74434c00885002834c925c98689b778a0049088f024b029646b1418701419480a943bc808c82b79286059a818144844285858191849688828241878187898289868f8883824389808a8782814c8948988abc8702bf890781874293809883858254834f918a048a93087f9a075b9a4709bd4b058604508264817082"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7864
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422561,
+        "access_hash": -8048110054362923607,
+        "file_reference": "00688b992906c0b8c801564411c28934df777ab5d0",
+        "date": "2018-07-25T15:00:35+00:00",
+        "mime_type": "image/webp",
+        "size": 60104,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "💔",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1905b202dc544168827b8065434a046a4d0247095055616d6e46094244414b42504248494f4a584356806d80460780504261807082518e6592778141874688489f7d89064a0890004c069445ac418605419480ac448604829987a58dba958683a396a79b8181448442848e879d8f9f9e8183878189848589969a97ac808183438342818283848386858b92ab93b4888703848e0663940164b3490289094f068a04538267807a80"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7250
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422562,
+        "access_hash": -7263072156282527887,
+        "file_reference": "00688b9929e0b1c60a6f5c75566909bb14b51c8514",
+        "date": "2018-07-25T15:00:57+00:00",
+        "mime_type": "image/webp",
+        "size": 55676,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😄",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1b06b203dc4807834e014953037d5e5e707846054903454a46584a5f4345427942470180518468827280438e618f669547058b054f0094064f009c808907458c00898d88a28fb29ba299b0ab8609860981814382438383828783898682838188818a828189878a8a82838088828e81848487888a85838a86088a880280a24188044e8a09808181434242428043824384459a718802470389084b87759d77a2418281434342578e758c47098c"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6556
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422563,
+        "access_hash": -842130665303837421,
+        "file_reference": "00688b99298edbca5231730c730622d53c7d4b0ee6",
+        "date": "2018-07-25T15:01:07+00:00",
+        "mime_type": "image/webp",
+        "size": 59208,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "🎉",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b204dc4903834d0455520947056e6f7d49067d510180534369807c82489a47039d470480808689888b86884e56475c8c4b9d51a95b84454883454582448742894385418b4f9052b86888096e90066ea180bd818806889186b49bb9a5818387808a82948c9499a3a881818542878283898c9a949e83818187828a81838c8d8e948182869b859c428045434580808389858a87828581908196829881b1808704419542b54c8700448847924b9942834942488186a66b880447058a044f895545624943818585858880854581478142804e8a548b5c877886480686"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8180
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422564,
+        "access_hash": -1284390929461713814,
+        "file_reference": "00688b99295d6ba1b56b6966d9c72588d0d7576e1f",
+        "date": "2018-07-25T15:02:14+00:00",
+        "mime_type": "image/webp",
+        "size": 56212,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👙",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1906b203dc4903854d045452084704545475460973490080464a524b5a4352806680798053426780798044864b864d8249824f8458834daf48028605490086428a5090528281858187808141814480458446b35ebb619848b547880047a5808705458a06889287b499b9a4818387808a828483959097928081448143828081834184808e8e8c97989e8181448342848b868a94969c8181448342848684848c88908081834184808182418580888a9d8cad8c8803808a05558f02490795024a8853905f9844824f8251844281808544865f894606894a0189"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7212
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422565,
+        "access_hash": 2560429351548764881,
+        "file_reference": "00688b992976b522e6aa636478d36813fdc6176b30",
+        "date": "2018-07-25T15:02:32+00:00",
+        "mime_type": "image/webp",
+        "size": 61984,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1903b302dc76474b018a500480534346047c4707470754594c46074c4a078069444806804c07814b955a9c628a4c895a8c6b87688e4703b54a048544945399548606478d078094048099808904478b028385839899989a80808186828683809187008f87014281808d8495828643968396828083958496868686828c8a808143834284828287838a86818244834284818187808884859c80bd80890080aa848807808c0981864f98549e478a7bbe470586046f874b0580500480"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7952
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422567,
+        "access_hash": -2190528244161569925,
+        "file_reference": "00688b99294cff3a593c43637151fb315ed84b30ee",
+        "date": "2018-07-25T15:11:05+00:00",
+        "mime_type": "image/webp",
+        "size": 78622,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "💪",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1804b302dc71824a09414f01434680844e805054494e485b5e42448a4b864c43806652644f83828b4a884844824d4b4e46428d8189508b4481434a804d834290418c4247424e564e4f808445944692484b454b0445510480548d480992490283414b4349458544835a8d5984814b4b484988839d6a996a43809b55ad7187498e0980920080ad808e08519201858707b5b78d08a99801439683a88388098084878b838b558249ab6db84381898885895085438a548d4a824a50514581818d888c8c81848b488c448184548e558e48874ba05aad53914c01814e0881"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8874
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422568,
+        "access_hash": 7678961052482820263,
+        "file_reference": "00688b9929af267f55f7d8aaa523de35e2b1c303f1",
+        "date": "2018-08-20T18:59:36+00:00",
+        "mime_type": "image/webp",
+        "size": 35106,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😡",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1607b302dc49018451097653084e074b77974709b24c009058945ea774894c885d90698d56a167b07a8b4e8d61976ea672ae708a04708f80a845b6809286bdba86048707828d4a9b46a7858e909992a88391489f4aaf428d809d82aa84998db09a8701878c939696a5828c479645a3849488a146b3569d788604490387034f84460583480180458147464d45538362857685"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 6812
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422569,
+        "access_hash": -4252627940846293486,
+        "file_reference": "00688b9929181826073280b89463e0f7c1cd483f01",
+        "date": "2018-08-20T18:59:51+00:00",
+        "mime_type": "image/webp",
+        "size": 51560,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "👉",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1407b302dc514365857580524549014701490148098061aa70b54705875363726c46064f5a4a7d5b49014e586a6a6c4702426087014b008a004b0987429f42a58087838c9599908b45904e9e4a9785a3a1b9a69d87a859860555a586b8a28804b78886928999909a98b2b58701880184868f8f9196838b84b080bb458e539353a380924a9b4dab438d8b9787a5438d52975ba05c9d470588014c0286095f486d8146059a42824a8d4e8e4f8465807580"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8984
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422570,
+        "access_hash": 8549240696728082694,
+        "file_reference": "00688b99292e7bcd124f029b951e0ec22b0192d9fc",
+        "date": "2018-08-20T19:00:03+00:00",
+        "mime_type": "image/webp",
+        "size": 44550,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😏",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1501b302dc5b4747068a4a0080524746047f470148024c604b460450490744575669587f4364917a91480980504d5851664246814a04804a0684468d47924b894791569a5a914790008092098099808b03478d02808983a7aab0b38d8ea098aba88d938ba994bd889293a298b5849381a682b8818c88938a9d869a80bc8088068093868700808805458c589961a243834c8f50914f864907834b0481458049454d464b424f8458865f864700804a0180"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7284
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422571,
+        "access_hash": 8194637603959297193,
+        "file_reference": "00688b9929b4e7e1a4baa51d56d9eb9abe4bb51827",
+        "date": "2018-08-20T19:00:12+00:00",
+        "mime_type": "image/webp",
+        "size": 41988,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😱",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1506b302dc5b464b07894d06804e4646047d4702470549504d6d487f844f92599a668f589779954804426e524809414d04854f90599865894f8860926e864a9c5ea5638e46870580890380a8808b02478e0880a1878702bc890388049ba0a78a09998e08469156a05ab14390879f82af448b4b944fa048994c86045c88064a8d599864a44787549b5c9e51874b02804d0780"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 7198
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422572,
+        "access_hash": -5124891299332191927,
+        "file_reference": "00688b9929c58cee7492f213dd2a3d5be1fa40bdfd",
+        "date": "2018-08-20T19:00:27+00:00",
+        "mime_type": "image/webp",
+        "size": 48956,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😬",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "1a05b302dc5d464a03894c078045424d4d5251574f6d5646066a4f4e6f6576794349444d02804e00864d9b59a365884a96629c6e8c57576d4d4701854d9658a061a061a06287027887438f4c954d9545af808608808e80a244b0808681b1b68609be9087aa4cbd4994848803b9890187048488849000809009448a508f539a438997a88987084b9e47098a044b008b025d874904804c0780"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 8058
+          }
+        ],
+        "video_thumbs": []
+      },
+      {
+        "_": "Document",
+        "id": 63200997811422573,
+        "access_hash": 5764015573519361647,
+        "file_reference": "00688b9929a27677c1fe45c264f6c7686ade566c72",
+        "date": "2018-08-20T19:00:35+00:00",
+        "mime_type": "image/webp",
+        "size": 47032,
+        "dc_id": 1,
+        "attributes": [
+          {
+            "_": "DocumentAttributeImageSize",
+            "w": 512,
+            "h": 512
+          },
+          {
+            "_": "DocumentAttributeSticker",
+            "alt": "😃",
+            "stickerset": {
+              "_": "InputStickerSetID",
+              "id": 63200997811421198,
+              "access_hash": 6930103799411034779
+            },
+            "mask": false,
+            "mask_coords": null
+          },
+          {
+            "_": "DocumentAttributeFilename",
+            "file_name": "sticker.webp"
+          }
+        ],
+        "thumbs": [
+          {
+            "_": "PhotoPathSize",
+            "type": "j",
+            "bytes": "2500b302dc4f45668774805047565d686256466b8e4607855f4c676147066564454a0246094b044a03455181624372425248624974814948534959424f456c807a82478c4b8e538450535b456d8a4c860747018801470487429081984289428d4f965291478a02808c06809580b0448608808a8290899a899080a452b5498c879697a1a099949881b6a485868d899090858a848c05808d07448e539656a54390909796a48387809980a1808e84a480b143894b904e994fb549ab7488074686509457984c8568807580"
+          },
+          {
+            "_": "PhotoSize",
+            "type": "m",
+            "w": 128,
+            "h": 128,
+            "size": 9250
+          }
+        ],
+        "video_thumbs": []
+      }
+    ]
+  }
+}

@@ -326,6 +326,10 @@ type Config struct {
 	// 存量账号的一次性赠送由迁移 0094 backfill，不受该配置影响。
 	PremiumGrantMonths int
 
+	// DefaultStickerSetID 是新注册账号自动安装的默认贴纸集 id；<=0 关闭。
+	// 存量账号的一次性安装由迁移 20260721202007 backfill，不受该配置影响。
+	DefaultStickerSetID int64
+
 	// PasskeyRPID 是 passkey(WebAuthn) relying-party id（域名）。服务端据此校验
 	// authData.rpIdHash；真机经 Android CredentialManager 时须与托管 assetlinks.json
 	// 的公网域名一致(详见 docs)。本地/软件 authenticator 验证用任意稳定值即可。
@@ -616,6 +620,7 @@ func Load() (Config, error) {
 		CallExpiryInterval:    envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
 		PremiumGrantMonths:               envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
+		DefaultStickerSetID:              envInt64Or("TELESRV_DEFAULT_STICKER_SET_ID", 773947703670341644),
 		PasskeyRPID:                      envOr("TELESRV_PASSKEY_RP_ID", "telesrv.net"),
 		PasskeyAllowedOrigins:            envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
 		StarsStartingGrant:               int64(envIntOr("TELESRV_STARS_STARTING_GRANT", 1000)),

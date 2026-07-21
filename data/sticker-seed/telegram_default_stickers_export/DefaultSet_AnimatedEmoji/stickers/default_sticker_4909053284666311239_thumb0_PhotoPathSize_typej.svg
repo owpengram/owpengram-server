@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Telegram PhotoPathSize Data -->
+<!-- Type: j -->
+<!-- Bytes Length: 177 -->
+<!-- Raw Hex Data: 2101ac01dc5848687c74480349516c4609684806824a8c4e954f9b42b7808802809d8089074a8701a64d995ab2688705478e5986086a8701f3cc10019c07dc5c844b4c525c42436049654c4b485152545e47579450a54f86818a9091948b86ac88b4458c5448015749076e6272af4605b046088144445b825cb948948fa19c8788a187af9a83838a948698438366836a8148444d646f5244824986488b83918900898a01b28fba73b779be4c90939c519c -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <style>
+      .path-data {
+        fill: #666;
+        stroke: none;
+      }
+    </style>
+  </defs>
+  <!-- This is a placeholder SVG. The actual path data is in the comments above. -->
+  <!-- To properly render this, you need to decode the Telegram path format. -->
+  <rect x="10" y="10" width="80" height="80" class="path-data" opacity="0.3"/>
+  <text x="50" y="50" text-anchor="middle" font-family="Arial" font-size="8" fill="#333">
+    PhotoPath
+  </text>
+  <text x="50" y="60" text-anchor="middle" font-family="Arial" font-size="6" fill="#666">
+    Type: j
+  </text>
+</svg>

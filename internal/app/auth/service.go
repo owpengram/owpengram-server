@@ -108,6 +108,9 @@ type Service struct {
 	emailSignupPhonePrefixes []string
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
+	// stickerSets/defaultStickerSetID：新注册账号默认安装的贴纸集（见 WithDefaultStickerSet）。
+	stickerSets         userStickerSetInstaller
+	defaultStickerSetID int64
 }
 
 type loginEmailStore interface {
@@ -169,6 +172,20 @@ func WithBotLogin(bots store.BotStore) Option {
 func WithPremiumGrant(months int) Option {
 	return func(s *Service) {
 		s.premiumGrantMonths = months
+	}
+}
+
+// userStickerSetInstaller 是 WithDefaultStickerSet 所需的最小写入面。
+type userStickerSetInstaller interface {
+	InstallUserStickerSet(ctx context.Context, userID int64, setID int64, kind domain.StickerSetKind, archived bool, installedDate int) error
+}
+
+// WithDefaultStickerSet 让新注册账号自动安装一个默认贴纸集（setID<=0 关闭）。
+// 存量账号的同等安装由迁移 20260721202007 一次性 backfill。
+func WithDefaultStickerSet(installer userStickerSetInstaller, setID int64) Option {
+	return func(s *Service) {
+		s.stickerSets = installer
+		s.defaultStickerSetID = setID
 	}
 }
 
@@ -1248,6 +1265,11 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err
+	}
+	// 给新账号预装一个默认贴纸集，让贴纸面板不至于空空如也。best-effort：装不上不阻断注册。
+	// 存量账号的同等安装见迁移 20260721202007。
+	if s.stickerSets != nil && s.defaultStickerSetID > 0 {
+		_ = s.stickerSets.InstallUserStickerSet(ctx, u.ID, s.defaultStickerSetID, domain.StickerSetKindStickers, false, int(time.Now().Unix()))
 	}
 	loginMessage := domain.Message{}
 	// A new account has no owner/dialog at issuance time. Only the development
