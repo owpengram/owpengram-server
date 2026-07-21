@@ -1,4 +1,4 @@
-import { CheckCircle2, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -11,6 +11,7 @@ import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
 type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
+type GiftPageSize = 10 | 20 | 50 | 100 | "all";
 
 function officialGiftAttributeCount(gift: OfficialStarGiftRow) {
   return gift.model_count + gift.pattern_count + gift.backdrop_count;
@@ -111,6 +112,8 @@ export function GiftsPage() {
   const [bulkReason, setBulkReason] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState("");
+  const [pageSize, setPageSize] = useState<GiftPageSize>(10);
+  const [page, setPage] = useState(1);
 
   async function load() {
     setError("");
@@ -156,7 +159,19 @@ export function GiftsPage() {
     );
   }, [gifts, query]);
 
-  const allVisibleSelected = visibleGifts.length > 0 && visibleGifts.every((gift) => selected.has(gift.GiftID));
+  useEffect(() => { setPage(1); }, [query, pageSize]);
+
+  const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(visibleGifts.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedGifts = useMemo(() => {
+    if (pageSize === "all") return visibleGifts;
+    const start = (currentPage - 1) * pageSize;
+    return visibleGifts.slice(start, start + pageSize);
+  }, [visibleGifts, currentPage, pageSize]);
+  const pageRangeStart = pagedGifts.length === 0 ? 0 : pageSize === "all" ? 1 : (currentPage - 1) * pageSize + 1;
+  const pageRangeEnd = pageRangeStart === 0 ? 0 : pageRangeStart + pagedGifts.length - 1;
+
+  const allVisibleSelected = pagedGifts.length > 0 && pagedGifts.every((gift) => selected.has(gift.GiftID));
 
   function toggleSelected(giftID: string) {
     setSelected((prev) => {
@@ -171,11 +186,11 @@ export function GiftsPage() {
     setSelected((prev) => {
       if (allVisibleSelected) {
         const next = new Set(prev);
-        for (const gift of visibleGifts) next.delete(gift.GiftID);
+        for (const gift of pagedGifts) next.delete(gift.GiftID);
         return next;
       }
       const next = new Set(prev);
-      for (const gift of visibleGifts) next.add(gift.GiftID);
+      for (const gift of pagedGifts) next.add(gift.GiftID);
       return next;
     });
   }
@@ -305,6 +320,15 @@ export function GiftsPage() {
       <QueryPanel>
         <div className="toolbar">
           <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("gifts.searchPlaceholder")} /></label>
+          <label className="gift-page-size"><span>{t("gifts.perPage")}</span>
+            <select value={String(pageSize)} onChange={(event) => setPageSize(event.target.value === "all" ? "all" : (Number(event.target.value) as GiftPageSize))}>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">{t("gifts.perPageAll")}</option>
+            </select>
+          </label>
           <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
         </div>
       </QueryPanel>
@@ -324,7 +348,7 @@ export function GiftsPage() {
         <table className="data-table gift-table">
           <thead><tr><th className="gift-select-col"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} aria-label={t("gifts.bulkSelectAll")} /></th><th>{t("gifts.animation")}</th><th>{t("gifts.idRevision")}</th><th>{t("gifts.title")}</th><th>{t("gifts.price")}</th><th>{t("gifts.source")}</th><th>{t("gifts.received")}</th><th>{t("common.status")}</th><th>{t("common.updatedAt")}</th><th>{t("common.actions")}</th></tr></thead>
           <tbody>
-            {visibleGifts.map((gift) => (
+            {pagedGifts.map((gift) => (
               <tr className={gift.Enabled ? "" : "gift-row-disabled"} key={gift.GiftID}>
                 <td className="gift-select-col"><input type="checkbox" checked={selected.has(gift.GiftID)} onChange={() => toggleSelected(gift.GiftID)} aria-label={t("gifts.bulkSelectOne", { id: gift.GiftID })} /></td>
                 <td><LottiePreview giftID={gift.GiftID} revision={gift.Revision} compact /></td>
@@ -338,10 +362,22 @@ export function GiftsPage() {
                 <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
-            {visibleGifts.length === 0 && <EmptyRow colSpan={10} />}
+            {pagedGifts.length === 0 && <EmptyRow colSpan={10} />}
           </tbody>
         </table>
       </div>
+      {pageSize !== "all" && visibleGifts.length > 0 && <div className="gift-pager">
+        <span className="gift-pager-range">{t("gifts.pageRange", { start: pageRangeStart, end: pageRangeEnd, total: visibleGifts.length })}</span>
+        <div className="gift-pager-controls">
+          <button className="btn compact-btn" type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+            <ChevronLeft size={14} /> {t("gifts.pagePrev")}
+          </button>
+          <span className="gift-pager-page">{t("gifts.pageOf", { page: currentPage, total: totalPages })}</span>
+          <button className="btn compact-btn" type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>
+            {t("gifts.pageNext")} <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>}
 
       {importOpen && createPortal(
         <div className="modal-backdrop" role="presentation">

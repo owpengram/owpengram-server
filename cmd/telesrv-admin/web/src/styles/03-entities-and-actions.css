@@ -419,7 +419,7 @@
   gap: 10px;
   padding: 9px 12px;
   margin-bottom: 10px;
-  background: #f3f8f7;
+  background: var(--panel-strong);
   border: 1px solid var(--line);
   border-radius: 9px;
 }
@@ -427,6 +427,38 @@
 .gift-bulk-reason { flex: 1; min-width: 160px; }
 .gift-bulk-reason input { height: 34px; }
 .gift-bulk-error { color: #b42318; font-size: 11px; font-weight: 700; }
+
+.gift-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.gift-page-size select {
+  height: 30px;
+  padding: 0 8px;
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.gift-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.gift-pager-range { color: var(--muted); font-size: 11px; font-weight: 700; }
+.gift-pager-controls { display: flex; align-items: center; gap: 10px; }
+.gift-pager-page { color: var(--text); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .gift-animation-shell.compact { width: 56px; min-height: 56px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; }
 .gift-animation-shell.compact .gift-animation { width: 54px; height: 54px; }
 .gift-animation-shell.compact .gift-play { right: 3px; bottom: 3px; width: 20px; height: 20px; }
