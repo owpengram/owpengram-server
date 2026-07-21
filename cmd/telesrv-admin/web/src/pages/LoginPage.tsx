@@ -2,7 +2,7 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert } from "../components/ui";
-import { LanguageSwitch, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
 export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
   const { t } = useI18n();
@@ -29,14 +29,13 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
       <section className="login-panel">
         <div className="login-head">
           <div className="brand brand-elevated">
-            <span className="brand-mark">T</span>
+            <span className="brand-mark"><img src="/logo.png" alt="OwpenGram" /></span>
             <span>
-              <strong>telesrv</strong>
+              <strong>OwpenGram</strong>
               <small>{t("app.adminConsole")}</small>
             </span>
           </div>
           <div className="login-head-actions">
-            <LanguageSwitch />
             <span className="login-chip">{t("app.localAccess")}</span>
           </div>
         </div>

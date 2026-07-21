@@ -110,8 +110,8 @@
   height: 38px;
   place-items: center;
   color: var(--brand);
-  background: #edf7f4;
-  border: 1px solid #c9e2dc;
+  background: #eaf2fd;
+  border: 1px solid #c7dcf9;
   border-radius: 8px;
 }
 
@@ -217,9 +217,9 @@
   align-items: center;
   gap: 8px;
   padding: 7px 9px;
-  color: #0f3f38;
-  background: #eef8f5;
-  border: 1px solid #b9dcd3;
+  color: #1e3a8a;
+  background: #eaf2fe;
+  border: 1px solid #c3d9f7;
   border-radius: 7px;
 }
 
@@ -291,7 +291,7 @@
 
 .picker-row:hover,
 .picker-row.selected {
-  background: #f3f8f6;
+  background: #eef4ff;
 }
 
 .picker-row strong,
@@ -410,7 +410,7 @@ textarea:focus {
 }
 
 .btn.primary:hover:not(:disabled) {
-  background: #12594f;
+  background: #1d4ed8;
 }
 
 .btn.ghost {

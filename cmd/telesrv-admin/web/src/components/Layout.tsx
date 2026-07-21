@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { LanguageSwitch, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { AppLink } from "./AppLink";
 
@@ -21,9 +21,9 @@ export function BootScreen() {
   return (
     <div className="boot-screen">
       <div className="brand compact brand-elevated">
-        <span className="brand-mark">T</span>
+        <span className="brand-mark"><img src="/logo.png" alt="OwpenGram" /></span>
         <span>
-          <strong>telesrv</strong>
+          <strong>OwpenGram</strong>
           <small>{t("app.adminConsole")}</small>
         </span>
       </div>
@@ -64,9 +64,9 @@ export function Shell({
     <div className="shell">
       <aside className="sidebar">
         <AppLink className="brand" href="/" navigate={navigate}>
-          <span className="brand-mark">T</span>
+          <span className="brand-mark"><img src="/logo.png" alt="OwpenGram" /></span>
           <span>
-            <strong>telesrv</strong>
+            <strong>OwpenGram</strong>
             <small>{t("app.adminConsole")}</small>
           </span>
         </AppLink>
@@ -123,7 +123,6 @@ export function Shell({
             <h1>{routeTitle(route.path, t)}</h1>
           </div>
           <div className="topbar-actions">
-            <LanguageSwitch />
             <span className="actor-pill">{t("layout.actor", { actor })}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={t("layout.logout")}>
               <LogOut size={16} /> {t("layout.logout")}
