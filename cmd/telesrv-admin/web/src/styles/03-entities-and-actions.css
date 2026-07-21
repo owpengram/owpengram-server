@@ -408,8 +408,25 @@
 
 .gift-table-wrap { background: #ffffff; }
 .gift-table { min-width: 1080px; }
-.gift-table th:first-child { width: 74px; }
+.gift-table th:nth-child(2) { width: 74px; }
 .gift-table td { vertical-align: middle; }
+.gift-select-col { width: 34px; text-align: center; }
+.gift-select-col input { width: 15px; height: 15px; }
+
+.gift-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  background: #f3f8f7;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.gift-bulk-count { color: var(--text); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.gift-bulk-reason { flex: 1; min-width: 160px; }
+.gift-bulk-reason input { height: 34px; }
+.gift-bulk-error { color: #b42318; font-size: 11px; font-weight: 700; }
 .gift-animation-shell.compact { width: 56px; min-height: 56px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; }
 .gift-animation-shell.compact .gift-animation { width: 54px; height: 54px; }
 .gift-animation-shell.compact .gift-play { right: 3px; bottom: 3px; width: 20px; height: 20px; }

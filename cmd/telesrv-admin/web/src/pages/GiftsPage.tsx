@@ -107,6 +107,10 @@ export function GiftsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [importError, setImportError] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState("");
 
   async function load() {
     setError("");
@@ -151,6 +155,61 @@ export function GiftsPage() {
       gift.SourceFormat.toLowerCase().includes(normalized)
     );
   }, [gifts, query]);
+
+  const allVisibleSelected = visibleGifts.length > 0 && visibleGifts.every((gift) => selected.has(gift.GiftID));
+
+  function toggleSelected(giftID: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(giftID)) next.delete(giftID);
+      else next.add(giftID);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelected((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const gift of visibleGifts) next.delete(gift.GiftID);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const gift of visibleGifts) next.add(gift.GiftID);
+      return next;
+    });
+  }
+
+  async function bulkSetEnabled(nextEnabled: boolean) {
+    if (!bulkReason.trim()) {
+      setBulkError(t("action.reasonRequired"));
+      return;
+    }
+    setBulkBusy(true);
+    setBulkError("");
+    const ids = Array.from(selected);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await api.action("/api/actions/set-gift-enabled", {
+          gift_id: id,
+          enabled: nextEnabled,
+          reason: bulkReason.trim(),
+          confirm: true
+        });
+      } catch {
+        failed++;
+      }
+    }
+    setBulkBusy(false);
+    if (failed > 0) {
+      setBulkError(t("gifts.bulkStatusFailed", { failed, total: ids.length }));
+    } else {
+      setSelected(new Set());
+      setBulkReason("");
+    }
+    await load();
+  }
 
   function uploadForm(confirm: boolean, commandID = "") {
     if (!file) throw new Error(t("gifts.fileRequired"));
@@ -249,12 +308,25 @@ export function GiftsPage() {
           <span className="gift-list-summary">{t("gifts.listSummary", { shown: visibleGifts.length, total: gifts.length })}</span>
         </div>
       </QueryPanel>
+      {selected.size > 0 && <div className="gift-bulk-toolbar">
+        <span className="gift-bulk-count">{t("gifts.bulkSelected", { count: selected.size })}</span>
+        <label className="gift-reason-field gift-bulk-reason"><span>{t("gifts.reason")}</span><input value={bulkReason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setBulkReason(e.target.value)} /></label>
+        <button className="btn" type="button" onClick={() => bulkSetEnabled(true)} disabled={bulkBusy}>
+          {bulkBusy ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />} {t("gifts.bulkEnable")}
+        </button>
+        <button className="btn" type="button" onClick={() => bulkSetEnabled(false)} disabled={bulkBusy}>
+          {bulkBusy ? <Loader2 className="spin" size={14} /> : <Pause size={14} />} {t("gifts.bulkDisable")}
+        </button>
+        <button className="btn" type="button" onClick={() => { setSelected(new Set()); setBulkError(""); }} disabled={bulkBusy}>{t("common.close")}</button>
+        {bulkError && <span className="gift-bulk-error">{bulkError}</span>}
+      </div>}
       <div className="table-wrap gift-table-wrap">
         <table className="data-table gift-table">
-          <thead><tr><th>{t("gifts.animation")}</th><th>{t("gifts.idRevision")}</th><th>{t("gifts.title")}</th><th>{t("gifts.price")}</th><th>{t("gifts.source")}</th><th>{t("gifts.received")}</th><th>{t("common.status")}</th><th>{t("common.updatedAt")}</th><th>{t("common.actions")}</th></tr></thead>
+          <thead><tr><th className="gift-select-col"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} aria-label={t("gifts.bulkSelectAll")} /></th><th>{t("gifts.animation")}</th><th>{t("gifts.idRevision")}</th><th>{t("gifts.title")}</th><th>{t("gifts.price")}</th><th>{t("gifts.source")}</th><th>{t("gifts.received")}</th><th>{t("common.status")}</th><th>{t("common.updatedAt")}</th><th>{t("common.actions")}</th></tr></thead>
           <tbody>
             {visibleGifts.map((gift) => (
               <tr className={gift.Enabled ? "" : "gift-row-disabled"} key={gift.GiftID}>
+                <td className="gift-select-col"><input type="checkbox" checked={selected.has(gift.GiftID)} onChange={() => toggleSelected(gift.GiftID)} aria-label={t("gifts.bulkSelectOne", { id: gift.GiftID })} /></td>
                 <td><LottiePreview giftID={gift.GiftID} revision={gift.Revision} compact /></td>
                 <td className="mono">{gift.GiftID} / {gift.Revision}</td>
                 <td><strong className="gift-table-title">{gift.Title || `Gift #${gift.GiftID}`}</strong><span className="gift-sort-order">{t("gifts.sortOrder")}: {gift.SortOrder}</span></td>
@@ -266,7 +338,7 @@ export function GiftsPage() {
                 <td><div className="gift-table-actions"><button className="btn compact-btn collectible-button" type="button" onClick={() => setCollectibleGift(gift)}><Gem size={13} />{t("collectibles.manage")}</button><button className="btn compact-btn" type="button" onClick={() => startRevision(gift)}>{t("gifts.replace")}</button><ActionButton compact tone="neutral" label={gift.Enabled ? t("gifts.disable") : t("gifts.enable")} path="/api/actions/set-gift-enabled" payload={() => ({ gift_id: gift.GiftID, enabled: !gift.Enabled })} onDone={() => void load()} /></div></td>
               </tr>
             ))}
-            {visibleGifts.length === 0 && <EmptyRow colSpan={9} />}
+            {visibleGifts.length === 0 && <EmptyRow colSpan={10} />}
           </tbody>
         </table>
       </div>
