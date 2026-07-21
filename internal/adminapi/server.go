@@ -35,6 +35,7 @@ type Service interface {
 	DeletePrivateHistory(ctx context.Context, req admin.DeletePrivateHistoryRequest) (admin.CommandResult, error)
 	ImportStarGift(ctx context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error)
 	ImportOfficialStarGift(ctx context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error)
+	ImportAllOfficialStarGifts(ctx context.Context, req admin.ImportAllOfficialStarGiftsRequest) (admin.CommandResult, error)
 	OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSummary, error)
 	OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error)
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
@@ -103,6 +104,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/official-gifts", s.authenticated(s.handleOfficialStarGifts))
 	mux.HandleFunc("GET /v1/official-gifts/{id}/animation", s.authenticated(s.handleOfficialStarGiftAnimation))
 	mux.HandleFunc("POST /v1/official-gifts/import", s.authenticated(s.handleImportOfficialStarGift))
+	mux.HandleFunc("POST /v1/official-gifts/import-all", s.authenticated(s.handleImportAllOfficialStarGifts))
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
@@ -280,6 +282,15 @@ func (s *Server) handleImportOfficialStarGift(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := s.svc.ImportOfficialStarGift(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleImportAllOfficialStarGifts(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportAllOfficialStarGiftsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.ImportAllOfficialStarGifts(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

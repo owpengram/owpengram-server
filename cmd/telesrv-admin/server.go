@@ -73,6 +73,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/delete-history", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteHistoryAPI)))
 	mux.Handle("POST /api/actions/import-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportStarGiftAPI)))
 	mux.Handle("POST /api/actions/import-official-gift", s.requireAuthAPI(http.HandlerFunc(s.handleImportOfficialStarGiftAPI)))
+	mux.Handle("POST /api/actions/import-all-official-gifts", s.requireAuthAPI(http.HandlerFunc(s.handleImportAllOfficialStarGiftsAPI)))
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
@@ -796,6 +797,24 @@ func (s *server) handleImportOfficialStarGiftAPI(w http.ResponseWriter, r *http.
 		SupplyTotal: body.SupplyTotal, SlugPrefix: body.SlugPrefix,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type importAllOfficialStarGiftsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+}
+
+func (s *server) handleImportAllOfficialStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
+	var body importAllOfficialStarGiftsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.ImportAllOfficialStarGiftsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-all-official-gifts"),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import-all", req)
 	writeCommandResultAPI(w, result, err)
 }
 

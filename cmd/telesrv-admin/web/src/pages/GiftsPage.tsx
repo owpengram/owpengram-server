@@ -290,6 +290,16 @@ export function GiftsPage() {
               </div>
               {importSource === "official" ? <section className="official-gift-picker">
                 <div className="gift-import-note"><span>{t("gifts.officialHint")}</span><div className="gift-format-chips"><span>{officialGifts.length}</span><span>SHA-256</span></div></div>
+                <div className="official-gift-bulk-import">
+                  <ActionButton
+                    label={t("gifts.importAll")}
+                    path="/api/actions/import-all-official-gifts"
+                    payload={() => ({})}
+                    tone="neutral"
+                    icon={<Upload size={14} />}
+                    onDone={() => void load()}
+                  />
+                </div>
                 <div className="official-gift-tools">
                   <label className="searchbox"><Search size={15} /><input value={officialQuery} onChange={(e) => setOfficialQuery(e.target.value)} placeholder={t("gifts.officialSearch")} /></label>
                   <span>{t("gifts.officialResults", { shown: visibleOfficial.length, total: officialGifts.length })}</span>

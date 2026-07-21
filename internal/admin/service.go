@@ -19,19 +19,20 @@ import (
 )
 
 const (
-	ActionSetAccountFrozen        = "account.set_frozen"
-	ActionGrantPremium            = "account.grant_premium"
-	ActionGrantStars              = "account.grant_stars"
-	ActionSetVerified             = "account.set_verified"
-	ActionSetChannelVerified      = "channel.set_verified"
-	ActionRevokeSessions          = "account.revoke_sessions"
-	ActionDeletePrivateMessages   = "messages.delete_private_messages"
-	ActionDeletePrivateHistory    = "messages.delete_private_history"
-	ActionImportStarGift          = "gifts.import"
-	ActionImportOfficialStarGift  = "gifts.official.import"
-	ActionPublishGiftCollectibles = "gifts.collectibles.publish"
-	ActionSetStarGiftEnabled      = "gifts.set_enabled"
-	ActionSetStarGiftSortOrder    = "gifts.set_sort_order"
+	ActionSetAccountFrozen           = "account.set_frozen"
+	ActionGrantPremium               = "account.grant_premium"
+	ActionGrantStars                 = "account.grant_stars"
+	ActionSetVerified                = "account.set_verified"
+	ActionSetChannelVerified         = "channel.set_verified"
+	ActionRevokeSessions             = "account.revoke_sessions"
+	ActionDeletePrivateMessages      = "messages.delete_private_messages"
+	ActionDeletePrivateHistory       = "messages.delete_private_history"
+	ActionImportStarGift             = "gifts.import"
+	ActionImportOfficialStarGift     = "gifts.official.import"
+	ActionImportAllOfficialStarGifts = "gifts.official.import_all"
+	ActionPublishGiftCollectibles    = "gifts.collectibles.publish"
+	ActionSetStarGiftEnabled         = "gifts.set_enabled"
+	ActionSetStarGiftSortOrder       = "gifts.set_sort_order"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -936,6 +937,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		if bundle.Collectible == nil {
 			return CommandResult{}, domain.ErrStarGiftCollectibleInvalid
 		}
+		modelNames := map[string]int{}
 		models := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Models))
 		for index, value := range bundle.Collectible.Models {
 			animation, err := s.gifts.PrepareOfficialAnimation(value.Document.FileName, value.Document.Data)
@@ -947,11 +949,12 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 				return CommandResult{}, err
 			}
 			models = append(models, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectibleModel,
-				Name: strings.TrimSpace(value.Name), RarityKind: rarityKind, RarityPermille: permille,
+				Name: dedupeCollectibleAttributeName(modelNames, strings.TrimSpace(value.Name)), RarityKind: rarityKind, RarityPermille: permille,
 				Crafted: value.Crafted, OfficialDocumentID: value.DocumentID, SortOrder: index, Animation: &animation})
 			assetHashes = append(assetHashes, value.Document.SHA256)
 			rarityCounts[string(rarityKind)]++
 		}
+		patternNames := map[string]int{}
 		patterns := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Patterns))
 		for index, value := range bundle.Collectible.Patterns {
 			animation, err := s.gifts.PrepareOfficialAnimation(value.Document.FileName, value.Document.Data)
@@ -963,11 +966,12 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 				return CommandResult{}, err
 			}
 			patterns = append(patterns, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectiblePattern,
-				Name: strings.TrimSpace(value.Name), RarityKind: rarityKind, RarityPermille: permille,
+				Name: dedupeCollectibleAttributeName(patternNames, strings.TrimSpace(value.Name)), RarityKind: rarityKind, RarityPermille: permille,
 				OfficialDocumentID: value.DocumentID, SortOrder: index, Animation: &animation})
 			assetHashes = append(assetHashes, value.Document.SHA256)
 			rarityCounts[string(rarityKind)]++
 		}
+		backdropNames := map[string]int{}
 		backdrops := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Backdrops))
 		for index, value := range bundle.Collectible.Backdrops {
 			rarityKind, permille, err := officialRarity(value.Rarity)
@@ -975,7 +979,7 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 				return CommandResult{}, err
 			}
 			backdrops = append(backdrops, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectibleBackdrop,
-				Name: strings.TrimSpace(value.Name), BackdropID: value.BackdropID, CenterColor: value.CenterColor,
+				Name: dedupeCollectibleAttributeName(backdropNames, strings.TrimSpace(value.Name)), BackdropID: value.BackdropID, CenterColor: value.CenterColor,
 				EdgeColor: value.EdgeColor, PatternColor: value.PatternColor, TextColor: value.TextColor,
 				RarityKind: rarityKind, RarityPermille: permille, SortOrder: index})
 			rarityCounts[string(rarityKind)]++
@@ -1004,7 +1008,9 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		// inventory. Keep the complete source JSON as provenance, while publishing
 		// regular official imports as a fresh, locally purchasable catalog entry.
 		// Local resale counters and sale dates are derived by lifecycle writes.
-		Limited: false, SoldOut: false, Birthday: bundle.Gift.Birthday,
+		// Auction gifts are the one exception: star_gift_catalog_revision_auction_check
+		// requires limited=true whenever auction=true, so it can't be forced false here.
+		Limited: bundle.Gift.Auction, SoldOut: false, Birthday: bundle.Gift.Birthday,
 		RequirePremium: bundle.Gift.RequirePremium, LimitedPerUser: bundle.Gift.LimitedPerUser,
 		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: bundle.Gift.Auction,
 		AvailabilityRemains: 0, AvailabilityTotal: 0,
@@ -1054,6 +1060,92 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		}
 		return CommandResult{Message: "official star gift bundle imported", Details: details}, nil
 	})
+}
+
+type ImportAllOfficialStarGiftsRequest struct {
+	CommandMeta
+}
+
+// ImportAllOfficialStarGifts imports every gift in the official snapshot, one
+// ImportOfficialStarGift call each, all inside the single admin command this
+// request itself represents (so it gets the same dry-run/confirm handling
+// and audit trail as every other admin action; DryRun previews only report
+// the candidate count and do not touch the catalog). Each per-gift call gets
+// a CommandID stable across separate confirmed runs of this action
+// (bulk-official-gift-<source id>), so re-running the batch later is safe:
+// gifts already imported by a prior run replay their cached result
+// (CommandResult.AlreadyExecuted) instead of writing a duplicate catalog
+// entry — the catalog table has no unique constraint on official_gift_id, so
+// without this the same gift could otherwise be imported twice.
+func (s *Service) ImportAllOfficialStarGifts(ctx context.Context, req ImportAllOfficialStarGiftsRequest) (CommandResult, error) {
+	if s == nil || s.gifts == nil || s.officialGifts == nil {
+		return CommandResult{}, fmt.Errorf("official star gift importer is not configured")
+	}
+	items, err := s.officialGifts.List(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportAllOfficialStarGifts, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"total": len(items)}
+		if req.DryRun {
+			details["note"] = "dry run does not import; confirming imports all, skipping gifts already imported by a prior run"
+			return CommandResult{
+				Message: fmt.Sprintf("%d official gifts available to import", len(items)),
+				Details: details,
+			}, nil
+		}
+		imported, skipped, failed := 0, 0, 0
+		perGift := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			perReq := ImportOfficialStarGiftRequest{
+				CommandMeta: CommandMeta{
+					CommandID: fmt.Sprintf("bulk-official-gift-%d", item.ID),
+					Actor:     req.Actor,
+					Reason:    req.Reason,
+				},
+				SourceGiftID: strconv.FormatInt(item.ID, 10),
+				// Every attribute the snapshot has for an upgradeable gift is
+				// worth importing; CanUpgrade() is exactly the precondition
+				// ImportOfficialStarGift enforces for IncludeCollectible.
+				IncludeCollectible: item.CanUpgrade(),
+			}
+			result, opErr := s.ImportOfficialStarGift(ctx, perReq)
+			entry := map[string]any{"source_gift_id": perReq.SourceGiftID, "status": result.Status}
+			if opErr != nil {
+				failed++
+				entry["error"] = opErr.Error()
+			} else if result.AlreadyExecuted {
+				skipped++
+			} else {
+				imported++
+				entry["gift_id"] = result.Details["gift_id"]
+			}
+			perGift = append(perGift, entry)
+		}
+		details["imported"] = imported
+		details["skipped"] = skipped
+		details["failed"] = failed
+		details["gifts"] = perGift
+		return CommandResult{
+			Message: fmt.Sprintf("imported %d, skipped %d, failed %d of %d official gifts", imported, skipped, failed, len(items)),
+			Details: details,
+		}, nil
+	})
+}
+
+// dedupeCollectibleAttributeName disambiguates attribute names within one kind (models,
+// patterns, or backdrops each need distinct names per collectible_revision — see the
+// star_gift_collectible_{model,pattern,backdrop}_name_uniq constraints). Official Telegram
+// data legitimately reuses a display name across two distinct attributes of the same kind
+// (seen in practice: two different "Strawberry" models on one gift), which the DB would
+// otherwise reject outright on insert.
+func dedupeCollectibleAttributeName(seen map[string]int, name string) string {
+	key := strings.ToLower(name)
+	seen[key]++
+	if seen[key] == 1 {
+		return name
+	}
+	return fmt.Sprintf("%s (%d)", name, seen[key])
 }
 
 func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityKind, int, error) {
