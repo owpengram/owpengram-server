@@ -109,6 +109,15 @@ type User struct {
 	Contact     bool
 	Mutual      bool
 	CloseFriend bool
+	// RestrictionReasons are transient, viewer-scoped unavailability reasons.
+	// They are produced after loading the viewer-independent base user and must
+	// never be persisted in users or the base-user cache.
+	RestrictionReasons []UserRestrictionReason
+	// ContactNote/ContactNoteEntities are transient viewer-scoped contact
+	// projection fields. They must never be persisted into users or a
+	// viewer-independent base-user cache.
+	ContactNote         string
+	ContactNoteEntities []MessageEntity
 	// Bot 标识 bot 账号；置位时 BotInfoVersion 必须 ≥1（TDesktop 只认
 	// user TL 是否携带 bot_info_version 字段，且与 bot flag 共用 bit14）。
 	Bot            bool
@@ -151,6 +160,23 @@ type User struct {
 	DeletionReason  string
 	CreatedAt       time.Time
 	AccountDeleteAt time.Time
+}
+
+// UserRestrictionReason is the protocol-neutral form of Telegram's
+// restrictionReason. Platform "all" applies to TDesktop and official mobile
+// clients; Text is intentionally server supplied and directly user-visible.
+type UserRestrictionReason struct {
+	Platform string
+	Reason   string
+	Text     string
+}
+
+func AccountFrozenRestrictionReasons() []UserRestrictionReason {
+	return []UserRestrictionReason{{
+		Platform: "all",
+		Reason:   "frozen",
+		Text:     "This account is frozen.",
+	}}
 }
 
 // PremiumActiveAt 报告用户在 now（Unix 秒）时刻是否为有效会员。

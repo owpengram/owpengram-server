@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	telegramloginapp "telesrv/internal/app/telegramlogin"
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
@@ -33,6 +34,10 @@ const (
 	botFatherCmdSetInlineFB    = "setinlinefeedback"
 	botFatherCmdSetJoinGroups  = "setjoingroups"
 	botFatherCmdSetPrivacy     = "setprivacy"
+	botFatherCmdSetLogin       = "setlogin"
+	botFatherCmdLoginInfo      = "logininfo"
+	botFatherCmdResetLogin     = "resetloginsecret"
+	botFatherCmdDone           = "done"
 
 	botFatherStepName     = "name"
 	botFatherStepUsername = "username"
@@ -41,6 +46,8 @@ const (
 
 	botFatherDraftBotID       = "bot_id"
 	botFatherDraftBotUsername = "bot_username"
+
+	maxTelegramLoginCommandsPerMessage = 32
 )
 
 const botFatherHelpText = `I can help you create and manage ` + branding.ProductName + ` bots.
@@ -60,6 +67,10 @@ You can control me by sending these commands:
 /setinlinefeedback - change inline feedback settings
 /setjoingroups - toggle whether a bot can join groups
 /setprivacy - toggle a bot's group privacy mode
+/setlogin - configure Telegram Login allowed URLs and signing
+/logininfo - show a bot's Telegram Login configuration
+/resetloginsecret - rotate a bot's OIDC Client Secret
+/done - finish the active Telegram Login configuration
 /cancel - cancel the current operation
 /help - show this message`
 
@@ -169,12 +180,13 @@ func (s *Service) botReplyRandomID() int64 {
 // 必须作为原始内容透传给状态机，否则 /setcommands 的 /empty 永不可达、且首行
 // 带斜杠的命令列表会被截成命令名 "start" 静默销毁整个流程。
 var botFatherGlobalCommands = map[string]bool{
-	"start": true, "help": true, "cancel": true,
+	"start": true, "help": true, "cancel": true, botFatherCmdDone: true,
 	botFatherCmdNewBot: true, "mybots": true,
 	botFatherCmdToken: true, botFatherCmdRevoke: true,
 	botFatherCmdSetName: true, botFatherCmdSetDescription: true, botFatherCmdSetAbout: true,
 	botFatherCmdSetCommands: true, botFatherCmdSetInline: true, botFatherCmdSetInlineGeo: true,
 	botFatherCmdSetInlineFB: true, botFatherCmdSetJoinGroups: true, botFatherCmdSetPrivacy: true,
+	botFatherCmdSetLogin: true, botFatherCmdLoginInfo: true, botFatherCmdResetLogin: true,
 }
 
 func (s *Service) handleBotFather(ctx context.Context, userID int64, text string) botReply {
@@ -231,6 +243,9 @@ var pickerPrompts = map[string]string{
 	botFatherCmdSetInlineGeo:   "Choose a bot to change inline location requests for. Send the bot's username:",
 	botFatherCmdSetJoinGroups:  "Choose a bot to configure group joining for. Send the bot's username:",
 	botFatherCmdSetPrivacy:     "Choose a bot to configure group privacy for. Send the bot's username:",
+	botFatherCmdSetLogin:       "Choose a bot to configure Telegram Login for. Send the bot's username:",
+	botFatherCmdLoginInfo:      "Choose a bot whose Telegram Login configuration you want to inspect:",
+	botFatherCmdResetLogin:     "Choose a bot whose OIDC Client Secret you want to rotate:",
 }
 
 // startBotPicker 列出 owner 的 bot 并进入 choose step（所有需先选 bot 的命令共用）。
@@ -277,7 +292,7 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
 		return botReply{Text: botFatherHelpText}
 	case "cancel":
-		_, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
+		state, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
 		if err != nil {
 			s.log.Error("botfather: get chat state", zap.Int64("user_id", userID), zap.Error(err))
 			return internalReply()
@@ -289,7 +304,12 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 			s.log.Error("botfather: delete chat state", zap.Int64("user_id", userID), zap.Error(err))
 			return internalReply()
 		}
+		if state.Command == botFatherCmdSetLogin && state.Step == botFatherStepValue {
+			return botReply{Text: "Telegram Login configuration closed. Changes that were already applied have been kept."}
+		}
 		return botReply{Text: "The command has been cancelled. Anything else I can do for you? Send /help for a list of commands."}
+	case botFatherCmdDone:
+		return s.finishTelegramLoginConfiguration(ctx, userID)
 	case botFatherCmdNewBot:
 		count, err := s.bots.CountBotsByOwner(ctx, userID)
 		if err != nil {
@@ -322,7 +342,8 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 	case botFatherCmdToken, botFatherCmdRevoke,
 		botFatherCmdSetName, botFatherCmdSetDescription, botFatherCmdSetAbout,
 		botFatherCmdSetCommands, botFatherCmdSetInline, botFatherCmdSetInlineGeo,
-		botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy:
+		botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy,
+		botFatherCmdSetLogin, botFatherCmdLoginInfo, botFatherCmdResetLogin:
 		return s.startBotPicker(ctx, userID, cmd)
 	case botFatherCmdSetInlineFB:
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
@@ -351,6 +372,8 @@ func valuePrompt(cmd, username string) string {
 		return fmt.Sprintf("Send 'enable' to allow @%s to be added to groups, or 'disable' to prevent it.", username)
 	case botFatherCmdSetPrivacy:
 		return fmt.Sprintf("Send 'enable' to turn ON group privacy for @%s (it will only receive commands and replies), or 'disable' to let it receive all group messages.", username)
+	case botFatherCmdSetLogin:
+		return telegramLoginConfigurationPrompt(username)
 	default:
 		return "Send the new value, or /cancel."
 	}
@@ -445,6 +468,61 @@ func (s *Service) handleChooseBot(ctx context.Context, state domain.BotChatState
 		}
 		head := fmt.Sprintf("Token for @%s has been revoked. The old token will stop working immediately. New token:\n", chosen.Username)
 		return tokenReply(head, token, "\n\nKeep your token secure and store it safely, it can be used by anyone to control your bot.")
+	case botFatherCmdLoginInfo:
+		defer s.clearState(ctx, state.UserID)
+		if s.telegramLogin == nil {
+			return botReply{Text: "Telegram Login is not enabled on this server."}
+		}
+		configuration, found, err := s.telegramLogin.ClientConfiguration(ctx, chosen.ID)
+		if err != nil {
+			s.log.Error("botfather: get telegram login configuration", zap.Int64("bot_user_id", chosen.ID), zap.Error(err))
+			return internalReply()
+		}
+		if !found {
+			return botReply{Text: fmt.Sprintf("Telegram Login is not configured for @%s. Use /setlogin to create it.", chosen.Username)}
+		}
+		return botReply{Text: formatTelegramLoginConfiguration(chosen.Username, configuration)}
+	case botFatherCmdResetLogin:
+		defer s.clearState(ctx, state.UserID)
+		if s.telegramLogin == nil {
+			return botReply{Text: "Telegram Login is not enabled on this server."}
+		}
+		credentials, err := s.telegramLogin.RotateClientSecret(ctx, chosen.ID)
+		if errors.Is(err, domain.ErrTelegramLoginClientInvalid) {
+			return botReply{Text: fmt.Sprintf("Telegram Login is not configured for @%s. Use /setlogin first.", chosen.Username)}
+		}
+		if err != nil {
+			s.log.Error("botfather: rotate telegram login secret", zap.Int64("bot_user_id", chosen.ID), zap.Error(err))
+			return internalReply()
+		}
+		head := fmt.Sprintf("The previous OIDC Client Secret for @%s is now invalid. Save this new secret; it will only be shown once:\n", chosen.Username)
+		return tokenReply(head, credentials.Secret, "\n\nClient ID: "+credentials.Client.ClientID)
+	case botFatherCmdSetLogin:
+		if s.telegramLogin == nil {
+			s.clearState(ctx, state.UserID)
+			return botReply{Text: "Telegram Login is not enabled on this server."}
+		}
+		credentials, created, err := s.telegramLogin.EnsureClient(ctx, chosen.ID)
+		if err != nil {
+			s.log.Error("botfather: ensure telegram login client", zap.Int64("bot_user_id", chosen.ID), zap.Error(err))
+			return internalReply()
+		}
+		state.Step = botFatherStepValue
+		if state.Draft == nil {
+			state.Draft = map[string]string{}
+		}
+		state.Draft[botFatherDraftBotID] = strconv.FormatInt(chosen.ID, 10)
+		state.Draft[botFatherDraftBotUsername] = chosen.Username
+		if err := s.bots.UpsertBotChatState(ctx, state); err != nil {
+			s.log.Error("botfather: save telegram login state", zap.Int64("user_id", state.UserID), zap.Error(err))
+			return internalReply()
+		}
+		prompt := telegramLoginConfigurationPrompt(chosen.Username)
+		if !created {
+			return botReply{Text: fmt.Sprintf("Telegram Login client %s is ready for @%s.\n\n%s", credentials.Client.ClientID, chosen.Username, prompt)}
+		}
+		head := fmt.Sprintf("Telegram Login is now enabled for @%s.\nClient ID: %s\nSave this Client Secret; it will only be shown once:\n", chosen.Username, credentials.Client.ClientID)
+		return tokenReply(head, credentials.Secret, "\n\n"+prompt)
 	case botFatherCmdSetName, botFatherCmdSetDescription, botFatherCmdSetAbout,
 		botFatherCmdSetCommands, botFatherCmdSetInline, botFatherCmdSetInlineGeo,
 		botFatherCmdSetJoinGroups, botFatherCmdSetPrivacy:
@@ -507,6 +585,8 @@ func (s *Service) handleSetValue(ctx context.Context, state domain.BotChatState,
 		reply, err = s.applyToggle(ctx, botID, text, true)
 	case botFatherCmdSetPrivacy:
 		reply, err = s.applyToggle(ctx, botID, text, false)
+	case botFatherCmdSetLogin:
+		return s.handleTelegramLoginConfigurationInput(ctx, state, botID, username, text)
 	default:
 		s.clearState(ctx, state.UserID)
 		return internalReply()
@@ -581,6 +661,266 @@ func (s *Service) applySetInlineGeo(ctx context.Context, botID int64, text strin
 		state = "enabled"
 	}
 	return botReply{Text: fmt.Sprintf("Success! Inline location requests are now %s.", state)}, nil
+}
+
+func telegramLoginConfigurationPrompt(username string) string {
+	return fmt.Sprintf(`Configure Telegram Login for @%s. Send commands one at a time or paste up to %d commands on separate lines:
+
+add origin https://example.com
+add redirect https://example.com/auth/callback
+add ios com.example.app ABCDE12345 exampleapp://tglogin Example iOS App
+add android com.example.app AA:BB:...:FF exampleapp://telegram-login Example Android App
+remove origin https://example.com
+remove redirect https://example.com/auth/callback
+remove app 12
+algorithm RS256|ES256|EdDSA|ES256K
+enable
+disable
+
+Origins authorize the JS SDK and legacy login_url buttons. Redirects are exact OIDC callbacks. Changes apply immediately. Send /done to finish, or /cancel to close this session without undoing changes already applied.`, username, maxTelegramLoginCommandsPerMessage)
+}
+
+func telegramLoginConfigurationContinuePrompt(username string) string {
+	return fmt.Sprintf("Still configuring @%s. Send another command, paste multiple commands on separate lines, or send /done to finish.", username)
+}
+
+func (s *Service) finishTelegramLoginConfiguration(ctx context.Context, userID int64) botReply {
+	state, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
+	if err != nil {
+		s.log.Error("botfather: get telegram login state", zap.Int64("user_id", userID), zap.Error(err))
+		return internalReply()
+	}
+	if !found || state.Command != botFatherCmdSetLogin || state.Step != botFatherStepValue {
+		return botReply{Text: "There is no active Telegram Login configuration to finish. Send /setlogin to start one."}
+	}
+	botID, _ := strconv.ParseInt(state.Draft[botFatherDraftBotID], 10, 64)
+	username := state.Draft[botFatherDraftBotUsername]
+	if botID == 0 || username == "" {
+		s.clearState(ctx, userID)
+		return botReply{Text: "Something went wrong, I forgot which bot we were editing. Send /setlogin to start again."}
+	}
+	owns, err := s.OwnsBot(ctx, userID, botID)
+	if err != nil {
+		s.log.Error("botfather: verify telegram login owner", zap.Int64("user_id", userID), zap.Int64("bot_user_id", botID), zap.Error(err))
+		return internalReply()
+	}
+	if !owns {
+		s.clearState(ctx, userID)
+		return botReply{Text: "That bot is no longer available."}
+	}
+	if s.telegramLogin == nil {
+		s.clearState(ctx, userID)
+		return botReply{Text: "Telegram Login is not enabled on this server."}
+	}
+	configuration, configured, err := s.telegramLogin.ClientConfiguration(ctx, botID)
+	if err != nil {
+		s.log.Error("botfather: get telegram login configuration", zap.Int64("bot_user_id", botID), zap.Error(err))
+		return internalReply()
+	}
+	if !configured {
+		s.clearState(ctx, userID)
+		return botReply{Text: fmt.Sprintf("Telegram Login is not configured for @%s. Send /setlogin to create it.", username)}
+	}
+	if err := s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID); err != nil {
+		s.log.Error("botfather: finish telegram login state", zap.Int64("user_id", userID), zap.Error(err))
+		return internalReply()
+	}
+	return botReply{Text: fmt.Sprintf("Finished configuring Telegram Login for @%s.\n\n%s", username, formatTelegramLoginConfiguration(username, configuration))}
+}
+
+func (s *Service) handleTelegramLoginConfigurationInput(
+	ctx context.Context,
+	state domain.BotChatState,
+	botID int64,
+	username string,
+	text string,
+) botReply {
+	if strings.EqualFold(strings.TrimSpace(text), "done") {
+		return s.finishTelegramLoginConfiguration(ctx, state.UserID)
+	}
+	lines := make([]string, 0, 4)
+	for _, raw := range strings.Split(text, "\n") {
+		if line := strings.TrimSpace(raw); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return botReply{Text: "Send a Telegram Login configuration command.\n\n" + telegramLoginConfigurationContinuePrompt(username)}
+	}
+	if len(lines) > maxTelegramLoginCommandsPerMessage {
+		return botReply{Text: fmt.Sprintf("Too many commands in one message. Send at most %d lines at a time.\n\n%s", maxTelegramLoginCommandsPerMessage, telegramLoginConfigurationContinuePrompt(username))}
+	}
+
+	applied := make([]string, 0, len(lines))
+	for i, line := range lines {
+		reply, err := s.applyTelegramLoginConfiguration(ctx, botID, username, line)
+		if err != nil {
+			if len(lines) == 1 {
+				if reply.Text == "" {
+					return internalReply()
+				}
+				return botReply{Text: reply.Text + "\n\n" + telegramLoginConfigurationContinuePrompt(username)}
+			}
+			failure := reply.Text
+			if failure == "" {
+				failure = "Something went wrong on my side. Please try that line again later."
+			}
+			var out strings.Builder
+			if len(applied) > 0 {
+				fmt.Fprintf(&out, "Applied %d command(s) before the error:\n%s\n\n", len(applied), strings.Join(applied, "\n"))
+			}
+			fmt.Fprintf(&out, "Stopped at line %d:\n%s\n\n", i+1, failure)
+			if i+1 < len(lines) {
+				fmt.Fprintf(&out, "%d later command(s) were not applied.\n\n", len(lines)-i-1)
+			}
+			out.WriteString(telegramLoginConfigurationContinuePrompt(username))
+			return botReply{Text: out.String()}
+		}
+		applied = append(applied, fmt.Sprintf("Line %d: %s", i+1, reply.Text))
+	}
+
+	var out strings.Builder
+	if len(lines) == 1 {
+		out.WriteString(strings.TrimPrefix(applied[0], "Line 1: "))
+	} else {
+		fmt.Fprintf(&out, "Applied all %d commands:\n%s", len(applied), strings.Join(applied, "\n"))
+	}
+	out.WriteString("\n\n")
+	out.WriteString(telegramLoginConfigurationContinuePrompt(username))
+	return botReply{Text: out.String()}
+}
+
+func formatTelegramLoginConfiguration(username string, configuration telegramloginapp.ClientConfiguration) string {
+	status := "disabled"
+	if configuration.Client.Enabled {
+		status = "enabled"
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "Telegram Login for @%s\nClient ID: %s\nStatus: %s\nSigning algorithm: %s\nSecret version: %d",
+		username, configuration.Client.ClientID, status, configuration.Client.SigningAlgorithm, configuration.Client.SecretVersion)
+	if len(configuration.AllowedURLs) == 0 {
+		out.WriteString("\nAllowed URLs: none")
+	} else {
+		out.WriteString("\nAllowed URLs:")
+		for _, allowed := range configuration.AllowedURLs {
+			fmt.Fprintf(&out, "\n- %s %s", allowed.Kind, allowed.NormalizedURL)
+		}
+	}
+	if len(configuration.NativeApps) > 0 {
+		out.WriteString("\nNative apps:")
+		for _, app := range configuration.NativeApps {
+			fmt.Fprintf(&out, "\n- #%d %s %s [%s] -> %s (%s)", app.ID, app.Platform, app.ApplicationID, app.VerificationID, app.CallbackURI, app.VerifiedDisplayName)
+		}
+	}
+	return out.String()
+}
+
+func telegramLoginAllowedURLKind(raw string) (domain.TelegramLoginAllowedURLKind, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "origin":
+		return domain.TelegramLoginAllowedWebOrigin, true
+	case "redirect":
+		return domain.TelegramLoginAllowedRedirectURI, true
+	default:
+		return "", false
+	}
+}
+
+func telegramLoginSigningAlgorithm(raw string) (domain.TelegramLoginSigningAlgorithm, bool) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "RS256":
+		return domain.TelegramLoginSigningRS256, true
+	case "ES256":
+		return domain.TelegramLoginSigningES256, true
+	case "EDDSA":
+		return domain.TelegramLoginSigningEdDSA, true
+	case "ES256K":
+		return domain.TelegramLoginSigningES256K, true
+	default:
+		return "", false
+	}
+}
+
+func (s *Service) applyTelegramLoginConfiguration(ctx context.Context, botID int64, username, text string) (botReply, error) {
+	if s.telegramLogin == nil {
+		return botReply{Text: "Telegram Login is not enabled on this server."}, domain.ErrTelegramLoginClientDisabled
+	}
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 1 {
+		switch strings.ToLower(fields[0]) {
+		case "enable":
+			if err := s.telegramLogin.SetClientEnabled(ctx, botID, true); err != nil {
+				return botReply{}, err
+			}
+			return botReply{Text: fmt.Sprintf("Telegram Login is enabled for @%s.", username)}, nil
+		case "disable":
+			if err := s.telegramLogin.SetClientEnabled(ctx, botID, false); err != nil {
+				return botReply{}, err
+			}
+			return botReply{Text: fmt.Sprintf("Telegram Login is disabled for @%s. Pending requests can no longer be approved or exchanged.", username)}, nil
+		}
+	}
+	if len(fields) == 2 && strings.EqualFold(fields[0], "algorithm") {
+		algorithm, ok := telegramLoginSigningAlgorithm(fields[1])
+		if !ok {
+			return botReply{Text: "Unknown signing algorithm. Use RS256, ES256, EdDSA or ES256K, or /cancel."}, domain.ErrTelegramLoginClientInvalid
+		}
+		if _, err := s.telegramLogin.SetClientSigningAlgorithm(ctx, botID, algorithm); err != nil {
+			if errors.Is(err, domain.ErrTelegramLoginClientInvalid) {
+				return botReply{Text: fmt.Sprintf("%s is not available on this server because no active signing key is configured for it. Choose another algorithm or ask the operator to rotate the key ring.", algorithm)}, err
+			}
+			return botReply{}, err
+		}
+		return botReply{Text: fmt.Sprintf("Success! New ID tokens for @%s will use %s. EdDSA and ES256K accept only the openid scope.", username, algorithm)}, nil
+	}
+	if len(fields) == 3 && (strings.EqualFold(fields[0], "add") || strings.EqualFold(fields[0], "remove")) &&
+		(strings.EqualFold(fields[1], "origin") || strings.EqualFold(fields[1], "redirect")) {
+		kind, ok := telegramLoginAllowedURLKind(fields[1])
+		if !ok {
+			return botReply{Text: "URL kind must be origin or redirect. Try again or /cancel."}, domain.ErrTelegramLoginURLInvalid
+		}
+		if strings.EqualFold(fields[0], "add") {
+			allowed, err := s.telegramLogin.AddAllowedURL(ctx, botID, kind, fields[2])
+			if err != nil {
+				return botReply{Text: "That URL is not allowed. Use an exact HTTP(S) URL permitted by this server without credentials, fragments or reserved OAuth query fields."}, err
+			}
+			return botReply{Text: fmt.Sprintf("Success! Added %s for @%s:\n%s", allowed.Kind, username, allowed.NormalizedURL)}, nil
+		}
+		deleted, err := s.telegramLogin.DeleteAllowedURL(ctx, botID, kind, fields[2])
+		if err != nil {
+			return botReply{Text: "That URL is invalid. Try again or /cancel."}, err
+		}
+		if !deleted {
+			return botReply{Text: "That exact URL was not registered. Check /logininfo and try again."}, domain.ErrTelegramLoginURLInvalid
+		}
+		return botReply{Text: fmt.Sprintf("Success! Removed %s from @%s.", kind, username)}, nil
+	}
+	if len(fields) >= 6 && strings.EqualFold(fields[0], "add") && (strings.EqualFold(fields[1], "ios") || strings.EqualFold(fields[1], "android")) {
+		platform := domain.TelegramLoginNativeIOS
+		if strings.EqualFold(fields[1], "android") {
+			platform = domain.TelegramLoginNativeAndroid
+		}
+		app, err := s.telegramLogin.AddNativeApp(ctx, botID, platform, fields[2], fields[3], fields[4], strings.Join(fields[5:], " "))
+		if err != nil {
+			return botReply{Text: "Invalid native app registration. iOS needs Bundle ID + 10-character Team ID; Android needs package name + SHA-256 signing fingerprint. Use an exact HTTPS callback or a custom scheme://host callback."}, err
+		}
+		return botReply{Text: fmt.Sprintf("Success! Registered native app #%d for @%s:\n%s %s -> %s", app.ID, username, app.Platform, app.ApplicationID, app.CallbackURI)}, nil
+	}
+	if len(fields) == 3 && strings.EqualFold(fields[0], "remove") && strings.EqualFold(fields[1], "app") {
+		appID, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil || appID <= 0 {
+			return botReply{Text: "Native app ID must be the positive number shown by /logininfo."}, domain.ErrTelegramLoginClientInvalid
+		}
+		deleted, err := s.telegramLogin.DeleteNativeApp(ctx, botID, appID)
+		if err != nil {
+			return botReply{}, err
+		}
+		if !deleted {
+			return botReply{Text: "That native app was not registered for this bot. Check /logininfo."}, domain.ErrTelegramLoginClientInvalid
+		}
+		return botReply{Text: fmt.Sprintf("Success! Removed native app #%d from @%s.", appID, username)}, nil
+	}
+	return botReply{Text: telegramLoginConfigurationPrompt(username)}, domain.ErrTelegramLoginRequestInvalid
 }
 
 // applyToggle 解析 enable/disable 并设置 joingroups（join=true）或 privacy（join=false）。

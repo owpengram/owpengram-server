@@ -451,6 +451,12 @@ func cloneCachedUser(in domain.User) domain.User {
 	if in.PhotoStripped != nil {
 		in.PhotoStripped = append([]byte(nil), in.PhotoStripped...)
 	}
+	if in.ContactNoteEntities != nil {
+		in.ContactNoteEntities = append([]domain.MessageEntity(nil), in.ContactNoteEntities...)
+	}
+	if in.RestrictionReasons != nil {
+		in.RestrictionReasons = append([]domain.UserRestrictionReason(nil), in.RestrictionReasons...)
+	}
 	return in
 }
 

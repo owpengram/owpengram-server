@@ -21,10 +21,12 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryCommandRepo()
 	restrictions := &fakeRestrictionStore{}
+	notifier := &fakeAccountFreezeNotifier{}
 	svc := NewService(Dependencies{
-		Commands:     repo,
-		Restrictions: restrictions,
-		Now:          fixedNow,
+		Commands:       repo,
+		Restrictions:   restrictions,
+		FreezeNotifier: notifier,
+		Now:            fixedNow,
 	})
 
 	dry, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
@@ -55,6 +57,9 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	if exec.Status != string(domain.AdminCommandCompleted) || restrictions.setCalls != 1 {
 		t.Fatalf("execute result=%+v setCalls=%d", exec, restrictions.setCalls)
 	}
+	if len(notifier.items) != 1 || notifier.items[0].UserID != 1001 || !notifier.items[0].Frozen || notifier.items[0].Version != 1 {
+		t.Fatalf("freeze notifications = %+v, want one versioned frozen state", notifier.items)
+	}
 	if err := svc.CanSendMessages(ctx, 1001); !errors.Is(err, domain.ErrUserFrozen) {
 		t.Fatalf("CanSendMessages err=%v, want ErrUserFrozen", err)
 	}
@@ -69,6 +74,32 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	}
 	if !again.AlreadyExecuted || restrictions.setCalls != 1 {
 		t.Fatalf("duplicate result=%+v setCalls=%d, want idempotent replay", again, restrictions.setCalls)
+	}
+	if len(notifier.items) != 1 {
+		t.Fatalf("idempotent replay emitted duplicate notification: %+v", notifier.items)
+	}
+}
+
+func TestAccountFreezesBatchesAndReturnsOnlyActiveFacts(t *testing.T) {
+	now := fixedNow()
+	store := &fakeBatchRestrictionStore{fakeRestrictionStore: fakeRestrictionStore{items: map[int64]domain.AccountFreeze{
+		1001: {
+			UserID: 1001, Frozen: true, Version: 2, Since: now,
+			Until: now.Add(time.Hour), AppealURL: "https://appeals.example.test/1001",
+		},
+		1002: {UserID: 1002, Frozen: false, Version: 4},
+	}}}
+	svc := NewService(Dependencies{Restrictions: store, Now: fixedNow})
+
+	got, err := svc.AccountFreezes(context.Background(), []int64{1001, 1001, 0, 1002})
+	if err != nil {
+		t.Fatalf("AccountFreezes: %v", err)
+	}
+	if len(store.requests) != 1 || !reflect.DeepEqual(store.requests[0], []int64{1001, 1002}) {
+		t.Fatalf("batch requests = %v, want one deduplicated request", store.requests)
+	}
+	if len(got) != 1 || !got[1001].Frozen || got[1001].Version != 2 {
+		t.Fatalf("AccountFreezes = %+v, want active user 1001 only", got)
 	}
 }
 
@@ -492,9 +523,35 @@ func (f *fakeRestrictionStore) SetAccountFreeze(_ context.Context, r domain.Acco
 		f.items = map[int64]domain.AccountFreeze{}
 	}
 	f.setCalls++
+	r.Version = f.items[r.UserID].Version + 1
 	r.UpdatedAt = fixedNow()
 	f.items[r.UserID] = r
 	return r, nil
+}
+
+type fakeBatchRestrictionStore struct {
+	fakeRestrictionStore
+	requests [][]int64
+}
+
+func (f *fakeBatchRestrictionStore) GetAccountFreezes(_ context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error) {
+	f.requests = append(f.requests, append([]int64(nil), userIDs...))
+	out := make(map[int64]domain.AccountFreeze)
+	for _, id := range userIDs {
+		if freeze, ok := f.items[id]; ok && freeze.Frozen {
+			out[id] = freeze
+		}
+	}
+	return out, nil
+}
+
+type fakeAccountFreezeNotifier struct {
+	items []domain.AccountFreeze
+}
+
+func (f *fakeAccountFreezeNotifier) NotifyAccountFreezeChanged(_ context.Context, freeze domain.AccountFreeze) error {
+	f.items = append(f.items, freeze)
+	return nil
 }
 
 type fakeMessagesService struct {
@@ -741,9 +798,18 @@ func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
 	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
 	base := PublishStarGiftCollectiblesRequest{
 		GiftID: 11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
-		Models:    []StarGiftCollectibleAnimationUpload{{Name: "Ruby", RarityPermille: 1000, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")}},
-		Patterns:  []StarGiftCollectibleAnimationUpload{{Name: "Stars", RarityPermille: 1000, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")}},
-		Backdrops: []StarGiftCollectibleBackdropInput{{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 1000}},
+		Models: []StarGiftCollectibleAnimationUpload{
+			{Name: "Ruby", RarityPermille: 500, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")},
+			{Name: "Sapphire", RarityPermille: 500, FileKey: "model-1", FileName: "sapphire.lottie", Data: []byte("model-1")},
+		},
+		Patterns: []StarGiftCollectibleAnimationUpload{
+			{Name: "Stars", RarityPermille: 500, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")},
+			{Name: "Moons", RarityPermille: 500, FileKey: "pattern-1", FileName: "moons.tgs", Data: []byte("pattern-1")},
+		},
+		Backdrops: []StarGiftCollectibleBackdropInput{
+			{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 500},
+			{Name: "Day", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityPermille: 500},
+		},
 	}
 	base.CommandMeta = CommandMeta{CommandID: "dry-collectibles", Actor: "ops", Reason: "pool", DryRun: true}
 	preview, err := svc.PublishStarGiftCollectibles(context.Background(), base)
@@ -754,6 +820,45 @@ func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
 	result, err := svc.PublishStarGiftCollectibles(context.Background(), base)
 	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != "33" || result.Details["published"] != true {
 		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+func TestPublishStarGiftCollectiblesRejectsUnsafeClientPreviewPool(t *testing.T) {
+	valid := func() PublishStarGiftCollectiblesRequest {
+		return PublishStarGiftCollectiblesRequest{
+			CommandMeta: CommandMeta{CommandID: "unsafe-pool", Actor: "ops", Reason: "regression", DryRun: true},
+			GiftID:      11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
+			Models: []StarGiftCollectibleAnimationUpload{
+				{Name: "Ruby", RarityPermille: 500, FileName: "ruby.lottie", Data: []byte("ruby")},
+				{Name: "Sapphire", RarityPermille: 500, FileName: "sapphire.lottie", Data: []byte("sapphire")},
+			},
+			Patterns: []StarGiftCollectibleAnimationUpload{
+				{Name: "Stars", RarityPermille: 500, FileName: "stars.lottie", Data: []byte("stars")},
+				{Name: "Moons", RarityPermille: 500, FileName: "moons.lottie", Data: []byte("moons")},
+			},
+			Backdrops: []StarGiftCollectibleBackdropInput{
+				{Name: "Night", BackdropID: 1, RarityPermille: 500},
+				{Name: "Day", BackdropID: 2, RarityPermille: 500},
+			},
+		}
+	}
+	tests := map[string]func(*PublishStarGiftCollectiblesRequest){
+		"single model":    func(req *PublishStarGiftCollectiblesRequest) { req.Models = req.Models[:1] },
+		"single pattern":  func(req *PublishStarGiftCollectiblesRequest) { req.Patterns = req.Patterns[:1] },
+		"single backdrop": func(req *PublishStarGiftCollectiblesRequest) { req.Backdrops = req.Backdrops[:1] },
+		"duplicate backdrop id": func(req *PublishStarGiftCollectiblesRequest) {
+			req.Backdrops[1].BackdropID = req.Backdrops[0].BackdropID
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			req := valid()
+			mutate(&req)
+			svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: &fakeGiftsService{}, Now: fixedNow})
+			if _, err := svc.PublishStarGiftCollectibles(context.Background(), req); !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+				t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
+			}
+		})
 	}
 }
 
@@ -771,10 +876,17 @@ func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testi
 		Collectible: &officialgifts.CollectibleSet{
 			Models: []officialgifts.Model{
 				{Name: "Regular", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 2, FileName: "regular.tgs", SHA256: strings.Repeat("b", 64), Data: []byte("regular")}},
+				{Name: "Regular Two", DocumentID: 5, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 5, FileName: "regular-two.tgs", SHA256: strings.Repeat("e", 64), Data: []byte("regular-two")}},
 				{Name: "Crafted", DocumentID: 3, Crafted: true, Rarity: officialgifts.Rarity{Kind: "legendary"}, Document: officialgifts.Document{ID: 3, FileName: "crafted.tgs", SHA256: strings.Repeat("c", 64), Data: []byte("crafted")}},
 			},
-			Patterns:  []officialgifts.Pattern{{Name: "Pattern", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 4, FileName: "pattern.tgs", SHA256: strings.Repeat("d", 64), Data: []byte("pattern")}}},
-			Backdrops: []officialgifts.Backdrop{{Name: "Black", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}}},
+			Patterns: []officialgifts.Pattern{
+				{Name: "Pattern", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 4, FileName: "pattern.tgs", SHA256: strings.Repeat("d", 64), Data: []byte("pattern")}},
+				{Name: "Pattern Two", DocumentID: 6, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 6, FileName: "pattern-two.tgs", SHA256: strings.Repeat("f", 64), Data: []byte("pattern-two")}},
+			},
+			Backdrops: []officialgifts.Backdrop{
+				{Name: "Black", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+				{Name: "White", BackdropID: 1, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+			},
 		},
 	}}
 	gifts := &fakeGiftsService{}
@@ -791,7 +903,7 @@ func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testi
 		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
 	}
 	models := gifts.lastBundle.Collectible.Models
-	if len(models) != 2 || !models[1].Crafted || models[1].RarityKind != domain.StarGiftRarityLegendary || models[1].RarityPermille != 0 ||
+	if len(models) != 3 || !models[2].Crafted || models[2].RarityKind != domain.StarGiftRarityLegendary || models[2].RarityPermille != 0 ||
 		models[0].RarityPermille != 922 || gifts.lastBundle.Collectible.Backdrops[0].BackdropID != 0 {
 		t.Fatalf("imported models=%+v backdrops=%+v", models, gifts.lastBundle.Collectible.Backdrops)
 	}
@@ -823,17 +935,18 @@ func TestImportOfficialStarGiftPublishesThroughRealGiftService(t *testing.T) {
 		},
 		BaseDocument: document(1, "gift.json"),
 		Collectible: &officialgifts.CollectibleSet{
-			Models: []officialgifts.Model{{
-				Name: "Model", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
-				Document: document(2, "model.json"),
-			}},
-			Patterns: []officialgifts.Pattern{{
-				Name: "Pattern", DocumentID: 3, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
-				Document: document(3, "pattern.json"),
-			}},
-			Backdrops: []officialgifts.Backdrop{{
-				Name: "Backdrop", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille},
-			}},
+			Models: []officialgifts.Model{
+				{Name: "Model", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(2, "model.json")},
+				{Name: "Model Two", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(4, "model-two.json")},
+			},
+			Patterns: []officialgifts.Pattern{
+				{Name: "Pattern", DocumentID: 3, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(3, "pattern.json")},
+				{Name: "Pattern Two", DocumentID: 5, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(5, "pattern-two.json")},
+			},
+			Backdrops: []officialgifts.Backdrop{
+				{Name: "Backdrop", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+				{Name: "Backdrop Two", BackdropID: 1, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+			},
 		},
 	}}
 	ctx := context.Background()
@@ -854,7 +967,7 @@ func TestImportOfficialStarGiftPublishesThroughRealGiftService(t *testing.T) {
 		t.Fatalf("catalog=%+v err=%v, want one imported gift", catalog, err)
 	}
 	preview, ok, err := giftService.CollectiblePreview(ctx, catalog[0].ID)
-	if err != nil || !ok || len(preview.Models) != 1 || len(preview.Patterns) != 1 {
+	if err != nil || !ok || len(preview.Models) != 2 || len(preview.Patterns) != 2 {
 		t.Fatalf("preview=%+v ok=%v err=%v", preview, ok, err)
 	}
 	model := preview.Models[0].Document

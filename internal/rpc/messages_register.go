@@ -11,6 +11,18 @@ import (
 
 // registerMessages 注册 messages.* RPC handler。
 func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.MessagesRequestURLAuthRequest](d, tlprofile.SemanticMethodMessagesRequestURLAuth, func(ctx context.Context, req *tg.MessagesRequestURLAuthRequest) (any, error) {
+		return r.onMessagesRequestURLAuth(ctx, req)
+	})
+	registerRPC[*tg.MessagesAcceptURLAuthRequest](d, tlprofile.SemanticMethodMessagesAcceptURLAuth, func(ctx context.Context, req *tg.MessagesAcceptURLAuthRequest) (any, error) {
+		return r.onMessagesAcceptURLAuth(ctx, req)
+	})
+	registerRPC[*tg.MessagesDeclineURLAuthRequest](d, tlprofile.SemanticMethodMessagesDeclineURLAuth, func(ctx context.Context, req *tg.MessagesDeclineURLAuthRequest) (any, error) {
+		return r.onMessagesDeclineURLAuth(ctx, req.URL)
+	})
+	registerRPC[*tg.MessagesCheckURLAuthMatchCodeRequest](d, tlprofile.SemanticMethodMessagesCheckURLAuthMatchCode, func(ctx context.Context, req *tg.MessagesCheckURLAuthMatchCodeRequest) (any, error) {
+		return r.onMessagesCheckURLAuthMatchCode(ctx, req.URL, req.MatchCode)
+	})
 	registerRPC[*tg.MessagesReceivedMessagesRequest](d, tlprofile.SemanticMethodMessagesReceivedMessages, func(ctx context.Context, layerRequest *tg.MessagesReceivedMessagesRequest) (any, error) {
 		return r.onMessagesReceivedMessages(ctx, layerRequest.
 			MaxID)
@@ -78,6 +90,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.MessagesSendMessageRequest](d, tlprofile.SemanticMethodMessagesSendMessage, func(ctx context.Context, layerRequest *tg.MessagesSendMessageRequest) (any, error) {
 		return r.onMessagesSendMessage(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesToggleSuggestedPostApprovalRequest](d, tlprofile.SemanticMethodMessagesToggleSuggestedPostApproval, func(ctx context.Context, layerRequest *tg.MessagesToggleSuggestedPostApprovalRequest) (any, error) {
+		return r.onMessagesToggleSuggestedPostApproval(ctx, layerRequest)
 	})
 	registerRPC[*tg.MessagesForwardMessagesRequest](d, tlprofile.SemanticMethodMessagesForwardMessages, func(ctx context.Context, layerRequest *tg.MessagesForwardMessagesRequest) (any, error) {
 		return r.onMessagesForwardMessages(ctx, layerRequest)

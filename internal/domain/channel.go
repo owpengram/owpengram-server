@@ -505,6 +505,26 @@ type ChannelMember struct {
 	Guest bool
 }
 
+// CanManageDirectMessages reports whether this active parent-channel member may
+// see and address every subscriber topic in the linked direct-messages
+// monoforum.  Telegram deliberately does not grant this capability to an
+// ordinary channel administrator: the explicit manage_direct_messages right is
+// required (creators have the capability implicitly).
+func (m ChannelMember) CanManageDirectMessages() bool {
+	return m.Status == ChannelMemberActive &&
+		(m.Role == ChannelRoleCreator ||
+			(m.Role == ChannelRoleAdmin && m.AdminRights.ManageDirectMessages))
+}
+
+// CanPostChannelMessages reports whether this active member may publish a post
+// to a broadcast channel.  Suggested-post managers need this in addition to
+// CanManageDirectMessages when approving a subscriber-authored suggestion.
+func (m ChannelMember) CanPostChannelMessages() bool {
+	return m.Status == ChannelMemberActive &&
+		(m.Role == ChannelRoleCreator ||
+			(m.Role == ChannelRoleAdmin && m.AdminRights.PostMessages))
+}
+
 // ChannelDialog is the current user's owner-view dialog state for a channel.
 type ChannelDialog struct {
 	UserID              int64
@@ -570,7 +590,10 @@ const (
 	ChannelActionSetChatWallpaper ChannelMessageActionType = "set_chat_wallpaper"
 	// ChannelActionChangeCommunity maps messageActionChangeCommunity. A non-zero
 	// CommunityID means linked; zero means unlinked.
-	ChannelActionChangeCommunity ChannelMessageActionType = "change_community"
+	ChannelActionChangeCommunity       ChannelMessageActionType = "change_community"
+	ChannelActionSuggestedPostApproval ChannelMessageActionType = "suggested_post_approval"
+	ChannelActionSuggestedPostSuccess  ChannelMessageActionType = "suggested_post_success"
+	ChannelActionSuggestedPostRefund   ChannelMessageActionType = "suggested_post_refund"
 )
 
 // ChannelMessageAction describes a service action without depending on tg.*.
@@ -609,6 +632,15 @@ type ChannelMessageAction struct {
 	Wallpaper *Wallpaper
 	// Photo 仅 chat_edit_photo 服务消息使用。
 	Photo *Photo
+	// Suggested-post lifecycle actions share the immutable price snapshot.  The
+	// approval action additionally uses the reject/balance/schedule fields;
+	// refund uses PayerInitiated.
+	SuggestedPostRejected       bool
+	SuggestedPostBalanceTooLow  bool
+	SuggestedPostRejectComment  string
+	SuggestedPostScheduleDate   int
+	SuggestedPostPrice          *SuggestedPostPrice
+	SuggestedPostPayerInitiated bool
 }
 
 // ChannelMessage is a single stored message in a channel/supergroup.
@@ -643,7 +675,7 @@ type ChannelMessage struct {
 	Reactions   *ChannelMessageReactions
 	Action      *ChannelMessageAction
 	Media       *MessageMedia
-	// RichMessage 是 Layer 227 富文本消息（richMessage）快照，可选；普通消息恒 nil。
+	// RichMessage 是 Layer 228 富文本消息（richMessage）快照，可选；普通消息恒 nil。
 	RichMessage *MessageRichMessage
 	// FromBoostsApplied 是发送时的 sender boost 数快照（message.from_boosts_applied）。
 	FromBoostsApplied int
@@ -1489,6 +1521,59 @@ type SendMonoforumMessageRequest struct {
 	AllowPaidStars int64
 	ClearDraft     bool
 	Date           int
+}
+
+// ToggleSuggestedPostApprovalRequest is the domain command behind
+// messages.toggleSuggestedPostApproval.  MessageID addresses the immutable
+// suggestion in one monoforum subscriber sub-dialog.
+type ToggleSuggestedPostApprovalRequest struct {
+	UserID        int64
+	MonoforumID   int64
+	MessageID     int
+	Reject        bool
+	RejectComment string
+	ScheduleDate  int
+	Date          int
+}
+
+// SuggestedPostLifecycleState is persisted so approval, scheduled publication,
+// settlement and refund remain idempotent across restarts.
+type SuggestedPostLifecycleState string
+
+const (
+	SuggestedPostStateBalanceLow SuggestedPostLifecycleState = "balance_low"
+	SuggestedPostStateRejected   SuggestedPostLifecycleState = "rejected"
+	SuggestedPostStateScheduled  SuggestedPostLifecycleState = "scheduled"
+	SuggestedPostStatePublished  SuggestedPostLifecycleState = "published"
+	SuggestedPostStateCompleted  SuggestedPostLifecycleState = "completed"
+	SuggestedPostStateRefunded   SuggestedPostLifecycleState = "refunded"
+)
+
+// ToggleSuggestedPostApprovalResult contains every durable update produced by
+// one command or lifecycle transition.  OriginalEvent is an edit in the
+// monoforum; ServiceEvent is the approval/success/refund service message; an
+// optional Published result is the broadcast post.
+type ToggleSuggestedPostApprovalResult struct {
+	Monoforum         Channel
+	Parent            Channel
+	SavedPeer         Peer
+	State             SuggestedPostLifecycleState
+	OriginalMessage   ChannelMessage
+	OriginalEvent     ChannelUpdateEvent
+	ServiceMessage    ChannelMessage
+	ServiceEvent      ChannelUpdateEvent
+	Published         *SendChannelMessageResult
+	Recipients        []int64
+	PayerStarsBalance *StarsBalance
+	PayerTONBalance   *int64
+	Duplicate         bool
+}
+
+// SuggestedPostLifecycleRequest bounds one worker pass; stores must use an
+// indexed seek and row locks rather than scanning every approval.
+type SuggestedPostLifecycleRequest struct {
+	Now   int
+	Limit int
 }
 
 // ChannelSendReplayRequest addresses either a regular channel send (SavedPeer is zero) or one
