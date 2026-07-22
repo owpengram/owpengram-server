@@ -11,7 +11,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
-	"telesrv/internal/officialgifts"
+	"telesrv/internal/seed/giftdemo"
 )
 
 func TestAdminAPIRequiresBearerToken(t *testing.T) {
@@ -178,23 +178,6 @@ func TestCollectiblePreviewResponsePreservesInt64AsDecimalStrings(t *testing.T) 
 	}
 }
 
-func TestOfficialStarGiftListItemExposesExplicitCapabilities(t *testing.T) {
-	item := officialStarGiftListItem(officialgifts.GiftSummary{
-		ID: 9223372036854775807, Title: "Fresh Socks", Stars: 25, ConvertStars: 10, UpgradeStars: 50,
-		ModelCount: 10, PatternCount: 20, BackdropCount: 30, CraftedModelCount: 2,
-	})
-	if item["source_gift_id"] != "9223372036854775807" || item["title"] != "Fresh Socks" ||
-		item["can_upgrade"] != true || item["can_craft"] != true {
-		t.Fatalf("official gift item = %#v", item)
-	}
-	item = officialStarGiftListItem(officialgifts.GiftSummary{
-		ID: 1, UpgradeStars: 0, ModelCount: 1, PatternCount: 1, BackdropCount: 1, CraftedModelCount: 1,
-	})
-	if item["can_upgrade"] != false || item["can_craft"] != false {
-		t.Fatalf("unavailable official gift capabilities = %#v", item)
-	}
-}
-
 type fakeService struct{}
 
 type captureFreezeService struct {
@@ -263,11 +246,11 @@ func (fakeService) ImportStarGift(_ context.Context, req admin.ImportStarGiftReq
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
-func (fakeService) ImportOfficialStarGift(_ context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error) {
+func (fakeService) ImportDefaultStarGift(_ context.Context, req admin.ImportDefaultStarGiftRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
-func (fakeService) ImportAllOfficialStarGifts(_ context.Context, req admin.ImportAllOfficialStarGiftsRequest) (admin.CommandResult, error) {
+func (fakeService) ImportAllDefaultStarGifts(_ context.Context, req admin.ImportAllDefaultStarGiftsRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
@@ -307,11 +290,11 @@ func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, str
 	return nil, "", false, nil
 }
 
-func (fakeService) OfficialStarGifts(context.Context) ([]officialgifts.GiftSummary, error) {
-	return nil, nil
+func (fakeService) DefaultStarGifts() []giftdemo.GiftInfo {
+	return giftdemo.List()
 }
 
-func (fakeService) OfficialStarGiftAnimation(context.Context, string) ([]byte, bool, error) {
+func (fakeService) DefaultStarGiftAnimation(context.Context, int) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
 }
 

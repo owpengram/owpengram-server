@@ -7,13 +7,12 @@ import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import { formatDate } from "../lib/format";
-import type { CommandResult, OfficialStarGiftRow, StarGiftRow } from "../types";
+import type { CommandResult, DefaultGiftRow, StarGiftRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
-type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
 type GiftPageSize = 10 | 20 | 50 | 100 | "all";
 
-function officialGiftAttributeCount(gift: OfficialStarGiftRow) {
+function defaultGiftAttributeCount(gift: DefaultGiftRow) {
   return gift.model_count + gift.pattern_count + gift.backdrop_count;
 }
 
@@ -67,17 +66,17 @@ function LottiePreview({ giftID, revision, compact = false }: { giftID: string; 
   );
 }
 
-function OfficialLottiePreview({ sourceGiftID }: { sourceGiftID: string }) {
+function DefaultLottiePreview({ id }: { id: number }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let cancelled = false;
     let player: ReturnType<typeof lottie.loadAnimation> | null = null;
-    api.officialGiftAnimation(sourceGiftID).then((data) => {
+    api.defaultGiftAnimation(id).then((data) => {
       if (cancelled || !host.current) return;
       player = lottie.loadAnimation({ container: host.current, renderer: "canvas", loop: true, autoplay: true, animationData: structuredClone(data) });
     }).catch(() => undefined);
     return () => { cancelled = true; player?.destroy(); };
-  }, [sourceGiftID]);
+  }, [id]);
   return <div className="gift-animation-shell"><div className="gift-animation" ref={host} /></div>;
 }
 
@@ -88,15 +87,9 @@ export function GiftsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [importSource, setImportSource] = useState<"official" | "file">("official");
-  const [officialGifts, setOfficialGifts] = useState<OfficialStarGiftRow[]>([]);
-  const [officialQuery, setOfficialQuery] = useState("");
-  const [officialCategory, setOfficialCategory] = useState<OfficialGiftCategory>("all");
-  const [sourceGiftID, setSourceGiftID] = useState("");
-  const [includeCollectible, setIncludeCollectible] = useState(true);
-  const [upgradeStars, setUpgradeStars] = useState("0");
-  const [supplyTotal, setSupplyTotal] = useState("0");
-  const [slugPrefix, setSlugPrefix] = useState("");
+  const [importSource, setImportSource] = useState<"default" | "file">("default");
+  const [defaultGifts, setDefaultGifts] = useState<DefaultGiftRow[]>([]);
+  const [selectedDefaultID, setSelectedDefaultID] = useState(0);
 	const [giftID, setGiftID] = useState("0");
   const [title, setTitle] = useState("");
   const [stars, setStars] = useState("50");
@@ -127,27 +120,11 @@ export function GiftsPage() {
   useEffect(() => { void load(); }, []);
 
   useEffect(() => {
-    if (!importOpen || importSource !== "official" || officialGifts.length > 0) return;
-    api.officialGifts().then((value) => setOfficialGifts(value.gifts ?? [])).catch((err) => setImportError(errorMessage(err)));
-  }, [importOpen, importSource, officialGifts.length]);
+    if (!importOpen || importSource !== "default" || defaultGifts.length > 0) return;
+    api.defaultGifts().then((value) => setDefaultGifts(value.gifts ?? [])).catch((err) => setImportError(errorMessage(err)));
+  }, [importOpen, importSource, defaultGifts.length]);
 
-  const selectedOfficial = useMemo(() => officialGifts.find((gift) => gift.source_gift_id === sourceGiftID) ?? null, [officialGifts, sourceGiftID]);
-  const officialCategoryCounts = useMemo(() => ({
-    all: officialGifts.length,
-    upgrade: officialGifts.filter((gift) => gift.can_upgrade).length,
-    craft: officialGifts.filter((gift) => gift.can_craft).length,
-    basic: officialGifts.filter((gift) => !gift.can_upgrade).length
-  }), [officialGifts]);
-  const visibleOfficial = useMemo(() => {
-    const normalized = officialQuery.trim().toLowerCase();
-    return officialGifts.filter((gift) => {
-      const categoryMatches = officialCategory === "all" ||
-        (officialCategory === "upgrade" && gift.can_upgrade) ||
-        (officialCategory === "craft" && gift.can_craft) ||
-        (officialCategory === "basic" && !gift.can_upgrade);
-      return categoryMatches && (!normalized || gift.source_gift_id.includes(normalized) || gift.title.toLowerCase().includes(normalized));
-    });
-  }, [officialGifts, officialQuery, officialCategory]);
+  const selectedDefault = useMemo(() => defaultGifts.find((gift) => gift.id === selectedDefaultID) ?? null, [defaultGifts, selectedDefaultID]);
 
   const visibleGifts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -245,34 +222,16 @@ export function GiftsPage() {
     return form;
   }
 
-  function officialPayload(confirm: boolean, commandID = "") {
-    if (!sourceGiftID) throw new Error(t("gifts.officialRequired"));
+  function defaultPayload(confirm: boolean, commandID = "") {
+    if (!selectedDefaultID) throw new Error(t("gifts.defaultRequired"));
     if (!reason.trim()) throw new Error(t("action.reasonRequired"));
-    return {
-      command_id: commandID, reason: reason.trim(), confirm,
-		source_gift_id: sourceGiftID, gift_id: giftID, title: title.trim(),
-		stars, convert_stars: convertStars, enabled, sort_order: Number(sortOrder),
-		include_collectible: includeCollectible, upgrade_stars: upgradeStars,
-      supply_total: Number(supplyTotal), slug_prefix: slugPrefix.trim().toLowerCase()
-    };
-  }
-
-  function chooseOfficial(gift: OfficialStarGiftRow) {
-    setSourceGiftID(gift.source_gift_id);
-    setTitle(gift.title || t("gifts.officialUnnamed", { id: gift.source_gift_id }));
-    setStars(String(gift.stars));
-    setConvertStars(String(gift.convert_stars));
-    setIncludeCollectible(gift.can_upgrade);
-		setUpgradeStars(gift.upgrade_stars);
-    setSupplyTotal(String(gift.availability_total || 1));
-    setSlugPrefix(`official-${gift.source_gift_id}`);
-    setPreview(null);
+    return { command_id: commandID, reason: reason.trim(), confirm, id: selectedDefaultID };
   }
 
   async function validateImport() {
     setBusy(true); setImportError(""); setPreview(null);
     try {
-      setPreview(importSource === "official" ? await api.importOfficialGift(officialPayload(false)) : await api.importGift(uploadForm(false)));
+      setPreview(importSource === "default" ? await api.importDefaultGift(defaultPayload(false)) : await api.importGift(uploadForm(false)));
     } catch (err) {
       setImportError(errorMessage(err));
     } finally { setBusy(false); }
@@ -282,9 +241,9 @@ export function GiftsPage() {
     if (!preview) return;
     setBusy(true); setImportError("");
     try {
-      if (importSource === "official") await api.importOfficialGift(officialPayload(true, preview.command_id));
+      if (importSource === "default") await api.importDefaultGift(defaultPayload(true, preview.command_id));
       else await api.importGift(uploadForm(true, preview.command_id));
-		setPreview(null); setFile(null); setGiftID("0"); setTitle(""); setSourceGiftID("");
+			setPreview(null); setFile(null); setGiftID("0"); setTitle(""); setSelectedDefaultID(0);
       await load();
       setImportOpen(false);
     } catch (err) {
@@ -295,15 +254,17 @@ export function GiftsPage() {
   function startImport() {
 	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
     setEnabled(true); setReason(""); setFile(null); setPreview(null); setImportError("");
-    setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
+    setImportSource("default"); setSelectedDefaultID(0); setImportOpen(true);
   }
 
   function startRevision(gift: StarGiftRow) {
     setGiftID(gift.GiftID); setTitle(gift.Title); setStars(String(gift.Stars));
     setConvertStars(String(gift.ConvertStars)); setSortOrder(String(gift.SortOrder)); setEnabled(gift.Enabled);
     setReason(""); setFile(null); setPreview(null); setImportError("");
-    setImportSource("official"); setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
+    setImportSource("file"); setSelectedDefaultID(0); setImportOpen(true);
   }
+
+  const step1Done = importSource === "default" ? selectedDefaultID > 0 : Boolean(file);
 
   return (
     <PageFrame title={t("gifts.pageTitle")} eyebrow={t("gifts.eyebrow")} actions={<>
@@ -388,71 +349,52 @@ export function GiftsPage() {
             </div>
             <div className="command-body gift-import-modal-body">
               <div className="command-steps">
-                <div className={`command-step ${(importSource === "official" ? sourceGiftID : file) ? "done" : "active"}`}><span>1</span><strong>{t("gifts.stepDetails")}</strong></div>
-                <div className={`command-step ${preview ? "done" : (importSource === "official" ? sourceGiftID : file) ? "active" : ""}`}><span>2</span><strong>{t("gifts.stepValidate")}</strong></div>
+                <div className={`command-step ${step1Done ? "done" : "active"}`}><span>1</span><strong>{t("gifts.stepDetails")}</strong></div>
+                <div className={`command-step ${preview ? "done" : step1Done ? "active" : ""}`}><span>2</span><strong>{t("gifts.stepValidate")}</strong></div>
                 <div className={`command-step ${preview ? "active" : ""}`}><span>3</span><strong>{t("gifts.stepImport")}</strong></div>
               </div>
-              <div className="gift-source-tabs">
-                <button className={`btn ${importSource === "official" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("official"); setPreview(null); }}>{t("gifts.officialSource")}</button>
+              {giftID === "0" && <div className="gift-source-tabs">
+                <button className={`btn ${importSource === "default" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("default"); setPreview(null); }}>{t("gifts.defaultSource")}</button>
                 <button className={`btn ${importSource === "file" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("file"); setPreview(null); }}>{t("gifts.fileSource")}</button>
-              </div>
-              {importSource === "official" ? <section className="official-gift-picker">
-                <div className="gift-import-note"><span>{t("gifts.officialHint")}</span><div className="gift-format-chips"><span>{officialGifts.length}</span><span>SHA-256</span></div></div>
+              </div>}
+              {importSource === "default" && giftID === "0" ? <section className="official-gift-picker">
+                <div className="gift-import-note"><span>{t("gifts.defaultHint")}</span><div className="gift-format-chips"><span>{defaultGifts.length}</span><span>OwpenGram</span></div></div>
                 <div className="official-gift-bulk-import">
                   <ActionButton
-                    label={t("gifts.importAll")}
-                    path="/api/actions/import-all-official-gifts"
+                    label={t("gifts.importAllDefault")}
+                    path="/api/actions/import-all-default-gifts"
                     payload={() => ({})}
                     tone="neutral"
                     icon={<Upload size={14} />}
                     onDone={() => void load()}
                   />
                 </div>
-                <div className="official-gift-tools">
-                  <label className="searchbox"><Search size={15} /><input value={officialQuery} onChange={(e) => setOfficialQuery(e.target.value)} placeholder={t("gifts.officialSearch")} /></label>
-                  <span>{t("gifts.officialResults", { shown: visibleOfficial.length, total: officialGifts.length })}</span>
-                </div>
-                <div className="official-gift-categories" role="group" aria-label={t("gifts.officialCategoryLabel")}>
-                  {(["all", "upgrade", "craft", "basic"] as const).map((category) => (
-                    <button key={category} className={officialCategory === category ? "active" : ""} type="button"
-                      aria-pressed={officialCategory === category} onClick={() => setOfficialCategory(category)}>
-                      {t(`gifts.officialCategory.${category}`)}<span>{officialCategoryCounts[category]}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="official-gift-list" role="listbox" aria-label={t("gifts.officialSelect")}>
-                  {visibleOfficial.map((gift) => {
-                    const selected = gift.source_gift_id === sourceGiftID;
-                    return <button key={gift.source_gift_id} className={`official-gift-option ${selected ? "selected" : ""}`}
-                      type="button" role="option" aria-selected={selected} onClick={() => chooseOfficial(gift)}>
+                <div className="official-gift-list" role="listbox" aria-label={t("gifts.defaultSelect")}>
+                  {defaultGifts.map((gift) => {
+                    const isSelected = gift.id === selectedDefaultID;
+                    return <button key={gift.id} className={`official-gift-option ${isSelected ? "selected" : ""}`}
+                      type="button" role="option" aria-selected={isSelected} onClick={() => { setSelectedDefaultID(gift.id); setPreview(null); }}>
                       <span className="official-gift-option-head">
-                        <strong>{gift.title || t("gifts.officialUnnamed", { id: gift.source_gift_id })}</strong>
-                        <span className="mono">#{gift.source_gift_id}</span>
+                        <strong>{gift.title}</strong>
+                        <span className="mono">⭐ {gift.stars}</span>
                       </span>
                       <span className="official-gift-option-meta">
-                        <span>⭐ {gift.stars}</span>
-                        <span>{t("gifts.officialAttributes", { count: officialGiftAttributeCount(gift) })}</span>
+                        <span>{t("gifts.officialAttributes", { count: defaultGiftAttributeCount(gift) })}</span>
+                        {gift.limited && <span>{t("gifts.limited", { total: gift.availability })}</span>}
+                        {gift.require_premium && <span>{t("gifts.premium")}</span>}
                       </span>
                       <span className="official-gift-capabilities">
-                        <span className={gift.can_upgrade ? "yes" : "no"}>{gift.can_upgrade ? t("gifts.canUpgrade") : t("gifts.cannotUpgrade")}</span>
-                        <span className={gift.can_craft ? "craft" : "no"}>{gift.can_craft ? t("gifts.canCraft") : t("gifts.cannotCraft")}</span>
+                        <span className={gift.upgradeable ? "yes" : "no"}>{gift.upgradeable ? t("gifts.canUpgrade") : t("gifts.cannotUpgrade")}</span>
+                        <span className={gift.craftable ? "craft" : "no"}>{gift.craftable ? t("gifts.canCraft") : t("gifts.cannotCraft")}</span>
                       </span>
                     </button>;
                   })}
-                  {visibleOfficial.length === 0 && <div className="official-gift-empty">{t("gifts.officialEmpty")}</div>}
+                  {defaultGifts.length === 0 && <div className="official-gift-empty">{t("gifts.defaultEmpty")}</div>}
                 </div>
-                {selectedOfficial && <div className="official-gift-selected">
-                  <OfficialLottiePreview sourceGiftID={selectedOfficial.source_gift_id} />
-                  <div><strong>{selectedOfficial.title || t("gifts.officialUnnamed", { id: selectedOfficial.source_gift_id })}</strong><span className="mono">{selectedOfficial.source_gift_id}</span><small>{selectedOfficial.model_count} {t("collectibles.models")} · {selectedOfficial.pattern_count} {t("collectibles.patterns")} · {selectedOfficial.backdrop_count} {t("collectibles.backdrops")}</small><span className="official-gift-capabilities"><span className={selectedOfficial.can_upgrade ? "yes" : "no"}>{selectedOfficial.can_upgrade ? t("gifts.canUpgrade") : t("gifts.cannotUpgrade")}</span><span className={selectedOfficial.can_craft ? "craft" : "no"}>{selectedOfficial.can_craft ? t("gifts.canCraft") : t("gifts.cannotCraft")}</span></span></div>
+                {selectedDefault && <div className="official-gift-selected">
+                  <DefaultLottiePreview id={selectedDefault.id} />
+                  <div><strong>{selectedDefault.title}</strong><span className="mono">⭐ {selectedDefault.stars} → {selectedDefault.convert_stars}</span><small>{selectedDefault.model_count} {t("collectibles.models")} · {selectedDefault.pattern_count} {t("collectibles.patterns")} · {selectedDefault.backdrop_count} {t("collectibles.backdrops")}</small><span className="official-gift-capabilities"><span className={selectedDefault.upgradeable ? "yes" : "no"}>{selectedDefault.upgradeable ? t("gifts.canUpgrade") : t("gifts.cannotUpgrade")}</span><span className={selectedDefault.craftable ? "craft" : "no"}>{selectedDefault.craftable ? t("gifts.canCraft") : t("gifts.cannotCraft")}</span></span></div>
                 </div>}
-                {selectedOfficial?.can_upgrade && <>
-                  <label className="gift-switch"><input type="checkbox" checked={includeCollectible} onChange={(e) => { setIncludeCollectible(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.includeCollectible")}</span></label>
-                  {includeCollectible && <div className="gift-fields-grid">
-                    <label><span>{t("collectibles.upgradeStars")}</span><input type="number" min="1" value={upgradeStars} onChange={(e) => { setUpgradeStars(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.supply")}</span><input type="number" min="1" value={supplyTotal} onChange={(e) => { setSupplyTotal(e.target.value); setPreview(null); }} /></label>
-                    <label><span>{t("collectibles.slug")}</span><input value={slugPrefix} maxLength={48} onChange={(e) => { setSlugPrefix(e.target.value.toLowerCase()); setPreview(null); }} /></label>
-                  </div>}
-                </>}
               </section> : <>
                 <div className="gift-import-note"><span>{t("gifts.importHint")}</span><div className="gift-format-chips" aria-label={t("gifts.formats")}><span>TGS</span><span>Lottie JSON</span></div></div>
                 <label className={`gift-file-picker ${file ? "has-file" : ""}`}>
@@ -461,15 +403,15 @@ export function GiftsPage() {
                   <span className="gift-file-copy"><span className="gift-field-label">{t("gifts.animation")}</span><strong>{file ? file.name : t("gifts.filePrompt")}</strong><small>{file ? formatBytes(file.size) : t("gifts.fileHint")}</small></span>
                   <span className="gift-file-action">{file ? t("gifts.changeFile") : t("gifts.chooseFile")}</span>
                 </label>
+                <div className="gift-fields-grid">
+                  <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { setTitle(e.target.value); setPreview(null); }} /></label>
+                  <label><span>{t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => { setStars(e.target.value); setPreview(null); }} /></label>
+                  <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
+                  <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
+                </div>
+                <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
               </>}
-              <div className="gift-fields-grid">
-                <label><span>{t("gifts.title")}</span><input value={title} maxLength={128} placeholder={t("gifts.titlePlaceholder")} onChange={(e) => { setTitle(e.target.value); setPreview(null); }} /></label>
-                <label><span>{t("gifts.stars")}</span><input type="number" min="1" value={stars} onChange={(e) => { setStars(e.target.value); setPreview(null); }} /></label>
-                <label><span>{t("gifts.convertStars")}</span><input type="number" min="0" value={convertStars} onChange={(e) => { setConvertStars(e.target.value); setPreview(null); }} /></label>
-                <label><span>{t("gifts.sortOrder")}</span><input type="number" value={sortOrder} onChange={(e) => { setSortOrder(e.target.value); setPreview(null); }} /></label>
-              </div>
               <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={reason} placeholder={t("gifts.reasonPlaceholder")} onChange={(e) => setReason(e.target.value)} /></label>
-              <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
               {importError && <Alert>{importError}</Alert>}
               {preview && <div className="gift-validation"><div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{t("gifts.validationReady")}</strong><span>{t("gifts.validationHint")}</span></div></div><pre>{JSON.stringify(preview.details, null, 2)}</pre></div>}
             </div>

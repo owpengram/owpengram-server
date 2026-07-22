@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +15,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
-	"telesrv/internal/officialgifts"
+	"telesrv/internal/seed/giftdemo"
 )
 
 type Config struct {
@@ -35,10 +34,10 @@ type Service interface {
 	DeletePrivateMessages(ctx context.Context, req admin.DeletePrivateMessagesRequest) (admin.CommandResult, error)
 	DeletePrivateHistory(ctx context.Context, req admin.DeletePrivateHistoryRequest) (admin.CommandResult, error)
 	ImportStarGift(ctx context.Context, req admin.ImportStarGiftRequest) (admin.CommandResult, error)
-	ImportOfficialStarGift(ctx context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error)
-	ImportAllOfficialStarGifts(ctx context.Context, req admin.ImportAllOfficialStarGiftsRequest) (admin.CommandResult, error)
-	OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSummary, error)
-	OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error)
+	ImportDefaultStarGift(ctx context.Context, req admin.ImportDefaultStarGiftRequest) (admin.CommandResult, error)
+	ImportAllDefaultStarGifts(ctx context.Context, req admin.ImportAllDefaultStarGiftsRequest) (admin.CommandResult, error)
+	DefaultStarGifts() []giftdemo.GiftInfo
+	DefaultStarGiftAnimation(ctx context.Context, id int) ([]byte, bool, error)
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
@@ -111,10 +110,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/messages/delete", s.authenticated(s.handleDeleteMessages))
 	mux.HandleFunc("POST /v1/messages/delete-history", s.authenticated(s.handleDeleteHistory))
 	mux.HandleFunc("POST /v1/gifts/import", s.authenticated(s.handleImportStarGift))
-	mux.HandleFunc("GET /v1/official-gifts", s.authenticated(s.handleOfficialStarGifts))
-	mux.HandleFunc("GET /v1/official-gifts/{id}/animation", s.authenticated(s.handleOfficialStarGiftAnimation))
-	mux.HandleFunc("POST /v1/official-gifts/import", s.authenticated(s.handleImportOfficialStarGift))
-	mux.HandleFunc("POST /v1/official-gifts/import-all", s.authenticated(s.handleImportAllOfficialStarGifts))
+	mux.HandleFunc("GET /v1/default-gifts", s.authenticated(s.handleDefaultStarGifts))
+	mux.HandleFunc("GET /v1/default-gifts/{id}/animation", s.authenticated(s.handleDefaultStarGiftAnimation))
+	mux.HandleFunc("POST /v1/default-gifts/import", s.authenticated(s.handleImportDefaultStarGift))
+	mux.HandleFunc("POST /v1/default-gifts/import-all", s.authenticated(s.handleImportAllDefaultStarGifts))
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
@@ -271,43 +270,24 @@ func (s *Server) handleImportStarGift(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
-func (s *Server) handleOfficialStarGifts(w http.ResponseWriter, r *http.Request) {
-	items, err := s.svc.OfficialStarGifts(r.Context())
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, officialgifts.ErrUnavailable) {
-			status = http.StatusServiceUnavailable
-		}
-		writeError(w, status, err.Error())
+func (s *Server) handleDefaultStarGifts(w http.ResponseWriter, r *http.Request) {
+	items := s.svc.DefaultStarGifts()
+	writeJSON(w, http.StatusOK, map[string]any{"gifts": items})
+}
+
+func (s *Server) handleDefaultStarGiftAnimation(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid gift id")
 		return
 	}
-	result := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		result = append(result, officialStarGiftListItem(item))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"gifts": result})
-}
-
-func officialStarGiftListItem(item officialgifts.GiftSummary) map[string]any {
-	return map[string]any{
-		"source_gift_id": strconv.FormatInt(item.ID, 10), "title": item.Title,
-		"stars": strconv.FormatInt(item.Stars, 10), "convert_stars": strconv.FormatInt(item.ConvertStars, 10),
-		"upgrade_stars":      strconv.FormatInt(item.UpgradeStars, 10),
-		"availability_total": item.AvailabilityTotal, "limited": item.Limited, "sold_out": item.SoldOut,
-		"model_count": item.ModelCount, "pattern_count": item.PatternCount, "backdrop_count": item.BackdropCount,
-		"crafted_model_count": item.CraftedModelCount, "can_upgrade": item.CanUpgrade(), "can_craft": item.CanCraft(),
-		"document_id": strconv.FormatInt(item.DocumentID, 10), "animation_validated": item.AnimationValidated,
-	}
-}
-
-func (s *Server) handleOfficialStarGiftAnimation(w http.ResponseWriter, r *http.Request) {
-	raw, found, err := s.svc.OfficialStarGiftAnimation(r.Context(), r.PathValue("id"))
+	raw, found, err := s.svc.DefaultStarGiftAnimation(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if !found {
-		writeError(w, http.StatusNotFound, "official gift animation not found")
+		writeError(w, http.StatusNotFound, "default gift animation not found")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -316,21 +296,21 @@ func (s *Server) handleOfficialStarGiftAnimation(w http.ResponseWriter, r *http.
 	_, _ = w.Write(raw)
 }
 
-func (s *Server) handleImportOfficialStarGift(w http.ResponseWriter, r *http.Request) {
-	var req admin.ImportOfficialStarGiftRequest
+func (s *Server) handleImportDefaultStarGift(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportDefaultStarGiftRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := s.svc.ImportOfficialStarGift(r.Context(), req)
+	result, err := s.svc.ImportDefaultStarGift(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
-func (s *Server) handleImportAllOfficialStarGifts(w http.ResponseWriter, r *http.Request) {
-	var req admin.ImportAllOfficialStarGiftsRequest
+func (s *Server) handleImportAllDefaultStarGifts(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportAllDefaultStarGiftsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := s.svc.ImportAllOfficialStarGifts(r.Context(), req)
+	result, err := s.svc.ImportAllDefaultStarGifts(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

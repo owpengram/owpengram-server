@@ -185,26 +185,26 @@ export type StarGiftRow = {
 
 export type StarGiftListResponse = { Gifts: StarGiftRow[] };
 
-export type OfficialStarGiftRow = {
-  source_gift_id: string;
+// A built-in original demo gift available to import. Ids are small integers
+// (1..N), so plain numbers are safe here — no snowflake precision concern.
+export type DefaultGiftRow = {
+  id: number;
   title: string;
-  stars: string;
-  convert_stars: string;
-  upgrade_stars: string;
-  availability_total: number;
+  stars: number;
+  convert_stars: number;
+  upgrade_stars: number;
+  upgradeable: boolean;
+  craftable: boolean;
   limited: boolean;
-  sold_out: boolean;
+  availability: number;
+  require_premium: boolean;
   model_count: number;
   pattern_count: number;
   backdrop_count: number;
-  crafted_model_count: number;
-  can_upgrade: boolean;
-  can_craft: boolean;
-  document_id: string;
-  animation_validated: boolean;
+  crafted_count: number;
 };
 
-export type OfficialStarGiftListResponse = { gifts: OfficialStarGiftRow[] };
+export type DefaultGiftListResponse = { gifts: DefaultGiftRow[] };
 
 export type StarGiftCollectibleAttributeRow = {
   id: string;

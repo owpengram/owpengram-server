@@ -108,21 +108,16 @@ func TestStarGiftRowJSONPreservesInt64AsDecimalStrings(t *testing.T) {
 	}
 }
 
-func TestStarGiftActionDecimalStringDecodingPreservesInt64(t *testing.T) {
-	const maxInt64 = int64(9223372036854775807)
-	req := httptest.NewRequest(http.MethodPost, "/api/actions/import-official-gift", strings.NewReader(`{
-		"source_gift_id":"5895603153683874485",
-		"gift_id":"9223372036854775807",
-		"stars":"9223372036854775807",
-		"convert_stars":"9223372036854775807",
-		"upgrade_stars":"9223372036854775807"
+func TestDefaultGiftImportActionDecodes(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/actions/import-default-gift", strings.NewReader(`{
+		"command_id":"c1","reason":"demo","confirm":true,"id":3
 	}`))
-	var got importOfficialStarGiftAPIRequest
+	var got importDefaultStarGiftAPIRequest
 	if err := decodeJSON(req, &got); err != nil {
-		t.Fatalf("decode gift action: %v", err)
+		t.Fatalf("decode default gift action: %v", err)
 	}
-	if got.GiftID != maxInt64 || got.Stars != maxInt64 || got.ConvertStars != maxInt64 || got.UpgradeStars != maxInt64 {
-		t.Fatalf("decoded gift action = %+v", got)
+	if got.ID != 3 || got.CommandID != "c1" || !got.Confirm {
+		t.Fatalf("decoded default gift action = %+v", got)
 	}
 }
 

@@ -327,7 +327,8 @@
   display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 14px; align-items: center;
   padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-soft);
 }
-.official-gift-selected .gift-animation-shell { width: 96px; height: 96px; }
+.official-gift-selected .gift-animation-shell { width: 96px; height: 96px; min-height: 96px; overflow: hidden; border-radius: 12px; }
+.official-gift-selected .gift-animation { width: 96px; height: 96px; }
 .official-gift-selected > div:last-child { display: grid; gap: 5px; min-width: 0; }
 .official-gift-selected small { color: var(--muted); }
 .gift-import-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); line-height: 1.45; }
