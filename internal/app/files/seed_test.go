@@ -282,6 +282,17 @@ func (f *fakeMediaStore) DeleteStickerSet(_ context.Context, setID int64, creato
 	f.sets[setID] = set
 	return nil
 }
+func (f *fakeMediaStore) AdminDeleteStickerSet(_ context.Context, setID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	set, ok := f.sets[setID]
+	if !ok || set.Deleted {
+		return domain.ErrStickerSetInvalid
+	}
+	set.Deleted = true
+	f.sets[setID] = set
+	return nil
+}
 func (f *fakeMediaStore) GetStickerSetByID(_ context.Context, id int64) (domain.StickerSet, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

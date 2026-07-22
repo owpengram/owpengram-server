@@ -52,6 +52,10 @@ type MediaStore interface {
 	CreateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
 	UpdateStickerSet(ctx context.Context, set domain.StickerSet, docs []domain.Document) error
 	DeleteStickerSet(ctx context.Context, setID int64, creatorUserID int64) error
+	// AdminDeleteStickerSet is DeleteStickerSet without the creator_user_id match —
+	// for admin-console management of any set, including seed-imported system/regular
+	// packs that have no creator (creator_user_id=0).
+	AdminDeleteStickerSet(ctx context.Context, setID int64) error
 	GetStickerSetByID(ctx context.Context, id int64) (domain.StickerSet, bool, error)
 	GetStickerSetByShortName(ctx context.Context, shortName string) (domain.StickerSet, bool, error)
 	GetStickerSetBySystemKey(ctx context.Context, systemKey string) (domain.StickerSet, bool, error)

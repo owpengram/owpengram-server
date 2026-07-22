@@ -1,11 +1,14 @@
 package admin
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,6 +37,10 @@ const (
 	ActionPublishGiftCollectibles    = "gifts.collectibles.publish"
 	ActionSetStarGiftEnabled         = "gifts.set_enabled"
 	ActionSetStarGiftSortOrder       = "gifts.set_sort_order"
+	ActionSetStickerSetArchived      = "stickers.set_archived"
+	ActionSetStickerSetSortOrder     = "stickers.set_sort_order"
+	ActionRenameStickerSet           = "stickers.rename"
+	ActionDeleteStickerSet           = "stickers.delete"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -124,6 +131,16 @@ type AvatarResolver interface {
 	GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error)
 }
 
+// StickerSetsService is the admin-console management surface over sticker/custom-emoji
+// sets: no ownership check (see internal/app/files.Service.AdminSetStickerSetArchived),
+// so it works for seed-imported system/regular packs as well as user-created ones.
+type StickerSetsService interface {
+	AdminSetStickerSetArchived(ctx context.Context, setID int64, archived bool) (bool, error)
+	AdminSetStickerSetSortOrder(ctx context.Context, setID int64, order int) (bool, error)
+	AdminRenameStickerSet(ctx context.Context, setID int64, title string) (domain.StickerSet, error)
+	AdminDeleteStickerSet(ctx context.Context, setID int64) (domain.StickerSetKind, error)
+}
+
 type Dependencies struct {
 	Commands        CommandRepository
 	Restrictions    RestrictionStore
@@ -139,6 +156,7 @@ type Dependencies struct {
 	Gifts           GiftsService
 	OfficialGifts   OfficialGiftsSource
 	Photos          AvatarResolver
+	StickerSets     StickerSetsService
 	Now             func() time.Time
 }
 
@@ -157,6 +175,7 @@ type Service struct {
 	gifts           GiftsService
 	officialGifts   OfficialGiftsSource
 	photos          AvatarResolver
+	stickerSets     StickerSetsService
 	now             func() time.Time
 }
 
@@ -207,6 +226,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Photos != nil {
 		s.photos = deps.Photos
+	}
+	if deps.StickerSets != nil {
+		s.stickerSets = deps.StickerSets
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -277,6 +299,29 @@ type SetStarGiftSortOrderRequest struct {
 	CommandMeta
 	GiftID    int64 `json:"gift_id"`
 	SortOrder int   `json:"sort_order"`
+}
+
+type SetStickerSetArchivedRequest struct {
+	CommandMeta
+	SetID    int64 `json:"set_id"`
+	Archived bool  `json:"archived"`
+}
+
+type SetStickerSetSortOrderRequest struct {
+	CommandMeta
+	SetID     int64 `json:"set_id"`
+	SortOrder int   `json:"sort_order"`
+}
+
+type RenameStickerSetRequest struct {
+	CommandMeta
+	SetID int64  `json:"set_id"`
+	Title string `json:"title"`
+}
+
+type DeleteStickerSetRequest struct {
+	CommandMeta
+	SetID int64 `json:"set_id"`
 }
 
 type StarGiftCollectibleAnimationUpload struct {
@@ -1392,6 +1437,123 @@ func (s *Service) SetStarGiftSortOrder(ctx context.Context, req SetStarGiftSortO
 		details["changed"] = changed
 		return CommandResult{Message: "star gift order updated", Details: details}, err
 	})
+}
+
+func (s *Service) SetStickerSetArchived(ctx context.Context, req SetStickerSetArchivedRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetStickerSetArchived, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "archived": req.Archived}
+		if req.DryRun {
+			return CommandResult{Message: "sticker set state change validated", Details: details}, nil
+		}
+		changed, err := s.stickerSets.AdminSetStickerSetArchived(ctx, req.SetID, req.Archived)
+		details["changed"] = changed
+		return CommandResult{Message: "sticker set state updated", Details: details}, err
+	})
+}
+
+func (s *Service) SetStickerSetSortOrder(ctx context.Context, req SetStickerSetSortOrderRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 || req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
+		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetStickerSetSortOrder, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "sort_order": req.SortOrder}
+		if req.DryRun {
+			return CommandResult{Message: "sticker set order change validated", Details: details}, nil
+		}
+		changed, err := s.stickerSets.AdminSetStickerSetSortOrder(ctx, req.SetID, req.SortOrder)
+		details["changed"] = changed
+		return CommandResult{Message: "sticker set order updated", Details: details}, err
+	})
+}
+
+func (s *Service) RenameStickerSet(ctx context.Context, req RenameStickerSetRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 || strings.TrimSpace(req.Title) == "" {
+		return CommandResult{}, fmt.Errorf("valid sticker set, title and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRenameStickerSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "title": req.Title}
+		if req.DryRun {
+			return CommandResult{Message: "sticker set rename validated", Details: details}, nil
+		}
+		set, err := s.stickerSets.AdminRenameStickerSet(ctx, req.SetID, req.Title)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["title"] = set.Title
+		return CommandResult{Message: "sticker set renamed", Details: details}, nil
+	})
+}
+
+func (s *Service) DeleteStickerSet(ctx context.Context, req DeleteStickerSetRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteStickerSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10)}
+		if req.DryRun {
+			return CommandResult{Message: "sticker set deletion validated", Details: details}, nil
+		}
+		kind, err := s.stickerSets.AdminDeleteStickerSet(ctx, req.SetID)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["kind"] = string(kind)
+		return CommandResult{Message: "sticker set deleted", Details: details}, nil
+	})
+}
+
+const maxStickerDocumentBytes = 8 << 20
+
+// StickerDocumentAnimation returns a sticker/custom-emoji document's preview
+// for the admin console's set-preview grid, plus the content type the caller
+// should serve it as. Most packs are gzip-compressed TGS (decompressed here to
+// Lottie JSON), but some (e.g. hand-uploaded packs) contain plain static
+// raster stickers instead — those are returned as-is with their real image
+// content type so the frontend can render an <img> instead of a Lottie player.
+func (s *Service) StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error) {
+	if s == nil || s.photos == nil || documentID <= 0 {
+		return nil, "", false, nil
+	}
+	chunk, found, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{
+		LocationKey: fmt.Sprintf("doc:%d", documentID),
+		Limit:       maxStickerDocumentBytes + 1,
+	})
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !found || chunk.Total <= 0 || chunk.Total > maxStickerDocumentBytes || int64(len(chunk.Bytes)) != chunk.Total {
+		return nil, "", false, nil
+	}
+	data := chunk.Bytes
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		reader, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, "", false, nil
+		}
+		defer reader.Close()
+		decompressed, err := io.ReadAll(io.LimitReader(reader, maxStickerDocumentBytes))
+		if err != nil {
+			return nil, "", false, nil
+		}
+		return decompressed, "application/json; charset=utf-8", true, nil
+	}
+	detected := http.DetectContentType(data)
+	if !isSafeStickerPreviewImageType(detected) {
+		return nil, "", false, nil
+	}
+	return data, detected, true, nil
+}
+
+func isSafeStickerPreviewImageType(value string) bool {
+	switch value {
+	case "image/webp", "image/png", "image/jpeg", "image/gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error) {

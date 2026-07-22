@@ -78,6 +78,13 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/publish-gift-collectibles", s.requireAuthAPI(http.HandlerFunc(s.handlePublishStarGiftCollectiblesAPI)))
 	mux.Handle("POST /api/actions/set-gift-enabled", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftEnabledAPI)))
 	mux.Handle("POST /api/actions/set-gift-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStarGiftSortOrderAPI)))
+	mux.Handle("GET /api/stickers", s.requireAuthAPI(http.HandlerFunc(s.handleStickerSetsAPI)))
+	mux.Handle("GET /api/stickers/{id}/documents", s.requireAuthAPI(http.HandlerFunc(s.handleStickerSetDocumentsAPI)))
+	mux.Handle("GET /api/stickers/documents/{id}/animation", s.requireAuthAPI(http.HandlerFunc(s.handleStickerDocumentAnimationAPI)))
+	mux.Handle("POST /api/actions/set-sticker-set-archived", s.requireAuthAPI(http.HandlerFunc(s.handleSetStickerSetArchivedAPI)))
+	mux.Handle("POST /api/actions/set-sticker-set-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStickerSetSortOrderAPI)))
+	mux.Handle("POST /api/actions/rename-sticker-set", s.requireAuthAPI(http.HandlerFunc(s.handleRenameStickerSetAPI)))
+	mux.Handle("POST /api/actions/delete-sticker-set", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteStickerSetAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -981,6 +988,164 @@ func (s *server) handleSetStarGiftSortOrderAPI(w http.ResponseWriter, r *http.Re
 		GiftID:      body.GiftID, SortOrder: body.SortOrder,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gifts/set-sort-order", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type renameStickerSetAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	SetID     int64  `json:"set_id,string"`
+	Title     string `json:"title"`
+}
+
+func (s *server) handleRenameStickerSetAPI(w http.ResponseWriter, r *http.Request) {
+	var body renameStickerSetAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.RenameStickerSetRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "rename-sticker-set"),
+		SetID:       body.SetID, Title: body.Title,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/rename", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteStickerSetAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	SetID     int64  `json:"set_id,string"`
+}
+
+func (s *server) handleDeleteStickerSetAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteStickerSetAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteStickerSetRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-sticker-set"),
+		SetID:       body.SetID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/delete", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+func (s *server) handleStickerSetsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	rows, err := s.read.ListStickerSets(r.Context(), r.URL.Query().Get("kind"))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
+}
+
+func (s *server) handleStickerSetDocumentsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.read == nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
+		return
+	}
+	setID, err := parseInt64(r.PathValue("id"))
+	if err != nil || setID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	ids, err := s.read.StickerSetDocumentIDs(r.Context(), setID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"document_ids": ids})
+}
+
+// handleStickerDocumentAnimationAPI proxies one document's decompressed Lottie
+// JSON from the real telesrv admin API — mirrors handleStarGiftAnimationAPI.
+func (s *server) handleStickerDocumentAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	documentID, err := parseInt64(r.PathValue("id"))
+	if err != nil || documentID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid document id")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		fmt.Sprintf("%s/v1/stickers/documents/%d/animation", s.cfg.AdminAPIURL, documentID), nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if err != nil || len(raw) > 8<<20 {
+		writeAPIError(w, http.StatusBadGateway, "invalid animation response")
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		writeAPIError(w, resp.StatusCode, string(raw))
+		return
+	}
+	// Content-Type is passed through as-is: the underlying document may be a
+	// decompressed Lottie animation (application/json) or a plain static
+	// raster sticker (image/webp, image/png, ...) — see
+	// admin.Service.StickerDocumentAnimation.
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+type setStickerSetArchivedAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	SetID     int64  `json:"set_id,string"`
+	Archived  bool   `json:"archived"`
+}
+
+func (s *server) handleSetStickerSetArchivedAPI(w http.ResponseWriter, r *http.Request) {
+	var body setStickerSetArchivedAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetStickerSetArchivedRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sticker-set-archived"),
+		SetID:       body.SetID, Archived: body.Archived,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/set-archived", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setStickerSetSortOrderAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	SetID     int64  `json:"set_id,string"`
+	SortOrder int    `json:"sort_order"`
+}
+
+func (s *server) handleSetStickerSetSortOrderAPI(w http.ResponseWriter, r *http.Request) {
+	var body setStickerSetSortOrderAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.SetStickerSetSortOrderRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-sticker-set-sort-order"),
+		SetID:       body.SetID, SortOrder: body.SortOrder,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/set-sort-order", req)
 	writeCommandResultAPI(w, result, err)
 }
 

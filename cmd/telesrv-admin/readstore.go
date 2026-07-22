@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -186,6 +187,85 @@ LIMIT $1`, domain.MaxStarGiftCatalogSize)
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+type StickerSetRow struct {
+	// ID must round-trip through JSON as a string: these are Telegram-style
+	// snowflake ids (18-19 digits), well past JS's 2^53 safe-integer limit, so
+	// a plain JSON number gets silently rounded by the browser (see StarGiftRow
+	// for the same fix applied to gift ids).
+	ID        int64 `json:"ID,string"`
+	ShortName string
+	Title     string
+	Count     int
+	Kind      string
+	SystemKey string
+	Official  bool
+	Archived  bool
+	Installed bool
+	SortOrder int
+	CreatedAt time.Time
+	// CoverDocumentID is the first document in the set, used as a small
+	// thumbnail in the admin list — empty when the set has no documents yet.
+	// Extracted straight from the jsonb array as text (document_ids->>0), so
+	// it never round-trips through a JSON number and risks the same 2^53
+	// precision loss as ID above.
+	CoverDocumentID string
+}
+
+// ListStickerSets lists non-system sticker/emoji sets. kind filters to exactly
+// that set_kind ("stickers", "emoji", "masks"); an empty kind lists all of
+// them (still excluding "system" — dice, animated emoji, premium/TON gifts
+// and similar built-in packs are never admin-editable).
+func (s *readStore) ListStickerSets(ctx context.Context, kind string) ([]StickerSetRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, short_name, title, count, set_kind, system_key, official, archived, installed, sort_order, created_at,
+       COALESCE(document_ids->>0, '')
+FROM sticker_sets
+WHERE deleted = false AND set_kind <> 'system'
+  AND ($1 = '' OR set_kind = $1)
+ORDER BY set_kind, sort_order, id`, kind)
+	if err != nil {
+		return nil, fmt.Errorf("list sticker sets: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StickerSetRow, 0)
+	for rows.Next() {
+		var item StickerSetRow
+		if err := rows.Scan(&item.ID, &item.ShortName, &item.Title, &item.Count, &item.Kind, &item.SystemKey, &item.Official, &item.Archived, &item.Installed, &item.SortOrder, &item.CreatedAt, &item.CoverDocumentID); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// StickerSetDocumentIDs returns document ids as strings, not int64 — a plain
+// JSON number array would let the browser silently round these snowflake ids
+// past 2^53 (see StickerSetRow.ID for the same issue on the set id itself).
+func (s *readStore) StickerSetDocumentIDs(ctx context.Context, setID int64) ([]string, error) {
+	// jsonb must be cast to text and scanned as a string — see the identical
+	// ::text-cast pattern in internal/store/postgres/media.go's sticker set
+	// select; scanning jsonb straight into []byte does not reliably decode here.
+	var raw string
+	err := s.pool.QueryRow(ctx, `SELECT document_ids::text FROM sticker_sets WHERE id = $1 AND deleted = false`, setID).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sticker set documents: %w", err)
+	}
+	var ids []int64
+	if raw != "" && raw != "[]" {
+		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+			return nil, fmt.Errorf("sticker set documents: %w", err)
+		}
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return out, nil
 }
 
 func (s *readStore) SearchAccounts(ctx context.Context, q string) ([]AccountRow, error) {

@@ -21,6 +21,8 @@ export function routeTitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/channels")) return t("route.channels");
   if (pathname.startsWith("/messages")) return t("route.messages");
 	if (pathname.startsWith("/gifts")) return t("route.gifts");
+	if (pathname.startsWith("/stickers")) return t("route.stickers");
+	if (pathname.startsWith("/emoji")) return t("route.emoji");
   return t("route.dashboard");
 }
 
@@ -29,5 +31,7 @@ export function routeSubtitle(pathname: string, t: TFunction): string {
   if (pathname.startsWith("/channels")) return t("route.channelsSubtitle");
   if (pathname.startsWith("/messages")) return t("route.messagesSubtitle");
 	if (pathname.startsWith("/gifts")) return t("route.giftsSubtitle");
+	if (pathname.startsWith("/stickers")) return t("route.stickersSubtitle");
+	if (pathname.startsWith("/emoji")) return t("route.emojiSubtitle");
   return t("route.dashboardSubtitle");
 }

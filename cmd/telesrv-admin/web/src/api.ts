@@ -10,7 +10,8 @@ import type {
   MessageListResponse,
   OfficialStarGiftListResponse,
   StarGiftCollectiblePreview,
-  StarGiftListResponse
+  StarGiftListResponse,
+  StickerSetListResponse
 } from "./types";
 
 export class APIError extends Error {
@@ -67,6 +68,9 @@ export const api = {
     return request<GroupMessageDetail>(`/api/messages/groups/detail?${params.toString()}`);
   },
 	gifts: () => request<StarGiftListResponse>("/api/gifts"),
+	stickerSets: (kind: string) => request<StickerSetListResponse>(`/api/stickers?kind=${encodeURIComponent(kind)}`),
+	stickerSetDocuments: (setID: string) => request<{ document_ids: string[] }>(`/api/stickers/${encodeURIComponent(setID)}/documents`),
+	stickerDocumentAnimationURL: (documentID: string) => `/api/stickers/documents/${encodeURIComponent(documentID)}/animation`,
 	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
 	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),
 	giftAnimation: (id: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(id)}/animation`),

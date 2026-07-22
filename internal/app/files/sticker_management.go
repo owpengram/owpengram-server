@@ -134,6 +134,93 @@ func (s *Service) DeleteStickerSet(ctx context.Context, actorUserID int64, ref d
 	return set.Kind, nil
 }
 
+// AdminSetStickerSetArchived toggles a set's archived flag with no ownership
+// check, so admins can hide/show any pack — including seed-imported system
+// and regular packs, which have no creator_user_id to match against.
+func (s *Service) AdminSetStickerSetArchived(ctx context.Context, setID int64, archived bool) (bool, error) {
+	set, found, err := s.media.GetStickerSetByID(ctx, setID)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, domain.ErrStickerSetInvalid
+	}
+	if set.Archived == archived {
+		return false, nil
+	}
+	set.Archived = archived
+	if err := s.media.UpdateStickerSet(ctx, set, nil); err != nil {
+		return false, err
+	}
+	s.deleteCachedStickerSet(set)
+	return true, nil
+}
+
+// AdminSetStickerSetSortOrder sets a set's display sort order with no
+// ownership check; see AdminSetStickerSetArchived for why that's needed here.
+func (s *Service) AdminSetStickerSetSortOrder(ctx context.Context, setID int64, order int) (bool, error) {
+	set, found, err := s.media.GetStickerSetByID(ctx, setID)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, domain.ErrStickerSetInvalid
+	}
+	if set.SortOrder == order {
+		return false, nil
+	}
+	set.SortOrder = order
+	if err := s.media.UpdateStickerSet(ctx, set, nil); err != nil {
+		return false, err
+	}
+	s.deleteCachedStickerSet(set)
+	return true, nil
+}
+
+// AdminRenameStickerSet renames a set with no ownership check; see
+// AdminSetStickerSetArchived for why that's needed here.
+func (s *Service) AdminRenameStickerSet(ctx context.Context, setID int64, title string) (domain.StickerSet, error) {
+	title = strings.TrimSpace(title)
+	if err := validateStickerSetTitle(title); err != nil {
+		return domain.StickerSet{}, err
+	}
+	set, found, err := s.media.GetStickerSetByID(ctx, setID)
+	if err != nil {
+		return domain.StickerSet{}, err
+	}
+	if !found {
+		return domain.StickerSet{}, domain.ErrStickerSetInvalid
+	}
+	set.Title = title
+	set.Hash = stickerSetHash(set)
+	if err := s.media.UpdateStickerSet(ctx, set, nil); err != nil {
+		return domain.StickerSet{}, err
+	}
+	s.deleteCachedStickerSet(set)
+	return set, nil
+}
+
+// AdminDeleteStickerSet deletes (soft-delete) a set with no ownership check;
+// see AdminSetStickerSetArchived for why that's needed here. Safe to bypass
+// ownership for: sticker_sets has no incoming foreign keys, so there's no
+// cascade to worry about (unlike star gifts, which have ~15 dependent
+// tables). Seed-imported sets will reappear on next restart if their source
+// files are still under data/sticker-seed — this only removes the DB row.
+func (s *Service) AdminDeleteStickerSet(ctx context.Context, setID int64) (domain.StickerSetKind, error) {
+	set, found, err := s.media.GetStickerSetByID(ctx, setID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", domain.ErrStickerSetInvalid
+	}
+	if err := s.media.AdminDeleteStickerSet(ctx, setID); err != nil {
+		return "", err
+	}
+	s.deleteCachedStickerSet(set)
+	return set.Kind, nil
+}
+
 func (s *Service) resolveOwnedStickerSet(ctx context.Context, actorUserID int64, ref domain.StickerSetRef) (domain.StickerSet, []domain.Document, error) {
 	if actorUserID <= 0 {
 		return domain.StickerSet{}, nil, domain.ErrStickerSetCreatorInvalid

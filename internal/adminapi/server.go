@@ -42,6 +42,11 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	SetStarGiftEnabled(ctx context.Context, req admin.SetStarGiftEnabledRequest) (admin.CommandResult, error)
 	SetStarGiftSortOrder(ctx context.Context, req admin.SetStarGiftSortOrderRequest) (admin.CommandResult, error)
+	SetStickerSetArchived(ctx context.Context, req admin.SetStickerSetArchivedRequest) (admin.CommandResult, error)
+	SetStickerSetSortOrder(ctx context.Context, req admin.SetStickerSetSortOrderRequest) (admin.CommandResult, error)
+	RenameStickerSet(ctx context.Context, req admin.RenameStickerSetRequest) (admin.CommandResult, error)
+	DeleteStickerSet(ctx context.Context, req admin.DeleteStickerSetRequest) (admin.CommandResult, error)
+	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	StarGiftAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
 	StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
 	StarGiftCollectibleAnimation(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
@@ -110,6 +115,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gifts/{id}/collectibles/publish", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/gifts/set-enabled", s.authenticated(s.handleSetStarGiftEnabled))
 	mux.HandleFunc("POST /v1/gifts/set-sort-order", s.authenticated(s.handleSetStarGiftSortOrder))
+	mux.HandleFunc("POST /v1/stickers/set-archived", s.authenticated(s.handleSetStickerSetArchived))
+	mux.HandleFunc("POST /v1/stickers/set-sort-order", s.authenticated(s.handleSetStickerSetSortOrder))
+	mux.HandleFunc("POST /v1/stickers/rename", s.authenticated(s.handleRenameStickerSet))
+	mux.HandleFunc("POST /v1/stickers/delete", s.authenticated(s.handleDeleteStickerSet))
+	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("GET /v1/gifts/{id}/animation", s.authenticated(s.handleStarGiftAnimation))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/gifts/{id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
@@ -400,6 +410,63 @@ func (s *Server) handleSetStarGiftSortOrder(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := s.svc.SetStarGiftSortOrder(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetStickerSetArchived(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetStickerSetArchivedRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetStickerSetArchived(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetStickerSetSortOrder(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetStickerSetSortOrderRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetStickerSetSortOrder(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRenameStickerSet(w http.ResponseWriter, r *http.Request) {
+	var req admin.RenameStickerSetRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RenameStickerSet(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteStickerSet(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteStickerSetRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteStickerSet(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleStickerDocumentAnimation(w http.ResponseWriter, r *http.Request) {
+	documentID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || documentID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid document id")
+		return
+	}
+	raw, contentType, found, err := s.svc.StickerDocumentAnimation(r.Context(), documentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "document animation not found")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) handleStarGiftAnimation(w http.ResponseWriter, r *http.Request) {

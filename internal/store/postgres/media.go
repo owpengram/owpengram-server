@@ -756,6 +756,24 @@ WHERE id = $1
 	})
 }
 
+func (s *MediaStore) AdminDeleteStickerSet(ctx context.Context, setID int64) error {
+	return withTx(ctx, s.db, "admin delete sticker set", func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+UPDATE sticker_sets
+SET deleted = true, updated_at = now()
+WHERE id = $1
+  AND deleted = false`, setID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return domain.ErrStickerSetInvalid
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM user_sticker_sets WHERE sticker_set_id = $1`, setID)
+		return err
+	})
+}
+
 func insertStickerSet(ctx context.Context, db sqlcgen.DBTX, set domain.StickerSet) error {
 	thumbs, err := jsonArrayOrEmpty(set.Thumbs)
 	if err != nil {

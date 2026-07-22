@@ -347,6 +347,19 @@ textarea:focus {
   width: 88px;
 }
 
+.sort-order-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sort-order-editor .small-input {
+  width: 64px;
+  height: 32px;
+}
+.sort-order-editor .title-input {
+  width: 160px;
+}
+
 .field-inline {
   display: inline-flex;
   align-items: center;

@@ -275,6 +275,26 @@ func (fakeService) AccountAvatar(context.Context, int64) ([]byte, string, bool, 
 	return nil, "", false, nil
 }
 
+func (fakeService) SetStickerSetArchived(_ context.Context, req admin.SetStickerSetArchivedRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetStickerSetSortOrder(_ context.Context, req admin.SetStickerSetSortOrderRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) RenameStickerSet(_ context.Context, req admin.RenameStickerSetRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DeleteStickerSet(_ context.Context, req admin.DeleteStickerSetRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, string, bool, error) {
+	return nil, "", false, nil
+}
+
 func (fakeService) OfficialStarGifts(context.Context) ([]officialgifts.GiftSummary, error) {
 	return nil, nil
 }

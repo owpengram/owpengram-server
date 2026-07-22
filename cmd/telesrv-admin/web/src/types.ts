@@ -266,6 +266,27 @@ export type CommandResult = {
   error?: string;
 };
 
+export type StickerSetRow = {
+  // String, not number: these are 18-19 digit snowflake ids, past JS's 2^53
+  // safe-integer limit — see GiftID on StarGiftRow for the same convention.
+  ID: string;
+  ShortName: string;
+  Title: string;
+  Count: number;
+  Kind: string;
+  SystemKey: string;
+  Official: boolean;
+  Archived: boolean;
+  Installed: boolean;
+  SortOrder: number;
+  CreatedAt: string;
+  // Id of the set's first document, for a small list thumbnail — empty when
+  // the set has no documents. Same string-not-number reasoning as ID.
+  CoverDocumentID: string;
+};
+
+export type StickerSetListResponse = { rows: StickerSetRow[] };
+
 export type AccountListResponse = {
   query: string;
   limit: number;
