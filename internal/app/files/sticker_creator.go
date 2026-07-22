@@ -62,6 +62,23 @@ func (s *Service) CreateStickerSet(ctx context.Context, req domain.CreateSticker
 	if req.CreatorUserID <= 0 {
 		return domain.StickerSet{}, nil, domain.ErrStickerSetCreatorInvalid
 	}
+	return s.createStickerSet(ctx, req)
+}
+
+// AdminCreateStickerSet creates a pack with no owning user (CreatorUserID
+// forced to 0) so it's editable only through the Admin* bypass methods —
+// the same convention seed-imported packs already use. Unlike CreateStickerSet,
+// the caller must supply a non-empty ShortName: short-name suggestion needs a
+// real user id to build a stable suffix, which an unowned pack doesn't have.
+func (s *Service) AdminCreateStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
+	req.CreatorUserID = 0
+	if strings.TrimSpace(req.ShortName) == "" {
+		return domain.StickerSet{}, nil, domain.ErrStickerSetShortNameInvalid
+	}
+	return s.createStickerSet(ctx, req)
+}
+
+func (s *Service) createStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error) {
 	title := strings.TrimSpace(req.Title)
 	if err := validateStickerSetTitle(title); err != nil {
 		return domain.StickerSet{}, nil, err

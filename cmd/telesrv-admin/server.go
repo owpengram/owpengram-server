@@ -85,6 +85,9 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-sticker-set-sort-order", s.requireAuthAPI(http.HandlerFunc(s.handleSetStickerSetSortOrderAPI)))
 	mux.Handle("POST /api/actions/rename-sticker-set", s.requireAuthAPI(http.HandlerFunc(s.handleRenameStickerSetAPI)))
 	mux.Handle("POST /api/actions/delete-sticker-set", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteStickerSetAPI)))
+	mux.Handle("POST /api/actions/create-sticker-set", s.requireAuthAPI(http.HandlerFunc(s.handleCreateStickerSetAPI)))
+	mux.Handle("POST /api/actions/add-sticker-to-set", s.requireAuthAPI(http.HandlerFunc(s.handleAddStickerToSetAPI)))
+	mux.Handle("POST /api/actions/remove-sticker-from-set", s.requireAuthAPI(http.HandlerFunc(s.handleRemoveStickerFromSetAPI)))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -1029,6 +1032,120 @@ func (s *server) handleDeleteStickerSetAPI(w http.ResponseWriter, r *http.Reques
 		SetID:       body.SetID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/delete", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type createStickerSetAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Title     string `json:"title"`
+	ShortName string `json:"short_name"`
+	Kind      string `json:"kind"`
+	Emoji     string `json:"emoji"`
+	Keywords  string `json:"keywords,omitempty"`
+}
+
+func (s *server) handleCreateStickerSetAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 21<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body createStickerSetAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "sticker file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (20<<20)+1))
+	if err != nil || len(data) == 0 || len(data) > 20<<20 {
+		writeAPIError(w, http.StatusBadRequest, "sticker file is empty or too large")
+		return
+	}
+	req := admin.CreateStickerSetRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-sticker-set"),
+		Title:       body.Title, ShortName: body.ShortName, Kind: body.Kind,
+		Emoji: body.Emoji, Keywords: body.Keywords, FileName: header.Filename,
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/stickers/create", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
+}
+
+type addStickerToSetAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	SetID     int64  `json:"set_id,string"`
+	Emoji     string `json:"emoji"`
+	Keywords  string `json:"keywords,omitempty"`
+}
+
+func (s *server) handleAddStickerToSetAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 21<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body addStickerToSetAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "sticker file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (20<<20)+1))
+	if err != nil || len(data) == 0 || len(data) > 20<<20 {
+		writeAPIError(w, http.StatusBadRequest, "sticker file is empty or too large")
+		return
+	}
+	req := admin.AddStickerToSetRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "add-sticker-to-set"),
+		SetID:       body.SetID, Emoji: body.Emoji, Keywords: body.Keywords, FileName: header.Filename,
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/stickers/add", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
+}
+
+type removeStickerFromSetAPIRequest struct {
+	CommandID  string `json:"command_id"`
+	Reason     string `json:"reason"`
+	Confirm    bool   `json:"confirm"`
+	SetID      int64  `json:"set_id,string"`
+	DocumentID int64  `json:"document_id,string"`
+}
+
+func (s *server) handleRemoveStickerFromSetAPI(w http.ResponseWriter, r *http.Request) {
+	var body removeStickerFromSetAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.RemoveStickerFromSetRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "remove-sticker-from-set"),
+		SetID:       body.SetID, DocumentID: body.DocumentID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/stickers/remove", req)
 	writeCommandResultAPI(w, result, err)
 }
 

@@ -71,6 +71,8 @@ export const api = {
 	stickerSets: (kind: string) => request<StickerSetListResponse>(`/api/stickers?kind=${encodeURIComponent(kind)}`),
 	stickerSetDocuments: (setID: string) => request<{ document_ids: string[] }>(`/api/stickers/${encodeURIComponent(setID)}/documents`),
 	stickerDocumentAnimationURL: (documentID: string) => `/api/stickers/documents/${encodeURIComponent(documentID)}/animation`,
+	createStickerSet: (form: FormData) => request<CommandResult>("/api/actions/create-sticker-set", { method: "POST", body: form }),
+	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
 	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),
 	giftAnimation: (id: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(id)}/animation`),

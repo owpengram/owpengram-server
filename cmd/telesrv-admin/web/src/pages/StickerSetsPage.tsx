@@ -1,4 +1,4 @@
-import { Eye, ChevronLeft, ChevronRight, ImageOff, RefreshCw, Search } from "lucide-react";
+import { Eye, ChevronLeft, ChevronRight, ImageOff, Plus, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -6,6 +6,7 @@ import { StickerDocumentPreview } from "../components/StickerDocumentPreview";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
 import type { StickerSetRow } from "../types";
+import { CreateStickerSetModal } from "./CreateStickerSetModal";
 import { StickerSetPreviewModal } from "./StickerSetPreviewModal";
 
 type StickerPageSize = 10 | 20 | 50 | 100 | "all";
@@ -25,9 +26,11 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
   const [orderDrafts, setOrderDrafts] = useState<Record<string, string>>({});
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
   const [previewSet, setPreviewSet] = useState<StickerSetRow | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const pageTitleKey = kind === "emoji" ? "stickers.emojiPageTitle" : "stickers.pageTitle";
   const eyebrowKey = kind === "emoji" ? "stickers.emojiEyebrow" : "stickers.eyebrow";
+  const noun = kind === "emoji" ? "emoji" : "sticker";
 
   async function load() {
     setBusy(true);
@@ -76,9 +79,14 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
       title={t(pageTitleKey)}
       eyebrow={t(eyebrowKey)}
       actions={
-        <button className="btn" type="button" onClick={() => load()} disabled={busy}>
-          <RefreshCw size={15} /> {t("common.refresh")}
-        </button>
+        <>
+          <button className="btn" type="button" onClick={() => load()} disabled={busy}>
+            <RefreshCw size={15} /> {t("common.refresh")}
+          </button>
+          <button className="btn primary" type="button" onClick={() => setCreateOpen(true)}>
+            <Plus size={15} /> {t("stickers.create", { noun })}
+          </button>
+        </>
       }
     >
       {error && <Alert>{error}</Alert>}
@@ -218,6 +226,7 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
         </div>
       )}
       {previewSet && <StickerSetPreviewModal set={previewSet} onClose={() => setPreviewSet(null)} />}
+      {createOpen && <CreateStickerSetModal kind={kind} onClose={() => setCreateOpen(false)} onCreated={() => void load()} />}
     </PageFrame>
   );
 }

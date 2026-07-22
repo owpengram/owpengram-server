@@ -291,6 +291,18 @@ func (fakeService) DeleteStickerSet(_ context.Context, req admin.DeleteStickerSe
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) CreateStickerSet(_ context.Context, req admin.CreateStickerSetRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) AddStickerToSet(_ context.Context, req admin.AddStickerToSetRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) RemoveStickerFromSet(_ context.Context, req admin.RemoveStickerFromSetRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, string, bool, error) {
 	return nil, "", false, nil
 }

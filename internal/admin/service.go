@@ -41,6 +41,9 @@ const (
 	ActionSetStickerSetSortOrder     = "stickers.set_sort_order"
 	ActionRenameStickerSet           = "stickers.rename"
 	ActionDeleteStickerSet           = "stickers.delete"
+	ActionCreateStickerSet           = "stickers.create"
+	ActionAddStickerToSet            = "stickers.add_sticker"
+	ActionRemoveStickerFromSet       = "stickers.remove_sticker"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -139,6 +142,13 @@ type StickerSetsService interface {
 	AdminSetStickerSetSortOrder(ctx context.Context, setID int64, order int) (bool, error)
 	AdminRenameStickerSet(ctx context.Context, setID int64, title string) (domain.StickerSet, error)
 	AdminDeleteStickerSet(ctx context.Context, setID int64) (domain.StickerSetKind, error)
+	// ValidateStickerMaterialUpload is a pure check (no store writes) so a dry-run
+	// preview can validate an uploaded file's shape without materializing it.
+	ValidateStickerMaterialUpload(fileName string, data []byte) (mimeType string, ok bool)
+	AdminUploadStickerMaterial(ctx context.Context, fileName string, data []byte) (domain.Document, error)
+	AdminCreateStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error)
+	AdminAddStickerToSet(ctx context.Context, setID int64, item domain.StickerSetItemInput) (domain.StickerSet, []domain.Document, error)
+	AdminRemoveStickerFromSet(ctx context.Context, setID int64, documentID int64) (domain.StickerSet, []domain.Document, error)
 }
 
 type Dependencies struct {
@@ -322,6 +332,32 @@ type RenameStickerSetRequest struct {
 type DeleteStickerSetRequest struct {
 	CommandMeta
 	SetID int64 `json:"set_id"`
+}
+
+type CreateStickerSetRequest struct {
+	CommandMeta
+	Title     string `json:"title"`
+	ShortName string `json:"short_name"`
+	Kind      string `json:"kind"`
+	Emoji     string `json:"emoji"`
+	Keywords  string `json:"keywords,omitempty"`
+	FileName  string `json:"file_name"`
+	Data      []byte `json:"-"`
+}
+
+type AddStickerToSetRequest struct {
+	CommandMeta
+	SetID    int64  `json:"set_id"`
+	Emoji    string `json:"emoji"`
+	Keywords string `json:"keywords,omitempty"`
+	FileName string `json:"file_name"`
+	Data     []byte `json:"-"`
+}
+
+type RemoveStickerFromSetRequest struct {
+	CommandMeta
+	SetID      int64 `json:"set_id"`
+	DocumentID int64 `json:"document_id"`
 }
 
 type StarGiftCollectibleAnimationUpload struct {
@@ -1502,6 +1538,109 @@ func (s *Service) DeleteStickerSet(ctx context.Context, req DeleteStickerSetRequ
 		}
 		details["kind"] = string(kind)
 		return CommandResult{Message: "sticker set deleted", Details: details}, nil
+	})
+}
+
+func (s *Service) CreateStickerSet(ctx context.Context, req CreateStickerSetRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil {
+		return CommandResult{}, fmt.Errorf("sticker sets service is not configured")
+	}
+	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.ShortName) == "" || strings.TrimSpace(req.Emoji) == "" {
+		return CommandResult{}, domain.ErrStickerSetFileInvalid
+	}
+	mimeType, ok := s.stickerSets.ValidateStickerMaterialUpload(req.FileName, req.Data)
+	if !ok {
+		return CommandResult{}, domain.ErrStickerSetFileInvalid
+	}
+	kind := domain.StickerSetKindStickers
+	if req.Kind == string(domain.StickerSetKindEmoji) {
+		kind = domain.StickerSetKindEmoji
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionCreateStickerSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"title": req.Title, "short_name": req.ShortName, "kind": string(kind),
+			"file_name": req.FileName, "mime_type": mimeType, "bytes": len(req.Data),
+		}
+		if req.DryRun {
+			return CommandResult{Message: "sticker pack validated", Details: details}, nil
+		}
+		doc, err := s.stickerSets.AdminUploadStickerMaterial(ctx, req.FileName, req.Data)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		set, _, err := s.stickerSets.AdminCreateStickerSet(ctx, domain.CreateStickerSetRequest{
+			Title:     req.Title,
+			ShortName: req.ShortName,
+			Kind:      kind,
+			Items: []domain.StickerSetItemInput{{
+				DocumentID:         doc.ID,
+				DocumentAccessHash: doc.AccessHash,
+				Emoji:              req.Emoji,
+				Keywords:           req.Keywords,
+			}},
+		})
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["set_id"] = strconv.FormatInt(set.ID, 10)
+		details["short_name"] = set.ShortName
+		return CommandResult{Message: "sticker pack created", Details: details}, nil
+	})
+}
+
+func (s *Service) AddStickerToSet(ctx context.Context, req AddStickerToSetRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+	}
+	if strings.TrimSpace(req.Emoji) == "" {
+		return CommandResult{}, domain.ErrStickerSetEmojiInvalid
+	}
+	mimeType, ok := s.stickerSets.ValidateStickerMaterialUpload(req.FileName, req.Data)
+	if !ok {
+		return CommandResult{}, domain.ErrStickerSetFileInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionAddStickerToSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{
+			"set_id": strconv.FormatInt(req.SetID, 10), "emoji": req.Emoji,
+			"file_name": req.FileName, "mime_type": mimeType, "bytes": len(req.Data),
+		}
+		if req.DryRun {
+			return CommandResult{Message: "sticker upload validated", Details: details}, nil
+		}
+		doc, err := s.stickerSets.AdminUploadStickerMaterial(ctx, req.FileName, req.Data)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		set, _, err := s.stickerSets.AdminAddStickerToSet(ctx, req.SetID, domain.StickerSetItemInput{
+			DocumentID:         doc.ID,
+			DocumentAccessHash: doc.AccessHash,
+			Emoji:              req.Emoji,
+			Keywords:           req.Keywords,
+		})
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["document_id"] = strconv.FormatInt(doc.ID, 10)
+		details["count"] = set.Count
+		return CommandResult{Message: "sticker added", Details: details}, nil
+	})
+}
+
+func (s *Service) RemoveStickerFromSet(ctx context.Context, req RemoveStickerFromSetRequest) (CommandResult, error) {
+	if s == nil || s.stickerSets == nil || req.SetID <= 0 || req.DocumentID <= 0 {
+		return CommandResult{}, fmt.Errorf("valid sticker set, document and service are required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRemoveStickerFromSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "document_id": strconv.FormatInt(req.DocumentID, 10)}
+		if req.DryRun {
+			return CommandResult{Message: "sticker removal validated", Details: details}, nil
+		}
+		set, _, err := s.stickerSets.AdminRemoveStickerFromSet(ctx, req.SetID, req.DocumentID)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["count"] = set.Count
+		return CommandResult{Message: "sticker removed", Details: details}, nil
 	})
 }
 
