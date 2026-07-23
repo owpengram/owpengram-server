@@ -27,6 +27,11 @@ tmp/
 .gocache/
 .tdesktop-e2e/
 
+# start-server.sh/bat generated files
+.public_ip
+.link_prefix
+.secrets
+
 # IDE
 .idea/
 .vscode/
