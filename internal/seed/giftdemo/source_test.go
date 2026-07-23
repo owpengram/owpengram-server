@@ -29,8 +29,8 @@ func newService() *stargifts.Service {
 
 func TestListDescribesFullGiftSurface(t *testing.T) {
 	list := List()
-	if len(list) != 5 {
-		t.Fatalf("List has %d gifts, want 5", len(list))
+	if len(list) != 3 {
+		t.Fatalf("List has %d gifts, want 3", len(list))
 	}
 	upgradeable, craftable, limited, premium := 0, 0, 0, 0
 	for _, g := range list {
@@ -50,7 +50,8 @@ func TestListDescribesFullGiftSurface(t *testing.T) {
 			premium++
 		}
 	}
-	if upgradeable != 4 || craftable != 3 || limited != 2 || premium != 1 {
+	// One plain (Spark), one upgradeable-only (Star), one craftable (Coin).
+	if upgradeable != 2 || craftable != 1 || limited != 0 || premium != 0 {
 		t.Fatalf("surface counts upgradeable=%d craftable=%d limited=%d premium=%d", upgradeable, craftable, limited, premium)
 	}
 }
@@ -79,8 +80,8 @@ func TestBuildBundleImportsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 5 {
-		t.Fatalf("catalog has %d, want 5", len(catalog))
+	if len(catalog) != 3 {
+		t.Fatalf("catalog has %d, want 3", len(catalog))
 	}
 	limited, premium, upgradeable := 0, 0, 0
 	for _, g := range catalog {
@@ -94,7 +95,7 @@ func TestBuildBundleImportsEndToEnd(t *testing.T) {
 			upgradeable++
 		}
 	}
-	if limited != 2 || premium != 1 || upgradeable != 4 {
+	if limited != 0 || premium != 0 || upgradeable != 2 {
 		t.Fatalf("stored flags limited=%d premium=%d upgradeable=%d", limited, premium, upgradeable)
 	}
 }

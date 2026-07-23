@@ -110,13 +110,13 @@ func TestStarGiftRowJSONPreservesInt64AsDecimalStrings(t *testing.T) {
 
 func TestDefaultGiftImportActionDecodes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/actions/import-default-gift", strings.NewReader(`{
-		"command_id":"c1","reason":"demo","confirm":true,"id":3
+		"command_id":"c1","reason":"demo","confirm":true,"id":3,"enabled":true
 	}`))
 	var got importDefaultStarGiftAPIRequest
 	if err := decodeJSON(req, &got); err != nil {
 		t.Fatalf("decode default gift action: %v", err)
 	}
-	if got.ID != 3 || got.CommandID != "c1" || !got.Confirm {
+	if got.ID != 3 || got.CommandID != "c1" || !got.Confirm || !got.Enabled {
 		t.Fatalf("decoded default gift action = %+v", got)
 	}
 }

@@ -837,6 +837,7 @@ type importDefaultStarGiftAPIRequest struct {
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
 	ID        int    `json:"id"`
+	Enabled   bool   `json:"enabled"`
 }
 
 func (s *server) handleImportDefaultStarGiftAPI(w http.ResponseWriter, r *http.Request) {
@@ -851,6 +852,7 @@ func (s *server) handleImportDefaultStarGiftAPI(w http.ResponseWriter, r *http.R
 	req := admin.ImportDefaultStarGiftRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-default-gift"),
 		ID:          body.ID,
+		Enabled:     body.Enabled,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/default-gifts/import", req)
 	writeCommandResultAPI(w, result, err)
@@ -860,6 +862,7 @@ type importAllDefaultStarGiftsAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
+	Enabled   bool   `json:"enabled"`
 }
 
 func (s *server) handleImportAllDefaultStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
@@ -869,6 +872,7 @@ func (s *server) handleImportAllDefaultStarGiftsAPI(w http.ResponseWriter, r *ht
 	}
 	req := admin.ImportAllDefaultStarGiftsRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-all-default-gifts"),
+		Enabled:     body.Enabled,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/default-gifts/import-all", req)
 	writeCommandResultAPI(w, result, err)
@@ -915,6 +919,7 @@ type importAllOfficialStarGiftsAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
+	Enabled   bool   `json:"enabled"`
 }
 
 func (s *server) handleImportAllOfficialStarGiftsAPI(w http.ResponseWriter, r *http.Request) {
@@ -924,6 +929,7 @@ func (s *server) handleImportAllOfficialStarGiftsAPI(w http.ResponseWriter, r *h
 	}
 	req := admin.ImportAllOfficialStarGiftsRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-all-official-gifts"),
+		Enabled:     body.Enabled,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/official-gifts/import-all", req)
 	writeCommandResultAPI(w, result, err)

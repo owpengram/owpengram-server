@@ -760,8 +760,8 @@ func TestImportDefaultStarGiftPublishesThroughRealService(t *testing.T) {
 	giftService := stargiftapp.NewService(memory.NewStarGiftStore(), &adminGiftBlob{data: map[string][]byte{}}, 2)
 	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: giftService, Now: fixedNow})
 
-	if list := svc.DefaultStarGifts(); len(list) != 5 {
-		t.Fatalf("default gifts = %d, want 5", len(list))
+	if list := svc.DefaultStarGifts(); len(list) != 3 {
+		t.Fatalf("default gifts = %d, want 3", len(list))
 	}
 
 	// Dry-run must not write to the catalog.
@@ -773,15 +773,15 @@ func TestImportDefaultStarGiftPublishesThroughRealService(t *testing.T) {
 		t.Fatalf("dry run wrote %d gifts", len(cat))
 	}
 
-	// Confirmed import-all creates the whole demo set.
-	all := ImportAllDefaultStarGiftsRequest{CommandMeta: CommandMeta{CommandID: "exec-default-all", Actor: "ops", Reason: "demo"}}
+	// Confirmed import-all creates the whole demo set, enabled per the request flag.
+	all := ImportAllDefaultStarGiftsRequest{CommandMeta: CommandMeta{CommandID: "exec-default-all", Actor: "ops", Reason: "demo"}, Enabled: true}
 	result, err := svc.ImportAllDefaultStarGifts(ctx, all)
-	if err != nil || result.Details["imported"] != 5 {
+	if err != nil || result.Details["imported"] != 3 {
 		t.Fatalf("import all: result=%+v err=%v", result, err)
 	}
 	catalog, err := giftService.Catalog(ctx)
-	if err != nil || len(catalog) != 5 {
-		t.Fatalf("catalog=%d err=%v, want 5", len(catalog), err)
+	if err != nil || len(catalog) != 3 {
+		t.Fatalf("catalog=%d err=%v, want 3", len(catalog), err)
 	}
 	limited, premium, upgradeable := 0, 0, 0
 	var craftGiftID int64
@@ -799,7 +799,7 @@ func TestImportDefaultStarGiftPublishesThroughRealService(t *testing.T) {
 			craftGiftID = g.ID
 		}
 	}
-	if limited != 2 || premium != 1 || upgradeable != 4 {
+	if limited != 0 || premium != 0 || upgradeable != 2 {
 		t.Fatalf("stored flags limited=%d premium=%d upgradeable=%d", limited, premium, upgradeable)
 	}
 	// The craftable gift must carry a craft-only (named-rarity) model.
@@ -818,9 +818,40 @@ func TestImportDefaultStarGiftPublishesThroughRealService(t *testing.T) {
 	}
 
 	// Re-running import-all is idempotent: everything already present -> skipped.
-	result, err = svc.ImportAllDefaultStarGifts(ctx, ImportAllDefaultStarGiftsRequest{CommandMeta: CommandMeta{CommandID: "exec-default-all-2", Actor: "ops", Reason: "demo"}})
-	if err != nil || result.Details["imported"] != 0 || result.Details["skipped"] != 5 {
+	// Enabled must match the first run's value (true) or the per-gift replay
+	// hits COMMAND_ID_CONFLICT since the payload would differ from the cached one.
+	result, err = svc.ImportAllDefaultStarGifts(ctx, ImportAllDefaultStarGiftsRequest{CommandMeta: CommandMeta{CommandID: "exec-default-all-2", Actor: "ops", Reason: "demo"}, Enabled: true})
+	if err != nil || result.Details["imported"] != 0 || result.Details["skipped"] != 3 {
 		t.Fatalf("re-import: result=%+v err=%v", result, err)
+	}
+}
+
+// TestImportDefaultStarGiftRespectsEnabledFlag is a regression test: a single
+// default gift import must honor the request's Enabled flag rather than
+// always landing enabled (or, before this fix, always disabled regardless of
+// the admin console checkbox).
+func TestImportDefaultStarGiftRespectsEnabledFlag(t *testing.T) {
+	ctx := context.Background()
+	giftService := stargiftapp.NewService(memory.NewStarGiftStore(), &adminGiftBlob{data: map[string][]byte{}}, 2)
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: giftService, Now: fixedNow})
+
+	off := ImportDefaultStarGiftRequest{ID: 1, CommandMeta: CommandMeta{CommandID: "default-1-off", Actor: "ops", Reason: "demo"}, Enabled: false}
+	if _, err := svc.ImportDefaultStarGift(ctx, off); err != nil {
+		t.Fatalf("import disabled: %v", err)
+	}
+	on := ImportDefaultStarGiftRequest{ID: 2, CommandMeta: CommandMeta{CommandID: "default-2-on", Actor: "ops", Reason: "demo"}, Enabled: true}
+	if _, err := svc.ImportDefaultStarGift(ctx, on); err != nil {
+		t.Fatalf("import enabled: %v", err)
+	}
+
+	// Catalog() only ever returns enabled gifts, so presence/absence here
+	// directly proves whether the Enabled flag was honored.
+	catalog, err := giftService.Catalog(ctx)
+	if err != nil || len(catalog) != 1 {
+		t.Fatalf("catalog=%d err=%v, want 1 (only the enabled gift)", len(catalog), err)
+	}
+	if catalog[0].Title != "OwpenGram Star" {
+		t.Fatalf("unexpected gift in catalog: %q, want %q", catalog[0].Title, "OwpenGram Star")
 	}
 }
 

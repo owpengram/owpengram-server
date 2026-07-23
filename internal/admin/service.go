@@ -291,11 +291,13 @@ type ImportStarGiftRequest struct {
 
 type ImportDefaultStarGiftRequest struct {
 	CommandMeta
-	ID int `json:"id"`
+	ID      int  `json:"id"`
+	Enabled bool `json:"enabled"`
 }
 
 type ImportAllDefaultStarGiftsRequest struct {
 	CommandMeta
+	Enabled bool `json:"enabled"`
 }
 
 type ImportOfficialStarGiftRequest struct {
@@ -317,6 +319,7 @@ type ImportOfficialStarGiftRequest struct {
 
 type ImportAllOfficialStarGiftsRequest struct {
 	CommandMeta
+	Enabled bool `json:"enabled"`
 }
 
 type SetStarGiftEnabledRequest struct {
@@ -1127,6 +1130,7 @@ func (s *Service) ImportDefaultStarGift(ctx context.Context, req ImportDefaultSt
 	if err != nil {
 		return CommandResult{}, domain.ErrStarGiftInvalid
 	}
+	write.Catalog.Enabled = req.Enabled
 	return s.runCommand(ctx, req.CommandMeta, ActionImportDefaultStarGift, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{
 			"id": req.ID, "title": title,
@@ -1181,7 +1185,8 @@ func (s *Service) ImportAllDefaultStarGifts(ctx context.Context, req ImportAllDe
 					Actor:     req.Actor,
 					Reason:    req.Reason,
 				},
-				ID: item.ID,
+				ID:      item.ID,
+				Enabled: req.Enabled,
 			}
 			result, opErr := s.ImportDefaultStarGift(ctx, perReq)
 			entry := map[string]any{"id": item.ID, "title": item.Title, "status": result.Status}
@@ -1428,6 +1433,7 @@ func (s *Service) ImportAllOfficialStarGifts(ctx context.Context, req ImportAllO
 				// worth importing; CanUpgrade() is exactly the precondition
 				// ImportOfficialStarGift enforces for IncludeCollectible.
 				IncludeCollectible: item.CanUpgrade(),
+				Enabled:            req.Enabled,
 			}
 			result, opErr := s.ImportOfficialStarGift(ctx, perReq)
 			entry := map[string]any{"source_gift_id": perReq.SourceGiftID, "status": result.Status}

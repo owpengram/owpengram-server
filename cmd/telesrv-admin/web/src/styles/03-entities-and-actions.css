@@ -275,9 +275,18 @@
 .gift-list-summary { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 700; }
 
 .gift-import-modal { width: min(860px, 100%); }
+.gift-bulk-import-modal { width: min(480px, 100%); }
+.gift-bulk-import-modal .command-body { display: grid; gap: 14px; padding: 16px 18px; }
 .gift-import-modal-body { gap: 14px; }
 .gift-source-tabs { display: flex; gap: 8px; }
 .official-gift-picker { display: grid; min-width: 0; gap: 12px; }
+.official-gift-bulk-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.gift-bulk-import-progress { display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.gift-bulk-import-progress-bar {
+  flex: 1 1 auto; width: 120px; height: 6px; overflow: hidden; background: #e3e8ef; border-radius: 999px;
+}
+.gift-bulk-import-progress-bar > div { height: 100%; background: var(--brand); border-radius: 999px; transition: width .2s ease; }
+.gift-bulk-import-progress span { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .official-gift-tools { display: flex; align-items: center; gap: 12px; }
 .official-gift-tools .searchbox { width: 100%; }
 .official-gift-tools > span { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-weight: 750; }

@@ -15,6 +15,10 @@ const (
 	BotFatherUserID int64 = 93372553
 	// BotFatherAccessHash 固定不变；与迁移 0090 的种子行双写，必须保持一致。
 	BotFatherAccessHash int64 = 7421896403922962293
+	// BotFatherUserPhotoID/AccessHash 是 BotFather 头像 photo 的固定 id，
+	// 与 files.Service.SeedBotFatherAvatar 种子写入的行保持一致。
+	BotFatherUserPhotoID         int64 = 933725530001
+	BotFatherUserPhotoAccessHash int64 = 3198475620194837201
 
 	// StickersBotUserID 是内置 @Stickers 账号。它是 server 内置 service bot，
 	// 不走外部 Bot API 进程。
@@ -43,6 +47,20 @@ func SetOfficialSystemUserAvatar(dcID int, stripped []byte) {
 	officialSystemUserPhotoStripped = stripped
 }
 
+// botFatherPhotoDCID/Stripped 由 files.Service.SeedBotFatherAvatar 在启动时
+// 通过 SetBotFatherAvatar 写入一次；写入前 BotFatherUser() 不带头像（PhotoID==0）。
+var (
+	botFatherPhotoDCID     int
+	botFatherPhotoStripped []byte
+)
+
+// SetBotFatherAvatar 记录 BotFather 头像所在的 DC 与内联缩略图字节。
+// 只应在启动阶段、头像 seed 完成后调用一次。
+func SetBotFatherAvatar(dcID int, stripped []byte) {
+	botFatherPhotoDCID = dcID
+	botFatherPhotoStripped = stripped
+}
+
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
 func OfficialSystemUser() User {
 	u := User{
@@ -64,7 +82,7 @@ func OfficialSystemUser() User {
 
 // BotFatherUser 返回内置 BotFather 账号。username 不以 bot 结尾属种子例外（与官方一致）。
 func BotFatherUser() User {
-	return User{
+	u := User{
 		ID:             BotFatherUserID,
 		AccessHash:     BotFatherAccessHash,
 		FirstName:      "BotFather",
@@ -73,6 +91,12 @@ func BotFatherUser() User {
 		Bot:            true,
 		BotInfoVersion: 1,
 	}
+	if botFatherPhotoDCID != 0 {
+		u.PhotoID = BotFatherUserPhotoID
+		u.PhotoDCID = botFatherPhotoDCID
+		u.PhotoStripped = botFatherPhotoStripped
+	}
+	return u
 }
 
 // StickersBotUser 返回内置 @Stickers 账号。username 不以 bot 结尾属种子例外（与官方一致）。

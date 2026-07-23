@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight, FileJson2, Gem, Loader2, Pause
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, errorMessage } from "../api";
+import { api, APIError, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { useI18n } from "../i18n";
@@ -12,6 +12,11 @@ import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
 type OfficialGiftCategory = "all" | "upgrade" | "craft" | "basic";
 type GiftPageSize = 10 | 20 | 50 | 100 | "all";
+
+// The demo pool only has 3 placeholder gifts left after pruning to one per
+// capability tier (Spark/Star/Coin); hide the tab until real custom designs
+// replace them. Flip back to true to re-enable.
+const SHOW_DEFAULT_GIFTS_TAB = false;
 
 function defaultGiftAttributeCount(gift: DefaultGiftRow) {
   return gift.model_count + gift.pattern_count + gift.backdrop_count;
@@ -106,7 +111,7 @@ export function GiftsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [collectibleGift, setCollectibleGift] = useState<StarGiftRow | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [importSource, setImportSource] = useState<"default" | "official" | "file">("default");
+  const [importSource, setImportSource] = useState<"default" | "official" | "file">(SHOW_DEFAULT_GIFTS_TAB ? "default" : "official");
   const [defaultGifts, setDefaultGifts] = useState<DefaultGiftRow[]>([]);
   const [selectedDefaultID, setSelectedDefaultID] = useState(0);
   const [officialGifts, setOfficialGifts] = useState<OfficialStarGiftRow[]>([]);
@@ -128,6 +133,14 @@ export function GiftsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [importError, setImportError] = useState("");
+  const [bulkImportOpen, setBulkImportOpen] = useState<"default" | "official" | null>(null);
+  const [bulkImportItems, setBulkImportItems] = useState<Array<DefaultGiftRow | OfficialStarGiftRow>>([]);
+  const [bulkImportEnabled, setBulkImportEnabled] = useState(true);
+  const [bulkImportReason, setBulkImportReason] = useState("");
+  const [bulkImportBusy, setBulkImportBusy] = useState(false);
+  const [bulkImportProgress, setBulkImportProgress] = useState({ done: 0, total: 0 });
+  const [bulkImportError, setBulkImportError] = useState("");
+  const [bulkImportResult, setBulkImportResult] = useState<{ imported: number; skipped: number; failed: number; errors: string[] } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkReason, setBulkReason] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -301,6 +314,84 @@ export function GiftsPage() {
     setPreview(null);
   }
 
+  async function openBulkImport(source: "default" | "official") {
+    setBulkImportOpen(source);
+    setBulkImportItems([]);
+    setBulkImportEnabled(true);
+    setBulkImportReason("");
+    setBulkImportBusy(false);
+    setBulkImportProgress({ done: 0, total: 0 });
+    setBulkImportError("");
+    setBulkImportResult(null);
+    try {
+      if (source === "default") {
+        const list = defaultGifts.length > 0 ? defaultGifts : (await api.defaultGifts()).gifts ?? [];
+        setBulkImportItems(list);
+      } else {
+        const list = officialGifts.length > 0 ? officialGifts : (await api.officialGifts()).gifts ?? [];
+        setBulkImportItems(list);
+      }
+    } catch (err) {
+      setBulkImportError(errorMessage(err));
+    }
+  }
+
+  function closeBulkImport() {
+    if (bulkImportBusy) return;
+    setBulkImportOpen(null);
+  }
+
+  async function runBulkImport() {
+    if (!bulkImportOpen) return;
+    if (!bulkImportReason.trim()) { setBulkImportError(t("action.reasonRequired")); return; }
+    const source = bulkImportOpen;
+    setBulkImportBusy(true); setBulkImportError(""); setBulkImportResult(null);
+    setBulkImportProgress({ done: 0, total: bulkImportItems.length });
+    let imported = 0, skipped = 0, failed = 0;
+    const errors: string[] = [];
+    for (const item of bulkImportItems) {
+      const label = source === "default" ? (item as DefaultGiftRow).title : ((item as OfficialStarGiftRow).title || `#${(item as OfficialStarGiftRow).source_gift_id}`);
+      try {
+        // Stable per-gift command_id (mirrors the old server-side bulk
+        // endpoint) so a gift already imported by a prior run is recognized
+        // as a replay instead of creating a duplicate catalog entry -
+        // CreateCatalogBundle has no unique constraint on title/source id to
+        // fall back on. If this run's Enabled value differs from the run
+        // that first created it, the server reports COMMAND_ID_CONFLICT
+        // instead of silently re-importing; treat that as "skipped" too.
+        const result = source === "default"
+          ? await api.importDefaultGift({
+              command_id: `bulk-default-gift-${(item as DefaultGiftRow).id}`,
+              reason: bulkImportReason.trim(),
+              confirm: true,
+              id: (item as DefaultGiftRow).id,
+              enabled: bulkImportEnabled
+            })
+          : await api.importOfficialGift({
+              command_id: `bulk-official-gift-${(item as OfficialStarGiftRow).source_gift_id}`,
+              reason: bulkImportReason.trim(),
+              confirm: true,
+              source_gift_id: (item as OfficialStarGiftRow).source_gift_id,
+              include_collectible: (item as OfficialStarGiftRow).can_upgrade,
+              enabled: bulkImportEnabled
+            });
+        if (result.already_executed || result.details?.skipped) skipped++;
+        else imported++;
+      } catch (err) {
+        if (err instanceof APIError && err.message === "COMMAND_ID_CONFLICT") {
+          skipped++;
+        } else {
+          failed++;
+          errors.push(`${label}: ${errorMessage(err)}`);
+        }
+      }
+      setBulkImportProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+    }
+    setBulkImportBusy(false);
+    setBulkImportResult({ imported, skipped, failed, errors });
+    await load();
+  }
+
   async function validateImport() {
     setBusy(true); setImportError(""); setPreview(null);
     try {
@@ -331,8 +422,10 @@ export function GiftsPage() {
   function startImport() {
 	setGiftID("0"); setTitle(""); setStars("50"); setConvertStars("50"); setSortOrder("0");
     setEnabled(true); setReason(""); setFile(null); setPreview(null); setImportError("");
-    setImportSource("default"); setSelectedDefaultID(0);
-    setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all"); setImportOpen(true);
+    setImportSource(SHOW_DEFAULT_GIFTS_TAB ? "default" : "official"); setSelectedDefaultID(0);
+    setSourceGiftID(""); setOfficialQuery(""); setOfficialCategory("all");
+    setBulkImportBusy(false); setBulkImportProgress({ done: 0, total: 0 }); setBulkImportError("");
+    setImportOpen(true);
   }
 
   function startRevision(gift: StarGiftRow) {
@@ -434,22 +527,18 @@ export function GiftsPage() {
                 <div className={`command-step ${preview ? "active" : ""}`}><span>3</span><strong>{t("gifts.stepImport")}</strong></div>
               </div>
               {giftID === "0" && <div className="gift-source-tabs">
-                <button className={`btn ${importSource === "default" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("default"); setPreview(null); }}>{t("gifts.defaultSource")}</button>
+                {SHOW_DEFAULT_GIFTS_TAB && <button className={`btn ${importSource === "default" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("default"); setPreview(null); }}>{t("gifts.defaultSource")}</button>}
                 <button className={`btn ${importSource === "official" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("official"); setPreview(null); }}>{t("gifts.officialSource")}</button>
                 <button className={`btn ${importSource === "file" ? "primary" : ""}`} type="button" onClick={() => { setImportSource("file"); setPreview(null); }}>{t("gifts.fileSource")}</button>
               </div>}
-              {importSource === "default" && giftID === "0" ? <section className="official-gift-picker">
+              {importSource === "default" && giftID === "0" && SHOW_DEFAULT_GIFTS_TAB ? <section className="official-gift-picker">
                 <div className="gift-import-note"><span>{t("gifts.defaultHint")}</span><div className="gift-format-chips"><span>{defaultGifts.length}</span><span>OwpenGram</span></div></div>
                 <div className="official-gift-bulk-import">
-                  <ActionButton
-                    label={t("gifts.importAllDefault")}
-                    path="/api/actions/import-all-default-gifts"
-                    payload={() => ({})}
-                    tone="neutral"
-                    icon={<Upload size={14} />}
-                    onDone={() => void load()}
-                  />
+                  <button className="btn" type="button" onClick={() => openBulkImport("default")}>
+                    <Upload size={14} /> {t("gifts.importAllDefault")}
+                  </button>
                 </div>
+                <label className="gift-switch"><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); setPreview(null); }} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
                 <div className="official-gift-list" role="listbox" aria-label={t("gifts.defaultSelect")}>
                   {defaultGifts.map((gift) => {
                     const isSelected = gift.id === selectedDefaultID;
@@ -479,14 +568,9 @@ export function GiftsPage() {
               </section> : importSource === "official" && giftID === "0" ? <section className="official-gift-picker">
                 <div className="gift-import-note"><span>{t("gifts.officialHint")}</span><div className="gift-format-chips"><span>{officialGifts.length}</span><span>SHA-256</span></div></div>
                 <div className="official-gift-bulk-import">
-                  <ActionButton
-                    label={t("gifts.importAllOfficial")}
-                    path="/api/actions/import-all-official-gifts"
-                    payload={() => ({})}
-                    tone="neutral"
-                    icon={<Upload size={14} />}
-                    onDone={() => void load()}
-                  />
+                  <button className="btn" type="button" onClick={() => openBulkImport("official")}>
+                    <Upload size={14} /> {t("gifts.importAllOfficial")}
+                  </button>
                 </div>
                 <div className="official-gift-tools">
                   <label className="searchbox"><Search size={15} /><input value={officialQuery} onChange={(e) => setOfficialQuery(e.target.value)} placeholder={t("gifts.officialSearch")} /></label>
@@ -564,6 +648,38 @@ export function GiftsPage() {
               <button className="btn" type="button" onClick={() => setImportOpen(false)} disabled={busy}>{t("common.close")}</button>
               <button className="btn" type="button" onClick={validateImport} disabled={busy}>{busy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />}{t("gifts.validate")}</button>
               <button className="btn primary" type="button" onClick={confirmImport} disabled={busy || !preview}><Upload size={15} />{t("gifts.confirmImport")}</button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+      {bulkImportOpen && createPortal(
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal command-modal gift-bulk-import-modal" role="dialog" aria-modal="true"
+            aria-label={bulkImportOpen === "default" ? t("gifts.importAllDefault") : t("gifts.importAllOfficial")}>
+            <div className="modal-head">
+              <div><div className="eyebrow">{t("gifts.importEyebrow")}</div><h2>{bulkImportOpen === "default" ? t("gifts.importAllDefault") : t("gifts.importAllOfficial")}</h2></div>
+              <button className="icon-btn" type="button" onClick={closeBulkImport} disabled={bulkImportBusy} aria-label={t("action.close")}><X size={15} /></button>
+            </div>
+            <div className="command-body">
+              <div className="gift-import-note"><span>{t("gifts.bulkImportCount", { count: bulkImportItems.length })}</span></div>
+              <label className="gift-switch"><input type="checkbox" checked={bulkImportEnabled} disabled={bulkImportBusy} onChange={(e) => setBulkImportEnabled(e.target.checked)} /><span className="gift-switch-track" aria-hidden="true"><span /></span><span>{t("gifts.enableAfterImport")}</span></label>
+              <label className="gift-reason-field"><span>{t("gifts.reason")}</span><input value={bulkImportReason} placeholder={t("gifts.reasonPlaceholder")} disabled={bulkImportBusy} onChange={(e) => setBulkImportReason(e.target.value)} /></label>
+              {bulkImportBusy && <div className="gift-bulk-import-progress">
+                <div className="gift-bulk-import-progress-bar"><div style={{ width: `${bulkImportProgress.total ? Math.round((bulkImportProgress.done / bulkImportProgress.total) * 100) : 0}%` }} /></div>
+                <span>{t("gifts.importingProgress", { done: bulkImportProgress.done, total: bulkImportProgress.total })}</span>
+              </div>}
+              {bulkImportError && <Alert>{bulkImportError}</Alert>}
+              {bulkImportResult && <div className="gift-validation">
+                <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{t("gifts.bulkImportDone")}</strong><span>{t("gifts.bulkImportSummary", { imported: bulkImportResult.imported, skipped: bulkImportResult.skipped, failed: bulkImportResult.failed })}</span></div></div>
+                {bulkImportResult.errors.length > 0 && <pre>{bulkImportResult.errors.join("\n")}</pre>}
+              </div>}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" type="button" onClick={closeBulkImport} disabled={bulkImportBusy}>{t("common.close")}</button>
+              <button className="btn primary" type="button" onClick={runBulkImport} disabled={bulkImportBusy || bulkImportItems.length === 0}>
+                {bulkImportBusy ? <Loader2 className="spin" size={15} /> : <Upload size={15} />} {t("gifts.startBulkImport")}
+              </button>
             </div>
           </section>
         </div>,

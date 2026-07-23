@@ -453,6 +453,11 @@ func run(logger *zap.Logger) error {
 	} else if seeded {
 		logger.Info("官方系统账号头像种子导入完成", zap.Int64("photo_id", domain.OfficialSystemUserPhotoID))
 	}
+	if seeded, err := filesService.SeedBotFatherAvatar(ctx); err != nil {
+		return fmt.Errorf("seed botfather avatar: %w", err)
+	} else if seeded {
+		logger.Info("BotFather 头像种子导入完成", zap.Int64("photo_id", domain.BotFatherUserPhotoID))
+	}
 	if stats, err := filesService.WarmCaches(ctx); err != nil {
 		logger.Warn("媒体资源缓存预热失败", zap.Error(err))
 	} else if stats.StickerSets > 0 || stats.Documents > 0 || stats.Blobs > 0 {

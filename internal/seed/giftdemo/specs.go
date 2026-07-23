@@ -44,18 +44,19 @@ func demoBackdrops() []backdropSpec {
 	}
 }
 
-// demoGifts returns the five demo gifts in display order.
+// demoGifts returns the three demo gifts in display order, one per capability
+// tier: plain (not upgradeable), upgradeable (no crafting), and craftable.
 func demoGifts() []giftSpec {
 	return []giftSpec{
 		{
-			// #1 — cheapest, plain, not upgradeable.
+			// #1 — Звичайний: cheapest, plain, not upgradeable.
 			title:   "OwpenGram Spark",
 			stars:   15,
 			convert: 15,
 			base:    burst(8, colGold, motionPulse),
 		},
 		{
-			// #2 — standard upgradeable, no crafting.
+			// #2 — Апгрейдебл: standard upgradeable, no crafting.
 			title:   "OwpenGram Star",
 			stars:   50,
 			convert: 50,
@@ -76,7 +77,7 @@ func demoGifts() []giftSpec {
 			},
 		},
 		{
-			// #3 — upgradeable + craftable.
+			// #3 — Крафтабл: upgradeable + craftable.
 			title:   "OwpenGram Coin",
 			stars:   100,
 			convert: 75,
@@ -93,55 +94,6 @@ func demoGifts() []giftSpec {
 				patterns: []attrSpec{
 					{name: "Gleam", spec: burst(10, colGold, motionPulse), permille: 700},
 					{name: "Ember", spec: burst(6, colAmber, motionPulse), permille: 300},
-				},
-				backdrops: demoBackdrops(),
-			},
-		},
-		{
-			// #4 — limited edition, upgradeable + craftable.
-			title:        "OwpenGram Gem",
-			stars:        250,
-			convert:      200,
-			base:         polygon(6, colViolet, colWhite, 10, motionSpinPulse),
-			limited:      true,
-			availability: 5000,
-			upgrade: &upgradeSpec{
-				upgradeStars: 800,
-				supplyTotal:  3000,
-				slug:         "owg-gem",
-				models: []attrSpec{
-					{name: "Amethyst", spec: polygon(6, colViolet, colWhite, 12, motionSpin), permille: 600},
-					{name: "Verdant", spec: polygon(6, colEmerald, colWhite, 12, motionSpin), permille: 400},
-					{name: "Prism", spec: polygon(8, colCyan, colWhite, 10, motionSpinPulse), crafted: true, rarity: domain.StarGiftRarityEpic},
-				},
-				patterns: []attrSpec{
-					{name: "Facet", spec: burst(12, colViolet, motionPulse), permille: 700},
-					{name: "Shine", spec: burst(8, colWhite, motionPulse), permille: 300},
-				},
-				backdrops: demoBackdrops(),
-			},
-		},
-		{
-			// #5 — premium-gated, limited, the full stack.
-			title:          "OwpenGram Crown",
-			stars:          1000,
-			convert:        800,
-			base:           star(3, colGold, colAmber, 12, motionSpinPulse),
-			limited:        true,
-			availability:   500,
-			requirePremium: true,
-			upgrade: &upgradeSpec{
-				upgradeStars: 2000,
-				supplyTotal:  500,
-				slug:         "owg-crown",
-				models: []attrSpec{
-					{name: "Regal", spec: star(3, colGold, colAmber, 14, motionSpinPulse), permille: 600},
-					{name: "Noble", spec: star(5, colAmber, colGold, 12, motionSpin), permille: 400},
-					{name: "Eternal", spec: star(6, colGold, colWhite, 12, motionSpinPulse), crafted: true, rarity: domain.StarGiftRarityLegendary},
-				},
-				patterns: []attrSpec{
-					{name: "Aura", spec: burst(12, colGold, motionPulse), permille: 700},
-					{name: "Crest", spec: burst(8, colWhite, motionPulse), permille: 300},
 				},
 				backdrops: demoBackdrops(),
 			},
