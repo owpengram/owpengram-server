@@ -8,6 +8,7 @@ IP_FILE=".public_ip"
 PREFIX_FILE=".link_prefix"
 SECRETS_FILE=".secrets"
 COMPOSE_FILE="deploy/docker-compose.yml"
+LOG_DIR="logs"
 
 NO_BUILD=false
 for arg in "$@"; do
@@ -163,6 +164,10 @@ fi
 # --- Start servers ----------------------------------------------------------
 step "[4/4] Starting telesrv + telesrv-admin"
 
+mkdir -p "$LOG_DIR"
+TELESRV_LOG="$LOG_DIR/telesrv.log"
+ADMIN_LOG="$LOG_DIR/telesrv-admin.log"
+
 cleanup() {
   echo
   echo "[stop] stopping telesrv and telesrv-admin ..."
@@ -177,16 +182,16 @@ trap cleanup EXIT INT TERM
 # Start telesrv (main server)
 BIN="./bin/telesrv"
 [[ -f "bin/telesrv.exe" ]] && BIN="./bin/telesrv.exe"
-$BIN &
+$BIN >>"$TELESRV_LOG" 2>&1 &
 TELESRV_PID=$!
-echo "[ok] telesrv started (PID ${TELESRV_PID})"
+echo "[ok] telesrv started (PID ${TELESRV_PID}), logs -> ${TELESRV_LOG}"
 
 # Start telesrv-admin (admin panel)
 ADMIN_BIN="./bin/telesrv-admin"
 [[ -f "bin/telesrv-admin.exe" ]] && ADMIN_BIN="./bin/telesrv-admin.exe"
-$ADMIN_BIN &
+$ADMIN_BIN >>"$ADMIN_LOG" 2>&1 &
 ADMIN_PID=$!
-echo "[ok] telesrv-admin started (PID ${ADMIN_PID})"
+echo "[ok] telesrv-admin started (PID ${ADMIN_PID}), logs -> ${ADMIN_LOG}"
 
 echo
 echo "============================================"
@@ -199,15 +204,48 @@ echo " Admin API: http://127.0.0.1:2399"
 echo ""
 echo " Admin login password: ${ADMIN_PASSWORD}"
 echo ""
-echo " Ports to open in firewall:"
-echo "   TCP 2398          - MTProto (login / chats / media)"
-echo "   TCP 12400         - TURN/STUN control (calls)"
-echo "   UDP 12500-12999   - TURN media relay (calls)"
-echo "   UDP 12399         - SFU group calls"
-echo "   TCP 2400          - RTMP livestream ingest"
-echo ""
-echo " Press Ctrl+C to stop."
+echo " Logs:"
+echo "   telesrv:        tail -f ${TELESRV_LOG}"
+echo "   telesrv-admin:  tail -f ${ADMIN_LOG}"
 echo "============================================"
 
-wait "$TELESRV_PID" 2>/dev/null || true
-wait "$ADMIN_PID" 2>/dev/null || true
+# --- Interactive menu -------------------------------------------------------
+show_menu() {
+  echo
+  echo "  [1] View telesrv logs (last 50 lines)"
+  echo "  [2] View telesrv-admin logs (last 50 lines)"
+  echo "  [3] View both logs (last 50 lines)"
+  echo "  [4] Tail telesrv logs (live)"
+  echo "  [5] Tail telesrv-admin logs (live)"
+  echo "  [q] Stop server and exit"
+  echo
+}
+
+while true; do
+  # Check if processes are still alive
+  if ! kill -0 "$TELESRV_PID" 2>/dev/null; then
+    echo "[WARN] telesrv (PID ${TELESRV_PID}) exited unexpectedly"
+    echo "       Check ${TELESRV_LOG} for details"
+    kill "$ADMIN_PID" 2>/dev/null || true
+    break
+  fi
+  if ! kill -0 "$ADMIN_PID" 2>/dev/null; then
+    echo "[WARN] telesrv-admin (PID ${ADMIN_PID}) exited unexpectedly"
+    echo "       Check ${ADMIN_LOG} for details"
+    kill "$TELESRV_PID" 2>/dev/null || true
+    break
+  fi
+
+  show_menu
+  read -rp "  Choice: " choice
+  case "$choice" in
+    1) tail -n 50 "$TELESRV_LOG" 2>/dev/null || echo "  (no logs yet)" ;;
+    2) tail -n 50 "$ADMIN_LOG" 2>/dev/null || echo "  (no logs yet)" ;;
+    3) echo "  --- telesrv ---" ; tail -n 50 "$TELESRV_LOG" 2>/dev/null || echo "  (no logs yet)"
+       echo "  --- telesrv-admin ---" ; tail -n 50 "$ADMIN_LOG" 2>/dev/null || echo "  (no logs yet)" ;;
+    4) echo "  Press Ctrl+C to stop tailing"; tail -f "$TELESRV_LOG" ;;
+    5) echo "  Press Ctrl+C to stop tailing"; tail -f "$ADMIN_LOG" ;;
+    q|Q) break ;;
+    *) echo "  Invalid choice" ;;
+  esac
+done

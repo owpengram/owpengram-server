@@ -8,6 +8,7 @@ set "IP_FILE=.public_ip"
 set "PREFIX_FILE=.link_prefix"
 set "SECRETS_FILE=.secrets"
 set "COMPOSE_FILE=deploy\docker-compose.yml"
+set "LOG_DIR=logs"
 
 set "NO_BUILD=false"
 :parse_args
@@ -205,11 +206,15 @@ rem --- Start servers ----------------------------------------------------------
 echo.
 echo == [4/4] Starting telesrv + telesrv-admin ==
 
-start "telesrv" /B bin\telesrv.exe
-echo [ok] telesrv started
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+set "TELESRV_LOG=%LOG_DIR%\telesrv.log"
+set "ADMIN_LOG=%LOG_DIR%\telesrv-admin.log"
 
-start "telesrv-admin" /B bin\telesrv-admin.exe
-echo [ok] telesrv-admin started
+start "telesrv" /B cmd /c "bin\telesrv.exe >> "%TELESRV_LOG%" 2>&1"
+echo [ok] telesrv started, logs -^> %TELESRV_LOG%
+
+start "telesrv-admin" /B cmd /c "bin\telesrv-admin.exe >> "%ADMIN_LOG%" 2>&1"
+echo [ok] telesrv-admin started, logs -^> %ADMIN_LOG%
 
 echo.
 echo ============================================
@@ -222,13 +227,57 @@ echo  Admin API: http://127.0.0.1:2399
 echo.
 echo  Admin login password: !ADMIN_PASSWORD!
 echo.
-echo  Ports to open in firewall:
-echo    TCP 2398          - MTProto (login / chats / media)
-echo    TCP 12400         - TURN/STUN control (calls)
-echo    UDP 12500-12999   - TURN media relay (calls)
-echo    UDP 12399         - SFU group calls
-echo    TCP 2400          - RTMP livestream ingest
+echo  Logs:
+echo    telesrv:        type %TELESRV_LOG%
+echo    telesrv-admin:  type %ADMIN_LOG%
 echo.
 echo ============================================
 
+rem --- Interactive menu ------------------------------------------------------
+:menu
+echo.
+echo   [1] View telesrv logs (last 50 lines)
+echo   [2] View telesrv-admin logs (last 50 lines)
+echo   [3] View both logs (last 50 lines)
+echo   [4] Follow telesrv logs (live)
+echo   [5] Follow telesrv-admin logs (live)
+echo   [q] Stop server and exit
+echo.
+set /p "choice=  Choice: "
+
+if "!choice!"=="1" (
+  powershell -NoProfile -Command "Get-Content '%TELESRV_LOG%' -Tail 50 -ErrorAction SilentlyContinue"
+  goto menu
+)
+if "!choice!"=="2" (
+  powershell -NoProfile -Command "Get-Content '%ADMIN_LOG%' -Tail 50 -ErrorAction SilentlyContinue"
+  goto menu
+)
+if "!choice!"=="3" (
+  echo   --- telesrv ---
+  powershell -NoProfile -Command "Get-Content '%TELESRV_LOG%' -Tail 50 -ErrorAction SilentlyContinue"
+  echo   --- telesrv-admin ---
+  powershell -NoProfile -Command "Get-Content '%ADMIN_LOG%' -Tail 50 -ErrorAction SilentlyContinue"
+  goto menu
+)
+if "!choice!"=="4" (
+  echo   Press Ctrl+C to stop following
+  powershell -NoProfile -Command "Get-Content '%TELESRV_LOG%' -Wait -Tail 10"
+  goto menu
+)
+if "!choice!"=="5" (
+  echo   Press Ctrl+C to stop following
+  powershell -NoProfile -Command "Get-Content '%ADMIN_LOG%' -Wait -Tail 10"
+  goto menu
+)
+if /i "!choice!"=="q" goto stop_server
+echo   Invalid choice
+goto menu
+
+:stop_server
+echo.
+echo [stop] stopping telesrv and telesrv-admin ...
+taskkill /FI "WINDOWTITLE eq telesrv*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq telesrv-admin*" /F >nul 2>&1
+echo [ok] stopped.
 exit /b 0
