@@ -121,6 +121,24 @@ func TestDefaultGiftImportActionDecodes(t *testing.T) {
 	}
 }
 
+func TestOfficialGiftActionDecimalStringDecodingPreservesInt64(t *testing.T) {
+	const maxInt64 = int64(9223372036854775807)
+	req := httptest.NewRequest(http.MethodPost, "/api/actions/import-official-gift", strings.NewReader(`{
+		"source_gift_id":"5895603153683874485",
+		"gift_id":"9223372036854775807",
+		"stars":"9223372036854775807",
+		"convert_stars":"9223372036854775807",
+		"upgrade_stars":"9223372036854775807"
+	}`))
+	var got importOfficialStarGiftAPIRequest
+	if err := decodeJSON(req, &got); err != nil {
+		t.Fatalf("decode official gift action: %v", err)
+	}
+	if got.GiftID != maxInt64 || got.Stars != maxInt64 || got.ConvertStars != maxInt64 || got.UpgradeStars != maxInt64 {
+		t.Fatalf("decoded official gift action = %+v", got)
+	}
+}
+
 func TestSetStarGiftEnabledBFFForwardsExactInt64(t *testing.T) {
 	const maxInt64 = int64(9223372036854775807)
 	var got admin.SetStarGiftEnabledRequest

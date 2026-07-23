@@ -58,6 +58,7 @@ import (
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
 	"telesrv/internal/mtprotoedge"
+	"telesrv/internal/officialgifts"
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
@@ -478,8 +479,9 @@ func run(logger *zap.Logger) error {
 	rateLimiter := redisstore.NewRateLimiter(rdb)
 	activeSessions := mtprotoedge.NewSessionManager(logger.Named("mtprotoedge").Named("sessions"))
 	adminService := adminapp.NewService(adminapp.Dependencies{
-		Commands:     adminStore,
-		Restrictions: adminStore,
+		Commands:      adminStore,
+		Restrictions:  adminStore,
+		OfficialGifts: officialgifts.New(cfg.OfficialGiftsDir),
 	})
 	go maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
 		cfg.UpdateEventRetention,

@@ -75,6 +75,7 @@
 | `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。 |
 | `TELESRV_REDIS_DB` | int / `0` | Redis 逻辑库编号。 |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` 语言包 seed 目录。 |
+| `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | `cmd/giftfetch` 生成的只读官方礼物快照；供管理后台选择、验哈希并显式导入。 |
 | `TELESRV_BLOB_DIR` | path / `data/blobs` | 本地开发 blob backend 的媒体字节根目录。 |
 | `TELESRV_STICKER_SEED_DIR` | path / `data/sticker-seed` | 导入 documents、sticker sets、blob 的贴纸/reaction seed 目录。 |
 | `TELESRV_STICKER_SEED_MAX_SETS` | int / `300` | 启动时导入的常规贴纸集上限；`<=0` 表示不限。 |

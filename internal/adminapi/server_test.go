@@ -11,6 +11,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
+	"telesrv/internal/officialgifts"
 	"telesrv/internal/seed/giftdemo"
 )
 
@@ -295,6 +296,22 @@ func (fakeService) DefaultStarGifts() []giftdemo.GiftInfo {
 }
 
 func (fakeService) DefaultStarGiftAnimation(context.Context, int) ([]byte, bool, error) {
+	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
+}
+
+func (fakeService) ImportOfficialStarGift(_ context.Context, req admin.ImportOfficialStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) ImportAllOfficialStarGifts(_ context.Context, req admin.ImportAllOfficialStarGiftsRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) OfficialStarGifts(context.Context) ([]officialgifts.GiftSummary, error) {
+	return nil, nil
+}
+
+func (fakeService) OfficialStarGiftAnimation(context.Context, string) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":512,"h":512}`), true, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -18,31 +19,34 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/officialgifts"
 	"telesrv/internal/seed/giftdemo"
 )
 
 const (
-	ActionSetAccountFrozen          = "account.set_frozen"
-	ActionGrantPremium              = "account.grant_premium"
-	ActionGrantStars                = "account.grant_stars"
-	ActionSetVerified               = "account.set_verified"
-	ActionSetChannelVerified        = "channel.set_verified"
-	ActionRevokeSessions            = "account.revoke_sessions"
-	ActionDeletePrivateMessages     = "messages.delete_private_messages"
-	ActionDeletePrivateHistory      = "messages.delete_private_history"
-	ActionImportStarGift            = "gifts.import"
-	ActionImportDefaultStarGift     = "gifts.default.import"
-	ActionImportAllDefaultStarGifts = "gifts.default.import_all"
-	ActionPublishGiftCollectibles   = "gifts.collectibles.publish"
-	ActionSetStarGiftEnabled        = "gifts.set_enabled"
-	ActionSetStarGiftSortOrder      = "gifts.set_sort_order"
-	ActionSetStickerSetArchived     = "stickers.set_archived"
-	ActionSetStickerSetSortOrder    = "stickers.set_sort_order"
-	ActionRenameStickerSet          = "stickers.rename"
-	ActionDeleteStickerSet          = "stickers.delete"
-	ActionCreateStickerSet          = "stickers.create"
-	ActionAddStickerToSet           = "stickers.add_sticker"
-	ActionRemoveStickerFromSet      = "stickers.remove_sticker"
+	ActionSetAccountFrozen           = "account.set_frozen"
+	ActionGrantPremium               = "account.grant_premium"
+	ActionGrantStars                 = "account.grant_stars"
+	ActionSetVerified                = "account.set_verified"
+	ActionSetChannelVerified         = "channel.set_verified"
+	ActionRevokeSessions             = "account.revoke_sessions"
+	ActionDeletePrivateMessages      = "messages.delete_private_messages"
+	ActionDeletePrivateHistory       = "messages.delete_private_history"
+	ActionImportStarGift             = "gifts.import"
+	ActionImportOfficialStarGift     = "gifts.official.import"
+	ActionImportAllOfficialStarGifts = "gifts.official.import_all"
+	ActionImportDefaultStarGift      = "gifts.default.import"
+	ActionImportAllDefaultStarGifts  = "gifts.default.import_all"
+	ActionPublishGiftCollectibles    = "gifts.collectibles.publish"
+	ActionSetStarGiftEnabled         = "gifts.set_enabled"
+	ActionSetStarGiftSortOrder       = "gifts.set_sort_order"
+	ActionSetStickerSetArchived      = "stickers.set_archived"
+	ActionSetStickerSetSortOrder     = "stickers.set_sort_order"
+	ActionRenameStickerSet           = "stickers.rename"
+	ActionDeleteStickerSet           = "stickers.delete"
+	ActionCreateStickerSet           = "stickers.create"
+	ActionAddStickerToSet            = "stickers.add_sticker"
+	ActionRemoveStickerFromSet       = "stickers.remove_sticker"
 
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
@@ -109,6 +113,7 @@ type MessagesService interface {
 
 type GiftsService interface {
 	PrepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
+	PrepareOfficialAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
 	Catalog(ctx context.Context) ([]domain.StarGift, error)
 	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
 	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
@@ -118,6 +123,14 @@ type GiftsService interface {
 	CreateCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error)
 	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
 	CollectibleAnimationJSON(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
+}
+
+// OfficialGiftsSource reads a verified official Star Gift snapshot from disk
+// (see cmd/giftfetch) for explicit, operator-triggered import. Nothing here
+// is imported automatically — the snapshot directory can simply be empty.
+type OfficialGiftsSource interface {
+	List(ctx context.Context) ([]officialgifts.GiftSummary, error)
+	Bundle(ctx context.Context, giftID int64, includeCollectible bool) (officialgifts.Bundle, error)
 }
 
 // AvatarResolver is the same shape as internal/web's ProfilePhotoResolver, kept as its
@@ -158,6 +171,7 @@ type Dependencies struct {
 	ChannelNotifier ChannelNotifier
 	Messages        MessagesService
 	Gifts           GiftsService
+	OfficialGifts   OfficialGiftsSource
 	Photos          AvatarResolver
 	StickerSets     StickerSetsService
 	Now             func() time.Time
@@ -176,6 +190,7 @@ type Service struct {
 	channelNotifier ChannelNotifier
 	messages        MessagesService
 	gifts           GiftsService
+	officialGifts   OfficialGiftsSource
 	photos          AvatarResolver
 	stickerSets     StickerSetsService
 	now             func() time.Time
@@ -222,6 +237,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Gifts != nil {
 		s.gifts = deps.Gifts
+	}
+	if deps.OfficialGifts != nil {
+		s.officialGifts = deps.OfficialGifts
 	}
 	if deps.Photos != nil {
 		s.photos = deps.Photos
@@ -277,6 +295,27 @@ type ImportDefaultStarGiftRequest struct {
 }
 
 type ImportAllDefaultStarGiftsRequest struct {
+	CommandMeta
+}
+
+type ImportOfficialStarGiftRequest struct {
+	CommandMeta
+	SourceGiftID       string   `json:"source_gift_id"`
+	GiftID             int64    `json:"gift_id,omitempty"`
+	Title              string   `json:"title"`
+	Stars              int64    `json:"stars"`
+	ConvertStars       int64    `json:"convert_stars"`
+	Enabled            bool     `json:"enabled"`
+	SortOrder          int      `json:"sort_order"`
+	IncludeCollectible bool     `json:"include_collectible"`
+	UpgradeStars       int64    `json:"upgrade_stars,omitempty"`
+	SupplyTotal        int      `json:"supply_total,omitempty"`
+	SlugPrefix         string   `json:"slug_prefix,omitempty"`
+	ManifestSHA256     string   `json:"manifest_sha256,omitempty"`
+	AssetSHA256        []string `json:"asset_sha256,omitempty"`
+}
+
+type ImportAllOfficialStarGiftsRequest struct {
 	CommandMeta
 }
 
@@ -936,6 +975,16 @@ func (s *Service) DefaultStarGifts() []giftdemo.GiftInfo {
 	return giftdemo.List()
 }
 
+// OfficialStarGifts lists the verified official snapshot on disk (see
+// cmd/giftfetch), if one has been placed there. Nothing here is imported
+// automatically — this is purely for the admin console's picker.
+func (s *Service) OfficialStarGifts(ctx context.Context) ([]officialgifts.GiftSummary, error) {
+	if s == nil || s.officialGifts == nil {
+		return nil, officialgifts.ErrUnavailable
+	}
+	return s.officialGifts.List(ctx)
+}
+
 const maxAccountAvatarBytes = 4 << 20
 
 // AccountAvatar returns an account's current profile photo bytes and detected
@@ -1045,6 +1094,28 @@ func (s *Service) DefaultStarGiftAnimation(_ context.Context, id int) ([]byte, b
 	return giftdemo.BaseAnimationJSON(s.gifts, id)
 }
 
+func (s *Service) OfficialStarGiftAnimation(ctx context.Context, sourceGiftID string) ([]byte, bool, error) {
+	if s == nil || s.officialGifts == nil || s.gifts == nil {
+		return nil, false, officialgifts.ErrUnavailable
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(sourceGiftID), 10, 64)
+	if err != nil || id <= 0 {
+		return nil, false, officialgifts.ErrNotFound
+	}
+	bundle, err := s.officialGifts.Bundle(ctx, id, false)
+	if errors.Is(err, officialgifts.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	animation, err := s.gifts.PrepareOfficialAnimation(bundle.BaseDocument.FileName, bundle.BaseDocument.Data)
+	if err != nil {
+		return nil, false, err
+	}
+	return animation.JSON, true, nil
+}
+
 // ImportDefaultStarGift imports one built-in original demo gift (complete with
 // its collectible pool when upgradeable). Idempotent: a gift whose title is
 // already in the catalog is skipped rather than duplicated.
@@ -1135,6 +1206,283 @@ func (s *Service) ImportAllDefaultStarGifts(ctx context.Context, req ImportAllDe
 			Details: details,
 		}, nil
 	})
+}
+
+func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficialStarGiftRequest) (CommandResult, error) {
+	if s == nil || s.gifts == nil || s.officialGifts == nil {
+		return CommandResult{}, fmt.Errorf("official star gift importer is not configured")
+	}
+	sourceID, err := strconv.ParseInt(strings.TrimSpace(req.SourceGiftID), 10, 64)
+	if err != nil || sourceID <= 0 || req.GiftID < 0 || req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
+		return CommandResult{}, domain.ErrStarGiftInvalid
+	}
+	bundle, err := s.officialGifts.Bundle(ctx, sourceID, req.IncludeCollectible)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if req.Title = strings.TrimSpace(req.Title); req.Title == "" {
+		req.Title = strings.TrimSpace(bundle.Gift.Title)
+		if req.Title == "" {
+			req.Title = "Official gift " + req.SourceGiftID
+		}
+	}
+	if req.Stars <= 0 {
+		req.Stars = bundle.Gift.Stars
+	}
+	if req.ConvertStars < 0 || req.ConvertStars > req.Stars || len([]rune(req.Title)) > domain.MaxStarGiftTitleRunes {
+		return CommandResult{}, domain.ErrStarGiftInvalid
+	}
+	if req.UpgradeStars <= 0 {
+		req.UpgradeStars = bundle.Gift.UpgradeStars
+	}
+	if req.SupplyTotal <= 0 {
+		req.SupplyTotal = bundle.Gift.AvailabilityTotal
+	}
+	if req.SlugPrefix = strings.ToLower(strings.TrimSpace(req.SlugPrefix)); req.SlugPrefix == "" {
+		req.SlugPrefix = "official-" + req.SourceGiftID
+	}
+
+	baseAnimation, err := s.gifts.PrepareOfficialAnimation(bundle.BaseDocument.FileName, bundle.BaseDocument.Data)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("prepare official gift animation: %w", err)
+	}
+	assetHashes := []string{bundle.BaseDocument.SHA256}
+	rarityCounts := map[string]int{}
+	var background *domain.StarGiftBackground
+	if bundle.Gift.Background != nil {
+		background = &domain.StarGiftBackground{
+			CenterColor: bundle.Gift.Background.CenterColor,
+			EdgeColor:   bundle.Gift.Background.EdgeColor,
+			TextColor:   bundle.Gift.Background.TextColor,
+		}
+	}
+	var collectible *domain.StarGiftCollectibleWrite
+	if req.IncludeCollectible {
+		if bundle.Collectible == nil {
+			return CommandResult{}, domain.ErrStarGiftCollectibleInvalid
+		}
+		modelNames := map[string]int{}
+		models := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Models))
+		for index, value := range bundle.Collectible.Models {
+			animation, err := s.gifts.PrepareOfficialAnimation(value.Document.FileName, value.Document.Data)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("prepare official model %q: %w", value.Name, err)
+			}
+			rarityKind, permille, err := officialRarity(value.Rarity)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			models = append(models, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectibleModel,
+				Name: dedupeCollectibleAttributeName(modelNames, strings.TrimSpace(value.Name)), RarityKind: rarityKind, RarityPermille: permille,
+				Crafted: value.Crafted, OfficialDocumentID: value.DocumentID, SortOrder: index, Animation: &animation})
+			assetHashes = append(assetHashes, value.Document.SHA256)
+			rarityCounts[string(rarityKind)]++
+		}
+		patternNames := map[string]int{}
+		patterns := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Patterns))
+		for index, value := range bundle.Collectible.Patterns {
+			animation, err := s.gifts.PrepareOfficialAnimation(value.Document.FileName, value.Document.Data)
+			if err != nil {
+				return CommandResult{}, fmt.Errorf("prepare official pattern %q: %w", value.Name, err)
+			}
+			rarityKind, permille, err := officialRarity(value.Rarity)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			patterns = append(patterns, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectiblePattern,
+				Name: dedupeCollectibleAttributeName(patternNames, strings.TrimSpace(value.Name)), RarityKind: rarityKind, RarityPermille: permille,
+				OfficialDocumentID: value.DocumentID, SortOrder: index, Animation: &animation})
+			assetHashes = append(assetHashes, value.Document.SHA256)
+			rarityCounts[string(rarityKind)]++
+		}
+		backdropNames := map[string]int{}
+		backdrops := make([]domain.StarGiftCollectibleAttribute, 0, len(bundle.Collectible.Backdrops))
+		for index, value := range bundle.Collectible.Backdrops {
+			rarityKind, permille, err := officialRarity(value.Rarity)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			backdrops = append(backdrops, domain.StarGiftCollectibleAttribute{Kind: domain.StarGiftCollectibleBackdrop,
+				Name: dedupeCollectibleAttributeName(backdropNames, strings.TrimSpace(value.Name)), BackdropID: value.BackdropID, CenterColor: value.CenterColor,
+				EdgeColor: value.EdgeColor, PatternColor: value.PatternColor, TextColor: value.TextColor,
+				RarityKind: rarityKind, RarityPermille: permille, SortOrder: index})
+			rarityCounts[string(rarityKind)]++
+		}
+		collectible = &domain.StarGiftCollectibleWrite{GiftID: req.GiftID, UpgradeStars: req.UpgradeStars,
+			SupplyTotal: req.SupplyTotal, SlugPrefix: req.SlugPrefix, Models: models, Patterns: patterns, Backdrops: backdrops,
+			Actor: req.Actor, CommandID: req.CommandID, OfficialGiftID: sourceID,
+			SourceManifestSHA256: append([]byte(nil), bundle.ManifestSHA256...)}
+		validation := *collectible
+		if validation.GiftID == 0 {
+			validation.GiftID = 1
+		}
+		if err := domain.ValidateStarGiftCollectibleDraft(validation); err != nil {
+			return CommandResult{}, err
+		}
+	}
+	req.ManifestSHA256 = hex.EncodeToString(bundle.ManifestSHA256)
+	sort.Strings(assetHashes)
+	req.AssetSHA256 = assetHashes
+	write := domain.StarGiftCatalogBundleWrite{Catalog: domain.StarGiftCatalogWrite{
+		GiftID: req.GiftID, Title: req.Title, Stars: req.Stars, ConvertStars: req.ConvertStars,
+		Enabled: req.Enabled, SortOrder: req.SortOrder, Animation: baseAnimation, Actor: req.Actor, CommandID: req.CommandID,
+		OfficialGiftID: sourceID, SourceManifestSHA256: append([]byte(nil), bundle.ManifestSHA256...),
+		OfficialSourceJSON: append([]byte(nil), bundle.SourceJSON...),
+		// The snapshot describes Telegram's global market, not this deployment's
+		// inventory. Keep the complete source JSON as provenance, while publishing
+		// regular official imports as a fresh, locally purchasable catalog entry.
+		// Local resale counters and sale dates are derived by lifecycle writes.
+		// Auction gifts are the one exception: star_gift_catalog_revision_auction_check
+		// requires limited=true whenever auction=true, so it can't be forced false here.
+		Limited: bundle.Gift.Auction, SoldOut: false, Birthday: bundle.Gift.Birthday,
+		RequirePremium: bundle.Gift.RequirePremium, LimitedPerUser: bundle.Gift.LimitedPerUser,
+		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: bundle.Gift.Auction,
+		AvailabilityRemains: 0, AvailabilityTotal: 0,
+		AvailabilityResale: 0, FirstSaleDate: 0,
+		LastSaleDate: 0, ResellMinStars: 0,
+		PerUserTotal: bundle.Gift.PerUserTotal, LockedUntilDate: bundle.Gift.LockedUntilDate,
+		AuctionSlug: bundle.Gift.AuctionSlug, GiftsPerRound: bundle.Gift.GiftsPerRound,
+		AuctionStartDate: bundle.Gift.AuctionStartDate, UpgradeVariants: bundle.Gift.UpgradeVariants,
+		Background: background,
+	}, Collectible: collectible}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportOfficialStarGift, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"source_gift_id": req.SourceGiftID, "gift_id": strconv.FormatInt(req.GiftID, 10),
+			"manifest_sha256": req.ManifestSHA256, "title": req.Title, "stars": strconv.FormatInt(req.Stars, 10),
+			"convert_stars": strconv.FormatInt(req.ConvertStars, 10), "include_collectible": req.IncludeCollectible,
+			"verified_asset_count": len(assetHashes), "rarity_counts": rarityCounts,
+			"official_limited": bundle.Gift.Limited, "official_sold_out": bundle.Gift.SoldOut,
+			"official_auction": bundle.Gift.Auction, "official_birthday": bundle.Gift.Birthday,
+			"official_require_premium":      bundle.Gift.RequirePremium,
+			"official_availability_remains": bundle.Gift.AvailabilityRemains,
+			"official_availability_total":   bundle.Gift.AvailabilityTotal,
+			"official_availability_resale":  bundle.Gift.AvailabilityResale,
+		}
+		if bundle.Collectible != nil {
+			details["models"] = len(bundle.Collectible.Models)
+			details["patterns"] = len(bundle.Collectible.Patterns)
+			details["backdrops"] = len(bundle.Collectible.Backdrops)
+			crafted := 0
+			for _, model := range bundle.Collectible.Models {
+				if model.Crafted {
+					crafted++
+				}
+			}
+			details["crafted_models"] = crafted
+		}
+		if req.DryRun {
+			return CommandResult{Message: "official star gift bundle validated", Details: details}, nil
+		}
+		result, err := s.gifts.CreateCatalogBundle(ctx, write)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["gift_id"] = strconv.FormatInt(result.Catalog.Gift.ID, 10)
+		details["catalog_revision_id"] = strconv.FormatInt(result.Catalog.Gift.RevisionID, 10)
+		if result.Collectible != nil {
+			details["collectible_revision_id"] = strconv.FormatInt(result.Collectible.ID, 10)
+			details["collectible_revision"] = result.Collectible.Revision
+		}
+		return CommandResult{Message: "official star gift bundle imported", Details: details}, nil
+	})
+}
+
+// ImportAllOfficialStarGifts imports every gift in the official snapshot, one
+// ImportOfficialStarGift call each, all inside the single admin command this
+// request itself represents (so it gets the same dry-run/confirm handling
+// and audit trail as every other admin action; DryRun previews only report
+// the candidate count and do not touch the catalog). Each per-gift call gets
+// a CommandID stable across separate confirmed runs of this action
+// (bulk-official-gift-<source id>), so re-running the batch later is safe:
+// gifts already imported by a prior run replay their cached result
+// (CommandResult.AlreadyExecuted) instead of writing a duplicate catalog
+// entry — the catalog table has no unique constraint on official_gift_id, so
+// without this the same gift could otherwise be imported twice.
+func (s *Service) ImportAllOfficialStarGifts(ctx context.Context, req ImportAllOfficialStarGiftsRequest) (CommandResult, error) {
+	if s == nil || s.gifts == nil || s.officialGifts == nil {
+		return CommandResult{}, fmt.Errorf("official star gift importer is not configured")
+	}
+	items, err := s.officialGifts.List(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportAllOfficialStarGifts, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"total": len(items)}
+		if req.DryRun {
+			details["note"] = "dry run does not import; confirming imports all, skipping gifts already imported by a prior run"
+			return CommandResult{
+				Message: fmt.Sprintf("%d official gifts available to import", len(items)),
+				Details: details,
+			}, nil
+		}
+		imported, skipped, failed := 0, 0, 0
+		perGift := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			perReq := ImportOfficialStarGiftRequest{
+				CommandMeta: CommandMeta{
+					CommandID: fmt.Sprintf("bulk-official-gift-%d", item.ID),
+					Actor:     req.Actor,
+					Reason:    req.Reason,
+				},
+				SourceGiftID: strconv.FormatInt(item.ID, 10),
+				// Every attribute the snapshot has for an upgradeable gift is
+				// worth importing; CanUpgrade() is exactly the precondition
+				// ImportOfficialStarGift enforces for IncludeCollectible.
+				IncludeCollectible: item.CanUpgrade(),
+			}
+			result, opErr := s.ImportOfficialStarGift(ctx, perReq)
+			entry := map[string]any{"source_gift_id": perReq.SourceGiftID, "status": result.Status}
+			if opErr != nil {
+				failed++
+				entry["error"] = opErr.Error()
+			} else if result.AlreadyExecuted {
+				skipped++
+			} else {
+				imported++
+				entry["gift_id"] = result.Details["gift_id"]
+			}
+			perGift = append(perGift, entry)
+		}
+		details["imported"] = imported
+		details["skipped"] = skipped
+		details["failed"] = failed
+		details["gifts"] = perGift
+		return CommandResult{
+			Message: fmt.Sprintf("imported %d, skipped %d, failed %d of %d official gifts", imported, skipped, failed, len(items)),
+			Details: details,
+		}, nil
+	})
+}
+
+// dedupeCollectibleAttributeName disambiguates attribute names within one kind (models,
+// patterns, or backdrops each need distinct names per collectible_revision — see the
+// star_gift_collectible_{model,pattern,backdrop}_name_uniq constraints). Official Telegram
+// data legitimately reuses a display name across two distinct attributes of the same kind
+// (seen in practice: two different "Strawberry" models on one gift), which the DB would
+// otherwise reject outright on insert.
+func dedupeCollectibleAttributeName(seen map[string]int, name string) string {
+	key := strings.ToLower(name)
+	seen[key]++
+	if seen[key] == 1 {
+		return name
+	}
+	return fmt.Sprintf("%s (%d)", name, seen[key])
+}
+
+func officialRarity(value officialgifts.Rarity) (domain.StarGiftAttributeRarityKind, int, error) {
+	kind := domain.StarGiftAttributeRarityKind(strings.ToLower(strings.TrimSpace(value.Kind)))
+	if !kind.Valid() {
+		return "", 0, domain.ErrStarGiftCollectibleInvalid
+	}
+	if kind == domain.StarGiftRarityPermille {
+		if value.Permille == nil || *value.Permille <= 0 || *value.Permille > 1000 {
+			return "", 0, domain.ErrStarGiftCollectibleInvalid
+		}
+		return kind, *value.Permille, nil
+	}
+	if value.Permille != nil {
+		return "", 0, domain.ErrStarGiftCollectibleInvalid
+	}
+	return kind, 0, nil
 }
 
 func (s *Service) PublishStarGiftCollectibles(ctx context.Context, req PublishStarGiftCollectiblesRequest) (CommandResult, error) {

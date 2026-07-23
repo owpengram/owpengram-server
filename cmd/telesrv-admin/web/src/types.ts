@@ -206,6 +206,29 @@ export type DefaultGiftRow = {
 
 export type DefaultGiftListResponse = { gifts: DefaultGiftRow[] };
 
+// A verified official Star Gift snapshot entry (see cmd/giftfetch). Numeric
+// ids/counters that can approach int64 range are decimal strings.
+export type OfficialStarGiftRow = {
+  source_gift_id: string;
+  title: string;
+  stars: string;
+  convert_stars: string;
+  upgrade_stars: string;
+  availability_total: number;
+  limited: boolean;
+  sold_out: boolean;
+  model_count: number;
+  pattern_count: number;
+  backdrop_count: number;
+  crafted_model_count: number;
+  can_upgrade: boolean;
+  can_craft: boolean;
+  document_id: string;
+  animation_validated: boolean;
+};
+
+export type OfficialStarGiftListResponse = { gifts: OfficialStarGiftRow[] };
+
 export type StarGiftCollectibleAttributeRow = {
   id: string;
   kind: "model" | "pattern" | "backdrop";

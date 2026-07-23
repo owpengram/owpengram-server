@@ -9,6 +9,7 @@ import type {
   MessageDetail,
   MessageListResponse,
   DefaultGiftListResponse,
+  OfficialStarGiftListResponse,
   StarGiftCollectiblePreview,
   StarGiftListResponse,
   StickerSetListResponse
@@ -75,11 +76,14 @@ export const api = {
 	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	defaultGifts: () => request<DefaultGiftListResponse>("/api/default-gifts"),
 	defaultGiftAnimation: (id: number) => request<Record<string, unknown>>(`/api/default-gifts/${id}/animation`),
+	officialGifts: () => request<OfficialStarGiftListResponse>("/api/official-gifts"),
+	officialGiftAnimation: (id: string) => request<Record<string, unknown>>(`/api/official-gifts/${encodeURIComponent(id)}/animation`),
 	giftAnimation: (id: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(id)}/animation`),
 	giftCollectibles: (id: string) => request<StarGiftCollectiblePreview>(`/api/gifts/${encodeURIComponent(id)}/collectibles`),
 	giftCollectibleAnimation: (giftID: string, kind: "model" | "pattern", attributeID: string) => request<Record<string, unknown>>(`/api/gifts/${encodeURIComponent(giftID)}/collectibles/${kind}/${encodeURIComponent(attributeID)}/animation`),
 	importGift: (form: FormData) => request<CommandResult>("/api/actions/import-gift", { method: "POST", body: form }),
 	importDefaultGift: (payload: Record<string, unknown>) => request<CommandResult>("/api/actions/import-default-gift", { method: "POST", body: JSON.stringify(payload) }),
+	importOfficialGift: (payload: Record<string, unknown>) => request<CommandResult>("/api/actions/import-official-gift", { method: "POST", body: JSON.stringify(payload) }),
 	publishGiftCollectibles: (giftID: string, form: FormData) => request<CommandResult>(`/api/actions/publish-gift-collectibles?gift_id=${encodeURIComponent(giftID)}`, { method: "POST", body: form }),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
