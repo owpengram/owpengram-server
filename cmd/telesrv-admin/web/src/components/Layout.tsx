@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { LanguageSwitch, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 import { type Navigate, type RouteState, routeSubtitle, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
@@ -133,7 +133,6 @@ export function Shell({
           </div>
           <div className="topbar-actions">
             <ThemeSwitch />
-            <LanguageSwitch />
             <span className="actor-pill">{t("layout.actor", { actor })}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={t("layout.logout")}>
               <LogOut size={16} /> {t("layout.logout")}

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "telesrv-admin-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "cmd/telesrv-admin/web"],
+      "port": 2410
+    },
+    {
+      "name": "owpengram-site-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "../owpengram-site"],
+      "port": 5173
+    }
+  ]
+}

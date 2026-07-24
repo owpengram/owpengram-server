@@ -1564,25 +1564,6 @@ export function useI18n(): I18nContextValue {
   return value;
 }
 
-export function LanguageSwitch() {
-  const { lang, setLang, t } = useI18n();
-  return (
-    <div className="language-switch" role="group" aria-label="Language">
-      {(["en", "zh", "ru"] as const).map((item) => (
-        <button
-          key={item}
-          className={lang === item ? "active" : ""}
-          type="button"
-          aria-pressed={lang === item}
-          onClick={() => setLang(item)}
-        >
-          {t(`language.${item}`)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function translate(lang: Language, key: string, params?: TranslationParams): string {
   const value = translations[lang][key] ?? translations.en[key] ?? key;
   if (!params) {
