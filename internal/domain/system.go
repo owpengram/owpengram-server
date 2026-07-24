@@ -25,11 +25,19 @@ const (
 	StickersBotUserID int64 = 1063110917
 	// StickersBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
 	StickersBotAccessHash int64 = 5213187021149032991
+	// StickersBotUserPhotoID/AccessHash 是 @Stickers 头像 photo 的固定 id，
+	// 与 files.Service.SeedStickersBotAvatar 种子写入的行保持一致。
+	StickersBotUserPhotoID         int64 = 10631109170001
+	StickersBotUserPhotoAccessHash int64 = 4636293356791048892
 
 	// ChatBotUserID 是内置 @ChatBot 账号。它把私聊文本转给 server AI provider 链。
 	ChatBotUserID int64 = 1250000007
 	// ChatBotAccessHash 固定不变；与 postgres 种子行双写，必须保持一致。
 	ChatBotAccessHash int64 = 6332902371644871201
+	// ChatBotUserPhotoID/AccessHash 是 @ChatBot 头像 photo 的固定 id，
+	// 与 files.Service.SeedChatBotAvatar 种子写入的行保持一致。
+	ChatBotUserPhotoID         int64 = 12500000070001
+	ChatBotUserPhotoAccessHash int64 = 8748578814399338333
 )
 
 // officialSystemUserPhotoDCID/Stripped 由 files.Service.SeedOfficialSystemAvatar
@@ -59,6 +67,34 @@ var (
 func SetBotFatherAvatar(dcID int, stripped []byte) {
 	botFatherPhotoDCID = dcID
 	botFatherPhotoStripped = stripped
+}
+
+// stickersBotPhotoDCID/Stripped 由 files.Service.SeedStickersBotAvatar 在启动时
+// 通过 SetStickersBotAvatar 写入一次；写入前 StickersBotUser() 不带头像（PhotoID==0）。
+var (
+	stickersBotPhotoDCID     int
+	stickersBotPhotoStripped []byte
+)
+
+// SetStickersBotAvatar 记录 @Stickers 头像所在的 DC 与内联缩略图字节。
+// 只应在启动阶段、头像 seed 完成后调用一次。
+func SetStickersBotAvatar(dcID int, stripped []byte) {
+	stickersBotPhotoDCID = dcID
+	stickersBotPhotoStripped = stripped
+}
+
+// chatBotPhotoDCID/Stripped 由 files.Service.SeedChatBotAvatar 在启动时
+// 通过 SetChatBotAvatar 写入一次；写入前 ChatBotUser() 不带头像（PhotoID==0）。
+var (
+	chatBotPhotoDCID     int
+	chatBotPhotoStripped []byte
+)
+
+// SetChatBotAvatar 记录 @ChatBot 头像所在的 DC 与内联缩略图字节。
+// 只应在启动阶段、头像 seed 完成后调用一次。
+func SetChatBotAvatar(dcID int, stripped []byte) {
+	chatBotPhotoDCID = dcID
+	chatBotPhotoStripped = stripped
 }
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
@@ -101,7 +137,7 @@ func BotFatherUser() User {
 
 // StickersBotUser 返回内置 @Stickers 账号。username 不以 bot 结尾属种子例外（与官方一致）。
 func StickersBotUser() User {
-	return User{
+	u := User{
 		ID:             StickersBotUserID,
 		AccessHash:     StickersBotAccessHash,
 		FirstName:      "Stickers",
@@ -110,11 +146,17 @@ func StickersBotUser() User {
 		Bot:            true,
 		BotInfoVersion: 2,
 	}
+	if stickersBotPhotoDCID != 0 {
+		u.PhotoID = StickersBotUserPhotoID
+		u.PhotoDCID = stickersBotPhotoDCID
+		u.PhotoStripped = stickersBotPhotoStripped
+	}
+	return u
 }
 
 // ChatBotUser 返回内置 @ChatBot 账号。
 func ChatBotUser() User {
-	return User{
+	u := User{
 		ID:             ChatBotUserID,
 		AccessHash:     ChatBotAccessHash,
 		FirstName:      "ChatBot",
@@ -123,6 +165,12 @@ func ChatBotUser() User {
 		Bot:            true,
 		BotInfoVersion: 1,
 	}
+	if chatBotPhotoDCID != 0 {
+		u.PhotoID = ChatBotUserPhotoID
+		u.PhotoDCID = chatBotPhotoDCID
+		u.PhotoStripped = chatBotPhotoStripped
+	}
+	return u
 }
 
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。

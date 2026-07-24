@@ -82,6 +82,8 @@
   --shadow: 0 28px 70px -36px rgba(5, 5, 8, 0.35);
   --shadow-sm: 0 2px 10px rgba(24, 39, 56, 0.05);
   --shadow-brand: 0 8px 22px rgba(37, 99, 235, 0.22);
+  --hero-glow: rgba(37, 99, 235, 0.14);
+  --hero-grid: rgba(5, 5, 8, 0.04);
 
   /* Radii */
   --radius-xs: 8px;
@@ -157,6 +159,8 @@
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.46);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.38);
   --shadow-brand: 0 8px 22px rgba(91, 157, 255, 0.26);
+  --hero-glow: rgba(91, 157, 255, 0.25);
+  --hero-grid: rgba(255, 255, 255, 0.04);
 }
 
 * {

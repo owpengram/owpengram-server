@@ -176,11 +176,91 @@
 }
 
 .login-page {
+  position: relative;
   display: grid;
   min-height: 100vh;
   place-items: center;
   padding: 24px;
   background: var(--bg);
+  background-image:
+    radial-gradient(900px 480px at 50% -8%, var(--hero-glow) 0%, rgba(0, 0, 0, 0) 70%),
+    linear-gradient(var(--hero-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
+  background-size: auto, 44px 44px, 44px 44px;
+  overflow: hidden;
+}
+
+.login-page .bg-orbs {
+  position: absolute;
+  inset: -60px;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.login-page .bg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  pointer-events: none;
+}
+
+.login-page .bg-orb--1 {
+  top: -15%;
+  left: -10%;
+  width: 700px;
+  height: 700px;
+  background: color-mix(in srgb, var(--brand-2) 40%, transparent);
+  animation: loginOrbFloat1 20s ease-in-out infinite;
+}
+
+.login-page .bg-orb--2 {
+  top: 25%;
+  right: -15%;
+  width: 600px;
+  height: 600px;
+  background: color-mix(in srgb, var(--brand) 38%, transparent);
+  animation: loginOrbFloat2 24s ease-in-out infinite;
+}
+
+.login-page .bg-orb--3 {
+  bottom: -15%;
+  left: 30%;
+  width: 500px;
+  height: 500px;
+  background: color-mix(in srgb, var(--brand-2) 30%, transparent);
+  animation: loginOrbFloat3 28s ease-in-out infinite;
+}
+
+@keyframes loginOrbFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(60px, -40px) scale(1.08); }
+  66% { transform: translate(-30px, 30px) scale(.92); }
+}
+@keyframes loginOrbFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-50px, -35px) scale(.93); }
+  66% { transform: translate(45px, 25px) scale(1.07); }
+}
+@keyframes loginOrbFloat3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, 45px) scale(1.06); }
+  66% { transform: translate(-55px, -25px) scale(.94); }
+}
+
+@media (max-width: 720px) {
+  .login-page .bg-orb { filter: blur(60px); }
+  .login-page .bg-orb--1 { width: 350px; height: 350px; }
+  .login-page .bg-orb--2 { width: 300px; height: 300px; }
+  .login-page .bg-orb--3 { width: 250px; height: 250px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page .bg-orb { animation: none; }
+}
+
+.login-page .login-panel {
+  position: relative;
+  z-index: 1;
 }
 
 .login-panel {

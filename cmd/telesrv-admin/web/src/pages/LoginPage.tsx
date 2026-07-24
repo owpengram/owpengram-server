@@ -27,6 +27,11 @@ export function LoginPage({ onLogin }: { onLogin: (actor: string) => void }) {
 
   return (
     <main className="login-page">
+      <div className="bg-orbs" aria-hidden="true">
+        <div className="bg-orb bg-orb--1" />
+        <div className="bg-orb bg-orb--2" />
+        <div className="bg-orb bg-orb--3" />
+      </div>
       <section className="login-panel">
         <div className="login-head">
           <div className="brand brand-elevated">

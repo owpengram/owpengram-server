@@ -508,6 +508,16 @@ func run(logger *zap.Logger) error {
 	} else if seeded {
 		logger.Info("BotFather 头像种子导入完成", zap.Int64("photo_id", domain.BotFatherUserPhotoID))
 	}
+	if seeded, err := filesService.SeedStickersBotAvatar(ctx); err != nil {
+		return fmt.Errorf("seed stickers bot avatar: %w", err)
+	} else if seeded {
+		logger.Info("@Stickers 头像种子导入完成", zap.Int64("photo_id", domain.StickersBotUserPhotoID))
+	}
+	if seeded, err := filesService.SeedChatBotAvatar(ctx); err != nil {
+		return fmt.Errorf("seed chatbot avatar: %w", err)
+	} else if seeded {
+		logger.Info("@ChatBot 头像种子导入完成", zap.Int64("photo_id", domain.ChatBotUserPhotoID))
+	}
 	if stats, err := filesService.WarmCaches(ctx); err != nil {
 		logger.Warn("媒体资源缓存预热失败", zap.Error(err))
 	} else if stats.StickerSets > 0 || stats.Documents > 0 || stats.Blobs > 0 {
