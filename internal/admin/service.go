@@ -2057,6 +2057,9 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	if req.Stars <= 0 {
 		req.Stars = bundle.Gift.Stars
 	}
+	if req.ConvertStars <= 0 {
+		req.ConvertStars = bundle.Gift.ConvertStars
+	}
 	if req.ConvertStars < 0 || req.ConvertStars > req.Stars || len([]rune(req.Title)) > domain.MaxStarGiftTitleRunes {
 		return CommandResult{}, domain.ErrStarGiftInvalid
 	}
@@ -2151,6 +2154,10 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 	req.ManifestSHA256 = hex.EncodeToString(bundle.ManifestSHA256)
 	sort.Strings(assetHashes)
 	req.AssetSHA256 = assetHashes
+	var auctionAvailabilityTotal int
+	if bundle.Gift.Auction {
+		auctionAvailabilityTotal = bundle.Gift.AvailabilityTotal
+	}
 	write := domain.StarGiftCatalogBundleWrite{Catalog: domain.StarGiftCatalogWrite{
 		GiftID: req.GiftID, Title: req.Title, Stars: req.Stars, ConvertStars: req.ConvertStars,
 		Enabled: req.Enabled, SortOrder: req.SortOrder, Animation: baseAnimation, Actor: req.Actor, CommandID: req.CommandID,
@@ -2162,10 +2169,13 @@ func (s *Service) ImportOfficialStarGift(ctx context.Context, req ImportOfficial
 		// Local resale counters and sale dates are derived by lifecycle writes.
 		// Auction gifts are the one exception: star_gift_catalog_revision_auction_check
 		// requires limited=true whenever auction=true, so it can't be forced false here.
+		// limited=true in turn trips star_gift_catalog_revision_supply_check unless
+		// availability_total is positive, so an auction import also needs a real
+		// local supply figure — reuse the snapshot's total and open it at full stock.
 		Limited: bundle.Gift.Auction, SoldOut: false, Birthday: bundle.Gift.Birthday,
 		RequirePremium: bundle.Gift.RequirePremium, LimitedPerUser: bundle.Gift.LimitedPerUser,
 		PeerColorAvailable: bundle.Gift.PeerColorAvailable, Auction: bundle.Gift.Auction,
-		AvailabilityRemains: 0, AvailabilityTotal: 0,
+		AvailabilityRemains: auctionAvailabilityTotal, AvailabilityTotal: auctionAvailabilityTotal,
 		AvailabilityResale: 0, FirstSaleDate: 0,
 		LastSaleDate: 0, ResellMinStars: 0,
 		PerUserTotal: bundle.Gift.PerUserTotal, LockedUntilDate: bundle.Gift.LockedUntilDate,
