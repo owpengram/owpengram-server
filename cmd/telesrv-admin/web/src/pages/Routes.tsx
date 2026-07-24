@@ -5,7 +5,6 @@ import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
 import { BotDetailPage } from "./BotDetailPage";
 import { BotsPage } from "./BotsPage";
-import { EmojiPage } from "./EmojiPage";
 import { Dashboard } from "./Dashboard";
 import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
 import { GroupMessagesPage } from "./GroupMessagesPage";
@@ -38,7 +37,7 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
     return <BotsPage navigate={navigate} />;
   }
   if (route.path === "/emoji") {
-    return <EmojiPage />;
+    return <StickerSetsPage kind="emoji" />;
   }
 	if (route.path === "/gifts") {
 		return <GiftsPage />;
