@@ -57,10 +57,14 @@ func (r *registry) sweepLocked(nowUnix int64, ringTimeoutSec, tombstoneTTLSec in
 			if nowUnix-int64(e.call.DiscardedAt) > tombstoneTTLSec {
 				r.removeLocked(id, e, false)
 			}
-		default:
-			if nowUnix-int64(e.call.Date) > 2*ringTimeoutSec {
-				r.removeLocked(id, e, true)
-			}
+	default:
+		// Confirmed 通话没有服务端时长上限，不在此回收
+		if e.call.State == domain.PhoneCallStateConfirmed {
+			continue
+		}
+		if nowUnix-int64(e.call.Date) > 2*ringTimeoutSec {
+			r.removeLocked(id, e, true)
+		}
 		}
 	}
 }
