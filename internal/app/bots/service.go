@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 
+	telegramloginapp "telesrv/internal/app/telegramlogin"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
 	"telesrv/internal/store"
@@ -82,6 +83,7 @@ type Service struct {
 	stickers              stickerSetCreator
 	installer             userStickerSetInstaller
 	aiChat                aiChatGenerator
+	telegramLogin         *telegramloginapp.Service
 	hooks                 RouterHooks
 	textDrafts            TextDraftPusher
 	userCache             store.UserCache
@@ -171,6 +173,16 @@ func WithAIChatGenerator(g aiChatGenerator) Option {
 	return func(s *Service) {
 		if g != nil {
 			s.aiChat = g
+		}
+	}
+}
+
+// WithTelegramLogin injects the OIDC application service used by BotFather.
+// BotFather never writes the login tables directly.
+func WithTelegramLogin(login *telegramloginapp.Service) Option {
+	return func(s *Service) {
+		if login != nil {
+			s.telegramLogin = login
 		}
 	}
 }
@@ -434,6 +446,45 @@ func (s *Service) ListOwnedBots(ctx context.Context, ownerUserID int64) ([]domai
 		out = append(out, item.user)
 	}
 	return out, nil
+}
+
+// botAccountDeleter is the optional store capability used to permanently delete
+// a user-created bot. Only the Postgres store implements it, so the memory store
+// and other BotStore mocks are unaffected.
+type botAccountDeleter interface {
+	DeleteBotAccount(ctx context.Context, botUserID int64) (domain.User, error)
+}
+
+// DeleteBot permanently removes a user-created bot. System service bots are
+// rejected. Live sessions are dropped and the bot's caches are invalidated so
+// the deletion is visible immediately. Returns the tombstoned user.
+func (s *Service) DeleteBot(ctx context.Context, botUserID int64) (domain.User, error) {
+	if s == nil || s.bots == nil || botUserID == 0 {
+		return domain.User{}, domain.ErrBotNotFound
+	}
+	if domain.IsSystemUserID(botUserID) {
+		return domain.User{}, domain.ErrBotNotFound
+	}
+	deleter, ok := s.bots.(botAccountDeleter)
+	if !ok {
+		return domain.User{}, fmt.Errorf("bot deletion is not supported by the configured store")
+	}
+	// Session revocation is part of the deletion invariant: a deleted bot must
+	// never retain an authenticated connection. Fail closed before tombstoning
+	// when the hook is unavailable or revocation fails.
+	if s.hooks == nil {
+		return domain.User{}, domain.ErrBotSessionsNotRevoked
+	}
+	if err := s.hooks.RevokeBotSessions(ctx, botUserID); err != nil {
+		s.log.Warn("revoke bot sessions before delete", zap.Int64("bot_user_id", botUserID), zap.Error(err))
+		return domain.User{}, domain.ErrBotSessionsNotRevoked
+	}
+	u, err := deleter.DeleteBotAccount(ctx, botUserID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	s.invalidateBotReadCaches(ctx, botUserID)
+	return u, nil
 }
 
 // ExportBotToken 返回 bot token；revoke=true 时先轮换 secret 并撤销已登录 session。

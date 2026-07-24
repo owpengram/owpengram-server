@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { ScamFakeBadges } from "../components/flags";
 import { useI18n } from "../i18n";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix } from "../lib/format";
 import { accountMetrics } from "../lib/metrics";
@@ -116,7 +117,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
                 <td>{row.DeviceCount}</td>
                 <td>{formatDate(row.LastActiveAt)}</td>
                 <td>{row.PremiumUntil > 0 ? <Badge tone="good">{t("account.premium")} {formatUnix(row.PremiumUntil)}</Badge> : <Badge>{t("common.none")}</Badge>}</td>
-                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>}</td>
+                <td>{row.Verified ? <Badge tone="good">{t("common.verified")}</Badge> : <Badge>{t("account.notVerified")}</Badge>} <ScamFakeBadges scam={row.Scam} fake={row.Fake} /></td>
                 <td>{row.Frozen ? <Badge tone="danger">{t("account.frozen")}</Badge> : <Badge>{t("common.normal")}</Badge>}</td>
                 <td>{formatDate(row.UpdatedAt)}</td>
                 <td><button className="row-link" onClick={() => navigate(`/accounts/${row.ID}`)}>{t("common.detail")} <ChevronRight size={14} /></button></td>

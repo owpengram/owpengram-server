@@ -3,6 +3,9 @@ import { AccountDetailPage } from "./AccountDetailPage";
 import { AccountsPage } from "./AccountsPage";
 import { ChannelDetailPage } from "./ChannelDetailPage";
 import { ChannelsPage } from "./ChannelsPage";
+import { BotDetailPage } from "./BotDetailPage";
+import { BotsPage } from "./BotsPage";
+import { EmojiPage } from "./EmojiPage";
 import { Dashboard } from "./Dashboard";
 import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
 import { GroupMessagesPage } from "./GroupMessagesPage";
@@ -10,15 +13,20 @@ import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { GiftsPage } from "./GiftsPage";
 import { StickerSetsPage } from "./StickerSetsPage";
+import { GiveGiftsPage } from "./GiveGiftsPage";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
   const channelID = route.path.match(/^\/channels\/(\d+)$/)?.[1];
+  const botID = route.path.match(/^\/bots\/(\d+)$/)?.[1];
   if (accountID) {
     return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;
   }
   if (channelID) {
     return <ChannelDetailPage id={Number(channelID)} navigate={navigate} />;
+  }
+  if (botID) {
+    return <BotDetailPage id={Number(botID)} navigate={navigate} />;
   }
   if (route.path === "/accounts") {
     return <AccountsPage navigate={navigate} />;
@@ -26,14 +34,20 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   if (route.path === "/channels") {
     return <ChannelsPage navigate={navigate} />;
   }
+  if (route.path === "/bots") {
+    return <BotsPage navigate={navigate} />;
+  }
+  if (route.path === "/emoji") {
+    return <EmojiPage />;
+  }
 	if (route.path === "/gifts") {
 		return <GiftsPage />;
 	}
 	if (route.path === "/stickers") {
 		return <StickerSetsPage kind="stickers" />;
 	}
-	if (route.path === "/emoji") {
-		return <StickerSetsPage kind="emoji" />;
+	if (route.path === "/give-gifts") {
+		return <GiveGiftsPage />;
 	}
   if (route.path === "/messages/detail" || route.path === "/messages/private/detail") {
     return (

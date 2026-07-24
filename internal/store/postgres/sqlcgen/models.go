@@ -34,6 +34,21 @@ type AccountDeletionRequest struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+type AccountFreezeNotification struct {
+	ID            int64
+	TargetUserID  int64
+	FrozenUserID  int64
+	Version       int64
+	Frozen        bool
+	Status        string
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LeaseUntil    pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AccountPassword struct {
 	UserID                  int64
 	HasRecovery             bool
@@ -90,6 +105,7 @@ type AccountRestriction struct {
 	FrozenSince pgtype.Timestamptz
 	FrozenUntil pgtype.Timestamptz
 	AppealUrl   string
+	Version     int64
 }
 
 type AccountSetting struct {
@@ -394,6 +410,38 @@ type BotEmojiStatusPermission struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type BotLoginAllowedUrl struct {
+	ID            int64
+	BotUserID     int64
+	Kind          string
+	NormalizedUrl string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type BotLoginClient struct {
+	BotUserID        int64
+	ClientID         string
+	ClientSecretHash []byte
+	SecretVersion    int64
+	SigningAlgorithm string
+	Enabled          bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type BotLoginNativeApp struct {
+	ID                  int64
+	BotUserID           int64
+	Platform            string
+	ApplicationID       string
+	VerificationID      string
+	CallbackUri         string
+	VerifiedDisplayName string
+	Enabled             bool
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type BotUserPermission struct {
 	BotUserID   int64
 	UserID      int64
@@ -504,6 +552,9 @@ type Channel struct {
 	Wallpaper                     []byte
 	Verified                      bool
 	LinkedCommunityID             int64
+	Scam                          bool
+	Fake                          bool
+	Gigagroup                     bool
 }
 
 type ChannelAdminLogEvent struct {
@@ -1596,6 +1647,17 @@ type SeedState struct {
 	UpdatedAt   pgtype.Timestamptz
 }
 
+type StarGiftAdminGrantCommand struct {
+	RecipientUserID    int64
+	CommandKey         string
+	RequestFingerprint []byte
+	SenderUserID       int64
+	GiftID             int64
+	SavedGiftID        int64
+	UniqueGiftID       int64
+	CreatedAt          pgtype.Timestamptz
+}
+
 type StarGiftAuction struct {
 	GiftID        int64
 	Slug          string
@@ -1652,6 +1714,14 @@ type StarGiftAuctionBidPayment struct {
 	BidAmount    int64
 	BalanceAfter int64
 	CreatedAt    int32
+}
+
+type StarGiftBoxMediaRepair struct {
+	OwnerUserID   int64
+	BoxID         int32
+	PeerType      string
+	PeerID        int64
+	RepairedMedia []byte
 }
 
 type StarGiftCatalog struct {
@@ -1768,6 +1838,13 @@ type StarGiftCollectiblePattern struct {
 	OfficialDocumentID    *int64
 }
 
+type StarGiftCollectiblePreviewRepair struct {
+	GiftID                int64
+	CollectibleRevisionID int64
+	Reason                string
+	RepairedAt            pgtype.Timestamptz
+}
+
 type StarGiftCollectibleRevision struct {
 	ID                   int64
 	GiftID               int64
@@ -1823,6 +1900,16 @@ type StarGiftCraftCommand struct {
 	ChancePermille     int32
 	CreatedAt          int32
 	SourceEditPts      []int32
+	OutputMedia        []byte
+	OutputFingerprint  []byte
+}
+
+type StarGiftCraftMessageRepair struct {
+	OwnerUserID        int64
+	BoxID              int32
+	UniqueGiftID       int64
+	DesiredCraftChance int32
+	DesiredCanCraftAt  int32
 }
 
 type StarGiftDropDetailsCommand struct {
@@ -1883,6 +1970,29 @@ type StarGiftPatternPreviewDocumentRepair struct {
 	OldDocumentID int64
 	NewDocumentID int64
 	RepairedAt    pgtype.Timestamptz
+}
+
+type StarGiftPinRepair struct {
+	ID       int64
+	NewOrder int32
+}
+
+type StarGiftPrepaidMessageAlias struct {
+	OwnerUserID      int64
+	BoxID            int32
+	SavedGiftID      int64
+	MessageSenderID  int64
+	PrivateMessageID int64
+}
+
+type StarGiftPrepaidMessageRepair struct {
+	OwnerUserID      int64
+	BoxID            int32
+	PeerType         string
+	PeerID           int64
+	MessageSenderID  int64
+	PrivateMessageID int64
+	RepairedMedia    []byte
 }
 
 type StarGiftPrepaidUpgradeCommand struct {
@@ -1964,11 +2074,27 @@ type StarGiftUpgradeCommand struct {
 	SourceEditPts       int32
 }
 
+// Owner-local service-message aliases (unique outputs and separate prepaid-upgrade notifications) for one saved gift aggregate.
+type StarGiftUserMessageRef struct {
+	OwnerUserID int64
+	MsgID       int32
+	SavedGiftID int64
+	CreatedAt   pgtype.Timestamptz
+}
+
 type StarGiftUserPurchase struct {
 	UserID         int64
 	GiftID         int64
 	PurchasedCount int32
 	UpdatedAt      pgtype.Timestamptz
+}
+
+type StarGiftUserUniqueMediaRepair struct {
+	OwnerUserID   int64
+	BoxID         int32
+	PeerType      string
+	PeerID        int64
+	RepairedMedia []byte
 }
 
 type StarGiftWithdrawalRequest struct {
@@ -2098,6 +2224,85 @@ type StoryView struct {
 	Date          int32
 	Reaction      []byte
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type SuggestedPostApproval struct {
+	MonoforumID              int64
+	SuggestionMessageID      int32
+	ParentChannelID          int64
+	ActorUserID              int64
+	PayerUserID              int64
+	State                    string
+	PriceKind                string
+	PriceAmount              int64
+	PriceNanos               int32
+	ScheduleDate             int32
+	ApprovalServiceMessageID int32
+	PublishedMessageID       int32
+	SettlementDue            int32
+	FinalServiceMessageID    int32
+	CreatedAt                int32
+	UpdatedAt                int32
+}
+
+type TelegramLoginCode struct {
+	ID         int64
+	RequestID  int64
+	CodeHash   []byte
+	SealedCode []byte
+	SealNonce  []byte
+	SealKeyID  string
+	IssuedAt   pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+}
+
+type TelegramLoginRequest struct {
+	ID                  int64
+	RequestTokenHash    []byte
+	BrowserTokenHash    []byte
+	BotUserID           int64
+	ClientID            string
+	SigningAlgorithm    string
+	Source              string
+	ResponseType        string
+	RedirectUri         string
+	Origin              string
+	Domain              string
+	RequestedScopes     []string
+	OauthState          string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Browser             string
+	Platform            string
+	Ip                  string
+	Region              string
+	InAppOrigin         string
+	IsApp               bool
+	VerifiedAppName     string
+	MatchCodes          []string
+	MatchCode           string
+	MatchCodesFirst     bool
+	UserIDHint          int64
+	PeerType            string
+	PeerID              int64
+	MessageID           int32
+	ButtonID            int32
+	Status              string
+	AuthorizedUserID    *int64
+	ProfileName         string
+	GivenName           string
+	FamilyName          string
+	PreferredUsername   string
+	Picture             string
+	PhoneNumber         string
+	WriteAllowed        bool
+	PhoneShared         bool
+	CreatedAt           pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	ApprovedAt          pgtype.Timestamptz
+	DeclinedAt          pgtype.Timestamptz
 }
 
 type TelesrvCollectiblePatternCorrectionEvent struct {
@@ -2276,6 +2481,7 @@ type User struct {
 	BirthdayMonth                 int32
 	BirthdayYear                  int32
 	PersonalChannelID             int64
+	SignupEmail                   string
 	DeletedAt                     pgtype.Timestamptz
 	DeletionSource                string
 	DeletionReason                string
@@ -2283,7 +2489,8 @@ type User struct {
 	EmojiStatusCollectibleID      *int64
 	EmojiStatusCollectible        []byte
 	LinkedCommunityID             int64
-	SignupEmail                   string
+	Scam                          bool
+	Fake                          bool
 }
 
 type UserBusinessProfile struct {
@@ -2400,6 +2607,24 @@ type UserUpdateWatermark struct {
 	UserID        int64
 	ContiguousPts int32
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type WebAuthorization struct {
+	Hash             int64
+	RequestID        int64
+	UserID           int64
+	BotUserID        int64
+	Domain           string
+	Browser          string
+	Platform         string
+	Ip               string
+	Region           string
+	GrantedScopes    []string
+	PhoneShared      bool
+	BotAccessGranted bool
+	CreatedAt        pgtype.Timestamptz
+	LastActiveAt     pgtype.Timestamptz
+	RevokedAt        pgtype.Timestamptz
 }
 
 type WebPage struct {

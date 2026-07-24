@@ -402,6 +402,7 @@ func cloneDialogMessages(in []domain.Message) []domain.Message {
 
 func cloneMessageForDialogCache(msg domain.Message) domain.Message {
 	msg.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+	msg.RichMessage = cloneRichMessage(msg.RichMessage)
 	if msg.ReplyTo != nil {
 		reply := *msg.ReplyTo
 		reply.QuoteEntities = append([]domain.MessageEntity(nil), msg.ReplyTo.QuoteEntities...)
@@ -424,6 +425,7 @@ func cloneDialogChannelMessages(in []domain.ChannelMessage) []domain.ChannelMess
 
 func cloneChannelMessageForDialogCache(msg domain.ChannelMessage) domain.ChannelMessage {
 	msg.Entities = append([]domain.MessageEntity(nil), msg.Entities...)
+	msg.RichMessage = cloneRichMessage(msg.RichMessage)
 	if msg.ReplyTo != nil {
 		reply := *msg.ReplyTo
 		reply.QuoteEntities = append([]domain.MessageEntity(nil), msg.ReplyTo.QuoteEntities...)
@@ -499,6 +501,9 @@ func cloneDialogUsers(in []domain.User) []domain.User {
 func cloneDialogUser(in domain.User) domain.User {
 	if in.PhotoStripped != nil {
 		in.PhotoStripped = append([]byte(nil), in.PhotoStripped...)
+	}
+	if in.RestrictionReasons != nil {
+		in.RestrictionReasons = append([]domain.UserRestrictionReason(nil), in.RestrictionReasons...)
 	}
 	return in
 }

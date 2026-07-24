@@ -48,27 +48,38 @@ func (r *Router) pushPhoneCall(ctx context.Context, targetUserID int64, call dom
 }
 
 // pushPhoneCallToDevice 只把 phoneCall 状态推给【发起呼叫的那台设备】(originating
-// session)，不广播到该用户的其它会话。
+// session)，不广播到该用户的其它会话，且是 fail-closed 路径：目标锚点缺失、session
+// 已断开或编码/发送失败时都不得回退为 user 级广播。
 //
-// ⚠ 为什么必须定向：一个「呼出」通话只属于发起它的那台设备。若把呼叫方视角的
-// phoneCallWaiting(receive_date) 广播到该账号的所有会话，而【同一账号又登录在被叫
-// 的那台手机上】(多账号同机)，手机上这份呼叫方副本会收到 phoneCallWaiting——它与
-// 来电是同一个 call_id，于是覆写 VoIPService.callIShouldHavePutIntoIntent 这个
-// 【静态全局】pending 来电（stock DrKLO：MessagesController 只按 call.id 匹配、不校验
-// 账号），把带 g_a_hash 的 phoneCallRequested 换成不含 g_a_hash 的 phoneCallWaiting。
-// 被叫接听后 SHA256(g_a)!=g_a_hash → 「Ga hash doesn't match」→ callFailed → 一接就断。
-// 定向到 CallerDevice 后，手机上的呼叫方副本收不到该更新，pending 来电不被污染。
-// See memory: call-ga-hash-multiaccount-clobber。
+// ⚠ 为什么必须定向、且不能回退广播：一个「呼出」通话只属于发起它的那台设备。若把
+// 呼叫方视角的 phoneCallWaiting(receive_date) 广播到该账号的所有会话，而【同一账号
+// 又登录在被叫的那台手机上】(多账号同机)，手机上这份呼叫方副本会收到
+// phoneCallWaiting——它与来电是同一个 call_id，于是覆写
+// VoIPService.callIShouldHavePutIntoIntent 这个【静态全局】pending 来电（stock
+// DrKLO：MessagesController 只按 call.id 匹配、不校验账号），把带 g_a_hash 的
+// phoneCallRequested 换成不含 g_a_hash 的 phoneCallWaiting。被叫接听后
+// SHA256(g_a)!=g_a_hash → 「Ga hash doesn't match」→ callFailed → 一接就断。定向到
+// CallerDevice 后，手机上的呼叫方副本收不到该更新，pending 来电不被污染。早前版本在
+// 定向失败时回退广播，看似"正常路径不会走到"，但那正是本条目要防的那类多账号同机场景
+// ——回退广播会重新引入污染，因此改为纯粹跳过。See memory: call-ga-hash-multiaccount-clobber。
 //
 // 呼叫方发起会话在 requestCall 时已发过 RPC、必然 ready；PushToSessionForAuthKey 对
-// 暂未 ready 的会话也会入队补发，不丢。CallerDevice 未知(理论上不会)时回退广播。
+// 暂未 ready 的会话也会入队补发，不丢。
 func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, device domain.SessionRef, call domain.PhoneCall, logMessage string) {
-	if device.Zero() || r.deps.Sessions == nil {
-		r.pushPhoneCall(ctx, targetUserID, call, logMessage)
+	if targetUserID == 0 || device.Zero() || r.deps.Sessions == nil {
+		if r.log != nil {
+			r.log.Debug(logMessage,
+				zap.Int64("target_user_id", targetUserID),
+				zap.Int64("call_id", call.ID),
+				zap.Int64("target_session_id", device.SessionID),
+				zap.String("delivery", "skipped_invalid_device_anchor"),
+			)
+		}
 		return
 	}
-	upd := r.phoneCallUpdates(ctx, call, targetUserID)
-	err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, upd)
+
+	updates := r.phoneCallUpdates(ctx, call, targetUserID)
+	err := r.deps.Sessions.PushToSessionForAuthKey(ctx, device.RawAuthKeyID, device.SessionID, proto.MessageFromServer, updates)
 	if r.log != nil {
 		r.log.Info("push phoneCall to device",
 			zap.String("stage", logMessage),
@@ -78,10 +89,6 @@ func (r *Router) pushPhoneCallToDevice(ctx context.Context, targetUserID int64, 
 			zap.Int64("device_session", device.SessionID),
 			zap.Error(err),
 		)
-	}
-	if err != nil {
-		// 定向失败(会话已不存在)才回退广播——正常路径不会走到，故不会重新引入污染。
-		r.pushPhoneCall(ctx, targetUserID, call, logMessage)
 	}
 }
 

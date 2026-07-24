@@ -340,6 +340,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 		}},
 		PublicBaseURL: "https://links.example.test",
 		AppScheme:     "example-chat",
+		AppLinkBase:   "owpg://tenant.example.test",
 		WebBaseURL:    "https://web.example.test/client/",
 		AppName:       "Example Chat",
 	})
@@ -389,6 +390,8 @@ func TestNewHandlerRejectsInvalidClientLinkConfig(t *testing.T) {
 	}{
 		{name: "missing sticker resolver", cfg: Config{}},
 		{name: "official scheme", cfg: Config{StickerSets: fakeResolver{}, AppScheme: "tg"}},
+		{name: "official app link base", cfg: Config{StickerSets: fakeResolver{}, AppLinkBase: "tg://links.example.test"}},
+		{name: "app link base path", cfg: Config{StickerSets: fakeResolver{}, AppLinkBase: "owpg://links.example.test/root"}},
 		{name: "invalid Web base URL", cfg: Config{StickerSets: fakeResolver{}, WebBaseURL: "file:///tmp/web"}},
 		{name: "invalid app name", cfg: Config{StickerSets: fakeResolver{}, AppName: "bad\nname"}},
 	} {

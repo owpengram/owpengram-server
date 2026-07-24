@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -139,6 +140,7 @@ func (k StarGiftAttributeRarityKind) Valid() bool {
 
 // StarGiftCollectibleAttribute 是已发布属性池的一项。RarityKind/RarityPermille
 // 是客户端展示事实；普通升级把非 crafted 的 permille 值当相对权重，不要求合计为 1000。
+// 每类仍必须提供至少两个客户端可区分的普通升级属性，否则 TDesktop 的升级滚动无法结束。
 type StarGiftCollectibleAttribute struct {
 	ID                    int64
 	CollectibleRevisionID int64
@@ -325,6 +327,45 @@ type StarGiftUpgradeRequest struct {
 	Date                int
 	OriginAuthKeyID     [8]byte
 	OriginSessionID     int64
+
+	// Admin-controlled attribute overrides. When non-zero these pin the specific
+	// collectible model/pattern/backdrop instead of the random pool draw. They
+	// are only honoured on the admin grant path; the DB FK (attribute must belong
+	// to the revision) remains the source of truth. The collectible number is
+	// always assigned automatically (sequential).
+	ModelAttributeID    int64
+	PatternAttributeID  int64
+	BackdropAttributeID int64
+}
+
+// AdminStarGiftGrant is one admin "give gift" command: deliver GiftID to
+// Recipient from the official system account 777000 at no charge.
+// When Upgrade is set the gift is minted as a collectible; the optional
+// attribute IDs pin specific model/pattern/backdrop (0 => random). The
+// collectible number is always assigned automatically.
+type AdminStarGiftGrant struct {
+	SenderID            int64
+	Recipient           Peer
+	GiftID              int64
+	HideName            bool
+	Message             string
+	Upgrade             bool
+	CommandKey          string
+	Date                int
+	RecipientBlocked    bool
+	ModelAttributeID    int64
+	PatternAttributeID  int64
+	BackdropAttributeID int64
+}
+
+// AdminStarGiftGrantResult is the committed direct collectible assignment.
+// The saved gift, unique issuance, private message and replay receipt are one
+// aggregate transaction.
+type AdminStarGiftGrantResult struct {
+	Saved     SavedStarGift
+	Unique    UniqueStarGift
+	Send      SendPrivateTextResult
+	Duplicate bool
 }
 
 type StarGiftPurchaseRequest struct {
@@ -879,6 +920,9 @@ const (
 	MaxStarGiftCollectionTitleRunes         = 12
 	MaxStarGiftCollectionsPerPeer           = 100
 	MaxStarGiftCollectionItems              = 1000
+	// MaxPinnedStarGifts matches stargifts_pinned_to_top_limit advertised to
+	// official clients. Pin requests are complete replacement vectors.
+	MaxPinnedStarGifts = 6
 )
 
 // Star gift 哨兵错误（rpc 层 errors.Is 映射为 tgerr）。
@@ -932,7 +976,10 @@ func ValidateStarGiftCollectibleDraft(write StarGiftCollectibleWrite) error {
 	if err := validateStarGiftAttributes(write.Patterns, StarGiftCollectiblePattern, false); err != nil {
 		return err
 	}
-	return validateStarGiftAttributes(write.Backdrops, StarGiftCollectibleBackdrop, false)
+	if err := validateStarGiftAttributes(write.Backdrops, StarGiftCollectibleBackdrop, false); err != nil {
+		return err
+	}
+	return validateStarGiftUpgradePreviewPool(write, false)
 }
 
 // ValidateStarGiftCollectibleWrite validates a complete publish command. Published pools are
@@ -947,7 +994,62 @@ func ValidateStarGiftCollectibleWrite(write StarGiftCollectibleWrite) error {
 	if err := validateStarGiftAttributes(write.Patterns, StarGiftCollectiblePattern, true); err != nil {
 		return err
 	}
-	return validateStarGiftAttributes(write.Backdrops, StarGiftCollectibleBackdrop, true)
+	if err := validateStarGiftAttributes(write.Backdrops, StarGiftCollectibleBackdrop, true); err != nil {
+		return err
+	}
+	return validateStarGiftUpgradePreviewPool(write, true)
+}
+
+// validateStarGiftUpgradePreviewPool protects the official-client animation contract. The
+// preview response includes the target attribute plus the published selectable pool; TDesktop
+// deduplicates models and patterns by document identity and needs a non-target item in every
+// category before its spinner can transition to the finished state.
+func validateStarGiftUpgradePreviewPool(write StarGiftCollectibleWrite, requireStoredAsset bool) error {
+	validateAnimated := func(kind StarGiftCollectibleAttributeKind, attributes []StarGiftCollectibleAttribute) error {
+		selectable := 0
+		documents := make(map[int64]struct{}, len(attributes))
+		for _, attribute := range attributes {
+			if attribute.RarityKind != StarGiftRarityPermille || attribute.Crafted {
+				continue
+			}
+			selectable++
+			if requireStoredAsset {
+				if attribute.Document == nil {
+					return fmt.Errorf("%w: %s preview attribute has no document", ErrStarGiftCollectibleInvalid, kind)
+				}
+				documents[attribute.Document.ID] = struct{}{}
+			}
+		}
+		if selectable < 2 {
+			return fmt.Errorf("%w: %s preview requires at least two selectable attributes", ErrStarGiftCollectibleInvalid, kind)
+		}
+		if requireStoredAsset && len(documents) < 2 {
+			return fmt.Errorf("%w: %s preview requires at least two distinct documents", ErrStarGiftCollectibleInvalid, kind)
+		}
+		return nil
+	}
+	if err := validateAnimated(StarGiftCollectibleModel, write.Models); err != nil {
+		return err
+	}
+	if err := validateAnimated(StarGiftCollectiblePattern, write.Patterns); err != nil {
+		return err
+	}
+	seenBackdropIDs := make(map[int]struct{}, len(write.Backdrops))
+	selectableBackdrops := 0
+	for _, attribute := range write.Backdrops {
+		if attribute.RarityKind != StarGiftRarityPermille || attribute.Crafted {
+			continue
+		}
+		selectableBackdrops++
+		if _, exists := seenBackdropIDs[attribute.BackdropID]; exists {
+			return fmt.Errorf("%w: duplicate backdrop_id %d", ErrStarGiftCollectibleInvalid, attribute.BackdropID)
+		}
+		seenBackdropIDs[attribute.BackdropID] = struct{}{}
+	}
+	if selectableBackdrops < 2 {
+		return fmt.Errorf("%w: backdrop preview requires at least two selectable attributes", ErrStarGiftCollectibleInvalid)
+	}
+	return nil
 }
 
 func validateStarGiftAttributes(attributes []StarGiftCollectibleAttribute, kind StarGiftCollectibleAttributeKind, requireStoredAsset bool) error {

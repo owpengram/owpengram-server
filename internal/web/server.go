@@ -24,6 +24,7 @@ type Config struct {
 	Addr            string
 	PublicBaseURL   string
 	AppScheme       string
+	AppLinkBase     string
 	WebBaseURL      string
 	AppName         string
 	DownloadURL     string
@@ -34,6 +35,10 @@ type Config struct {
 	Photos          ProfilePhotoResolver
 	UniqueGifts     UniqueStarGiftResolver
 	GiftWithdrawals StarGiftWithdrawalResolver
+	// TelegramLogin is the optional OIDC/Login HTTP adapter. Public Web owns
+	// the listener so discovery/auth/token and public links share the exact
+	// externally registered origin behind one reverse proxy.
+	TelegramLogin http.Handler
 }
 
 type StickerSetResolver interface {
@@ -102,6 +107,7 @@ func Start(ctx context.Context, cfg Config, logger *zap.Logger) (*http.Server, e
 			zap.String("addr", addr),
 			zap.String("public_base_url", cfg.PublicBaseURL),
 			zap.String("app_scheme", cfg.AppScheme),
+			zap.String("app_link_base", cfg.AppLinkBase),
 			zap.String("web_base_url", cfg.WebBaseURL),
 			zap.String("download_url", cfg.DownloadURL))
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -132,6 +138,13 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	if cfg.PublicBaseURL, err = links.ValidateBaseURL(cfg.PublicBaseURL); err != nil {
 		return nil, fmt.Errorf("public base URL: %w", err)
 	}
+	appLinks, err := links.NewAppLinkBuilder(cfg.AppScheme, cfg.AppLinkBase)
+	if err != nil {
+		return nil, fmt.Errorf("app links: %w", err)
+	}
+	// appLinks.legacyScheme is validated/defaulted internally but private; our
+	// own path-based appURL/appInviteURL/appUsernameURL use the raw field
+	// below directly, so it needs the same validation applied here too.
 	if cfg.AppScheme, err = links.ValidateAppScheme(cfg.AppScheme); err != nil {
 		return nil, fmt.Errorf("app scheme: %w", err)
 	}
@@ -176,6 +189,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		publicBaseURL:   cfg.PublicBaseURL,
 		publicHost:      publicHost,
 		appScheme:       cfg.AppScheme,
+		appLinks:        appLinks,
 		webBaseURL:      cfg.WebBaseURL,
 		appName:         cfg.AppName,
 		downloadURL:     cfg.DownloadURL,
@@ -194,6 +208,17 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /nft/{slug}/{$}", h.uniqueGift)
 	mux.HandleFunc("GET /gift-withdrawal/{requestID}", h.starGiftWithdrawal)
 	mux.HandleFunc("POST /gift-withdrawal/{requestID}", h.completeStarGiftWithdrawal)
+	if cfg.TelegramLogin != nil {
+		mux.Handle("GET /.well-known/openid-configuration", cfg.TelegramLogin)
+		mux.Handle("GET /.well-known/jwks.json", cfg.TelegramLogin)
+		mux.Handle("GET /auth", cfg.TelegramLogin)
+		mux.Handle("GET /crossapp", cfg.TelegramLogin)
+		mux.Handle("GET /inapp", cfg.TelegramLogin)
+		mux.Handle("POST /auth/status", cfg.TelegramLogin)
+		mux.Handle("POST /token", cfg.TelegramLogin)
+		mux.Handle("GET /telegram-login.js", cfg.TelegramLogin)
+		mux.Handle("GET /js/telegram-login.js", cfg.TelegramLogin)
+	}
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)
 	return publicSecurityHeaders(mux), nil
@@ -210,6 +235,7 @@ type handler struct {
 	publicBaseURL   string
 	publicHost      string
 	appScheme       string
+	appLinks        links.AppLinkBuilder
 	webBaseURL      string
 	appName         string
 	downloadURL     string
@@ -1187,7 +1213,9 @@ func itemNoun(set domain.StickerSet, count int) string {
 // owpg://<host>/<path>?<query> as https://<host>/<path>?<query> and falls
 // through to the normal t.me-style path router (LaunchActivity.java), which
 // expects a path, not a tg://-style "resolve?domain=" query. Do NOT use
-// schemeURL here — that format is only valid for the real tg:// scheme.
+// schemeURL/appLinks.Build here — those formats (route-as-host with a query
+// key, or upstream's own AppLinkBuilder) are query-param based and only match
+// the real tg:// convention; our patched clients parse a path segment.
 func (h *handler) appURL(kind, value string) string {
 	return h.appScheme + "://" + h.publicHost + "/" + kind + "/" + url.PathEscape(value)
 }

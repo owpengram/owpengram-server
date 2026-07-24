@@ -134,9 +134,18 @@ VALUES($1,$2,$3,$4,$5,$6,$7)`, req.PayerUserID, req.CommandKey, locked.ID, req.F
 		locked.PrepaidUpgradeStars, locked.PrepaidUpgradeHash = req.ChargeStars, ""
 		result.Saved, result.Balance = locked, balance
 		return nil
+	}, projectMedia: func(ctx context.Context, tx pgx.Tx, messageReq *domain.SendPrivateTextRequest) (privateSendMediaProjection, error) {
+		if result.Saved.Owner.Type != domain.PeerTypeUser {
+			return privateSendMediaProjection{Shared: messageReq.Media, Sender: messageReq.Media, Recipient: messageReq.Media}, nil
+		}
+		return projectPrivateStarGiftSourceRef(ctx, tx, messageReq, result.Saved.Owner.ID, result.Saved.MsgID)
 	}, after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
-		if req.Owner.Type != domain.PeerTypeChannel {
-			return nil
+		if req.Owner.Type == domain.PeerTypeUser {
+			ownerMessageID := sent.RecipientMessage.ID
+			if sent.SenderMessage.OwnerUserID == req.Owner.ID {
+				ownerMessageID = sent.SenderMessage.ID
+			}
+			return registerUserStarGiftMessageRef(ctx, tx, req.Owner.ID, ownerMessageID, result.Saved.ID, 0)
 		}
 		action := messageReq.Media.ServiceAction.StarGift
 		return NewChannelStore(tx).appendStarGiftAdminLogTx(ctx, tx, req.Owner.ID, req.PayerUserID,

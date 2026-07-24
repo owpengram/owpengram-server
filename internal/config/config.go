@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -88,15 +89,43 @@ type Config struct {
 	// PublicAppScheme 是公开落地页自动唤起自建客户端时使用的 URL scheme。
 	// 必须与 TDesktop/Android 客户端构建时注册的 scheme 一致，且不能占用 tg/http/https。
 	PublicAppScheme string
+	// PublicAppLinkBase 是可选的 host-based 自建客户端链接根，例如
+	// owpg://example.com。为空时继续生成 PublicAppScheme://<route>；非空时
+	// 生成 <base>/<route>，同时保留旧 scheme 作为服务端输入兼容。
+	PublicAppLinkBase string
 	// PublicWebBaseURL 是公开 username 页面“Open in Web”按钮指向的 Web 客户端根 URL。
 	PublicWebBaseURL string
 	// PublicAppName 是公开落地页展示的产品名，不参与协议路由。
 	PublicAppName string
 	// PublicDownloadURL 是公开落地页头部“Download”按钮指向的产品官网/下载页 URL。
 	PublicDownloadURL string
+	// ScamWarning / FakeWarning override the profile warning text injected into
+	// getFullUser/getFullChannel About for scam/fake peers. Empty keeps the
+	// built-in per-peer-type English defaults. Clients cannot localize
+	// server-provided text, so operators set these to their audience language.
+	ScamWarning string
+	FakeWarning string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/ 与 /addlist/ 反代到该地址。
 	PublicLinkWebAddr string
+	// TelegramLoginEnabled mounts the self-hosted Telegram Login/OIDC provider
+	// on PublicLinkWebAddr. Secrets are file-backed so they are not exposed in
+	// process listings or accidentally copied into tracked .env templates.
+	TelegramLoginEnabled bool
+	TelegramLoginIssuer  string
+	// TelegramLoginAllowHTTP permits HTTP issuers and registered Login URLs on
+	// any valid host/IP and port. HTTPS remains mandatory when false.
+	TelegramLoginAllowHTTP         bool
+	TelegramLoginSigningKeysFile   string
+	TelegramLoginCodeKeysFile      string
+	TelegramLoginSecretPepperFile  string
+	TelegramLoginRequestTTL        time.Duration
+	TelegramLoginCodeTTL           time.Duration
+	TelegramLoginIDTokenTTL        time.Duration
+	TelegramLoginTrustedProxyCIDRs []string
+	TelegramLoginRetention         time.Duration
+	TelegramLoginSweepInterval     time.Duration
+	TelegramLoginSweepBatch        int
 	// Admin UI 独立进程配置项保留在统一配置中，cmd/telesrv-admin 也按同名 env 读取。
 	AdminUIAddr     string
 	AdminUIPassword string
@@ -445,6 +474,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_SCHEME: %w", err)
 	}
+	publicAppLinkBase, err := links.ValidateAppLinkBase(envAllowEmptyOr("TELESRV_PUBLIC_APP_LINK_BASE", ""))
+	if err != nil {
+		return Config{}, fmt.Errorf("TELESRV_PUBLIC_APP_LINK_BASE: %w", err)
+	}
 	// TELESRV_PUBLIC_WEB_BASE_URL is nullable: an explicitly empty value disables
 	// the "Open in Web" button on public landing pages instead of falling back
 	// to the default telesrv Web client URL.
@@ -508,10 +541,26 @@ func Load() (Config, error) {
 		AdminAPIToken:                        envOr("TELESRV_ADMIN_API_TOKEN", ""),
 		PublicBaseURL:                        publicBaseURL,
 		PublicAppScheme:                      publicAppScheme,
+		PublicAppLinkBase:                    publicAppLinkBase,
 		PublicWebBaseURL:                     publicWebBaseURL,
 		PublicAppName:                        publicAppName,
 		PublicDownloadURL:                    publicDownloadURL,
+		ScamWarning:                          envAllowEmptyOr("TELESRV_SCAM_WARNING", ""),
+		FakeWarning:                          envAllowEmptyOr("TELESRV_FAKE_WARNING", ""),
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
+		TelegramLoginEnabled:                 envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
+		TelegramLoginIssuer:                  strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),
+		TelegramLoginAllowHTTP:               envBoolOr("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", false),
+		TelegramLoginSigningKeysFile:         envOr("TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE", "data/telegram-login/signing-keys.json"),
+		TelegramLoginCodeKeysFile:            envOr("TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE", "data/telegram-login/code-keys.json"),
+		TelegramLoginSecretPepperFile:        envOr("TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE", "data/telegram-login/client-secret-pepper"),
+		TelegramLoginRequestTTL:              envDurationOr("TELESRV_TELEGRAM_LOGIN_REQUEST_TTL", 5*time.Minute),
+		TelegramLoginCodeTTL:                 envDurationOr("TELESRV_TELEGRAM_LOGIN_CODE_TTL", 2*time.Minute),
+		TelegramLoginIDTokenTTL:              envDurationOr("TELESRV_TELEGRAM_LOGIN_ID_TOKEN_TTL", time.Hour),
+		TelegramLoginTrustedProxyCIDRs:       envListOr("TELESRV_TELEGRAM_LOGIN_TRUSTED_PROXY_CIDRS", nil),
+		TelegramLoginRetention:               envDurationOr("TELESRV_TELEGRAM_LOGIN_RETENTION", 7*24*time.Hour),
+		TelegramLoginSweepInterval:           envDurationOr("TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL", 5*time.Minute),
+		TelegramLoginSweepBatch:              envIntOr("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", 500),
 		AdminUIAddr:                          envOr("TELESRV_ADMIN_UI_ADDR", "127.0.0.1:2600"),
 		AdminUIPassword:                      envOr("TELESRV_ADMIN_UI_PASSWORD", ""),
 		AdminUIToken:                         envOr("TELESRV_ADMIN_UI_TOKEN", ""),
@@ -673,7 +722,52 @@ func Load() (Config, error) {
 	if err := validateStarGiftConfig(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := validateTelegramLoginConfig(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateTelegramLoginConfig(cfg Config) error {
+	if !cfg.TelegramLoginEnabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.PublicLinkWebAddr) == "" {
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ENABLE requires TELESRV_PUBLIC_LINK_WEB_ADDR")
+	}
+	issuer, err := url.Parse(strings.TrimSpace(cfg.TelegramLoginIssuer))
+	if err != nil || issuer.User != nil || issuer.Host == "" || issuer.RawQuery != "" || issuer.Fragment != "" ||
+		(issuer.Path != "" && issuer.Path != "/") {
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER must be an absolute origin URL")
+	}
+	switch issuer.Scheme {
+	case "https":
+	case "http":
+		if !cfg.TelegramLoginAllowHTTP {
+			return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER http requires TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP=true")
+		}
+	default:
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_ISSUER must use https")
+	}
+	if strings.TrimSpace(cfg.TelegramLoginSigningKeysFile) == "" || strings.TrimSpace(cfg.TelegramLoginCodeKeysFile) == "" || strings.TrimSpace(cfg.TelegramLoginSecretPepperFile) == "" {
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_* key and pepper files are required")
+	}
+	if cfg.TelegramLoginRequestTTL < time.Minute || cfg.TelegramLoginRequestTTL > 15*time.Minute ||
+		cfg.TelegramLoginCodeTTL < 30*time.Second || cfg.TelegramLoginCodeTTL > 10*time.Minute ||
+		cfg.TelegramLoginIDTokenTTL < time.Minute || cfg.TelegramLoginIDTokenTTL > 24*time.Hour {
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN TTL values are outside their bounded ranges")
+	}
+	if cfg.TelegramLoginRetention < time.Hour || cfg.TelegramLoginRetention > 90*24*time.Hour ||
+		cfg.TelegramLoginSweepInterval < 10*time.Second || cfg.TelegramLoginSweepInterval > time.Hour ||
+		cfg.TelegramLoginSweepBatch <= 0 || cfg.TelegramLoginSweepBatch > 1000 {
+		return fmt.Errorf("TELESRV_TELEGRAM_LOGIN retention must be 1h..90d, sweep interval 10s..1h, and sweep batch 1..1000")
+	}
+	for _, raw := range cfg.TelegramLoginTrustedProxyCIDRs {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(raw)); err != nil {
+			return fmt.Errorf("TELESRV_TELEGRAM_LOGIN_TRUSTED_PROXY_CIDRS contains invalid CIDR %q: %w", raw, err)
+		}
+	}
+	return nil
 }
 
 func validateStarGiftConfig(cfg Config) error {

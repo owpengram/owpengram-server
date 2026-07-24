@@ -25,6 +25,9 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicAppScheme != "telesrv" {
 		t.Fatalf("PublicAppScheme = %q, want telesrv", cfg.PublicAppScheme)
 	}
+	if cfg.PublicAppLinkBase != "" {
+		t.Fatalf("PublicAppLinkBase = %q, want disabled", cfg.PublicAppLinkBase)
+	}
 	if cfg.PublicWebBaseURL != "https://web.telesrv.net" {
 		t.Fatalf("PublicWebBaseURL = %q, want https://web.telesrv.net", cfg.PublicWebBaseURL)
 	}
@@ -35,13 +38,13 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 
 func TestLoadUsesExplicitAdvertiseIP(t *testing.T) {
 	disableDefaultConfigFile(t)
-	t.Setenv("TELESRV_ADVERTISE_IP", "192.0.2.10")
+	t.Setenv("TELESRV_ADVERTISE_IP", "203.0.113.10")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.AdvertiseIP != "192.0.2.10" {
+	if cfg.AdvertiseIP != "203.0.113.10" {
 		t.Fatalf("AdvertiseIP = %q, want explicit env", cfg.AdvertiseIP)
 	}
 }
@@ -413,6 +416,7 @@ TELESRV_WEBSOCKET_ALLOWED_ORIGINS=https://one.example, https://two.example
 TELESRV_CALL_RING_TIMEOUT=2m
 TELESRV_PUBLIC_BASE_URL=links.example.test/root
 TELESRV_PUBLIC_APP_SCHEME=example-chat
+TELESRV_PUBLIC_APP_LINK_BASE=OWPG://Tenant.Example.Test/
 TELESRV_PUBLIC_WEB_BASE_URL=web.example.test/client
 TELESRV_PUBLIC_APP_NAME=Example Chat
 TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
@@ -444,6 +448,9 @@ TELESRV_PUBLIC_LINK_WEB_ADDR=127.0.0.1:2401
 	if cfg.PublicAppScheme != "example-chat" {
 		t.Fatalf("PublicAppScheme = %q, want example-chat", cfg.PublicAppScheme)
 	}
+	if cfg.PublicAppLinkBase != "owpg://tenant.example.test" {
+		t.Fatalf("PublicAppLinkBase = %q, want owpg://tenant.example.test", cfg.PublicAppLinkBase)
+	}
 	if cfg.PublicWebBaseURL != "https://web.example.test/client" {
 		t.Fatalf("PublicWebBaseURL = %q, want https://web.example.test/client", cfg.PublicWebBaseURL)
 	}
@@ -465,6 +472,95 @@ func TestLoadNormalizesLocalPublicBaseURL(t *testing.T) {
 	}
 }
 
+func TestLoadTelegramLoginConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PUBLIC_LINK_WEB_ADDR", "127.0.0.1:2401")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ENABLE", "true")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ISSUER", "http://192.0.2.25:2401/")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ALLOW_HTTP", "true")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_SIGNING_KEYS_FILE", "secrets/signing.json")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_CODE_KEYS_FILE", "secrets/codes.json")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_SECRET_PEPPER_FILE", "secrets/pepper")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_REQUEST_TTL", "7m")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_CODE_TTL", "90s")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_ID_TOKEN_TTL", "45m")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_TRUSTED_PROXY_CIDRS", "127.0.0.0/8,10.0.0.0/8")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_RETENTION", "48h")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_SWEEP_INTERVAL", "30s")
+	t.Setenv("TELESRV_TELEGRAM_LOGIN_SWEEP_BATCH", "73")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.TelegramLoginEnabled || cfg.TelegramLoginIssuer != "http://192.0.2.25:2401" || !cfg.TelegramLoginAllowHTTP {
+		t.Fatalf("telegram login endpoint config = enabled:%v issuer:%q allow_http:%v", cfg.TelegramLoginEnabled, cfg.TelegramLoginIssuer, cfg.TelegramLoginAllowHTTP)
+	}
+	if cfg.TelegramLoginSigningKeysFile != "secrets/signing.json" || cfg.TelegramLoginCodeKeysFile != "secrets/codes.json" || cfg.TelegramLoginSecretPepperFile != "secrets/pepper" {
+		t.Fatalf("telegram login secret files = %q / %q / %q", cfg.TelegramLoginSigningKeysFile, cfg.TelegramLoginCodeKeysFile, cfg.TelegramLoginSecretPepperFile)
+	}
+	if cfg.TelegramLoginRequestTTL != 7*time.Minute || cfg.TelegramLoginCodeTTL != 90*time.Second || cfg.TelegramLoginIDTokenTTL != 45*time.Minute ||
+		cfg.TelegramLoginRetention != 48*time.Hour || cfg.TelegramLoginSweepInterval != 30*time.Second || cfg.TelegramLoginSweepBatch != 73 {
+		t.Fatalf("telegram login durations/batch = %v / %v / %v / %v / %v / %d", cfg.TelegramLoginRequestTTL, cfg.TelegramLoginCodeTTL,
+			cfg.TelegramLoginIDTokenTTL, cfg.TelegramLoginRetention, cfg.TelegramLoginSweepInterval, cfg.TelegramLoginSweepBatch)
+	}
+	if len(cfg.TelegramLoginTrustedProxyCIDRs) != 2 || cfg.TelegramLoginTrustedProxyCIDRs[1] != "10.0.0.0/8" {
+		t.Fatalf("trusted proxy CIDRs = %#v", cfg.TelegramLoginTrustedProxyCIDRs)
+	}
+}
+
+func TestValidateTelegramLoginConfigRejectsUnsafeOrUnboundedSettings(t *testing.T) {
+	valid := Config{
+		TelegramLoginEnabled: true, PublicLinkWebAddr: "127.0.0.1:2401", TelegramLoginIssuer: "https://login.example.test",
+		TelegramLoginSigningKeysFile: "signing.json", TelegramLoginCodeKeysFile: "codes.json", TelegramLoginSecretPepperFile: "pepper",
+		TelegramLoginRequestTTL: 5 * time.Minute, TelegramLoginCodeTTL: 2 * time.Minute, TelegramLoginIDTokenTTL: time.Hour,
+		TelegramLoginRetention: 7 * 24 * time.Hour, TelegramLoginSweepInterval: 5 * time.Minute, TelegramLoginSweepBatch: 500,
+	}
+	if err := validateTelegramLoginConfig(valid); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "missing listener", mutate: func(c *Config) { c.PublicLinkWebAddr = "" }},
+		{name: "issuer path", mutate: func(c *Config) { c.TelegramLoginIssuer = "https://login.example.test/oauth" }},
+		{name: "http disabled", mutate: func(c *Config) { c.TelegramLoginIssuer = "http://192.0.2.25:2401" }},
+		{name: "missing key file", mutate: func(c *Config) { c.TelegramLoginSigningKeysFile = "" }},
+		{name: "request ttl too long", mutate: func(c *Config) { c.TelegramLoginRequestTTL = 16 * time.Minute }},
+		{name: "code ttl too short", mutate: func(c *Config) { c.TelegramLoginCodeTTL = 29 * time.Second }},
+		{name: "id token ttl too long", mutate: func(c *Config) { c.TelegramLoginIDTokenTTL = 25 * time.Hour }},
+		{name: "retention too short", mutate: func(c *Config) { c.TelegramLoginRetention = 59 * time.Minute }},
+		{name: "sweep unbounded", mutate: func(c *Config) { c.TelegramLoginSweepBatch = 1001 }},
+		{name: "invalid proxy CIDR", mutate: func(c *Config) { c.TelegramLoginTrustedProxyCIDRs = []string{"10.0.0.0/33"} }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.mutate(&cfg)
+			if err := validateTelegramLoginConfig(cfg); err == nil {
+				t.Fatal("unsafe Telegram Login config was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateTelegramLoginConfigAcceptsHTTPHostAndIPWhenEnabled(t *testing.T) {
+	valid := Config{
+		TelegramLoginEnabled: true, TelegramLoginAllowHTTP: true, PublicLinkWebAddr: "127.0.0.1:2401",
+		TelegramLoginSigningKeysFile: "signing.json", TelegramLoginCodeKeysFile: "codes.json", TelegramLoginSecretPepperFile: "pepper",
+		TelegramLoginRequestTTL: 5 * time.Minute, TelegramLoginCodeTTL: 2 * time.Minute, TelegramLoginIDTokenTTL: time.Hour,
+		TelegramLoginRetention: 7 * 24 * time.Hour, TelegramLoginSweepInterval: 5 * time.Minute, TelegramLoginSweepBatch: 500,
+	}
+	for _, issuer := range []string{"http://login.example.test:3000", "http://192.0.2.25:2401", "http://[2001:db8::25]:2401"} {
+		cfg := valid
+		cfg.TelegramLoginIssuer = issuer
+		if err := validateTelegramLoginConfig(cfg); err != nil {
+			t.Fatalf("issuer %q was rejected: %v", issuer, err)
+		}
+	}
+}
+
 func TestLoadRejectsInvalidPublicBaseURL(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_PUBLIC_BASE_URL", "https://links.example.test/root?tenant=one")
@@ -482,6 +578,10 @@ func TestLoadRejectsInvalidPublicLinkClientConfig(t *testing.T) {
 	}{
 		{name: "official scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "tg"},
 		{name: "malformed scheme", key: "TELESRV_PUBLIC_APP_SCHEME", value: "bad scheme"},
+		{name: "app link base official scheme", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "tg://links.example.test"},
+		{name: "app link base missing host", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://"},
+		{name: "app link base path", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test/root"},
+		{name: "app link base query", key: "TELESRV_PUBLIC_APP_LINK_BASE", value: "owpg://links.example.test?tenant=one"},
 		{name: "invalid web base", key: "TELESRV_PUBLIC_WEB_BASE_URL", value: "file:///tmp/client"},
 		{name: "empty app name after trim", key: "TELESRV_PUBLIC_APP_NAME", value: "   "},
 		{name: "control in app name", key: "TELESRV_PUBLIC_APP_NAME", value: "bad\nname"},

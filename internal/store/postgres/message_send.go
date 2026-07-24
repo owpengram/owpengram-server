@@ -117,8 +117,24 @@ func (s *MessageStore) SendPrivateText(ctx context.Context, req domain.SendPriva
 }
 
 type privateSendTxHooks struct {
-	before func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
-	after  func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error
+	before       func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) error
+	projectMedia func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest) (privateSendMediaProjection, error)
+	// afterAllocate runs after the immutable logical message and both box IDs
+	// exist, but before either box, update event or replay snapshot is written.
+	// It may finalize req.Media using those IDs; all of its writes remain in the
+	// same private-send transaction.
+	afterAllocate func(context.Context, pgx.Tx, *domain.SendPrivateTextRequest, int, int) error
+	after         func(context.Context, pgx.Tx, domain.SendPrivateTextResult) error
+}
+
+// privateSendMediaProjection separates the logical private-message payload
+// from the two account-local message-box projections. Most messages use the
+// same media for all three fields. Service actions that carry message ids must
+// project those ids per account because box ids are not shared by both users.
+type privateSendMediaProjection struct {
+	Shared    *domain.MessageMedia
+	Sender    *domain.MessageMedia
+	Recipient *domain.MessageMedia
 }
 
 func (s *MessageStore) sendPrivateTextWithHooks(ctx context.Context, req domain.SendPrivateTextRequest, hooks privateSendTxHooks) (res domain.SendPrivateTextResult, err error) {
@@ -228,7 +244,22 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			return domain.SendPrivateTextResult{}, err
 		}
 	}
-	mediaJSON, err := encodeMessageMedia(req.Media)
+	media := privateSendMediaProjection{Shared: req.Media, Sender: req.Media, Recipient: req.Media}
+	if hooks.projectMedia != nil {
+		media, err = hooks.projectMedia(ctx, tx, &req)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+	}
+	sharedMediaJSON, err := encodeMessageMedia(media.Shared)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	senderMediaJSON, err := encodeMessageMedia(media.Sender)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	recipientMediaJSON, err := encodeMessageMedia(media.Recipient)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
@@ -255,7 +286,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		TtlPeriod:          int32(ttlPeriod),
 		ExpiresAt:          int32(expiresAt),
 		EntitiesJson:       entities,
-		MediaJson:          mediaJSON,
+		MediaJson:          sharedMediaJSON,
 		ReplyMarkupJson:    replyMarkupJSON,
 		RichMessageJson:    richMessageJSON,
 		ViaBotID:           req.ViaBotID,
@@ -299,6 +330,44 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			return domain.SendPrivateTextResult{}, fmt.Errorf("allocate recipient pts: %w", err)
 		}
 	}
+	if hooks.afterAllocate != nil {
+		// A callback may replace the media after the ordinary request
+		// fingerprint was computed. Requiring a complete caller-owned
+		// fingerprint keeps random_id replay bound to the final aggregate intent.
+		if err := store.ValidateSendFingerprint(req.IdempotencyFingerprint, "after-allocate private send"); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		if err := hooks.afterAllocate(ctx, tx, &req, senderBoxID, recipientBoxID); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		media = privateSendMediaProjection{Shared: req.Media, Sender: req.Media, Recipient: req.Media}
+		if hooks.projectMedia != nil {
+			media, err = hooks.projectMedia(ctx, tx, &req)
+			if err != nil {
+				return domain.SendPrivateTextResult{}, err
+			}
+		}
+		sharedMediaJSON, err = encodeMessageMedia(media.Shared)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		senderMediaJSON, err = encodeMessageMedia(media.Sender)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		recipientMediaJSON, err = encodeMessageMedia(media.Recipient)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE private_messages SET media=$3
+WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("finalize private message media: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("finalize private message media: logical message disappeared")
+		}
+	}
 
 	senderArg := sqlcgen.CreateMessageBoxParams{
 		OwnerUserID:      req.SenderUserID,
@@ -315,7 +384,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		ExpiresAt:        int32(expiresAt),
 		EntitiesJson:     entities,
 		Pts:              int32(senderPts),
-		MediaJson:        mediaJSON,
+		MediaJson:        senderMediaJSON,
 		ReplyMarkupJson:  replyMarkupJSON,
 		RichMessageJson:  richMessageJSON,
 		ViaBotID:         req.ViaBotID,
@@ -323,7 +392,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		Effect:           req.Effect,
 		// voice/round 在发送者自己的副本上也保持"未听"，直到对端
 		// readMessageContents 触发 sender 侧清除；发给自己无人可听，恒已读。
-		MediaUnread:    req.Media.HasUnreadPayload() && !selfMessage,
+		MediaUnread:    media.Sender.HasUnreadPayload() && !selfMessage,
 		ReactionUnread: false,
 	}
 	applyCreateMessageBoxMetadata(&senderArg, senderMeta)
@@ -334,7 +403,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	sender := messageFromBoxRow(senderRow)
 	sender.RandomID = req.RandomID
 	// 共享媒体索引(0118):发送者侧 box 按媒体类别建索引(peer=收件人)。
-	if err := insertMessageBoxMediaIndexTx(ctx, tx, req.SenderUserID, req.RecipientUserID, int(senderBoxID), req.Date, req.Media, req.Entities); err != nil {
+	if err := insertMessageBoxMediaIndexTx(ctx, tx, req.SenderUserID, req.RecipientUserID, int(senderBoxID), req.Date, media.Sender, req.Entities); err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
 	if err := qtx.UpsertOutboxDialog(ctx, sqlcgen.UpsertOutboxDialogParams{
@@ -388,13 +457,13 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			ExpiresAt:        int32(expiresAt),
 			EntitiesJson:     entities,
 			Pts:              int32(recipientPts),
-			MediaJson:        mediaJSON,
+			MediaJson:        recipientMediaJSON,
 			ReplyMarkupJson:  replyMarkupJSON,
 			RichMessageJson:  richMessageJSON,
 			ViaBotID:         req.ViaBotID,
 			GroupedID:        req.GroupedID,
 			Effect:           req.Effect,
-			MediaUnread:      req.Media.HasUnreadPayload(),
+			MediaUnread:      media.Recipient.HasUnreadPayload(),
 			ReactionUnread:   false,
 		}
 		applyCreateMessageBoxMetadata(&recipientArg, recipientMeta)
@@ -405,7 +474,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		recipient = messageFromBoxRow(recipientRow)
 		recipient.RandomID = req.RandomID
 		// 共享媒体索引(0118):收件人侧 box 按媒体类别建索引(peer=发送者)。
-		if err := insertMessageBoxMediaIndexTx(ctx, tx, req.RecipientUserID, req.SenderUserID, int(recipientBoxID), req.Date, req.Media, req.Entities); err != nil {
+		if err := insertMessageBoxMediaIndexTx(ctx, tx, req.RecipientUserID, req.SenderUserID, int(recipientBoxID), req.Date, media.Recipient, req.Entities); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
 		if err := qtx.UpsertInboxDialog(ctx, sqlcgen.UpsertInboxDialogParams{

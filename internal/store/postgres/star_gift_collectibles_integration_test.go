@@ -43,24 +43,29 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 			Document: collectibleTestDocumentPtr(baseDocumentID+3, "crafted-model.tgs"),
 			Blob:     collectibleTestBlobPtr(baseDocumentID+3, "crafted-model"), Animation: collectibleTestAnimationPtr("crafted-model.tgs"),
 			OfficialDocumentID: 5100000000000000003,
+		}, {
+			Kind: domain.StarGiftCollectibleModel, Name: "Solar", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 78,
+			Document: collectibleTestDocumentPtr(baseDocumentID+4, "model-two.tgs"),
+			Blob:     collectibleTestBlobPtr(baseDocumentID+4, "model-two"), Animation: collectibleTestAnimationPtr("model-two.tgs"),
+			OfficialDocumentID: 5100000000000000004,
 		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999,
-		}},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Orbit", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 989,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "pattern"), Animation: collectibleTestAnimationPtr("pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Rings", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 11,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+5, "pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+5, "pattern-two"), Animation: collectibleTestAnimationPtr("pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Midnight", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 999},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Daylight", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1},
+		},
 		Actor: "integration", CommandID: "collectibles-" + suffix,
 		OfficialGiftID: 5170145012310081615, SourceManifestSHA256: make([]byte, 32),
 	})
 	if err != nil {
 		t.Fatalf("publish collectible pool: %v", err)
 	}
-	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 2 || len(poolRevision.Patterns) != 1 || len(poolRevision.Backdrops) != 1 ||
+	if !poolRevision.Published || poolRevision.Issued != 0 || len(poolRevision.Models) != 3 || len(poolRevision.Patterns) != 2 || len(poolRevision.Backdrops) != 2 ||
 		!poolRevision.Models[1].Crafted || poolRevision.Models[1].RarityKind != domain.StarGiftRarityLegendary ||
 		poolRevision.Models[1].RarityPermille != 0 || poolRevision.Models[0].OfficialDocumentID != 5100000000000000001 {
 		t.Fatalf("published pool = %+v", poolRevision)
@@ -116,8 +121,27 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 		t.Fatalf("owner upgrade service message = %+v", ownerMessage)
 	}
 	uniqueAction := ownerMessage.Media.ServiceAction.StarGiftUnique
-	if uniqueAction.SavedID != int64(saved.MsgID) {
-		t.Fatalf("unique action saved_id = %d, want stable source msg id %d", uniqueAction.SavedID, saved.MsgID)
+	if uniqueAction.SavedID != 0 || uniqueAction.Peer.Type != "" || uniqueAction.Peer.ID != 0 {
+		t.Fatalf("user unique action leaked channel peer/saved_id: %+v", uniqueAction)
+	}
+	senderUniqueAction := upgraded.Send.SenderMessage.Media.ServiceAction.StarGiftUnique
+	if senderUniqueAction == nil || senderUniqueAction.SavedID != 0 {
+		t.Fatalf("sender unique action leaked owner-only saved_id: %+v", senderUniqueAction)
+	}
+	if byOutput, found, err := gifts.GetByRef(ctx, domain.SavedStarGiftRef{Owner: ownerPeer, MsgID: ownerMessage.ID}); err != nil || !found || byOutput.ID != savedID {
+		t.Fatalf("owner upgrade output ref = %+v found %v err %v", byOutput, found, err)
+	}
+	var ownerAliasCount, senderAliasCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2 AND saved_gift_id=$3`, owner.ID, ownerMessage.ID, savedID).Scan(&ownerAliasCount); err != nil {
+		t.Fatalf("load owner upgrade output alias: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_user_message_refs
+WHERE owner_user_id=$1 AND msg_id=$2`, sender.ID, ownerMessage.ID).Scan(&senderAliasCount); err != nil {
+		t.Fatalf("load sender upgrade output alias: %v", err)
+	}
+	if ownerAliasCount != 1 || senderAliasCount != 0 {
+		t.Fatalf("upgrade output aliases owner=%d sender=%d, want owner-only", ownerAliasCount, senderAliasCount)
 	}
 	ownerSourceEdit := upgradedSourceEditForUser(upgraded, owner.ID)
 	if ownerSourceEdit.Event.Pts <= ownerMessage.Pts || ownerSourceEdit.Message.Media == nil ||
@@ -334,21 +358,22 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	}
 	soldOutRevision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: soldOutEntry.Gift.ID, UpgradeStars: 10, SupplyTotal: 1, SlugPrefix: "nova-" + suffix,
-		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+101, "nova-model.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+101, "nova-model"), Animation: collectibleTestAnimationPtr("nova-model.tgs"),
-		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Void", BackdropID: 2,
-			CenterColor: 0x101010, EdgeColor: 0x202020, PatternColor: 0x303030, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-		}},
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Nova", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+101, "nova-model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+101, "nova-model"), Animation: collectibleTestAnimationPtr("nova-model.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Nova Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+103, "nova-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+103, "nova-model-two"), Animation: collectibleTestAnimationPtr("nova-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Ray", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+102, "nova-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+102, "nova-pattern"), Animation: collectibleTestAnimationPtr("nova-pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Ray Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+104, "nova-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+104, "nova-pattern-two"), Animation: collectibleTestAnimationPtr("nova-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Void", BackdropID: 2, CenterColor: 0x101010, EdgeColor: 0x202020, PatternColor: 0x303030, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Light", BackdropID: 3, CenterColor: 0xeeeeee, EdgeColor: 0xcccccc, PatternColor: 0xaaaaaa, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
 		Actor: "integration", CommandID: "soldout-pool-" + suffix,
 	})
 	if err != nil {
@@ -418,6 +443,65 @@ func TestStarGiftCollectibleUpgradeAggregatePostgres(t *testing.T) {
 	}
 }
 
+func TestStarGiftCollectiblePreviewActivationGuardPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	gifts := NewStarGiftStore(pool)
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Unsafe Preview " + suffix, Stars: 10, ConvertStars: 5, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "unsafe-preview.tgs"), Blob: collectibleTestBlob(baseDocumentID, "unsafe-preview"),
+		Animation: collectibleTestAnimation("unsafe-preview.tgs"), Actor: "integration", CommandID: "unsafe-preview-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create unsafe-preview catalog: %v", err)
+	}
+	var revisionID int64
+	if err := pool.QueryRow(ctx, `
+INSERT INTO star_gift_collectible_revisions
+    (gift_id, revision, upgrade_stars, supply_total, slug_prefix, status, created_by, command_id)
+VALUES ($1, 1, 10, 10, $2, 'draft', 'integration', $3)
+RETURNING id`, entry.Gift.ID, "unsafe-"+suffix, "unsafe-preview-pool-"+suffix).Scan(&revisionID); err != nil {
+		t.Fatalf("insert unsafe-preview revision: %v", err)
+	}
+	animation := collectibleTestAnimation("unsafe-preview-attribute.tgs")
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_models
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, crafted, sort_order)
+VALUES ($1, 'Only Model', $2, $3::jsonb, $4, 'model.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, false, 0)`,
+		revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+		t.Fatalf("insert unsafe-preview model: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_patterns
+    (collectible_revision_id, name, document_id, animation_json, animation_sha256, source_name, source_format,
+     width, height, frame_rate, in_point, out_point, rarity_kind, rarity_permille, sort_order)
+VALUES ($1, 'Only Pattern', $2, $3::jsonb, $4, 'pattern.tgs', 'tgs', 512, 512, 30, 0, 60, 'permille', 1000, 0)`,
+		revisionID, baseDocumentID, string(animation.JSON), animation.SHA256); err != nil {
+		t.Fatalf("insert unsafe-preview pattern: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO star_gift_collectible_backdrops
+    (collectible_revision_id, name, backdrop_id, center_color, edge_color, pattern_color, text_color,
+     rarity_kind, rarity_permille, sort_order)
+VALUES ($1, 'Only Backdrop', 1, 1, 2, 3, 4, 'permille', 1000, 0)`, revisionID); err != nil {
+		t.Fatalf("insert unsafe-preview backdrop: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+UPDATE star_gift_collectible_revisions SET status='published', published_at=now() WHERE id=$1`, revisionID); err != nil {
+		t.Fatalf("publish unsafe-preview revision directly: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE star_gift_catalog SET collectible_revision_id=$2 WHERE gift_id=$1`, entry.Gift.ID, revisionID); err == nil {
+		t.Fatal("database activated a collectible preview pool with one client-distinct item per category")
+	}
+	var activeRevisionID *int64
+	if err := pool.QueryRow(ctx, `SELECT collectible_revision_id FROM star_gift_catalog WHERE gift_id=$1`, entry.Gift.ID).Scan(&activeRevisionID); err != nil || activeRevisionID != nil {
+		t.Fatalf("unsafe preview activation pointer=%v err=%v, want null", activeRevisionID, err)
+	}
+}
+
 func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -441,27 +525,28 @@ func TestStarGiftUpgradeWithoutCraftedModelDoesNotAdvertiseCraft(t *testing.T) {
 	}
 	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
 		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 10, SlugPrefix: "no-craft-" + suffix,
-		Models: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleModel, Name: "Ordinary", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestDocumentPtr(baseDocumentID+1, "no-craft-model.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+1, "no-craft-model"), Animation: collectibleTestAnimationPtr("no-craft-model.tgs"),
-		}},
-		Patterns: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-			Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"),
-			Blob:     collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs"),
-		}},
-		Backdrops: []domain.StarGiftCollectibleAttribute{{
-			Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1,
-			CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff,
-			RarityKind: domain.StarGiftRarityPermille, RarityPermille: 1000,
-		}},
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Ordinary", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "no-craft-model.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "no-craft-model"), Animation: collectibleTestAnimationPtr("no-craft-model.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Ordinary Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+3, "no-craft-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "no-craft-model-two"), Animation: collectibleTestAnimationPtr("no-craft-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+2, "no-craft-pattern.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "no-craft-pattern"), Animation: collectibleTestAnimationPtr("no-craft-pattern.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+4, "no-craft-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "no-craft-pattern-two"), Animation: collectibleTestAnimationPtr("no-craft-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
 		Actor: "integration", CommandID: "no-craft-pool-" + suffix,
 	})
 	if err != nil {
 		t.Fatalf("publish no-craft pool: %v", err)
 	}
-	if len(revision.Models) != 1 || revision.Models[0].Crafted {
+	if len(revision.Models) != 2 || revision.Models[0].Crafted || revision.Models[1].Crafted {
 		t.Fatalf("no-craft pool models = %+v", revision.Models)
 	}
 
@@ -515,6 +600,125 @@ FROM peer_star_gifts p JOIN unique_star_gifts u ON u.id=p.unique_gift_id WHERE p
 	}
 	if lifecycleStatus != "active" || burned || commandCount != 0 {
 		t.Fatalf("no-craft attempt mutated aggregate: status=%q burned=%t commands=%d", lifecycleStatus, burned, commandCount)
+	}
+}
+
+func TestAdminUniqueStarGiftGrantIsAtomicAndReplayable(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	now := int(time.Now().Unix())
+	recipient := createTestUser(t, ctx, NewUserStore(pool), "+1780"+suffix+"61", "AdminGiftRecipient", "")
+	gifts := NewStarGiftStore(pool)
+	baseDocumentID := time.Now().UnixNano() & 0x7ffffffffffff000
+	entry, err := gifts.CreateCatalogRevision(ctx, domain.StarGiftCatalogWrite{
+		Title: "Admin Grant " + suffix, Stars: 50, ConvertStars: 25, Enabled: true,
+		Document: collectibleTestDocument(baseDocumentID, "admin-grant-gift.tgs"),
+		Blob:     collectibleTestBlob(baseDocumentID, "admin-grant-gift"), Animation: collectibleTestAnimation("admin-grant-gift.tgs"),
+		Actor: "integration", CommandID: "admin-grant-catalog-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("create admin grant catalog gift: %v", err)
+	}
+	revision, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: entry.Gift.ID, UpgradeStars: 100, SupplyTotal: 2, SlugPrefix: "admin-grant-" + suffix,
+		Models: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+1, "admin-model-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+1, "admin-model-one"), Animation: collectibleTestAnimationPtr("admin-model-one.tgs")},
+			{Kind: domain.StarGiftCollectibleModel, Name: "Model Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestDocumentPtr(baseDocumentID+2, "admin-model-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+2, "admin-model-two"), Animation: collectibleTestAnimationPtr("admin-model-two.tgs")},
+		},
+		Patterns: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern One", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+3, "admin-pattern-one.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+3, "admin-pattern-one"), Animation: collectibleTestAnimationPtr("admin-pattern-one.tgs")},
+			{Kind: domain.StarGiftCollectiblePattern, Name: "Pattern Two", RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500,
+				Document: collectibleTestPatternDocumentPtr(baseDocumentID+4, "admin-pattern-two.tgs"), Blob: collectibleTestBlobPtr(baseDocumentID+4, "admin-pattern-two"), Animation: collectibleTestAnimationPtr("admin-pattern-two.tgs")},
+		},
+		Backdrops: []domain.StarGiftCollectibleAttribute{
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop One", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+			{Kind: domain.StarGiftCollectibleBackdrop, Name: "Backdrop Two", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityKind: domain.StarGiftRarityPermille, RarityPermille: 500},
+		},
+		Actor: "integration", CommandID: "admin-grant-pool-" + suffix,
+	})
+	if err != nil {
+		t.Fatalf("publish admin grant collectible pool: %v", err)
+	}
+	upgrades := NewStarGiftUpgradeStore(pool, NewMessageStore(pool))
+	invalid := domain.AdminStarGiftGrant{
+		SenderID: domain.OfficialSystemUserID, Recipient: domain.Peer{Type: domain.PeerTypeUser, ID: recipient.ID},
+		GiftID: entry.Gift.ID, Upgrade: true, CommandKey: "admin-invalid-" + suffix, Date: now,
+		ModelAttributeID: revision.Models[0].ID + 9_999_999,
+	}
+	if _, err := upgrades.GrantUniqueStarGift(ctx, invalid); !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+		t.Fatalf("invalid admin grant error=%v", err)
+	}
+	var issued, messageCount, savedCount, uniqueCount, commandCount int
+	if err := pool.QueryRow(ctx, `SELECT issued FROM star_gift_collectible_revisions WHERE id=$1`, revision.ID).Scan(&issued); err != nil {
+		t.Fatal(err)
+	}
+	invalidRandomID := lifecycleCommandRandomID("admin-collectible-grant", recipient.ID, invalid.CommandKey)
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM private_messages WHERE sender_user_id=$1 AND random_id=$2`,
+		domain.OfficialSystemUserID, invalidRandomID).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM peer_star_gifts WHERE owner_peer_type='user' AND owner_peer_id=$1 AND gift_id=$2`,
+		recipient.ID, entry.Gift.ID).Scan(&savedCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM unique_star_gifts WHERE gift_id=$1`, entry.Gift.ID).Scan(&uniqueCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_admin_grant_commands WHERE recipient_user_id=$1`,
+		recipient.ID).Scan(&commandCount); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 0 || messageCount != 0 || savedCount != 0 || uniqueCount != 0 || commandCount != 0 {
+		t.Fatalf("failed grant leaked state: issued=%d messages=%d saved=%d unique=%d commands=%d",
+			issued, messageCount, savedCount, uniqueCount, commandCount)
+	}
+
+	req := invalid
+	req.CommandKey = "admin-success-" + suffix
+	req.Message = "atomic collectible"
+	req.ModelAttributeID = revision.Models[0].ID
+	req.PatternAttributeID = revision.Patterns[0].ID
+	req.BackdropAttributeID = revision.Backdrops[0].ID
+	granted, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("grant admin unique gift: %v", err)
+	}
+	action := granted.Send.RecipientMessage.Media.ServiceAction.StarGiftUnique
+	if granted.Duplicate || granted.Saved.MsgID <= 0 || granted.Saved.MsgID != granted.Saved.UpgradeMsgID ||
+		granted.Saved.UniqueGiftID != granted.Unique.ID || granted.Unique.Num != 1 ||
+		action == nil || !action.Assigned || !action.Saved || action.Gift.ID != granted.Unique.ID {
+		t.Fatalf("admin grant result=%+v action=%+v", granted, action)
+	}
+	events, err := NewUpdateEventStore(pool).ListAfter(ctx, recipient.ID, granted.Send.RecipientMessage.Pts-1, 1)
+	if err != nil || len(events) != 1 || events[0].Message.Media == nil ||
+		events[0].Message.Media.ServiceAction == nil ||
+		events[0].Message.Media.ServiceAction.StarGiftUnique == nil ||
+		events[0].Message.Media.ServiceAction.StarGiftUnique.Gift.ID != granted.Unique.ID {
+		t.Fatalf("admin grant durable update=%+v err=%v", events, err)
+	}
+
+	replay, err := upgrades.GrantUniqueStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("replay admin unique gift: %v", err)
+	}
+	if !replay.Duplicate || replay.Saved.ID != granted.Saved.ID || replay.Unique.ID != granted.Unique.ID ||
+		replay.Send.RecipientMessage.ID != granted.Send.RecipientMessage.ID {
+		t.Fatalf("admin grant replay=%+v want saved=%d unique=%d msg=%d",
+			replay, granted.Saved.ID, granted.Unique.ID, granted.Send.RecipientMessage.ID)
+	}
+	if err := pool.QueryRow(ctx, `SELECT issued FROM star_gift_collectible_revisions WHERE id=$1`, revision.ID).Scan(&issued); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM star_gift_admin_grant_commands WHERE recipient_user_id=$1`,
+		recipient.ID).Scan(&commandCount); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 1 || commandCount != 1 {
+		t.Fatalf("replay duplicated aggregate: issued=%d commands=%d", issued, commandCount)
 	}
 }
 

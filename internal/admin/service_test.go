@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 
 	stargiftapp "telesrv/internal/app/stargifts"
 	"telesrv/internal/domain"
+	"telesrv/internal/officialgifts"
 	"telesrv/internal/store/memory"
 )
 
@@ -19,10 +21,12 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	ctx := context.Background()
 	repo := newMemoryCommandRepo()
 	restrictions := &fakeRestrictionStore{}
+	notifier := &fakeAccountFreezeNotifier{}
 	svc := NewService(Dependencies{
-		Commands:     repo,
-		Restrictions: restrictions,
-		Now:          fixedNow,
+		Commands:       repo,
+		Restrictions:   restrictions,
+		FreezeNotifier: notifier,
+		Now:            fixedNow,
 	})
 
 	dry, err := svc.SetAccountFrozen(ctx, SetAccountFrozenRequest{
@@ -53,6 +57,9 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	if exec.Status != string(domain.AdminCommandCompleted) || restrictions.setCalls != 1 {
 		t.Fatalf("execute result=%+v setCalls=%d", exec, restrictions.setCalls)
 	}
+	if len(notifier.items) != 1 || notifier.items[0].UserID != 1001 || !notifier.items[0].Frozen || notifier.items[0].Version != 1 {
+		t.Fatalf("freeze notifications = %+v, want one versioned frozen state", notifier.items)
+	}
 	if err := svc.CanSendMessages(ctx, 1001); !errors.Is(err, domain.ErrUserFrozen) {
 		t.Fatalf("CanSendMessages err=%v, want ErrUserFrozen", err)
 	}
@@ -67,6 +74,95 @@ func TestSetAccountFrozenDryRunExecuteAndIdempotency(t *testing.T) {
 	}
 	if !again.AlreadyExecuted || restrictions.setCalls != 1 {
 		t.Fatalf("duplicate result=%+v setCalls=%d, want idempotent replay", again, restrictions.setCalls)
+	}
+	if len(notifier.items) != 1 {
+		t.Fatalf("idempotent replay emitted duplicate notification: %+v", notifier.items)
+	}
+}
+
+func TestCreateBotReturnsTokenOnceWithoutPersistingCredential(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryCommandRepo()
+	bots := &fakeBotService{token: "test-one-time-bot-credential"}
+	svc := NewService(Dependencies{Commands: repo, Bots: bots, Now: fixedNow})
+	req := CreateBotRequest{
+		CommandMeta: CommandMeta{CommandID: "create-bot-once", Actor: "ops", Reason: "requested"},
+		OwnerUserID: 1001,
+		Name:        "Audit Safe Bot",
+		Username:    "audit_safe_bot",
+	}
+
+	first, err := svc.CreateBot(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateBot: %v", err)
+	}
+	if first.Details["token"] != bots.token || bots.createCalls != 1 {
+		t.Fatalf("first result=%+v createCalls=%d", first, bots.createCalls)
+	}
+	stored := repo.items[req.CommandID].ResultJSON
+	if bytes.Contains(stored, []byte(bots.token)) || bytes.Contains(stored, []byte(`"token"`)) {
+		t.Fatalf("persisted admin result contains bot credential: %s", stored)
+	}
+
+	replay, err := svc.CreateBot(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateBot replay: %v", err)
+	}
+	if !replay.AlreadyExecuted || bots.createCalls != 1 {
+		t.Fatalf("replay=%+v createCalls=%d", replay, bots.createCalls)
+	}
+	if _, leaked := replay.Details["token"]; leaked {
+		t.Fatalf("replayed command exposed one-time bot token: %+v", replay)
+	}
+}
+
+func TestModerationFlagsRejectImpossibleScamFakeState(t *testing.T) {
+	ctx := context.Background()
+	repo := newMemoryCommandRepo()
+	users := &fakeUsersService{users: map[int64]domain.User{1001: {ID: 1001}}}
+	channels := &fakeChannelsService{channels: map[int64]domain.Channel{2001: {
+		ID: 2001, Megagroup: true,
+	}}}
+	svc := NewService(Dependencies{Commands: repo, Users: users, Channels: channels, Now: fixedNow})
+	meta := CommandMeta{CommandID: "invalid-user-flags", Actor: "ops", Reason: "test"}
+	if _, err := svc.SetUserFlags(ctx, SetUserFlagsRequest{
+		CommandMeta: meta, UserID: 1001, Scam: true, Fake: true,
+	}); !errors.Is(err, domain.ErrPeerModerationFlagsInvalid) {
+		t.Fatalf("SetUserFlags error=%v", err)
+	}
+	meta.CommandID = "invalid-channel-flags"
+	if _, err := svc.SetChannelFlags(ctx, SetChannelFlagsRequest{
+		CommandMeta: meta, ChannelID: 2001, Scam: true, Fake: true,
+	}); !errors.Is(err, domain.ErrPeerModerationFlagsInvalid) {
+		t.Fatalf("SetChannelFlags error=%v", err)
+	}
+	if len(repo.items) != 0 || users.users[1001].Scam || users.users[1001].Fake ||
+		channels.channels[2001].Scam || channels.channels[2001].Fake {
+		t.Fatalf("invalid moderation state reached command/store boundary: commands=%d user=%+v channel=%+v",
+			len(repo.items), users.users[1001], channels.channels[2001])
+	}
+}
+
+func TestAccountFreezesBatchesAndReturnsOnlyActiveFacts(t *testing.T) {
+	now := fixedNow()
+	store := &fakeBatchRestrictionStore{fakeRestrictionStore: fakeRestrictionStore{items: map[int64]domain.AccountFreeze{
+		1001: {
+			UserID: 1001, Frozen: true, Version: 2, Since: now,
+			Until: now.Add(time.Hour), AppealURL: "https://appeals.example.test/1001",
+		},
+		1002: {UserID: 1002, Frozen: false, Version: 4},
+	}}}
+	svc := NewService(Dependencies{Restrictions: store, Now: fixedNow})
+
+	got, err := svc.AccountFreezes(context.Background(), []int64{1001, 1001, 0, 1002})
+	if err != nil {
+		t.Fatalf("AccountFreezes: %v", err)
+	}
+	if len(store.requests) != 1 || !reflect.DeepEqual(store.requests[0], []int64{1001, 1002}) {
+		t.Fatalf("batch requests = %v, want one deduplicated request", store.requests)
+	}
+	if len(got) != 1 || !got[1001].Frozen || got[1001].Version != 2 {
+		t.Fatalf("AccountFreezes = %+v, want active user 1001 only", got)
 	}
 }
 
@@ -472,6 +568,22 @@ func (m *memoryCommandRepo) FinishCommand(_ context.Context, commandID string, s
 	return cmd, nil
 }
 
+type fakeBotService struct {
+	token       string
+	createCalls int
+	deleteCalls int
+}
+
+func (f *fakeBotService) CreateBot(_ context.Context, _ int64, name, username string) (domain.User, string, error) {
+	f.createCalls++
+	return domain.User{ID: 2001, FirstName: name, Username: username, Bot: true}, f.token, nil
+}
+
+func (f *fakeBotService) DeleteBot(_ context.Context, botUserID int64) (domain.User, error) {
+	f.deleteCalls++
+	return domain.User{ID: botUserID, Bot: true, Deleted: true}, nil
+}
+
 type fakeRestrictionStore struct {
 	items    map[int64]domain.AccountFreeze
 	setCalls int
@@ -490,9 +602,35 @@ func (f *fakeRestrictionStore) SetAccountFreeze(_ context.Context, r domain.Acco
 		f.items = map[int64]domain.AccountFreeze{}
 	}
 	f.setCalls++
+	r.Version = f.items[r.UserID].Version + 1
 	r.UpdatedAt = fixedNow()
 	f.items[r.UserID] = r
 	return r, nil
+}
+
+type fakeBatchRestrictionStore struct {
+	fakeRestrictionStore
+	requests [][]int64
+}
+
+func (f *fakeBatchRestrictionStore) GetAccountFreezes(_ context.Context, userIDs []int64) (map[int64]domain.AccountFreeze, error) {
+	f.requests = append(f.requests, append([]int64(nil), userIDs...))
+	out := make(map[int64]domain.AccountFreeze)
+	for _, id := range userIDs {
+		if freeze, ok := f.items[id]; ok && freeze.Frozen {
+			out[id] = freeze
+		}
+	}
+	return out, nil
+}
+
+type fakeAccountFreezeNotifier struct {
+	items []domain.AccountFreeze
+}
+
+func (f *fakeAccountFreezeNotifier) NotifyAccountFreezeChanged(_ context.Context, freeze domain.AccountFreeze) error {
+	f.items = append(f.items, freeze)
+	return nil
 }
 
 type fakeMessagesService struct {
@@ -621,6 +759,60 @@ func (f *fakeUsersService) SetVerified(_ context.Context, userID int64, verified
 	return u, nil
 }
 
+func (f *fakeUsersService) SetScamFake(_ context.Context, userID int64, scam, fake bool) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Scam = scam
+	u.Fake = fake
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) SetSupport(_ context.Context, userID int64, support bool) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Support = support
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateUsername(_ context.Context, userID int64, username string) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	u.Username = username
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateColor(_ context.Context, userID int64, forProfile bool, color domain.PeerColor) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	if forProfile {
+		u.ProfileColor = color
+	} else {
+		u.Color = color
+	}
+	f.users[userID] = u
+	return u, nil
+}
+
+func (f *fakeUsersService) UpdateEmojiStatus(_ context.Context, userID int64, status domain.UserEmojiStatus) (domain.User, error) {
+	u, ok := f.users[userID]
+	if !ok {
+		return domain.User{}, domain.ErrUserNotFound
+	}
+	f.users[userID] = u
+	return u, nil
+}
+
 type fakeStarsService struct {
 	balances    map[int64]domain.StarsBalance
 	creditCalls int
@@ -695,6 +887,66 @@ func (f *fakeChannelsService) SetVerified(_ context.Context, channelID int64, ve
 	return ch, nil
 }
 
+func (f *fakeChannelsService) SetScamFake(_ context.Context, channelID int64, scam, fake bool) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.Scam = scam
+	ch.Fake = fake
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetSettings(_ context.Context, channelID int64, patch domain.ChannelAdminSettings) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if patch.Gigagroup != nil {
+		ch.Gigagroup = *patch.Gigagroup
+	}
+	if patch.SlowmodeSeconds != nil {
+		ch.SlowmodeSeconds = *patch.SlowmodeSeconds
+	}
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetUsername(_ context.Context, channelID int64, username string) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.Username = username
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetColor(_ context.Context, channelID int64, forProfile bool, color domain.ChannelPeerColor) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	if forProfile {
+		ch.ProfileColor = color
+	} else {
+		ch.Color = color
+	}
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
+func (f *fakeChannelsService) AdminSetEmojiStatus(_ context.Context, channelID int64, status domain.ChannelEmojiStatus) (domain.Channel, error) {
+	ch, ok := f.channels[channelID]
+	if !ok {
+		return domain.Channel{}, domain.ErrChannelInvalid
+	}
+	ch.EmojiStatus = status
+	f.channels[channelID] = ch
+	return ch, nil
+}
+
 type fakeChannelNotifier struct {
 	channels []int64
 }
@@ -739,9 +991,18 @@ func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
 	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, Now: fixedNow})
 	base := PublishStarGiftCollectiblesRequest{
 		GiftID: 11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
-		Models:    []StarGiftCollectibleAnimationUpload{{Name: "Ruby", RarityPermille: 1000, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")}},
-		Patterns:  []StarGiftCollectibleAnimationUpload{{Name: "Stars", RarityPermille: 1000, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")}},
-		Backdrops: []StarGiftCollectibleBackdropInput{{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 1000}},
+		Models: []StarGiftCollectibleAnimationUpload{
+			{Name: "Ruby", RarityPermille: 500, FileKey: "model-0", FileName: "ruby.lottie", Data: []byte("model")},
+			{Name: "Sapphire", RarityPermille: 500, FileKey: "model-1", FileName: "sapphire.lottie", Data: []byte("model-1")},
+		},
+		Patterns: []StarGiftCollectibleAnimationUpload{
+			{Name: "Stars", RarityPermille: 500, FileKey: "pattern-0", FileName: "stars.tgs", Data: []byte("pattern")},
+			{Name: "Moons", RarityPermille: 500, FileKey: "pattern-1", FileName: "moons.tgs", Data: []byte("pattern-1")},
+		},
+		Backdrops: []StarGiftCollectibleBackdropInput{
+			{Name: "Night", BackdropID: 1, CenterColor: 0x112233, EdgeColor: 0x223344, PatternColor: 0x334455, TextColor: 0xffffff, RarityPermille: 500},
+			{Name: "Day", BackdropID: 2, CenterColor: 0xaabbcc, EdgeColor: 0x778899, PatternColor: 0xddeeff, TextColor: 0x111111, RarityPermille: 500},
+		},
 	}
 	base.CommandMeta = CommandMeta{CommandID: "dry-collectibles", Actor: "ops", Reason: "pool", DryRun: true}
 	preview, err := svc.PublishStarGiftCollectibles(context.Background(), base)
@@ -752,6 +1013,101 @@ func TestPublishStarGiftCollectiblesDryRunThenConfirm(t *testing.T) {
 	result, err := svc.PublishStarGiftCollectibles(context.Background(), base)
 	if err != nil || gifts.createCalls != 1 || result.Details["revision_id"] != "33" || result.Details["published"] != true {
 		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+}
+
+func TestPublishStarGiftCollectiblesRejectsUnsafeClientPreviewPool(t *testing.T) {
+	valid := func() PublishStarGiftCollectiblesRequest {
+		return PublishStarGiftCollectiblesRequest{
+			CommandMeta: CommandMeta{CommandID: "unsafe-pool", Actor: "ops", Reason: "regression", DryRun: true},
+			GiftID:      11, UpgradeStars: 125, SupplyTotal: 100, SlugPrefix: "cake",
+			Models: []StarGiftCollectibleAnimationUpload{
+				{Name: "Ruby", RarityPermille: 500, FileName: "ruby.lottie", Data: []byte("ruby")},
+				{Name: "Sapphire", RarityPermille: 500, FileName: "sapphire.lottie", Data: []byte("sapphire")},
+			},
+			Patterns: []StarGiftCollectibleAnimationUpload{
+				{Name: "Stars", RarityPermille: 500, FileName: "stars.lottie", Data: []byte("stars")},
+				{Name: "Moons", RarityPermille: 500, FileName: "moons.lottie", Data: []byte("moons")},
+			},
+			Backdrops: []StarGiftCollectibleBackdropInput{
+				{Name: "Night", BackdropID: 1, RarityPermille: 500},
+				{Name: "Day", BackdropID: 2, RarityPermille: 500},
+			},
+		}
+	}
+	tests := map[string]func(*PublishStarGiftCollectiblesRequest){
+		"single model":    func(req *PublishStarGiftCollectiblesRequest) { req.Models = req.Models[:1] },
+		"single pattern":  func(req *PublishStarGiftCollectiblesRequest) { req.Patterns = req.Patterns[:1] },
+		"single backdrop": func(req *PublishStarGiftCollectiblesRequest) { req.Backdrops = req.Backdrops[:1] },
+		"duplicate backdrop id": func(req *PublishStarGiftCollectiblesRequest) {
+			req.Backdrops[1].BackdropID = req.Backdrops[0].BackdropID
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			req := valid()
+			mutate(&req)
+			svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: &fakeGiftsService{}, Now: fixedNow})
+			if _, err := svc.PublishStarGiftCollectibles(context.Background(), req); !errors.Is(err, domain.ErrStarGiftCollectibleInvalid) {
+				t.Fatalf("err=%v, want ErrStarGiftCollectibleInvalid", err)
+			}
+		})
+	}
+}
+
+func TestImportOfficialStarGiftPreservesCraftedRarityAndPublishesBundle(t *testing.T) {
+	permille := 922
+	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
+		ManifestSHA256: bytesOf(0x42, 32),
+		SourceJSON:     []byte(`{"id":5170145012310081615,"limited":true,"sold_out":true,"availability_total":10,"availability_resale":4}`),
+		Gift: officialgifts.Gift{
+			ID: 5170145012310081615, Stars: 50, ConvertStars: 25, UpgradeStars: 100, DocumentID: 1,
+			Limited: true, SoldOut: true, AvailabilityTotal: 10, AvailabilityRemains: 0,
+			AvailabilityResale: 4, FirstSaleDate: 100, LastSaleDate: 200, ResellMinStars: 75,
+		},
+		BaseDocument: officialgifts.Document{ID: 1, FileName: "gift.tgs", SHA256: strings.Repeat("a", 64), Data: []byte("gift")},
+		Collectible: &officialgifts.CollectibleSet{
+			Models: []officialgifts.Model{
+				{Name: "Regular", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 2, FileName: "regular.tgs", SHA256: strings.Repeat("b", 64), Data: []byte("regular")}},
+				{Name: "Regular Two", DocumentID: 5, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 5, FileName: "regular-two.tgs", SHA256: strings.Repeat("e", 64), Data: []byte("regular-two")}},
+				{Name: "Crafted", DocumentID: 3, Crafted: true, Rarity: officialgifts.Rarity{Kind: "legendary"}, Document: officialgifts.Document{ID: 3, FileName: "crafted.tgs", SHA256: strings.Repeat("c", 64), Data: []byte("crafted")}},
+			},
+			Patterns: []officialgifts.Pattern{
+				{Name: "Pattern", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 4, FileName: "pattern.tgs", SHA256: strings.Repeat("d", 64), Data: []byte("pattern")}},
+				{Name: "Pattern Two", DocumentID: 6, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: officialgifts.Document{ID: 6, FileName: "pattern-two.tgs", SHA256: strings.Repeat("f", 64), Data: []byte("pattern-two")}},
+			},
+			Backdrops: []officialgifts.Backdrop{
+				{Name: "Black", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+				{Name: "White", BackdropID: 1, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+			},
+		},
+	}}
+	gifts := &fakeGiftsService{}
+	svc := NewService(Dependencies{Commands: newMemoryCommandRepo(), Gifts: gifts, OfficialGifts: source, Now: fixedNow})
+	req := ImportOfficialStarGiftRequest{SourceGiftID: "5170145012310081615", Enabled: true, IncludeCollectible: true}
+	req.CommandMeta = CommandMeta{CommandID: "dry-official", Actor: "ops", Reason: "official snapshot", DryRun: true}
+	preview, err := svc.ImportOfficialStarGift(context.Background(), req)
+	if err != nil || gifts.createCalls != 0 || preview.Details["crafted_models"] != 1 {
+		t.Fatalf("preview=%+v err=%v create=%d", preview, err, gifts.createCalls)
+	}
+	req.CommandMeta = CommandMeta{CommandID: "exec-official", Actor: "ops", Reason: "official snapshot", DryRun: false}
+	result, err := svc.ImportOfficialStarGift(context.Background(), req)
+	if err != nil || gifts.createCalls != 1 || result.Details["collectible_revision_id"] != "33" {
+		t.Fatalf("result=%+v err=%v create=%d", result, err, gifts.createCalls)
+	}
+	models := gifts.lastBundle.Collectible.Models
+	if len(models) != 3 || !models[2].Crafted || models[2].RarityKind != domain.StarGiftRarityLegendary || models[2].RarityPermille != 0 ||
+		models[0].RarityPermille != 922 || gifts.lastBundle.Collectible.Backdrops[0].BackdropID != 0 {
+		t.Fatalf("imported models=%+v backdrops=%+v", models, gifts.lastBundle.Collectible.Backdrops)
+	}
+	catalog := gifts.lastBundle.Catalog
+	if catalog.Limited || catalog.SoldOut || catalog.AvailabilityTotal != 0 || catalog.AvailabilityRemains != 0 ||
+		catalog.AvailabilityResale != 0 || catalog.FirstSaleDate != 0 || catalog.LastSaleDate != 0 || catalog.ResellMinStars != 0 {
+		t.Fatalf("official global market state leaked into local catalog: %+v", catalog)
+	}
+	if catalog.OfficialGiftID != source.bundle.Gift.ID || !bytes.Equal(catalog.OfficialSourceJSON, source.bundle.SourceJSON) ||
+		!bytes.Equal(catalog.SourceManifestSHA256, source.bundle.ManifestSHA256) {
+		t.Fatalf("official provenance was not preserved: %+v", catalog)
 	}
 }
 
@@ -855,6 +1211,67 @@ func TestImportDefaultStarGiftRespectsEnabledFlag(t *testing.T) {
 	}
 }
 
+func TestImportOfficialStarGiftPublishesThroughRealGiftService(t *testing.T) {
+	const lottie = `{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":512,"h":512,"layers":[{"ty":4}],"assets":[]}`
+	document := func(id int64, name string) officialgifts.Document {
+		raw := []byte(lottie)
+		sum := sha256.Sum256(raw)
+		return officialgifts.Document{ID: id, FileName: name, SHA256: hex.EncodeToString(sum[:]), Data: raw}
+	}
+	permille := 1000
+	source := &fakeOfficialGiftsSource{bundle: officialgifts.Bundle{
+		ManifestSHA256: bytesOf(0x24, sha256.Size),
+		SourceJSON:     []byte(`{"id":6003643167683903930,"title":"Party Sparkler"}`),
+		Gift: officialgifts.Gift{
+			ID: 6003643167683903930, Title: "Party Sparkler", Stars: 15, ConvertStars: 13,
+			UpgradeStars: 25, AvailabilityTotal: 400000, DocumentID: 1,
+		},
+		BaseDocument: document(1, "gift.json"),
+		Collectible: &officialgifts.CollectibleSet{
+			Models: []officialgifts.Model{
+				{Name: "Model", DocumentID: 2, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(2, "model.json")},
+				{Name: "Model Two", DocumentID: 4, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(4, "model-two.json")},
+			},
+			Patterns: []officialgifts.Pattern{
+				{Name: "Pattern", DocumentID: 3, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(3, "pattern.json")},
+				{Name: "Pattern Two", DocumentID: 5, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}, Document: document(5, "pattern-two.json")},
+			},
+			Backdrops: []officialgifts.Backdrop{
+				{Name: "Backdrop", BackdropID: 0, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+				{Name: "Backdrop Two", BackdropID: 1, Rarity: officialgifts.Rarity{Kind: "permille", Permille: &permille}},
+			},
+		},
+	}}
+	ctx := context.Background()
+	giftService := stargiftapp.NewService(memory.NewStarGiftStore(), &adminGiftBlob{data: map[string][]byte{}}, 2)
+	svc := NewService(Dependencies{
+		Commands: newMemoryCommandRepo(), Gifts: giftService, OfficialGifts: source, Now: fixedNow,
+	})
+	req := ImportOfficialStarGiftRequest{
+		SourceGiftID: "6003643167683903930", Enabled: true, IncludeCollectible: true,
+		CommandMeta: CommandMeta{CommandID: "exec-official-real-service", Actor: "ops", Reason: "regression", DryRun: false},
+	}
+	result, err := svc.ImportOfficialStarGift(ctx, req)
+	if err != nil {
+		t.Fatalf("import official collectible through real service: result=%+v err=%v", result, err)
+	}
+	catalog, err := giftService.Catalog(ctx)
+	if err != nil || len(catalog) != 1 {
+		t.Fatalf("catalog=%+v err=%v, want one imported gift", catalog, err)
+	}
+	preview, ok, err := giftService.CollectiblePreview(ctx, catalog[0].ID)
+	if err != nil || !ok || len(preview.Models) != 2 || len(preview.Patterns) != 2 {
+		t.Fatalf("preview=%+v ok=%v err=%v", preview, ok, err)
+	}
+	model := preview.Models[0].Document
+	pattern := preview.Patterns[0].Document
+	if model == nil || !model.IsSticker() || model.IsCustomEmoji() || pattern == nil ||
+		pattern.IsSticker() || !pattern.IsCustomEmoji() || len(pattern.Thumbs) != 1 ||
+		pattern.Thumbs[0].Kind != domain.PhotoSizeKindPath || len(pattern.Thumbs[0].Bytes) == 0 {
+		t.Fatalf("materialized model=%+v pattern=%+v", model, pattern)
+	}
+}
+
 type adminGiftBlob struct{ data map[string][]byte }
 
 func (b *adminGiftBlob) Name() string { return "localfs" }
@@ -868,11 +1285,41 @@ func (b *adminGiftBlob) Get(_ context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), b.data[key]...), nil
 }
 
+func bytesOf(value byte, count int) []byte {
+	out := make([]byte, count)
+	for i := range out {
+		out[i] = value
+	}
+	return out
+}
+
+type fakeOfficialGiftsSource struct{ bundle officialgifts.Bundle }
+
+func (f *fakeOfficialGiftsSource) List(context.Context) ([]officialgifts.GiftSummary, error) {
+	return nil, nil
+}
+func (f *fakeOfficialGiftsSource) Bundle(_ context.Context, giftID int64, include bool) (officialgifts.Bundle, error) {
+	if giftID != f.bundle.Gift.ID {
+		return officialgifts.Bundle{}, officialgifts.ErrNotFound
+	}
+	out := f.bundle
+	if !include {
+		out.Collectible = nil
+	}
+	return out, nil
+}
+
 type fakeGiftsService struct {
 	createCalls int
 	lastBundle  domain.StarGiftCatalogBundleWrite
 }
 
+func (f *fakeGiftsService) GiftByID(_ context.Context, id int64) (domain.StarGift, bool, error) {
+	if id <= 0 {
+		return domain.StarGift{}, false, nil
+	}
+	return domain.StarGift{ID: id, Stars: 50, Title: "Test Gift"}, true, nil
+}
 func (f *fakeGiftsService) PrepareAnimation(name string, data []byte) (domain.StarGiftAnimation, error) {
 	sum := sha256.Sum256(data)
 	return domain.StarGiftAnimation{
