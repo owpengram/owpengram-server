@@ -387,9 +387,13 @@ func (m *Manager) goBuild(ctx context.Context, outPath, pkg string) (string, err
 
 // --- high-level actions ----------------------------------------------------
 
-// Restart rebuilds and relaunches only bin/owpengram-server (the MTProto
-// data-plane process) -- never the admin binary currently handling this
-// request. Returns a combined build/relaunch log for the admin UI.
+// Restart rebuilds BOTH bin/owpengram-server and bin/owpengram-admin-panel
+// from the current working tree (no git pull -- see Update for that) and
+// relaunches owpengram-server, which then bounces the admin panel onto its
+// freshly built binary. Never self-restarts the admin process handling this
+// request directly -- see HandlePendingAdminRestart's doc comment for why
+// that handoff happens from the newly launched server instead. Returns a
+// combined build/relaunch log for the admin UI.
 func (m *Manager) Restart(ctx context.Context) (string, error) {
 	st := m.loadState()
 	if pidAlive(st.ServerPID) {
@@ -399,7 +403,7 @@ func (m *Manager) Restart(ctx context.Context) (string, error) {
 	if err != nil {
 		return dockerLog, err
 	}
-	buildLog, err := m.buildServer(ctx)
+	buildLog, err := m.buildBoth(ctx)
 	fullLog := dockerLog + "\n" + buildLog
 	if err != nil {
 		return fullLog, fmt.Errorf("build failed: %w", err)
@@ -416,13 +420,11 @@ func (m *Manager) Restart(ctx context.Context) (string, error) {
 	if err := m.saveState(st); err != nil {
 		return fullLog, fmt.Errorf("save state: %w", err)
 	}
-	return fullLog + fmt.Sprintf("\nowpengram-server relaunched, pid=%d. Admin panel will restart shortly.\n", pid), nil
+	return fullLog + fmt.Sprintf("\nowpengram-server relaunched, pid=%d. Admin panel will restart shortly onto its freshly built binary.\n", pid), nil
 }
 
-// Update runs git pull, ensures Docker infrastructure is up, rebuilds both
-// binaries, then does the same server-only relaunch as Restart -- including
-// asking that new process to bounce the admin panel too, now onto its
-// freshly built binary.
+// Update is Restart plus a `git pull --ff-only` first, so a fresh checkout
+// gets built instead of whatever's already on disk.
 func (m *Manager) Update(ctx context.Context) (string, error) {
 	pullLog, err := m.GitPull(ctx)
 	if err != nil {

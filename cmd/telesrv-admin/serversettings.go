@@ -262,7 +262,7 @@ func (s *server) handleRestartServerAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "restart-server")
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- rebuilds and relaunches bin/owpengram-server", nil))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- rebuilds both bin/owpengram-server and bin/owpengram-admin-panel, relaunches owpengram-server", nil))
 		return
 	}
 	log, err := s.serverCtl.Restart(r.Context())

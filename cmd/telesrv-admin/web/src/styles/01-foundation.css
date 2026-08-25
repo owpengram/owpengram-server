@@ -263,6 +263,13 @@ a {
   letter-spacing: 0.04em;
 }
 
+.sidebar-build {
+  font-weight: 500;
+  text-transform: none;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  opacity: 0.7;
+}
+
 .nav-list {
   display: grid;
   gap: 4px;

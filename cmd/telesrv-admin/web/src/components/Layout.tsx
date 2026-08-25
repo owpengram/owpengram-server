@@ -41,12 +41,14 @@ export function BootScreen() {
 
 export function Shell({
   actor,
+  build,
   route,
   navigate,
   onLogout,
   children
 }: {
   actor: string;
+  build?: { commit: string; short_commit: string; dirty: boolean; build_time: string };
   route: RouteState;
   navigate: Navigate;
   onLogout: () => void;
@@ -143,6 +145,11 @@ export function Shell({
         </nav>
         <div className="sidebar-status">
           <span className="sidebar-label">{"Version: O7"}</span>
+          {build?.short_commit && (
+            <span className="sidebar-label sidebar-build" title={build.commit + (build.dirty ? " (uncommitted changes)" : "")}>
+              {`Build: ${build.short_commit}${build.dirty ? "+" : ""}`}
+            </span>
+          )}
         </div>
       </aside>
       <div className="workspace">

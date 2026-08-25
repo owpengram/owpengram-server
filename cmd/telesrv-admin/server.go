@@ -292,6 +292,7 @@ func (s *server) handleAPILogout(w http.ResponseWriter, _ *http.Request) {
 // session carries, so the UI can hide a section the operator may not use rather
 // than letting them walk into a 403.
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
+	build := currentBuildMetadata()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"actor":                         actorFromContext(r.Context()),
 		"permissions":                   permissionsFromContext(r.Context()).List(),
@@ -302,6 +303,15 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// tells "the old admin process died and a new one answered" apart
 		// from "the old one is just slow to respond".
 		"boot_id": bootID,
+		// build is this admin binary's own commit -- shown under "Version"
+		// in the sidebar footer so an operator can tell at a glance which
+		// build is actually running, independent of the app version string.
+		"build": map[string]any{
+			"commit":       build.Commit,
+			"short_commit": build.shortCommit(),
+			"dirty":        build.Dirty,
+			"build_time":   build.BuildTime,
+		},
 	})
 }
 

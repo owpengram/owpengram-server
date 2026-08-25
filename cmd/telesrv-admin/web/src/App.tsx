@@ -42,7 +42,7 @@ export function App() {
 
   return (
     <PermissionsProvider permissions={session.permissions ?? []} hideThirdPartyVerification={session.hide_third_party_verification ?? true}>
-      <Shell actor={session.actor} route={route} navigate={navigate} onLogout={() => setSession(null)}>
+      <Shell actor={session.actor} build={session.build} route={route} navigate={navigate} onLogout={() => setSession(null)}>
         <Routes route={route} navigate={navigate} />
       </Shell>
     </PermissionsProvider>

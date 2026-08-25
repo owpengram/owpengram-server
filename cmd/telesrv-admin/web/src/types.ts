@@ -584,6 +584,14 @@ export type AdminSession = {
   // comment. Used by Server Settings' Restart/Update flow to detect a
   // genuinely new admin process after asking it to bounce.
   boot_id?: string;
+  // This admin binary's own build -- shown under "Version" in the sidebar
+  // footer so an operator can tell which build is actually running.
+  build?: {
+    commit: string;
+    short_commit: string;
+    dirty: boolean;
+    build_time: string;
+  };
 };
 
 export type AdminLoginResult = AdminSession & {
