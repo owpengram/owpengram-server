@@ -299,6 +299,11 @@ type Config struct {
 	// StickerSeedDir, this expects no export manifest, just raw files dropped
 	// in. Missing directory is skipped, not an error.
 	GifSeedDir string
+	// IdentityDir holds the admin-editable server identity (name/description
+	// in identity.json, icon as icon.<ext>) served over /owpengram/server-info
+	// and /owpengram/server-icon -- see internal/identity. Read fresh on every
+	// request, so admin edits apply immediately with no server restart.
+	IdentityDir string
 	// BusinessAIProvider 控制服务端 Business automation 回复生成器。
 	// 空值/"echo" 回显触发私聊文本，用于跑通后续 AI provider 链路；
 	// "template" 使用 quick reply 模板。
@@ -776,6 +781,7 @@ func Load() (Config, error) {
 		StickerSeedMaxSets:            envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
 		PremiumPromoSeedDir:           envOr("TELESRV_PREMIUM_PROMO_SEED_DIR", "data/premium-promo"),
 		GifSeedDir:                    envOr("TELESRV_GIF_SEED_DIR", "data/gifs"),
+		IdentityDir:                   envOr("TELESRV_IDENTITY_DIR", "data/identity"),
 		MapboxToken:                   envOr("TELESRV_MAPBOX_TOKEN", ""),
 		MapTileCacheDir:               envOr("TELESRV_MAPTILE_CACHE_DIR", "data/maptiles"),
 		ExternalMediaEnable:           envBoolOr("TELESRV_EXTERNAL_MEDIA_ENABLE", true),

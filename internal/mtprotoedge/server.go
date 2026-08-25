@@ -26,6 +26,7 @@ import (
 	"github.com/iamxvbaba/td/transport"
 
 	"github.com/iamxvbaba/td/tlprofile"
+	"telesrv/internal/identity"
 	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
@@ -343,6 +344,11 @@ type Options struct {
 	StrictDC bool
 	// RSAKey 是 server RSA 私钥，用于密钥交换。nil 时无法完成握手。
 	RSAKey *rsa.PrivateKey
+	// IdentityDir, when non-empty, enables serving the admin-editable server
+	// name/description/icon over ServerInfoPath/ServerIconPath (see
+	// internal/identity). Empty disables the feature -- those fields are
+	// simply omitted, RSA key/DC info still serve as before.
+	IdentityDir string
 	// AuthKeys 持久化 auth key。默认内存实现。
 	AuthKeys store.AuthKeyStore
 	// ActiveSessions 管理活跃连接。默认新建；传入时可让 RPC 层共享同一注册表。
@@ -523,6 +529,9 @@ type Server struct {
 	// from a host:port instead of a manual openssl + copy-paste.
 	pubKeyPEM []byte
 
+	// identityStore is nil when Options.IdentityDir is empty (feature off).
+	identityStore *identity.Store
+
 	// onFrame 是测试钩子：收到一帧时回调其字节数；生产为 nil。
 	onFrame func(n int)
 }
@@ -581,6 +590,9 @@ func New(opts Options) *Server {
 		}),
 		rpcRewrap: newRPCRewrapRegistry(opts.RPCGlobalMaxTasks),
 		admission: newAdmissionController(opts.MaxConnections, opts.MaxConnectionsPerIP, opts.MaxConcurrentHandshakes),
+	}
+	if opts.IdentityDir != "" {
+		server.identityStore = identity.NewStore(opts.IdentityDir)
 	}
 	conns.setLogicalSessionReleaseHook(func(key sessionKey) {
 		server.rpcResults.forgetSession(key.authKeyID, key.sessionID)
@@ -718,6 +730,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 			websocketRouteHandler(wsHandler, s.websocketOrigins),
 			s.dc,
 			s.pubKeyPEM,
+			s.identityStore,
 		),
 		ReadHeaderTimeout: minDuration(10*time.Second, s.handshakeTimeout),
 		BaseContext: func(net.Listener) context.Context {

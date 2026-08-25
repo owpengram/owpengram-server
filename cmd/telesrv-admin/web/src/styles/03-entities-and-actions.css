@@ -928,3 +928,134 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* --- Server Settings ---------------------------------------------------- */
+
+/* Bare .card-body (outside .action-groups, which scopes its own flex rules)
+   just needs a sensible vertical rhythm below a SectionHead -- used as-is by
+   IdentitySection/ServerControlSection on the Server Settings page. */
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.server-identity-fields {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.server-icon-fallback {
+  color: var(--muted);
+  background: var(--panel-subtle);
+  border: 1px dashed var(--line-strong);
+}
+
+.env-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.env-group {
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.env-group-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--panel-subtle);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.env-group-toggle:hover {
+  background: var(--brand-tint);
+}
+
+.env-group-toggle-text {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.env-group-toggle-title {
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.env-group-toggle-count {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.env-group-chevron {
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.env-group.open .env-group-chevron {
+  transform: rotate(180deg);
+}
+
+.env-group-body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.env-group-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.env-field .env-field-desc {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.env-save-row {
+  margin-top: 12px;
+}
+
+.restart-overlay {
+  width: min(440px, 100%);
+}
+
+.restart-overlay-body {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.restart-overlay-body p {
+  margin: 0;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.restart-overlay-actions {
+  justify-content: center;
+}

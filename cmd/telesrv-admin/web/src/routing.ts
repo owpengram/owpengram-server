@@ -31,5 +31,6 @@ export function routeTitle(pathname: string): string {
   if (pathname.startsWith("/messages")) return "Message Audit";
 	if (pathname.startsWith("/stickers")) return "Stickers";
   if (pathname.startsWith("/gif-catalog")) return "GIFs";
+  if (pathname.startsWith("/server-settings")) return "Server Settings";
   return "Operations Console";
 }

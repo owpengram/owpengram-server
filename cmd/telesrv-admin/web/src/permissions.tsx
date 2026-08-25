@@ -12,6 +12,9 @@ export const permissionVerificationRevoke = "verification.revoke";
 // verifier roster, the icon catalogue and taking a granted mark away.
 export const permissionBotVerificationReview = "botverification.review";
 export const permissionBotVerificationManage = "botverification.manage";
+// Server Settings: identity, .env, restart/update. One right, not
+// review/manage -- see the constant's doc comment in security.go.
+export const permissionServerManage = "server.manage";
 
 // GET /api/session is read once at boot; the panel keeps the answer here so a
 // section the session may not use is hidden instead of rendered into a 403. This

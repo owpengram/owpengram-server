@@ -9,6 +9,7 @@ import {
   LogOut,
   Megaphone,
   MessageSquareText,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Smile,
@@ -18,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
-import { permissionBotVerificationReview, permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
+import { permissionBotVerificationReview, permissionServerManage, permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
 import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
@@ -57,6 +58,7 @@ export function Shell({
   // Same reasoning for the third-party queue, which has its own right: the two
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
+  const canManageServer = useCan(permissionServerManage);
   // Third-party verification is additionally hidden by default (not fully
   // finished) regardless of what the session was granted -- see permissions.tsx.
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
@@ -135,7 +137,13 @@ export function Shell({
               </div>
             )}
           </div>
+          {canManageServer && (
+            <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
+          )}
         </nav>
+        <div className="sidebar-status">
+          <span className="sidebar-label">{"Version: O7"}</span>
+        </div>
       </aside>
       <div className="workspace">
         <header className="topbar">

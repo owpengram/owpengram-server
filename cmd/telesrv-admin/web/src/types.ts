@@ -580,6 +580,10 @@ export type AdminSession = {
   // 404, so this is a UI convenience on top of a real enforcement, not the
   // enforcement itself.
   hide_third_party_verification?: boolean;
+  // Random per admin-process-start value -- see the Go handler's doc
+  // comment. Used by Server Settings' Restart/Update flow to detect a
+  // genuinely new admin process after asking it to bounce.
+  boot_id?: string;
 };
 
 export type AdminLoginResult = AdminSession & {
@@ -828,4 +832,32 @@ export type GroupMessageListResponse = {
   before_id: number;
   limit: number;
   rows: GroupMessageRow[];
+};
+
+export type ServerIdentity = {
+  name: string;
+  description: string;
+  icon_ext?: string;
+};
+
+export type EnvField = {
+  key: string;
+  default_value: string;
+  description: string;
+  enabled_by_default: boolean;
+  sensitive: boolean;
+  value: string;
+};
+
+export type EnvGroup = {
+  title: string;
+  description: string;
+  fields: EnvField[];
+};
+
+export type ServerStatus = {
+  ServerPID: number;
+  ServerAlive: boolean;
+  AdminPID: number;
+  AdminAlive: boolean;
 };

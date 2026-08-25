@@ -45,6 +45,13 @@ const (
 	// curates the icon catalogue and strips granted marks.
 	permissionBotVerificationReview = "botverification.review"
 	permissionBotVerificationManage = "botverification.manage"
+	// permissionServerManage gates the whole Server Settings panel: identity
+	// (name/description/icon), .env editing, and Restart/Update -- all of it
+	// meaningfully more sensitive than any domain-data action above (.env
+	// editing exposes every secret the deployment holds; Restart/Update runs
+	// git/go and bounces the live MTProto process), so it is one right, not
+	// split into review/manage like the sections above.
+	permissionServerManage = "server.manage"
 )
 
 type permissionsKey struct{}

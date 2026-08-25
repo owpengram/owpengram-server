@@ -23,6 +23,9 @@ import type {
   CollectibleUsernameDetail,
   CollectibleUsernameListResponse,
   CommandResult,
+  EnvGroup,
+  ServerIdentity,
+  ServerStatus,
   GroupMessageDetail,
   GroupMessageListResponse,
   MessageDetail,
@@ -232,6 +235,11 @@ export const api = {
 	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	gifCatalog: () => request<GifCatalogListResponse>("/api/gif-catalog"),
 	createGifCatalogEntry: (form: FormData) => request<CommandResult>("/api/actions/create-gif-catalog-entry", { method: "POST", body: form }),
+  serverIdentity: () => request<ServerIdentity>("/api/server/identity"),
+  uploadServerIcon: (form: FormData) => request<CommandResult>("/api/actions/upload-server-icon", { method: "POST", body: form }),
+  serverIconURL: () => `/api/server/icon?t=${Date.now()}`,
+  serverEnv: () => request<EnvGroup[]>("/api/server/env"),
+  serverStatus: () => request<ServerStatus>("/api/server/status"),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
     body: JSON.stringify(payload)

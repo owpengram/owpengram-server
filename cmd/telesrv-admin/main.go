@@ -27,6 +27,23 @@ const hostStatsPollInterval = 5 * time.Second
 
 const defaultAdminAPIAddr = "127.0.0.1:2599"
 
+// bootID is a random value generated once per process start, exposed via
+// GET /api/session -- see that handler's doc comment for why (the
+// Restart/Update polling flow's way of detecting a genuinely new admin
+// process, not just a slow-to-respond old one).
+var bootID = newBootID()
+
+func newBootID() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand failing is effectively unheard of on any real target
+		// this binary runs on; falling back to the wall clock still gives a
+		// value that changes across restarts, which is all this is for.
+		return fmt.Sprintf("t%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -95,6 +112,18 @@ type uiConfig struct {
 	// permissions, and the session/login response tells the frontend to hide
 	// the "Third-party marks" nav entry and its routes.
 	HideThirdPartyVerification bool
+	// IdentityDir mirrors config.IdentityDir -- must point at the same
+	// directory owpengram-server reads, so an identity edit here is visible
+	// over /owpengram/server-info immediately (see internal/identity).
+	IdentityDir string
+	// RepoRoot is where Server Settings' Restart/Update/.env-editing (see
+	// internal/procctl) operate: bin/, logs/, .env, .env.example and
+	// .server_panel.json are all expected directly under it, exactly as
+	// tui-panel/server-panel.py expects. Defaults to the process's current
+	// working directory, which is correct whenever this binary is launched
+	// from (or by something that cd'd into) the repo root -- true both for a
+	// manual run and for how the TUI itself launches it.
+	RepoRoot string
 }
 
 // loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
@@ -121,6 +150,11 @@ func loadConfig() (uiConfig, error) {
 	}
 	sum := sha256.Sum256([]byte(appCfg.AdminSessionKey))
 
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return uiConfig{}, fmt.Errorf("resolve repo root: %w", err)
+	}
+
 	return uiConfig{
 		Addr:                       appCfg.AdminUIAddr,
 		PostgresDSN:                appCfg.PostgresDSN,
@@ -132,6 +166,8 @@ func loadConfig() (uiConfig, error) {
 		Permissions:                appCfg.AdminUIPermissions,
 		HideThirdPartyVerification: appCfg.HideThirdPartyVerification,
 		BlobDir:                    appCfg.BlobDir,
+		IdentityDir:                appCfg.IdentityDir,
+		RepoRoot:                   repoRoot,
 	}, nil
 }
 

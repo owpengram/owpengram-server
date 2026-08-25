@@ -68,6 +68,7 @@ import (
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
+	"telesrv/internal/procctl"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
 	"telesrv/internal/sfu"
@@ -1547,6 +1548,7 @@ func run(logger *zap.Logger) error {
 		DC:                            cfg.DC,
 		StrictDC:                      cfg.StrictDCCheck,
 		RSAKey:                        rsaKey,
+		IdentityDir:                   cfg.IdentityDir,
 		LayerRPC:                      router,
 		AuthKeys:                      authKeyStore,
 		ActiveSessions:                activeSessions,
@@ -1581,6 +1583,23 @@ func run(logger *zap.Logger) error {
 				zap.Uint("schema_version", migrationStatus.Version),
 				zap.String("blob_backend", "localfs"),
 			)
+			// Picks up a pending "please bounce the admin panel" request left
+			// by cmd/telesrv-admin's Restart/Update (internal/procctl) --
+			// see HandlePendingAdminRestart's doc comment for why this
+			// process (the new one, already up) is the safe place to do
+			// that from, not the admin panel doing it to itself. Repo root
+			// is cwd, matching cmd/telesrv-admin's own convention; a no-op,
+			// not an error, when no restart was requested or the repo
+			// layout (bin/, .server_panel.json) isn't present.
+			go func() {
+				if root, err := os.Getwd(); err == nil {
+					if restarted, err := procctl.NewManager(root).HandlePendingAdminRestart(ctx); err != nil {
+						logger.Warn("admin panel auto-restart failed", zap.Error(err))
+					} else if restarted {
+						logger.Info("admin panel restarted after server restart/update")
+					}
+				}
+			}()
 		},
 	})
 	metricRegistry.AddGaugeProvider(func() []obsmetrics.GaugeSample {

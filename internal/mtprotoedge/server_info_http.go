@@ -5,7 +5,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"mime"
 	"net/http"
+	"strconv"
+
+	"telesrv/internal/identity"
 )
 
 // ServerInfoPath is the well-known same-port HTTP path a client can GET to
@@ -20,13 +24,26 @@ import (
 // active, i.e. TELESRV_WEBSOCKET_ENABLE=true (the default).
 const ServerInfoPath = "/owpengram/server-info"
 
+// ServerIconPath serves the server's icon as a raw image, separately from
+// ServerInfoPath's JSON -- avoids inflating every server-info fetch with a
+// base64 blob when most callers only need it once, and lets it be cached/
+// requested independently (e.g. an <img src> tag).
+const ServerIconPath = "/owpengram/server-icon"
+
 // ServerInfoResponse is ServerInfoPath's JSON body. RSAPublicKeyPEM is the
 // PKCS#1 "RSA PUBLIC KEY" PEM block -- the same format
 // `openssl rsa -RSAPublicKey_out` produces, and what the client's "Add
-// Server" RSA key field already expects verbatim.
+// Server" RSA key field already expects verbatim. Name/Description are
+// admin-edited via internal/identity and optional -- clients should treat
+// blank as "no override" and keep whatever the user typed.
 type ServerInfoResponse struct {
 	DCID            int    `json:"dc_id"`
 	RSAPublicKeyPEM string `json:"rsa_public_key_pem"`
+	Name            string `json:"name,omitempty"`
+	Description     string `json:"description,omitempty"`
+	// HasIcon tells the client whether GET ServerIconPath is worth calling,
+	// without requiring a separate round trip just to find out.
+	HasIcon bool `json:"has_icon,omitempty"`
 }
 
 // rsaPublicKeyPEM renders key's public half as a PKCS#1 PEM block, matching
@@ -41,34 +58,108 @@ func rsaPublicKeyPEM(key *rsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: der})
 }
 
-// serverInfoHTTPHandler serves ServerInfoResponse at ServerInfoPath and
-// delegates every other path to next (the existing WebSocket route
-// handler). pubKeyPEM is nil when the server has no RSA key configured
-// (shouldn't happen in production -- handshakes would already be broken --
-// but a client asking anyway gets 503, not a panic or an empty key).
-func serverInfoHTTPHandler(next http.Handler, dc int, pubKeyPEM []byte) http.Handler {
+// serverInfoHTTPHandler serves ServerInfoResponse at ServerInfoPath and the
+// raw icon bytes at ServerIconPath, delegating every other path to next (the
+// existing WebSocket route handler). pubKeyPEM is nil when the server has no
+// RSA key configured (shouldn't happen in production -- handshakes would
+// already be broken -- but a client asking anyway gets 503, not a panic or
+// an empty key). identityStore may be nil (identity feature disabled);
+// Name/Description/icon are then simply omitted, RSA key/DC still serve.
+func serverInfoHTTPHandler(
+	next http.Handler,
+	dc int,
+	pubKeyPEM []byte,
+	identityStore *identity.Store,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != ServerInfoPath {
+		switch r.URL.Path {
+		case ServerInfoPath:
+			serveServerInfo(w, r, dc, pubKeyPEM, identityStore)
+		case ServerIconPath:
+			serveServerIcon(w, r, identityStore)
+		default:
 			next.ServeHTTP(w, r)
-			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if len(pubKeyPEM) == 0 {
-			http.Error(w, "server key not configured", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method == http.MethodHead {
-			return
-		}
-		_ = json.NewEncoder(w).Encode(ServerInfoResponse{
-			DCID:            dc,
-			RSAPublicKeyPEM: string(pubKeyPEM),
-		})
 	})
+}
+
+func serveServerInfo(
+	w http.ResponseWriter,
+	r *http.Request,
+	dc int,
+	pubKeyPEM []byte,
+	identityStore *identity.Store,
+) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(pubKeyPEM) == 0 {
+		http.Error(w, "server key not configured", http.StatusServiceUnavailable)
+		return
+	}
+	resp := ServerInfoResponse{
+		DCID:            dc,
+		RSAPublicKeyPEM: string(pubKeyPEM),
+	}
+	if identityStore != nil {
+		if info, err := identityStore.Get(); err == nil {
+			resp.Name = info.Name
+			resp.Description = info.Description
+			resp.HasIcon = info.IconExt != ""
+		}
+	}
+	body, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, "encode server info", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	// See serveServerIcon's identical Content-Length comment -- same reason:
+	// keeps net/http from chunked-encoding a response the desktop client's
+	// raw-socket parser can't decode. name/description are short today, but
+	// nothing enforces that server-side, so this isn't purely defensive.
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+func serveServerIcon(w http.ResponseWriter, r *http.Request, identityStore *identity.Store) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if identityStore == nil {
+		http.NotFound(w, r)
+		return
+	}
+	data, ext, ok := identityStore.Icon()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-store")
+	// Explicit Content-Length keeps net/http from switching to
+	// Transfer-Encoding: chunked, which it otherwise does automatically once
+	// a single Write() exceeds its small internal sniff buffer (true for
+	// basically any real icon, easily hundreds of KB) -- the desktop
+	// client's same-port fetch is a hand-rolled raw-socket HTTP/1.1 parser
+	// (see FetchServerIcon in owpengram_servers.cpp), not a real HTTP
+	// client, and has no chunked-decoding logic: it would otherwise treat
+	// the chunk-size-prefixed framing as image bytes and fail to decode.
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(data)
 }

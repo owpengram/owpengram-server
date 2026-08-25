@@ -20,6 +20,8 @@ import (
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
 	"telesrv/internal/hoststats"
+	"telesrv/internal/identity"
+	"telesrv/internal/procctl"
 )
 
 //go:embed web/dist
@@ -31,6 +33,8 @@ type server struct {
 	hostStats *hoststats.Poller
 	web       fs.FS
 	webServer http.Handler
+	identity  *identity.Store
+	serverCtl *procctl.Manager
 }
 
 func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*server, error) {
@@ -44,6 +48,8 @@ func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*ser
 		hostStats: hostStats,
 		web:       web,
 		webServer: http.FileServer(http.FS(web)),
+		identity:  identity.NewStore(cfg.IdentityDir),
+		serverCtl: procctl.NewManager(cfg.RepoRoot),
 	}, nil
 }
 
@@ -163,6 +169,20 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/upsert-verification-icon", s.botVerificationManage(s.handleUpsertVerificationIconAPI))
 	mux.Handle("POST /api/actions/set-verification-icon-active", s.botVerificationManage(s.handleSetVerificationIconActiveAPI))
 	mux.Handle("POST /api/actions/revoke-custom-verification", s.botVerificationManage(s.handleRevokeCustomVerificationAPI))
+	// Server Settings -- see serversettings.go. Everything here operates
+	// directly on local files/processes (no RPC hop to owpengram-server's
+	// in-process admin API), so it works even for actions (Restart/Update)
+	// that owpengram-server could never safely perform on itself.
+	mux.Handle("GET /api/server/identity", s.serverManage(s.handleServerIdentityAPI))
+	mux.Handle("GET /api/server/icon", s.serverManage(s.handleServerIconAPI))
+	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))
+	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
+	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
+	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
+	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
+	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
+	mux.Handle("POST /api/actions/restart-server", s.serverManage(s.handleRestartServerAPI))
+	mux.Handle("POST /api/actions/update-server", s.serverManage(s.handleUpdateServerAPI))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "api route not found")
 	})
@@ -274,6 +294,12 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"actor":                         actorFromContext(r.Context()),
 		"permissions":                   permissionsFromContext(r.Context()).List(),
 		"hide_third_party_verification": s.cfg.HideThirdPartyVerification,
+		// boot_id is random per process start (see main.go) -- Server
+		// Settings' Restart/Update flow polls this after triggering an
+		// action and reloads the page once it changes, which is how it
+		// tells "the old admin process died and a new one answered" apart
+		// from "the old one is just slow to respond".
+		"boot_id": bootID,
 	})
 }
 

@@ -16,6 +16,7 @@ import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { StickerSetsPage } from "./StickerSetsPage";
 import { GifCatalogPage } from "./GifCatalogPage";
+import { ServerSettingsPage } from "./ServerSettingsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
 import { StoragePage } from "./StoragePage";
@@ -27,6 +28,7 @@ import {
   PermissionGate,
   ThirdPartyVerificationHiddenGate,
   permissionBotVerificationReview,
+  permissionServerManage,
   permissionVerificationReview
 } from "../permissions";
 
@@ -123,6 +125,13 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
 	}
   if (route.path === "/gif-catalog") {
     return <GifCatalogPage />;
+  }
+  if (route.path === "/server-settings") {
+    return (
+      <PermissionGate permission={permissionServerManage}>
+        <ServerSettingsPage />
+      </PermissionGate>
+    );
   }
   if (route.path === "/messages/detail" || route.path === "/messages/private/detail") {
     return (
