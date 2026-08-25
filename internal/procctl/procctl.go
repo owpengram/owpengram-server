@@ -247,6 +247,62 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 	}
 }
 
+// DockerService is one container's live status, as reported by
+// `docker compose ps`. State is Docker's raw container state ("running",
+// "exited", ...); Health is the healthcheck status ("healthy", "starting",
+// "unhealthy") or "" for a container/image with no healthcheck defined --
+// all three services in deploy/docker-compose.yml (postgres/redis/minio)
+// declare one, so "" in practice means Docker hasn't reported yet.
+type DockerService struct {
+	Name   string `json:"name"`   // compose service name, e.g. "postgres"
+	State  string `json:"state"`
+	Health string `json:"health"`
+}
+
+// dockerComposePsRow mirrors the fields `docker compose ps --format json`
+// emits (one JSON object per line, Compose v2's ndjson convention -- NOT a
+// single JSON array).
+type dockerComposePsRow struct {
+	Service string `json:"Service"`
+	State   string `json:"State"`
+	Health  string `json:"Health"`
+}
+
+// DockerStatus reports the live state of every service in
+// deploy/docker-compose.yml, for the admin panel's "Services" tab. Returns
+// an empty slice (not an error) when the compose file doesn't exist, same
+// convention as ensureDocker.
+func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
+	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
+	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
+		return nil, nil
+	}
+	st := m.loadState()
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "ps", "--all", "--format", "json")
+	cmd.Dir = m.Root
+	cmd.Env = append(os.Environ(),
+		"TELESRV_DOCKER_PROJECT="+st.DockerProject,
+		"TELESRV_DOCKER_PREFIX="+st.DockerPrefix,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker compose ps failed: %w", err)
+	}
+	var services []DockerService
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var row dockerComposePsRow
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			continue
+		}
+		services = append(services, DockerService{Name: row.Service, State: row.State, Health: row.Health})
+	}
+	return services, nil
+}
+
 // --- build steps ---------------------------------------------------------
 
 // GitPull runs `git pull --ff-only`, deliberately never a real merge -- see

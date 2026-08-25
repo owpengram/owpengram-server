@@ -861,3 +861,9 @@ export type ServerStatus = {
   AdminPID: number;
   AdminAlive: boolean;
 };
+
+export type DockerService = {
+  name: string;
+  state: string;
+  health: string;
+};

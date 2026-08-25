@@ -23,6 +23,7 @@ import type {
   CollectibleUsernameDetail,
   CollectibleUsernameListResponse,
   CommandResult,
+  DockerService,
   EnvGroup,
   ServerIdentity,
   ServerStatus,
@@ -240,6 +241,7 @@ export const api = {
   serverIconURL: () => `/api/server/icon?t=${Date.now()}`,
   serverEnv: () => request<EnvGroup[]>("/api/server/env"),
   serverStatus: () => request<ServerStatus>("/api/server/status"),
+  dockerStatus: () => request<DockerService[]>("/api/server/docker-status"),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
     body: JSON.stringify(payload)
