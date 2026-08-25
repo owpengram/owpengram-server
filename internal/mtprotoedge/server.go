@@ -517,6 +517,12 @@ type Server struct {
 	rpcResults *rpcExecutionLedger
 	rpcRewrap  *rpcRewrapRegistry
 
+	// pubKeyPEM is the server's RSA public key, precomputed once at
+	// construction and served over the same-port HTTP side (see
+	// server_info_http.go) so a client's "Add Server" flow can self-configure
+	// from a host:port instead of a manual openssl + copy-paste.
+	pubKeyPEM []byte
+
 	// onFrame 是测试钩子：收到一帧时回调其字节数；生产为 nil。
 	onFrame func(n int)
 }
@@ -554,6 +560,7 @@ func New(opts Options) *Server {
 		dc:                       opts.DC,
 		strictDC:                 opts.StrictDC,
 		key:                      exchange.PrivateKey{RSA: opts.RSAKey},
+		pubKeyPEM:                rsaPublicKeyPEM(opts.RSAKey),
 		authKeys:                 opts.AuthKeys,
 		conns:                    conns,
 		rpc:                      opts.legacyRPC,
@@ -707,7 +714,11 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 	wsLn := newTransportPacketMessageListener(wsRawLn)
 
 	httpServer := &http.Server{
-		Handler:           websocketRouteHandler(wsHandler, s.websocketOrigins),
+		Handler: serverInfoHTTPHandler(
+			websocketRouteHandler(wsHandler, s.websocketOrigins),
+			s.dc,
+			s.pubKeyPEM,
+		),
 		ReadHeaderTimeout: minDuration(10*time.Second, s.handshakeTimeout),
 		BaseContext: func(net.Listener) context.Context {
 			return ctx
