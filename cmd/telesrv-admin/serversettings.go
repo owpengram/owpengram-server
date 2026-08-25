@@ -228,6 +228,18 @@ func (s *server) handleServerStatusAPI(w http.ResponseWriter, r *http.Request) {
 // compose ps" failure (daemon not running, compose file missing) is
 // reported as an API error rather than an empty list, so the frontend can
 // tell "no services" apart from "couldn't ask Docker".
+// handleCheckServerUpdatesAPI backs the Update button's "Check updates"
+// state -- a plain git fetch + rev-list count, no pull/build/restart. See
+// procctl.Manager.CheckUpdates.
+func (s *server) handleCheckServerUpdatesAPI(w http.ResponseWriter, r *http.Request) {
+	behind, err := s.serverCtl.CheckUpdates(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commits_behind": behind})
+}
+
 func (s *server) handleDockerStatusAPI(w http.ResponseWriter, r *http.Request) {
 	services, err := s.serverCtl.DockerStatus(r.Context())
 	if err != nil {

@@ -182,6 +182,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
 	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
 	mux.Handle("GET /api/server/docker-status", s.serverManage(s.handleDockerStatusAPI))
+	mux.Handle("GET /api/server/check-updates", s.serverManage(s.handleCheckServerUpdatesAPI))
 	mux.Handle("POST /api/actions/restart-server", s.serverManage(s.handleRestartServerAPI))
 	mux.Handle("POST /api/actions/update-server", s.serverManage(s.handleUpdateServerAPI))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {

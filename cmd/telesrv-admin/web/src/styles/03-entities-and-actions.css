@@ -947,6 +947,35 @@
   gap: 8px;
 }
 
+/* Server identity card: icon+upload fixed on the left, name+description
+   filling the rest of the section's width on the right, full-width Save
+   button spanning the whole section beneath. */
+.identity-card {
+  width: 100%;
+}
+
+.identity-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.identity-layout .server-identity-fields {
+  flex: 1 1 auto;
+  gap: 12px;
+}
+
+.identity-layout .form-field textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.identity-save-row .btn {
+  width: 100%;
+  justify-content: center;
+  min-height: 40px;
+}
+
 .server-icon-fallback {
   color: var(--muted);
   background: var(--panel-subtle);
@@ -1180,4 +1209,10 @@
   color: var(--muted);
   background: var(--surface-soft);
   border: 1px solid var(--line);
+}
+
+.services-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

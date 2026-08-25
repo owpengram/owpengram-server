@@ -6,7 +6,7 @@ import { api, errorMessage } from "../api";
 import type { CommandResult } from "../types";
 import { Alert, JsonBlock } from "./ui";
 
-type ActionTone = "neutral" | "warn" | "danger";
+type ActionTone = "neutral" | "warn" | "danger" | "primary";
 
 export function ActionButton({
   label,
@@ -77,7 +77,7 @@ export function ActionButton({
   }
 
   const canConfirm = result?.dry_run && !result.error;
-  const triggerClass = `btn ${tone === "danger" ? "danger" : tone === "warn" ? "warn" : ""} ${compact ? "compact-btn" : ""}`;
+  const triggerClass = `btn ${tone === "danger" ? "danger" : tone === "warn" ? "warn" : tone === "primary" ? "primary" : ""} ${compact ? "compact-btn" : ""}`;
   const previewPayload = useMemo(() => {
     try {
       return payload();

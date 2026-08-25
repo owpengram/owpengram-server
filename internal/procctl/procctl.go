@@ -133,13 +133,17 @@ func pidAlive(pid int) bool {
 		return false
 	}
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid)).Output()
+		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid))
+		hideWindow(cmd)
+		out, err := cmd.Output()
 		if err != nil {
 			return false
 		}
 		return strings.Contains(string(out), strconv.Itoa(pid))
 	}
-	return exec.Command("kill", "-0", strconv.Itoa(pid)).Run() == nil
+	cmd := exec.Command("kill", "-0", strconv.Itoa(pid))
+	hideWindow(cmd)
+	return cmd.Run() == nil
 }
 
 // killPID mirrors kill_pid() in server-panel.py, MINUS its "/T" tree-kill on
@@ -162,12 +166,18 @@ func killPID(pid int) {
 		return
 	}
 	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F").Run()
+		cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F")
+		hideWindow(cmd)
+		_ = cmd.Run()
 		return
 	}
-	_ = exec.Command("kill", "-TERM", strconv.Itoa(pid)).Run()
+	term := exec.Command("kill", "-TERM", strconv.Itoa(pid))
+	hideWindow(term)
+	_ = term.Run()
 	time.Sleep(time.Second)
-	_ = exec.Command("kill", "-KILL", strconv.Itoa(pid)).Run()
+	kill := exec.Command("kill", "-KILL", strconv.Itoa(pid))
+	hideWindow(kill)
+	_ = kill.Run()
 }
 
 // launch starts exePath detached, cwd=Root, stdout/stderr appended to
@@ -189,6 +199,7 @@ func (m *Manager) launch(exePath, logPath string) (int, error) {
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	cmd.Stdin = nil
+	hideWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("start %s: %w", exePath, err)
 	}
@@ -224,6 +235,7 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 		"TELESRV_DOCKER_PROJECT="+st.DockerProject,
 		"TELESRV_DOCKER_PREFIX="+st.DockerPrefix,
 	)
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	log := "$ docker compose up -d\n" + string(out)
 	if err != nil {
@@ -233,6 +245,7 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 	deadline := time.Now().Add(postgresWaitTimeout)
 	for {
 		pgCmd := exec.CommandContext(ctx, "docker", "exec", st.DockerPrefix+"-postgres", "pg_isready", "-U", "telesrv", "-d", "telesrv")
+		hideWindow(pgCmd)
 		if pgCmd.Run() == nil {
 			return log + "\nPostgreSQL ready\n", nil
 		}
@@ -284,6 +297,7 @@ func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
 		"TELESRV_DOCKER_PROJECT="+st.DockerProject,
 		"TELESRV_DOCKER_PREFIX="+st.DockerPrefix,
 	)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker compose ps failed: %w", err)
@@ -303,6 +317,32 @@ func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
 	return services, nil
 }
 
+// CheckUpdates fetches from the remote and reports how many commits the
+// local branch is behind its upstream, WITHOUT pulling or building anything
+// -- the Services tab's "Check updates" button uses this to decide whether
+// to offer a real Update (GitPull + rebuild + restart) or tell the operator
+// they're already current.
+func (m *Manager) CheckUpdates(ctx context.Context) (int, error) {
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch")
+	fetchCmd.Dir = m.Root
+	hideWindow(fetchCmd)
+	if out, err := fetchCmd.CombinedOutput(); err != nil {
+		return 0, fmt.Errorf("git fetch failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	countCmd := exec.CommandContext(ctx, "git", "rev-list", "--count", "HEAD..@{upstream}")
+	countCmd.Dir = m.Root
+	hideWindow(countCmd)
+	out, err := countCmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list failed: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("parse commit count: %w", err)
+	}
+	return n, nil
+}
+
 // --- build steps ---------------------------------------------------------
 
 // GitPull runs `git pull --ff-only`, deliberately never a real merge -- see
@@ -310,6 +350,7 @@ func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
 func (m *Manager) GitPull(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "pull", "--ff-only")
 	cmd.Dir = m.Root
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	log := "$ git pull --ff-only\n" + string(out)
 	return log, err
@@ -339,6 +380,7 @@ func (m *Manager) goBuild(ctx context.Context, outPath, pkg string) (string, err
 	}
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", outPath, pkg)
 	cmd.Dir = m.Root
+	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return fmt.Sprintf("$ go build -o %s %s\n%s", filepath.Base(outPath), pkg, string(out)), err
 }

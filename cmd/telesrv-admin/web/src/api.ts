@@ -242,6 +242,7 @@ export const api = {
   serverEnv: () => request<EnvGroup[]>("/api/server/env"),
   serverStatus: () => request<ServerStatus>("/api/server/status"),
   dockerStatus: () => request<DockerService[]>("/api/server/docker-status"),
+  checkServerUpdates: () => request<{ commits_behind: number }>("/api/server/check-updates"),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {
     method: "POST",
     body: JSON.stringify(payload)

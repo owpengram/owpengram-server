@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Database, HardDrive, ImageOff, ImagePlus, Layers, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Database, Download, HardDrive, ImageOff, ImagePlus, Layers, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
@@ -69,25 +69,25 @@ function IdentitySection() {
 
   return (
     <section className="section-block">
-      <SectionHead title={"Server identity"} text={"Shown to clients auto-fetching this server's key -- takes effect immediately, no restart needed."} />
+      <SectionHead title={"Server identity"} />
       {error && <Alert>{error}</Alert>}
       {!identity ? (
         <LoadingSurface label={"Loading identity..."} />
       ) : (
-        <div className="card-body">
-          <div className="entity-head-main">
+        <div className="card-body identity-card">
+          <div className="identity-layout">
             <div className="avatar-edit-slot">
               {identity.icon_ext && !iconFailed ? (
                 <img
                   className="avatar-photo-img"
                   src={api.serverIconURL() + `&b=${iconBust}`}
                   alt=""
-                  style={{ width: 56, height: 56 }}
+                  style={{ width: 88, height: 88 }}
                   onError={() => setIconFailed(true)}
                 />
               ) : (
-                <div className="avatar-fallback server-icon-fallback" style={{ width: 56, height: 56 }}>
-                  <ImageOff size={20} />
+                <div className="avatar-fallback server-icon-fallback" style={{ width: 88, height: 88 }}>
+                  <ImageOff size={26} />
                 </div>
               )}
               <button
@@ -97,15 +97,15 @@ function IdentitySection() {
                 title={"Change server icon"}
                 onClick={() => setIconModalOpen(true)}
               >
-                <ImagePlus size={13} />
+                <ImagePlus size={14} />
               </button>
             </div>
             <div className="server-identity-fields">
               <label className="form-field"><span>{"Name"}</span><input value={name} maxLength={128} onChange={(event) => setName(event.target.value)} /></label>
-              <label className="form-field"><span>{"Description"}</span><input value={description} maxLength={512} onChange={(event) => setDescription(event.target.value)} /></label>
+              <label className="form-field"><span>{"Description"}</span><textarea rows={4} value={description} maxLength={512} onChange={(event) => setDescription(event.target.value)} /></label>
             </div>
           </div>
-          <div className="gift-table-actions">
+          <div className="gift-table-actions identity-save-row">
             <ActionButton
               tone="neutral"
               label={"Save identity"}
@@ -471,6 +471,75 @@ function dockerStatusLabel(service: DockerService): string {
 // couple seconds for no reason.
 const LIVE_POLL_MS = 4000;
 
+// UpdateButton is a two-state control: "Check updates" (a plain git fetch +
+// commit count, no side effects) until a check finds the branch behind its
+// upstream, at which point it becomes "Update (<N>)" -- a second click runs
+// the real git pull + rebuild + restart (via the existing update-server
+// action, called directly with confirm:true since the check step already
+// serves as the "are you sure" gate). Auto-checks once on mount so the
+// button reflects reality without an operator having to click twice.
+function UpdateButton({ onUpdateStarted }: { onUpdateStarted: (overlayLabel: string) => void }) {
+  const [behind, setBehind] = useState<number | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const check = useCallback(async () => {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.checkServerUpdates();
+      setBehind(result.commits_behind);
+      setMessage(result.commits_behind > 0
+        ? `${result.commits_behind} new commit${result.commits_behind === 1 ? "" : "s"} pulled from GitHub.`
+        : "Already up to date.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => { void check(); }, [check]);
+
+  async function runUpdate() {
+    const commits = behind ?? 0;
+    if (!window.confirm(`Pull ${commits} commit(s), rebuild, and restart owpengram-server and the admin panel?`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.action("/api/actions/update-server", { command_id: "", reason: "Update via Services tab", confirm: true });
+      if (result.error) {
+        setError(result.error);
+        setBusy(false);
+        return;
+      }
+      onUpdateStarted(`Pulled ${commits} commit${commits === 1 ? "" : "s"} -- rebuilding and restarting owpengram-server and the admin panel...`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  const hasUpdates = (behind ?? 0) > 0;
+
+  return (
+    <button
+      className={`btn compact-btn icon-text ${hasUpdates ? "danger" : ""}`}
+      type="button"
+      disabled={busy}
+      title={error || message || undefined}
+      onClick={() => void (hasUpdates ? runUpdate() : check())}
+    >
+      {busy ? <Loader2 className="spin" size={15} /> : hasUpdates ? <Download size={15} /> : <RefreshCw size={15} />}
+      {hasUpdates ? `Update (${behind})` : "Check updates"}
+    </button>
+  );
+}
+
 function ServicesTab() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -503,20 +572,60 @@ function ServicesTab() {
     return () => window.clearInterval(id);
   }, [load]);
 
+  const loading = status === null && docker === null && !statusError && !dockerError;
+
   return (
     <>
       <section className="section-block">
         <SectionHead
-          title={"Docker services"}
-          text={"postgres / redis / minio, from deploy/docker-compose.yml -- refreshes automatically."}
-          action={<button className="btn icon-text" type="button" onClick={() => void load()}><RefreshCw size={15} /> {"Refresh"}</button>}
+          title={"Services"}
+          action={
+            <div className="services-header-actions">
+              <UpdateButton
+                onUpdateStarted={(label) => {
+                  setOverlayLabel(label);
+                  void restartWatcher.watch();
+                }}
+              />
+              <ActionButton
+                compact
+                tone="primary"
+                label={"Restart"}
+                path="/api/actions/restart-server"
+                payload={() => ({})}
+                onDone={() => {
+                  setOverlayLabel("Restarting owpengram-server and the admin panel...");
+                  void restartWatcher.watch();
+                }}
+              />
+            </div>
+          }
         />
+        {statusError && <Alert>{statusError}</Alert>}
         {dockerError && <Alert>{dockerError}</Alert>}
-        {docker === null && !dockerError ? (
-          <LoadingSurface label={"Loading Docker status..."} />
-        ) : docker && docker.length > 0 ? (
+        {loading ? (
+          <LoadingSurface label={"Loading service status..."} />
+        ) : (
           <div className="service-grid">
-            {docker.map((service) => (
+            {status && (
+              <>
+                <ServiceCard
+                  icon={<Server size={18} />}
+                  name={"Server"}
+                  tone={status.ServerAlive ? "good" : "danger"}
+                  statusLabel={status.ServerAlive ? "running" : "stopped"}
+                  detail={status.ServerAlive ? `pid ${status.ServerPID}` : undefined}
+                />
+                <ServiceCard
+                  icon={<ShieldCheck size={18} />}
+                  name={"admin panel"}
+                  tone={status.AdminAlive ? "good" : "danger"}
+                  statusLabel={status.AdminAlive ? "running" : "stopped"}
+                  detail={status.AdminAlive ? `pid ${status.AdminPID}` : undefined}
+                />
+              </>
+            )}
+            {docker?.map((service) => (
               <ServiceCard
                 key={service.name}
                 icon={dockerServiceIcon[service.name] ?? <Database size={18} />}
@@ -527,59 +636,7 @@ function ServicesTab() {
               />
             ))}
           </div>
-        ) : docker && docker.length === 0 ? (
-          <Alert>{"No Docker Compose services found (deploy/docker-compose.yml missing, or nothing has been started yet)."}</Alert>
-        ) : null}
-      </section>
-
-      <section className="section-block">
-        <SectionHead
-          title={"Process control"}
-          text={"Restart rebuilds and relaunches owpengram-server. Update also runs git pull first and rebuilds both binaries. Either way the admin panel bounces onto its (possibly rebuilt) binary too, a few seconds after the server comes back -- this page reloads itself once that's done."}
-        />
-        {statusError && <Alert>{statusError}</Alert>}
-        {status === null && !statusError ? (
-          <LoadingSurface label={"Loading process status..."} />
-        ) : status ? (
-          <div className="service-grid">
-            <ServiceCard
-              icon={<Server size={18} />}
-              name={"owpengram-server"}
-              tone={status.ServerAlive ? "good" : "danger"}
-              statusLabel={status.ServerAlive ? "running" : "stopped"}
-              detail={status.ServerAlive ? `pid ${status.ServerPID}` : undefined}
-            />
-            <ServiceCard
-              icon={<ShieldCheck size={18} />}
-              name={"admin panel"}
-              tone={status.AdminAlive ? "good" : "danger"}
-              statusLabel={status.AdminAlive ? "running" : "stopped"}
-              detail={status.AdminAlive ? `pid ${status.AdminPID}` : undefined}
-            />
-          </div>
-        ) : null}
-        <div className="gift-table-actions">
-          <ActionButton
-            tone="warn"
-            label={"Restart server"}
-            path="/api/actions/restart-server"
-            payload={() => ({})}
-            onDone={() => {
-              setOverlayLabel("Restarting owpengram-server and the admin panel...");
-              void restartWatcher.watch();
-            }}
-          />
-          <ActionButton
-            tone="danger"
-            label={"Update (git pull + rebuild + restart)"}
-            path="/api/actions/update-server"
-            payload={() => ({})}
-            onDone={() => {
-              setOverlayLabel("Pulling, rebuilding, and restarting owpengram-server and the admin panel...");
-              void restartWatcher.watch();
-            }}
-          />
-        </div>
+        )}
       </section>
       {restartWatcher.waiting && <RestartOverlay label={overlayLabel} timedOut={false} onDismiss={restartWatcher.dismiss} />}
       {restartWatcher.timedOut && <RestartOverlay label={overlayLabel} timedOut={true} onDismiss={restartWatcher.dismiss} />}
