@@ -61,6 +61,22 @@ export function Shell({
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
   const canManageServer = useCan(permissionServerManage);
+  // Server identity (name/icon) is admin-editable per Server Settings ->
+  // Server identity, and takes over the sidebar branding when set -- the
+  // operator's own server should look like their server, not like the
+  // "OwpenGram" reference build, once they've bothered to configure it.
+  // Only fetched for sessions that can even see Server Settings; a session
+  // without that permission just gets the default branding.
+  const [identity, setIdentity] = useState<{ name: string; iconExt?: string } | null>(null);
+  useEffect(() => {
+    if (!canManageServer) return;
+    api.serverIdentity()
+      .then((info) => setIdentity({ name: info.name, iconExt: info.icon_ext }))
+      .catch(() => undefined);
+  }, [canManageServer]);
+  const [brandIconFailed, setBrandIconFailed] = useState(false);
+  const brandName = identity?.name?.trim() || "OwpenGram";
+  const brandIconSrc = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
   // Third-party verification is additionally hidden by default (not fully
   // finished) regardless of what the session was granted -- see permissions.tsx.
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
@@ -82,9 +98,9 @@ export function Shell({
     <div className="shell">
       <aside className="sidebar">
         <AppLink className="brand" href="/" navigate={navigate}>
-          <span className="brand-mark"><img src="/logo.png" alt="OwpenGram" /></span>
+          <span className="brand-mark"><img src={brandIconSrc} alt={brandName} onError={() => setBrandIconFailed(true)} /></span>
           <span>
-            <strong>OwpenGram</strong>
+            <strong>{brandName}</strong>
             <small>{"Admin Console"}</small>
           </span>
         </AppLink>
