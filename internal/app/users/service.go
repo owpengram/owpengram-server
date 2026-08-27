@@ -31,6 +31,9 @@ type Service struct {
 	// while true, ResolveUsername never resolves @marksbot
 	// (domain.VerifierBotUserID), so a client cannot discover it by username.
 	hideThirdPartyVerification bool
+	// reserved blocks UpdateUsername (self-service only) from claiming a
+	// config.ReservedUsernames entry -- see domain.ReservedUsernameSet.
+	reserved domain.ReservedUsernameSet
 }
 
 type usernameAvailabilityStore interface {
@@ -72,6 +75,12 @@ func WithAccountFreezeProvider(p userprojection.AccountFreezeProvider) Option {
 // while true, ResolveUsername treats @marksbot as not found.
 func WithHideThirdPartyVerification(hidden bool) Option {
 	return func(s *Service) { s.hideThirdPartyVerification = hidden }
+}
+
+// WithReservedUsernames mirrors config.ReservedUsernames: UpdateUsername
+// (self-service only) refuses to set any of these.
+func WithReservedUsernames(names []string) Option {
+	return func(s *Service) { s.reserved = domain.NewReservedUsernameSet(names) }
 }
 
 const (
@@ -240,8 +249,16 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 		return domain.User{}, err
 	}
 	username = normalizeUsername(username)
+	// Re-submitting the username the account already has is a no-op, not a
+	// claim -- checked before any validation (including the reserved-word
+	// list) so a name that was fine to keep before this feature existed
+	// (or before it was added to config.ReservedUsernames) never gets
+	// rejected just because the client re-sent an unchanged value.
+	if self.Username == username {
+		return s.projectOne(ctx, self.ID, self)
+	}
 	if username != "" {
-		if !validUsername(username) {
+		if !validUsername(username) || s.reserved.Contains(username) {
 			return domain.User{}, domain.ErrUsernameInvalid
 		}
 		ok, err := s.checkUsernameAvailable(ctx, self.ID, username)
@@ -251,9 +268,6 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 		if !ok {
 			return domain.User{}, domain.ErrUsernameOccupied
 		}
-	}
-	if self.Username == username {
-		return s.projectOne(ctx, self.ID, self)
 	}
 	u, err := s.users.UpdateUsername(ctx, self.ID, username)
 	if err != nil {

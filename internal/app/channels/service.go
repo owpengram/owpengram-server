@@ -23,6 +23,10 @@ type Service struct {
 	participantCache  *participantsReadModelCache
 	activeIDsCache    *activeChannelIDsReadModelCache
 	botMemberIDsCache *activeBotMemberIDsCache
+	// reserved blocks the self-service UpdateUsername (not AdminSetUsername)
+	// from claiming a config.ReservedUsernames entry -- see
+	// domain.ReservedUsernameSet.
+	reserved domain.ReservedUsernameSet
 }
 
 type Option func(*Service)
@@ -65,6 +69,14 @@ func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 func WithSendPermissionChecker(c SendPermissionChecker) Option {
 	return func(s *Service) {
 		s.sendGate = c
+	}
+}
+
+// WithReservedUsernames mirrors config.ReservedUsernames: the self-service
+// UpdateUsername refuses to set any of these.
+func WithReservedUsernames(names []string) Option {
+	return func(s *Service) {
+		s.reserved = domain.NewReservedUsernameSet(names)
 	}
 }
 
@@ -501,8 +513,19 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, req domain.U
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	req.Username = normalizeChannelUsername(req.Username)
-	if req.Username != "" && !validChannelUsername(req.Username) {
-		return domain.Channel{}, domain.ErrUsernameInvalid
+	// Re-submitting the username the channel already has is a no-op, not a
+	// claim -- checked before any validation (including the reserved-word
+	// list) so a name that was fine to keep before this feature existed (or
+	// before it was added to config.ReservedUsernames) never gets rejected
+	// just because the client re-sent an unchanged value.
+	current, err := s.channels.GetChannelByID(ctx, req.ChannelID)
+	if err != nil {
+		return domain.Channel{}, err
+	}
+	if !strings.EqualFold(current.Username, req.Username) {
+		if req.Username != "" && (!validChannelUsername(req.Username) || s.reserved.Contains(req.Username)) {
+			return domain.Channel{}, domain.ErrUsernameInvalid
+		}
 	}
 	return s.channels.UpdateUsername(ctx, req)
 }

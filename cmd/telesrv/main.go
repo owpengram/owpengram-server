@@ -63,6 +63,7 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
+	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/otpdelivery"
@@ -829,10 +830,25 @@ func run(logger *zap.Logger) error {
 			zap.Int("blobs", stats.Blobs),
 		)
 	}
-	if seeded, err := filesService.SeedOfficialSystemAvatar(ctx); err != nil {
+	// The official system account (777000) mirrors the operator's own Server
+	// Settings -> Server identity, when set: same "default unless
+	// configured" contract as the client-facing /owpengram/server-info
+	// endpoint, just applied to this one built-in account's display name
+	// and avatar instead of what's shown to a client adding the server.
+	identityStore := identity.NewStore(cfg.IdentityDir)
+	serverIdentity, err := identityStore.Get()
+	if err != nil {
+		return fmt.Errorf("read server identity: %w", err)
+	}
+	domain.SetOfficialSystemUserDisplayName(serverIdentity.Name)
+	var customSystemIcon []byte
+	if iconData, _, ok := identityStore.Icon(); ok {
+		customSystemIcon = iconData
+	}
+	if usingCustom, err := filesService.SeedOfficialSystemAvatar(ctx, customSystemIcon); err != nil {
 		return fmt.Errorf("seed official system avatar: %w", err)
-	} else if seeded {
-		logger.Info("official system account avatar seed import complete", zap.Int64("photo_id", domain.OfficialSystemUserPhotoID))
+	} else if usingCustom {
+		logger.Info("official system account avatar seed import complete (custom Server identity icon)", zap.Int64("photo_id", domain.OfficialSystemUserPhotoID))
 	}
 	if seeded, err := filesService.SeedBotFatherAvatar(ctx); err != nil {
 		return fmt.Errorf("seed botfather avatar: %w", err)
@@ -1113,7 +1129,7 @@ func run(logger *zap.Logger) error {
 		passkeyapp.WithAllowedOrigins(cfg.PasskeyAllowedOrigins))
 	// 自定义云主题(Create a New Theme):主题目录与每用户已安装列表均持久化到 postgres。
 	themeService := themesapp.NewService(postgres.NewThemeStore(pool))
-	usersService := users.NewService(userStore, users.WithBaseUserCache(userCache), users.WithContactStore(contactStore), users.WithPhotoProvider(cachedPhotos), users.WithPrivacyEvaluator(privacyService), users.WithAccountFreezeProvider(adminService), users.WithHideThirdPartyVerification(cfg.HideThirdPartyVerification))
+	usersService := users.NewService(userStore, users.WithBaseUserCache(userCache), users.WithContactStore(contactStore), users.WithPhotoProvider(cachedPhotos), users.WithPrivacyEvaluator(privacyService), users.WithAccountFreezeProvider(adminService), users.WithHideThirdPartyVerification(cfg.HideThirdPartyVerification), users.WithReservedUsernames(cfg.ReservedUsernames))
 	privacyService.ConfigureReadModels(usersService, channelStore)
 	aiComposeService := aiapp.NewService(aiComposeStore, newAIComposeOptions(cfg, rateLimiter, usersService.PremiumActive, logger)...)
 	botsService.SetAIChatGenerator(aiComposeService)
@@ -1132,6 +1148,7 @@ func run(logger *zap.Logger) error {
 		channelapp.WithBotProfileResolver(botsService),
 		channelapp.WithReadModelVersions(readModelVersionStore),
 		channelapp.WithSendPermissionChecker(adminService),
+		channelapp.WithReservedUsernames(cfg.ReservedUsernames),
 	)
 	communitiesService := communitiesapp.NewService(communityStore)
 	ephemeralService := ephemeralapp.NewService(ephemeralStore, channelsService, usersService, botsService)

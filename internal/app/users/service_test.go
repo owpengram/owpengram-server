@@ -89,6 +89,43 @@ func TestServiceUsernameLifecycle(t *testing.T) {
 	}
 }
 
+// TestServiceUsernameReservedBlocksNewClaimsButKeepsExisting locks in the
+// grandfather behavior config.ReservedUsernames needs: adding a word to the
+// list (or turning the feature on after channels/accounts already own a
+// matching username) must never break an account that already has it --
+// only a genuinely new claim of a reserved word is refused.
+func TestServiceUsernameReservedBlocksNewClaimsButKeepsExisting(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewUserStore()
+	grandfathered, err := store.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000003", FirstName: "Old", Username: "admin"})
+	if err != nil {
+		t.Fatalf("create grandfathered: %v", err)
+	}
+	newcomer, err := store.Create(ctx, domain.User{AccessHash: 2, Phone: "15550000004", FirstName: "New"})
+	if err != nil {
+		t.Fatalf("create newcomer: %v", err)
+	}
+	svc := NewService(store, WithReservedUsernames([]string{"admin"}))
+
+	// Re-submitting the exact same (grandfathered) reserved username -- the
+	// shape a client resubmitting an unmodified field sends, "@" prefix and
+	// all -- must be a no-op, not a rejection.
+	if u, err := svc.UpdateUsername(ctx, grandfathered.ID, "@admin"); err != nil || u.Username != "admin" {
+		t.Fatalf("re-submit grandfathered username = user %+v err %v, want no-op keeping %q", u, err, "admin")
+	}
+	// A different account claiming the same reserved word for the first time
+	// must still be refused.
+	if _, err := svc.UpdateUsername(ctx, newcomer.ID, "admin"); !errors.Is(err, domain.ErrUsernameInvalid) {
+		t.Fatalf("new claim of reserved username err = %v, want username invalid", err)
+	}
+	// The grandfathered account moving to a *different* reserved word is a
+	// genuine new claim too, and must be refused the same way.
+	svc2 := NewService(store, WithReservedUsernames([]string{"admin", "support"}))
+	if _, err := svc2.UpdateUsername(ctx, grandfathered.ID, "support"); !errors.Is(err, domain.ErrUsernameInvalid) {
+		t.Fatalf("grandfathered account claiming a different reserved word err = %v, want username invalid", err)
+	}
+}
+
 // marksbotOverrideStore wraps memory.UserStore to serve domain.VerifierBotUser()
 // for a fixed username lookup, since memory.UserStore.Create always assigns an
 // id from its own auto-increment sequence and can never produce the fixed

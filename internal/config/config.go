@@ -112,6 +112,15 @@ type Config struct {
 	// server-provided text, so operators set these to their audience language.
 	ScamWarning string
 	FakeWarning string
+	// ReservedUsernames blocks self-service username registration/changes
+	// (account.updateUsername, channels.updateUsername) from claiming any
+	// of these, case-insensitively -- brand-adjacent or staff-sounding
+	// handles (owpengram, admin, support), or the operator's own real name,
+	// so a user can't squat an identity that would read as official.
+	// Admin-panel-driven username assignment bypasses this deliberately: an
+	// operator setting one of these on an account on purpose is not the
+	// squatting this exists to stop.
+	ReservedUsernames []string
 	// PublicLinkWebAddr 是公开链接落地页监听地址；为空关闭。
 	// 生产应只监听 loopback，并由 nginx 将 /<username>、/addstickers/、/addemoji/、
 	// /addlist/ 与 hash-only /appeal/ 路由反代到该地址。
@@ -701,6 +710,9 @@ func Load() (Config, error) {
 		PublicDownloadURL:                    publicDownloadURL,
 		ScamWarning:                          envAllowEmptyOr("TELESRV_SCAM_WARNING", ""),
 		FakeWarning:                          envAllowEmptyOr("TELESRV_FAKE_WARNING", ""),
+		ReservedUsernames: envListOr("TELESRV_RESERVED_USERNAMES", []string{
+			"owpengram", "admin", "administrator", "support", "staff", "moderator", "official", "root", "owner",
+		}),
 		PublicLinkWebAddr:                    envAllowEmptyOr("TELESRV_PUBLIC_LINK_WEB_ADDR", ""),
 		TelegramLoginEnabled:                 envBoolOr("TELESRV_TELEGRAM_LOGIN_ENABLE", false),
 		TelegramLoginIssuer:                  strings.TrimSuffix(envOr("TELESRV_TELEGRAM_LOGIN_ISSUER", publicBaseURL), "/"),

@@ -2716,6 +2716,46 @@ func TestChannelUsernameAndSignatures(t *testing.T) {
 	}
 }
 
+// TestChannelUsernameReservedBlocksNewClaimsButKeepsExisting mirrors
+// internal/app/users' identical test: adding a word to
+// config.ReservedUsernames (or turning the feature on after a channel
+// already owns a matching username) must never break a channel that
+// already has it -- only a genuinely new claim of a reserved word is
+// refused.
+func TestChannelUsernameReservedBlocksNewClaimsButKeepsExisting(t *testing.T) {
+	ctx := context.Background()
+	channelStore := memory.NewChannelStore()
+	service := NewService(channelStore, WithReservedUsernames([]string{"admin"}))
+	grandfathered, err := service.CreateMegagroupFromCreateChat(ctx, 1001, domain.CreateChannelRequest{Title: "Old", Date: 10})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat: %v", err)
+	}
+	if _, err := channelStore.UpdateUsername(ctx, domain.UpdateChannelUsernameRequest{
+		ChannelID: grandfathered.Channel.ID,
+		UserID:    1001,
+		Username:  "admin",
+	}); err != nil {
+		t.Fatalf("seed grandfathered username directly on the store: %v", err)
+	}
+	newcomer, err := service.CreateMegagroupFromCreateChat(ctx, 1002, domain.CreateChannelRequest{Title: "New", Date: 11})
+	if err != nil {
+		t.Fatalf("CreateMegagroupFromCreateChat other: %v", err)
+	}
+
+	// Re-submitting the exact same (grandfathered) reserved username falls
+	// through to the store's own no-op detection (ErrChannelNotModified),
+	// not a validation rejection -- reaching that error at all proves the
+	// reserved check was bypassed for the unchanged value.
+	if _, err := service.UpdateUsername(ctx, 1001, domain.UpdateChannelUsernameRequest{ChannelID: grandfathered.Channel.ID, Username: "@Admin"}); !errors.Is(err, domain.ErrChannelNotModified) {
+		t.Fatalf("re-submit grandfathered username err = %v, want ErrChannelNotModified", err)
+	}
+	// A different channel claiming the same reserved word for the first
+	// time must still be refused.
+	if _, err := service.UpdateUsername(ctx, 1002, domain.UpdateChannelUsernameRequest{ChannelID: newcomer.Channel.ID, Username: "admin"}); !errors.Is(err, domain.ErrUsernameInvalid) {
+		t.Fatalf("new claim of reserved username err = %v, want username invalid", err)
+	}
+}
+
 func TestListStoryPostableChannelsFiltersPostStoryRights(t *testing.T) {
 	ctx := context.Background()
 	service := NewService(memory.NewChannelStore())

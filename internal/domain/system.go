@@ -107,6 +107,23 @@ func SetOfficialSystemUserAvatar(dcID int, stripped []byte) {
 	officialSystemUserPhotoStripped = stripped
 }
 
+// officialSystemUserDisplayName overrides OfficialSystemUser's FirstName --
+// empty means "use branding.ProductName" (the compile-time default), set
+// once at startup from the operator's Server Settings -> Server identity
+// name, if any. Deliberately only the display name, not Username: the
+// account's @username is a stable, addressable identifier other things may
+// already reference, unlike the display name shown in chat headers.
+var officialSystemUserDisplayName string
+
+// SetOfficialSystemUserDisplayName records the operator's custom server
+// name for the official system account (777000), read once at startup from
+// Server Settings -> Server identity. Pass "" to fall back to
+// branding.ProductName -- the same "unset -> default" contract the avatar
+// override above uses.
+func SetOfficialSystemUserDisplayName(name string) {
+	officialSystemUserDisplayName = strings.TrimSpace(name)
+}
+
 // botFatherPhotoDCID/Stripped 由 files.Service.SeedBotFatherAvatar 在启动时
 // 通过 SetBotFatherAvatar 写入一次；写入前 BotFatherUser() 不带头像（PhotoID==0）。
 var (
@@ -167,13 +184,20 @@ func SetVerifyBotAvatar(dcID int, stripped []byte) {
 }
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
+// No Username: the real Telegram service account (777000) isn't
+// @-addressable either, and reserving one here would need it re-blocked in
+// config.ReservedUsernames (which it now is, by default, precisely because
+// nothing keeps another account from claiming it once this one has none).
 func OfficialSystemUser() User {
+	name := branding.ProductName
+	if officialSystemUserDisplayName != "" {
+		name = officialSystemUserDisplayName
+	}
 	u := User{
 		ID:         OfficialSystemUserID,
 		AccessHash: 6599886787491911851,
 		Phone:      "42777",
-		FirstName:  branding.ProductName,
-		Username:   branding.ProductUsername,
+		FirstName:  name,
 		Verified:   true,
 		Support:    true,
 	}

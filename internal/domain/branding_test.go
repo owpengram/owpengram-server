@@ -7,8 +7,10 @@ import (
 
 func TestServiceIdentityAndLoginMessageUseOwpenGramBrand(t *testing.T) {
 	serviceUser := OfficialSystemUser()
-	if serviceUser.FirstName != "OwpenGram" || serviceUser.Username != "owpengram" {
-		t.Fatalf("service user = %+v, want OwpenGram identity", serviceUser)
+	// No Username by design -- see OfficialSystemUser's doc comment: real
+	// Telegram's own 777000 isn't @-addressable either.
+	if serviceUser.FirstName != "OwpenGram" || serviceUser.Username != "" {
+		t.Fatalf("service user = %+v, want OwpenGram identity with no username", serviceUser)
 	}
 	message, err := OfficialLoginCodeMessage(42, "12345", 1)
 	if err != nil {

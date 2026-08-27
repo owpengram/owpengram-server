@@ -77,6 +77,23 @@ export function Shell({
   const [brandIconFailed, setBrandIconFailed] = useState(false);
   const brandName = identity?.name?.trim() || "OwpenGram";
   const brandIconSrc = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+
+  // The browser tab (title + favicon) follows the same custom-identity
+  // override as the sidebar brand above, so a re-labeled server actually
+  // looks like itself in the tab strip too, not just inside the app.
+  useEffect(() => {
+    document.title = `${brandName} Admin`;
+  }, [brandName]);
+  useEffect(() => {
+    let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity?.iconExt, brandIconFailed]);
   // Third-party verification is additionally hidden by default (not fully
   // finished) regardless of what the session was granted -- see permissions.tsx.
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
