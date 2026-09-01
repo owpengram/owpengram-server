@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"telesrv/internal/admin"
+	"telesrv/internal/domain"
+	"telesrv/internal/identity"
 )
 
 // serverManage gates the whole Server Settings surface -- see
@@ -47,13 +49,39 @@ func serverCommandResult(meta admin.CommandMeta, action string, err error, messa
 
 // --- identity (name/description/icon) ---------------------------------
 
+// serverIdentityAPIResponse extends identity.Info's raw fields with the two
+// *effective* fallback welcome-message templates -- s.cfg's
+// WelcomeMessage{Phone,Email}Default, i.e. this admin process's own reading
+// of TELESRV_WELCOME_MESSAGE_*_TEMPLATE (env var, itself defaulting to the
+// compiled-in copy), which matches what owpengram-server falls back to
+// whenever the panel override is unset, as long as both processes share the
+// same .env (see uiConfig.WelcomeMessagePhoneDefault's doc comment). The
+// panel needs both: the raw override (possibly empty) to know whether a
+// field is "explicitly set", and the default text to show as "(using
+// default: ...)" / to restore on Reset.
+type serverIdentityAPIResponse struct {
+	identity.Info
+	DefaultWelcomeMessagePhoneTemplate string `json:"default_welcome_message_phone_template"`
+	DefaultWelcomeMessageEmailTemplate string `json:"default_welcome_message_email_template"`
+	// DefaultLoginCodeMessageTemplate is the effective fallback text for
+	// the login-code delivery message (s.cfg.LoginCodeMessageDefault) --
+	// same "raw override + effective default" contract as the two fields
+	// above, see their doc comment.
+	DefaultLoginCodeMessageTemplate string `json:"default_login_code_message_template"`
+}
+
 func (s *server) handleServerIdentityAPI(w http.ResponseWriter, r *http.Request) {
 	info, err := s.identity.Get()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, info)
+	writeJSON(w, http.StatusOK, serverIdentityAPIResponse{
+		Info:                               info,
+		DefaultWelcomeMessagePhoneTemplate: s.cfg.WelcomeMessagePhoneDefault,
+		DefaultWelcomeMessageEmailTemplate: s.cfg.WelcomeMessageEmailDefault,
+		DefaultLoginCodeMessageTemplate:    s.cfg.LoginCodeMessageDefault,
+	})
 }
 
 // handleServerIconAPI serves the icon's raw bytes for the panel's own
@@ -99,6 +127,84 @@ func (s *server) handleSetServerIdentityAPI(w http.ResponseWriter, r *http.Reque
 	}
 	err := s.identity.SetText(body.Name, body.Description)
 	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_identity", err, "server identity updated", details))
+}
+
+// --- login-notification templates ---------------------------------------
+
+type setWelcomeMessageTemplatesAPIRequest struct {
+	CommandID     string `json:"command_id"`
+	Reason        string `json:"reason"`
+	Confirm       bool   `json:"confirm"`
+	PhoneTemplate string `json:"phone_template"`
+	EmailTemplate string `json:"email_template"`
+}
+
+// handleSetWelcomeMessageTemplatesAPI sets (or, with an empty string,
+// clears) the admin-panel override for the 777000 login-notification
+// message's phone/email template -- see identity.Store.SetWelcomeMessageTemplates
+// and domain.ResolveWelcomeMessageTemplate. Deliberately a separate endpoint
+// from set-server-identity: brand identity (name/description/icon) and
+// login-notification copy are different concerns that happen to share the
+// same on-disk identity.json, and keeping them as separate actions/buttons
+// means editing one never risks silently blanking the other.
+func (s *server) handleSetWelcomeMessageTemplatesAPI(w http.ResponseWriter, r *http.Request) {
+	var body setWelcomeMessageTemplatesAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-welcome-message-templates")
+	details := map[string]any{
+		"phone_template_set": strings.TrimSpace(body.PhoneTemplate) != "",
+		"email_template_set": strings.TrimSpace(body.EmailTemplate) != "",
+	}
+	if meta.DryRun {
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", nil, "login-notification templates validated", details))
+		return
+	}
+	err := s.identity.SetWelcomeMessageTemplates(body.PhoneTemplate, body.EmailTemplate)
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_welcome_message_templates", err, "login-notification templates updated", details))
+}
+
+// --- login-code delivery message template --------------------------------
+
+type setLoginCodeMessageTemplateAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	Template  string `json:"template"`
+}
+
+// handleSetLoginCodeMessageTemplateAPI sets (or, with an empty string,
+// clears) the admin-panel override for the 777000 login-code delivery
+// message -- see identity.Store.SetLoginCodeMessageTemplate and
+// domain.ResolveLoginCodeMessageTemplate. A dedicated endpoint (not folded
+// into set-welcome-message-templates): this message embeds the actual OTP
+// code via the {{code}} placeholder, so a save here carries an extra,
+// security-relevant validation the login-notification templates don't
+// need -- a template missing {{code}} (or containing it more than once)
+// would either silently drop the code from the message or leave it
+// ambiguous which occurrence carries it, so it is rejected outright with a
+// 422 rather than saved. Clearing the override (empty string) is exempt --
+// it always resolves to a valid built-in/env default.
+func (s *server) handleSetLoginCodeMessageTemplateAPI(w http.ResponseWriter, r *http.Request) {
+	var body setLoginCodeMessageTemplateAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	if t := strings.TrimSpace(body.Template); t != "" {
+		if err := domain.ValidateLoginCodeMessageTemplate(t); err != nil {
+			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-login-code-message-template")
+	details := map[string]any{"template_set": strings.TrimSpace(body.Template) != ""}
+	if meta.DryRun {
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", nil, "login-code message template validated", details))
+		return
+	}
+	err := s.identity.SetLoginCodeMessageTemplate(body.Template)
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.set_login_code_message_template", err, "login-code message template updated", details))
 }
 
 var allowedServerIconExts = map[string]bool{

@@ -30,6 +30,7 @@ export function ServerSettingsPage() {
       {tab === "settings" ? (
         <div className="stacked-sections">
           <IdentitySection />
+          <LoginNotificationsSection />
           <EnvSection />
         </div>
       ) : (
@@ -122,6 +123,168 @@ function IdentitySection() {
           onClose={() => setIconModalOpen(false)}
           onDone={() => { setIconBust((n) => n + 1); setIconFailed(false); void load(); }}
         />
+      )}
+    </section>
+  );
+}
+
+// --- Login notifications ------------------------------------------------
+
+// LoginNotificationsSection edits the 777000 login-notification message's
+// per-method (phone/email) template -- a different concern from brand
+// identity above even though both live in the same identity.json (see
+// cmd/telesrv-admin/serversettings.go's handleSetWelcomeMessageTemplatesAPI
+// doc comment), so it gets its own card and its own save action.
+function LoginNotificationsSection() {
+  const [identity, setIdentity] = useState<ServerIdentity | null>(null);
+  const [phoneTemplate, setPhoneTemplate] = useState("");
+  const [emailTemplate, setEmailTemplate] = useState("");
+  const [codeTemplate, setCodeTemplate] = useState("");
+  const [error, setError] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      const info = await api.serverIdentity();
+      setIdentity(info);
+      setPhoneTemplate(info.welcome_message_phone_template ?? "");
+      setEmailTemplate(info.welcome_message_email_template ?? "");
+      setCodeTemplate(info.login_code_message_template ?? "");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  const phoneIsOverridden = phoneTemplate.trim() !== "";
+  const emailIsOverridden = emailTemplate.trim() !== "";
+  const codeIsOverridden = codeTemplate.trim() !== "";
+  // Mirrors the server-side check in handleSetLoginCodeMessageTemplateAPI --
+  // disable the save button instead of letting the operator submit a
+  // template that would silently never deliver the actual OTP code.
+  const codeOccurrences = (codeTemplate.match(/\{\{code\}\}/g) ?? []).length;
+  const codeTemplateInvalid = codeIsOverridden && codeOccurrences !== 1;
+
+  return (
+    <section className="section-block">
+      <SectionHead title={"Login notifications"} />
+      {error && <Alert>{error}</Alert>}
+      {!identity ? (
+        <LoadingSurface label={"Loading login notification templates..."} />
+      ) : (
+        <div className="card-body">
+          <p style={{ color: "var(--muted)", marginTop: 0 }}>
+            {"Sent from the official system account on every completed sign-in. Use "}
+            <code>{"{{server_name}}"}</code>
+            {" to insert the server's configured name."}
+          </p>
+          <label className="form-field">
+            <span>
+              {"Phone sign-in template"}
+              {" "}
+              {phoneIsOverridden ? <span className="badge good">{"custom"}</span> : <span className="badge">{"default"}</span>}
+            </span>
+            <textarea
+              rows={4}
+              value={phoneTemplate}
+              onChange={(event) => setPhoneTemplate(event.target.value)}
+              placeholder={identity.default_welcome_message_phone_template}
+            />
+          </label>
+          <div className="gift-table-actions">
+            <ActionButton
+              tone="neutral"
+              compact
+              label={"Reset to default"}
+              path="/api/actions/set-welcome-message-templates"
+              payload={() => ({ phone_template: "", email_template: emailTemplate })}
+              disabled={!phoneIsOverridden}
+              onDone={() => { setPhoneTemplate(""); void load(); }}
+            />
+          </div>
+          <label className="form-field">
+            <span>
+              {"Email sign-in template"}
+              {" "}
+              {emailIsOverridden ? <span className="badge good">{"custom"}</span> : <span className="badge">{"default"}</span>}
+            </span>
+            <textarea
+              rows={4}
+              value={emailTemplate}
+              onChange={(event) => setEmailTemplate(event.target.value)}
+              placeholder={identity.default_welcome_message_email_template}
+            />
+          </label>
+          <div className="gift-table-actions">
+            <ActionButton
+              tone="neutral"
+              compact
+              label={"Reset to default"}
+              path="/api/actions/set-welcome-message-templates"
+              payload={() => ({ phone_template: phoneTemplate, email_template: "" })}
+              disabled={!emailIsOverridden}
+              onDone={() => { setEmailTemplate(""); void load(); }}
+            />
+          </div>
+          <div className="gift-table-actions identity-save-row">
+            <ActionButton
+              tone="neutral"
+              label={"Save login notification templates"}
+              path="/api/actions/set-welcome-message-templates"
+              payload={() => ({ phone_template: phoneTemplate, email_template: emailTemplate })}
+              onDone={() => void load()}
+            />
+          </div>
+          <p style={{ color: "var(--muted)", marginTop: "1.5em", borderTop: "1px solid var(--line)", paddingTop: "1em" }}>
+            {"Sent from the official system account with every login code (SMS and email alike). Must contain "}
+            <code>{"{{code}}"}</code>
+            {" exactly once -- that's where the actual code is inserted and bolded. "}
+            <code>{"{{server_name}}"}</code>
+            {" is optional and may appear any number of times."}
+          </p>
+          <label className="form-field">
+            <span>
+              {"Login-code message template"}
+              {" "}
+              {codeIsOverridden ? <span className="badge good">{"custom"}</span> : <span className="badge">{"default"}</span>}
+            </span>
+            <textarea
+              rows={5}
+              value={codeTemplate}
+              onChange={(event) => setCodeTemplate(event.target.value)}
+              placeholder={identity.default_login_code_message_template}
+            />
+            {codeTemplateInvalid && (
+              <span style={{ color: "var(--danger-text)", fontSize: "0.85em" }}>
+                {codeOccurrences === 0
+                  ? "Must contain {{code}} exactly once -- it is currently missing."
+                  : `Must contain {{code}} exactly once -- it currently appears ${codeOccurrences} times.`}
+              </span>
+            )}
+          </label>
+          <div className="gift-table-actions">
+            <ActionButton
+              tone="neutral"
+              compact
+              label={"Reset to default"}
+              path="/api/actions/set-login-code-message-template"
+              payload={() => ({ template: "" })}
+              disabled={!codeIsOverridden}
+              onDone={() => { setCodeTemplate(""); void load(); }}
+            />
+          </div>
+          <div className="gift-table-actions identity-save-row">
+            <ActionButton
+              tone="neutral"
+              label={"Save login-code message template"}
+              path="/api/actions/set-login-code-message-template"
+              payload={() => ({ template: codeTemplate })}
+              disabled={codeTemplateInvalid}
+              onDone={() => void load()}
+            />
+          </div>
+        </div>
       )}
     </section>
   );

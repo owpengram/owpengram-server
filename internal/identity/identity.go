@@ -29,6 +29,26 @@ type Info struct {
 	// icon has been uploaded. Kept alongside Name/Description so Store can
 	// find the icon file without a directory listing.
 	IconExt string `json:"icon_ext,omitempty"`
+	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate are raw
+	// admin-panel overrides for the login-notification message sent from
+	// the official system account (777000) on every completed phone/email
+	// sign-in -- see domain.ResolveWelcomeMessageTemplate. Empty means "not
+	// configured": the resolver falls through to the TELESRV_WELCOME_MESSAGE_*
+	// env var, then the compiled-in default. Deliberately stored raw (not
+	// pre-resolved), so a deployment that never touches the panel keeps
+	// tracking whatever the fallback currently is, including future changes
+	// to the compiled-in default.
+	WelcomeMessagePhoneTemplate string `json:"welcome_message_phone_template,omitempty"`
+	WelcomeMessageEmailTemplate string `json:"welcome_message_email_template,omitempty"`
+	// LoginCodeMessageTemplate is the raw admin-panel override for the
+	// 777000 login-code delivery message (see
+	// domain.ResolveLoginCodeMessageTemplate). Unlike the welcome-message
+	// templates above there is only one -- the message never varies by
+	// delivery channel. Empty means "not configured": the resolver falls
+	// through to the TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE env var, then the
+	// compiled-in default. Stored raw, same "not pre-resolved" contract as
+	// the welcome-message overrides.
+	LoginCodeMessageTemplate string `json:"login_code_message_template,omitempty"`
 }
 
 // Store reads/writes Info and the icon file under a directory (typically
@@ -77,6 +97,42 @@ func (s *Store) SetText(name, description string) error {
 	}
 	info.Name = strings.TrimSpace(name)
 	info.Description = strings.TrimSpace(description)
+	return s.save(info)
+}
+
+// SetWelcomeMessageTemplates updates the login-notification template
+// overrides, preserving whatever name/description/icon is already
+// configured. An empty string in either argument clears that method's
+// override (falls back to the env var / compiled-in default -- see Info's
+// field comments), following the same "empty means unset" convention as the
+// rest of Info.
+func (s *Store) SetWelcomeMessageTemplates(phone, email string) error {
+	info, err := s.Get()
+	if err != nil {
+		return err
+	}
+	info.WelcomeMessagePhoneTemplate = strings.TrimSpace(phone)
+	info.WelcomeMessageEmailTemplate = strings.TrimSpace(email)
+	return s.save(info)
+}
+
+// SetLoginCodeMessageTemplate updates the login-code delivery message's
+// admin-panel override, preserving whatever else is already configured. An
+// empty string clears the override (falls back to the env var / compiled-in
+// default -- same "empty means unset" convention as the rest of Info).
+// Unlike SetWelcomeMessageTemplates there is no per-method split: every
+// login code, regardless of delivery channel, uses the same template.
+//
+// Callers must validate template with domain.ValidateLoginCodeMessageTemplate
+// before calling this -- this method does not itself reject a template
+// missing the {{code}} placeholder, since internal/identity does not depend
+// on internal/domain (see the package doc comment).
+func (s *Store) SetLoginCodeMessageTemplate(template string) error {
+	info, err := s.Get()
+	if err != nil {
+		return err
+	}
+	info.LoginCodeMessageTemplate = strings.TrimSpace(template)
 	return s.save(info)
 }
 

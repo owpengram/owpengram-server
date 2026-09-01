@@ -49,11 +49,12 @@ func TestLoginCodeDeliveryKeyAndFingerprint(t *testing.T) {
 }
 
 func TestRestoreLoginCodeDeliveryMessage(t *testing.T) {
-	got, err := RestoreLoginCodeDeliveryMessage(1000000001, "12345", 1700000000, 91, 7, 12)
+	const template = "Your code is {{code}}."
+	got, err := RestoreLoginCodeDeliveryMessage(1000000001, template, "12345", 1700000000, 91, 7, 12)
 	if err != nil {
 		t.Fatalf("RestoreLoginCodeDeliveryMessage: %v", err)
 	}
-	want, err := domain.OfficialLoginCodeMessage(1000000001, "12345", 1700000000)
+	want, err := domain.OfficialLoginCodeMessage(1000000001, template, "12345", 1700000000)
 	if err != nil {
 		t.Fatalf("OfficialLoginCodeMessage: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestRestoreLoginCodeDeliveryMessage(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("restored message = %+v, want %+v", got, want)
 	}
-	if _, err := RestoreLoginCodeDeliveryMessage(1000000001, "12345", 1700000000, 0, 7, 12); !errors.Is(err, domain.ErrLoginCodeDeliveryInvalid) {
+	if _, err := RestoreLoginCodeDeliveryMessage(1000000001, template, "12345", 1700000000, 0, 7, 12); !errors.Is(err, domain.ErrLoginCodeDeliveryInvalid) {
 		t.Fatalf("invalid uid err = %v, want ErrLoginCodeDeliveryInvalid", err)
 	}
 }

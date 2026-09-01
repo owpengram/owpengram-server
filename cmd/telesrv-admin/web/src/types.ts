@@ -851,6 +851,26 @@ export type ServerIdentity = {
   name: string;
   description: string;
   icon_ext?: string;
+  // welcome_message_*_template: raw admin-panel override for the 777000
+  // login-notification message, empty when unset (falls back to the
+  // TELESRV_WELCOME_MESSAGE_*_TEMPLATE env var, then a built-in default).
+  welcome_message_phone_template?: string;
+  welcome_message_email_template?: string;
+  // default_welcome_message_*_template: the effective fallback text this
+  // admin process currently reads (env var if set, else the compiled-in
+  // copy) -- shown when the override above is empty.
+  default_welcome_message_phone_template: string;
+  default_welcome_message_email_template: string;
+  // login_code_message_template: raw admin-panel override for the 777000
+  // login-code delivery message, empty when unset (falls back to the
+  // TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE env var, then a built-in default).
+  // Unlike the welcome_message_* templates there is only one -- the
+  // message never varies by delivery channel. Must contain the {{code}}
+  // placeholder exactly once (enforced server-side on save).
+  login_code_message_template?: string;
+  // default_login_code_message_template: the effective fallback text this
+  // admin process currently reads -- shown when the override above is empty.
+  default_login_code_message_template: string;
 };
 
 export type EnvField = {

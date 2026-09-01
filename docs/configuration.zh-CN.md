@@ -392,6 +392,9 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 | `TELESRV_AUTH_CODE_PHONE_RATE_LIMIT` | int / `5` | 每个规范化手机号摘要在窗口内的发码上限；`<=0` 关闭该维度。 |
 | `TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT` | int / `20` | 每个 raw auth key 在窗口内的发码上限；`<=0` 关闭该维度。 |
 | `TELESRV_AUTH_CODE_RATE_WINDOW` | duration / `10m` | 手机号与 auth-key 发码限流共用窗口。 |
+| `TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE` | string / 内置英文文案 | 每次手机号登录成功后，777000 账号发送的登录通知消息的兜底模板。支持 `{{server_name}}` 占位符。管理面板 Server Settings 页面若设置了覆盖值会立即生效（无需重启）；本变量只是未设置时的兜底。 |
+| `TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE` | string / 内置英文文案 | 同上，用于邮箱登录。 |
+| `TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE` | string / 内置英文文案 | 777000 账号发送的登录验证码消息的兜底模板——所有投递渠道（短信、邮箱）共用同一份模板。必须恰好包含一次 `{{code}}` 占位符；也支持 `{{server_name}}`。管理面板 Server Settings 页面若设置了覆盖值会立即生效（无需重启），且会拒绝保存缺少 `{{code}}` 的模板；本变量只是未设置时的兜底。 |
 | `TELESRV_PHONE_CODE_DELIVERY_PROVIDER` | enum / `development` | `development` 使用固定码；`webhook` 为登录、注册、改号生成随机 SMS code 并调用 OTP Webhook。已有账号在两种模式下都先 durable 写入同码 777000 消息，Webhook 只是附加渠道。 |
 | `TELESRV_EMAIL_CODE_DELIVERY_PROVIDER` | enum / `smtp` | 登录邮箱、邮箱 setup/change 的投递实现：`smtp` 或 `webhook`。已有账号的登录邮箱码会先同码镜像到 777000；邮箱 setup/change 仍只走 provider。 |
 | `TELESRV_OTP_WEBHOOK_URL` | absolute URL / 空 | 任一 provider 选择 `webhook` 时必填；固定 v1 协议见 [otp-delivery.md](otp-delivery.md)。允许任意合法 `http://` 或 `https://` 主机/IP 与端口，不得含 userinfo。 |

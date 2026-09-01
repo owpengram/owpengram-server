@@ -55,7 +55,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 	if req.ExpiresAt <= int64(req.Date) {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("login code receipt expiry: %w: date=%d expires_at=%d", domain.ErrLoginCodeDeliveryInvalid, req.Date, req.ExpiresAt)
 	}
-	base, err := domain.OfficialLoginCodeMessage(req.UserID, req.Code, req.Date)
+	base, err := domain.OfficialLoginCodeMessage(req.UserID, req.Template, req.Code, req.Date)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, err
 	}
@@ -99,6 +99,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 		}
 		msg, err := store.RestoreLoginCodeDeliveryMessage(
 			receipt.userID,
+			req.Template,
 			req.Code,
 			receipt.messageDate,
 			receipt.privateMessageID,
@@ -266,6 +267,7 @@ func (s *MessageStore) recoverLoginCodeDeliveryAfterCommitError(
 			}
 			msg, err := store.RestoreLoginCodeDeliveryMessage(
 				receipt.userID,
+				req.Template,
 				req.Code,
 				receipt.messageDate,
 				receipt.privateMessageID,

@@ -1401,6 +1401,8 @@ func run(logger *zap.Logger) error {
 	)
 	authService := auth.NewService(userStore, authzStore, codeStore, authKeyGetBatchStore, tempAuthKeyStore, cfg.DevAuthCode,
 		auth.WithLoginMessages(messageStore, dialogStore),
+		auth.WithLoginWelcomeMessages(identityStore, cfg.WelcomeMessagePhoneTemplate, cfg.WelcomeMessageEmailTemplate),
+		auth.WithLoginCodeMessageTemplate(identityStore, cfg.LoginCodeMessageTemplate),
 		auth.WithLoginCodeDelivery(messageStore),
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),

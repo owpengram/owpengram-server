@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const officialWelcomeMessageTemplate = "👋 Welcome to OwpenGram!\n\nYou just signed in via %s.\n\nIf this wasn't you, revoke this session from \"Settings > Privacy and Security > Active sessions\" immediately."
-
 // OfficialWelcomeMessage builds the account-visible incoming message sent
 // from the official system account on every completed sign-in (SignUp and
 // every subsequent SignIn/SignInWithEmail), regardless of delivery channel.
@@ -19,17 +17,23 @@ const officialWelcomeMessageTemplate = "👋 Welcome to OwpenGram!\n\nYou just s
 // to send unconditionally — it exists to give the account owner (and, on a
 // self-hosted single-admin server, that's usually also "the admin") a
 // visible record of every session start.
-func OfficialWelcomeMessage(userID int64, method string, date int) (Message, error) {
-	method = strings.TrimSpace(method)
-	if userID <= 0 || IsSystemUserID(userID) || method == "" || date < 0 || date > math.MaxInt32 {
-		return Message{}, fmt.Errorf("%w: user=%d method=%q date=%d", ErrLoginCodeDeliveryInvalid, userID, method, date)
+//
+// body is the already-resolved, already-{{server_name}}-substituted message
+// text (see ResolveWelcomeMessageTemplate / RenderWelcomeMessageTemplate in
+// login_welcome_template.go) -- resolving it requires the identity store and
+// config, both of which live above this package, so callers (internal/app/auth)
+// do that and pass the final text in here.
+func OfficialWelcomeMessage(userID int64, body string, date int) (Message, error) {
+	body = strings.TrimSpace(body)
+	if userID <= 0 || IsSystemUserID(userID) || body == "" || date < 0 || date > math.MaxInt32 {
+		return Message{}, fmt.Errorf("%w: user=%d date=%d", ErrLoginCodeDeliveryInvalid, userID, date)
 	}
 	return Message{
 		OwnerUserID: userID,
 		Peer:        Peer{Type: PeerTypeUser, ID: OfficialSystemUserID},
 		From:        Peer{Type: PeerTypeUser, ID: OfficialSystemUserID},
 		Date:        date,
-		Body:        fmt.Sprintf(officialWelcomeMessageTemplate, method),
+		Body:        body,
 	}, nil
 }
 

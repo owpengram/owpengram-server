@@ -12,7 +12,7 @@ func TestServiceIdentityAndLoginMessageUseOwpenGramBrand(t *testing.T) {
 	if serviceUser.FirstName != "OwpenGram" || serviceUser.Username != "" {
 		t.Fatalf("service user = %+v, want OwpenGram identity with no username", serviceUser)
 	}
-	message, err := OfficialLoginCodeMessage(42, "12345", 1)
+	message, err := OfficialLoginCodeMessage(42, "", "12345", 1)
 	if err != nil {
 		t.Fatalf("build login message: %v", err)
 	}

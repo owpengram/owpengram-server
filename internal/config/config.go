@@ -191,6 +191,23 @@ type Config struct {
 
 	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
 	DevAuthCode string
+	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate are the
+	// fallback templates for the 777000 login-notification message sent on
+	// every completed phone/email sign-in (see
+	// domain.ResolveWelcomeMessageTemplate), used whenever the admin panel
+	// hasn't set an override in internal/identity.Store. Support the
+	// {{server_name}} placeholder. Defaults to the compiled-in copy in
+	// domain.DefaultWelcomeMessage{Phone,Email}Template.
+	WelcomeMessagePhoneTemplate string
+	WelcomeMessageEmailTemplate string
+	// LoginCodeMessageTemplate is the fallback template for the 777000
+	// login-code delivery message sent for every login code, regardless of
+	// channel (see domain.ResolveLoginCodeMessageTemplate), used whenever
+	// the admin panel hasn't set an override in internal/identity.Store.
+	// Supports {{server_name}} and requires the {{code}} placeholder
+	// exactly once. Defaults to the compiled-in copy in
+	// domain.DefaultLoginCodeMessageTemplate.
+	LoginCodeMessageTemplate string
 	// AuthCodeTTL 是登录/注册/邮箱验证 code 的有效期。
 	AuthCodeTTL time.Duration
 	// PhoneCodeLength 是使用外部 provider 时生成的短信验证码长度。development
@@ -882,32 +899,35 @@ func Load() (Config, error) {
 		RedisPassword:    envOr("TELESRV_REDIS_PASSWORD", ""),
 		RedisDB:          envIntOr("TELESRV_REDIS_DB", 0),
 
-		DevAuthCode:               envOr("TELESRV_DEV_AUTH_CODE", "12345"),
-		AuthCodeTTL:               envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
-		PhoneCodeLength:           envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
-		AuthCodeMaxAttempts:       envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
-		AuthCodePhoneRateLimit:    envIntOr("TELESRV_AUTH_CODE_PHONE_RATE_LIMIT", 5),
-		AuthCodeAuthKeyRateLimit:  envIntOr("TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT", 20),
-		AuthCodeRateWindow:        envDurationOr("TELESRV_AUTH_CODE_RATE_WINDOW", 10*time.Minute),
-		LoginEmailEnable:          envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
-		LoginEmailRequireSetup:    envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
-		EmailSignupEnable:         envBoolOr("TELESRV_EMAIL_SIGNUP_ENABLE", false),
-		EmailSignupPhonePrefixes:  envListOr("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES", []string{"888"}),
-		LoginEmailCodeLength:      envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
-		PhoneCodeDeliveryProvider: strings.ToLower(strings.TrimSpace(envOr("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "development"))),
-		EmailCodeDeliveryProvider: strings.ToLower(strings.TrimSpace(envOr("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "smtp"))),
-		OTPWebhookURL:             envOr("TELESRV_OTP_WEBHOOK_URL", ""),
-		OTPWebhookSecret:          envOr("TELESRV_OTP_WEBHOOK_SECRET", ""),
-		OTPWebhookTimeout:         envDurationOr("TELESRV_OTP_WEBHOOK_TIMEOUT", 5*time.Second),
-		SMTPHost:                  envOr("TELESRV_SMTP_HOST", ""),
-		SMTPPort:                  envIntOr("TELESRV_SMTP_PORT", 587),
-		SMTPUsername:              envOr("TELESRV_SMTP_USERNAME", ""),
-		SMTPPassword:              envOr("TELESRV_SMTP_PASSWORD", ""),
-		SMTPFrom:                  envOr("TELESRV_SMTP_FROM", ""),
-		SMTPFromName:              envOr("TELESRV_SMTP_FROM_NAME", branding.ProductName),
-		SMTPTLSMode:               strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
-		SMTPTimeout:               envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
-		LangPackSeedDir:           envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
+		DevAuthCode:                 envOr("TELESRV_DEV_AUTH_CODE", "12345"),
+		WelcomeMessagePhoneTemplate: envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
+		WelcomeMessageEmailTemplate: envOr("TELESRV_WELCOME_MESSAGE_EMAIL_TEMPLATE", domain.DefaultWelcomeMessageEmailTemplate),
+		LoginCodeMessageTemplate:    envOr("TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE", domain.DefaultLoginCodeMessageTemplate),
+		AuthCodeTTL:                 envDurationOr("TELESRV_AUTH_CODE_TTL", 5*time.Minute),
+		PhoneCodeLength:             envIntOr("TELESRV_PHONE_CODE_LENGTH", 5),
+		AuthCodeMaxAttempts:         envIntOr("TELESRV_AUTH_CODE_MAX_ATTEMPTS", 5),
+		AuthCodePhoneRateLimit:      envIntOr("TELESRV_AUTH_CODE_PHONE_RATE_LIMIT", 5),
+		AuthCodeAuthKeyRateLimit:    envIntOr("TELESRV_AUTH_CODE_AUTH_KEY_RATE_LIMIT", 20),
+		AuthCodeRateWindow:          envDurationOr("TELESRV_AUTH_CODE_RATE_WINDOW", 10*time.Minute),
+		LoginEmailEnable:            envBoolOr("TELESRV_LOGIN_EMAIL_ENABLE", false),
+		LoginEmailRequireSetup:      envBoolOr("TELESRV_LOGIN_EMAIL_REQUIRE_SETUP", false),
+		EmailSignupEnable:           envBoolOr("TELESRV_EMAIL_SIGNUP_ENABLE", false),
+		EmailSignupPhonePrefixes:    envListOr("TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES", []string{"888"}),
+		LoginEmailCodeLength:        envIntOr("TELESRV_LOGIN_EMAIL_CODE_LENGTH", 6),
+		PhoneCodeDeliveryProvider:   strings.ToLower(strings.TrimSpace(envOr("TELESRV_PHONE_CODE_DELIVERY_PROVIDER", "development"))),
+		EmailCodeDeliveryProvider:   strings.ToLower(strings.TrimSpace(envOr("TELESRV_EMAIL_CODE_DELIVERY_PROVIDER", "smtp"))),
+		OTPWebhookURL:               envOr("TELESRV_OTP_WEBHOOK_URL", ""),
+		OTPWebhookSecret:            envOr("TELESRV_OTP_WEBHOOK_SECRET", ""),
+		OTPWebhookTimeout:           envDurationOr("TELESRV_OTP_WEBHOOK_TIMEOUT", 5*time.Second),
+		SMTPHost:                    envOr("TELESRV_SMTP_HOST", ""),
+		SMTPPort:                    envIntOr("TELESRV_SMTP_PORT", 587),
+		SMTPUsername:                envOr("TELESRV_SMTP_USERNAME", ""),
+		SMTPPassword:                envOr("TELESRV_SMTP_PASSWORD", ""),
+		SMTPFrom:                    envOr("TELESRV_SMTP_FROM", ""),
+		SMTPFromName:                envOr("TELESRV_SMTP_FROM_NAME", branding.ProductName),
+		SMTPTLSMode:                 strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
+		SMTPTimeout:                 envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
+		LangPackSeedDir:             envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
 		// s3 (MinIO by default, see deploy/docker-compose.yml's minio service) is
 		// the default blob backend; localfs remains fully supported as an
 		// explicit opt-in (TELESRV_BLOB_BACKEND=localfs).

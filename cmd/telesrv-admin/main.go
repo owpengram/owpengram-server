@@ -116,6 +116,21 @@ type uiConfig struct {
 	// directory owpengram-server reads, so an identity edit here is visible
 	// over /owpengram/server-info immediately (see internal/identity).
 	IdentityDir string
+	// WelcomeMessagePhoneDefault/WelcomeMessageEmailDefault mirror
+	// config.WelcomeMessage{Phone,Email}Template -- the env-var-resolved
+	// fallback text (TELESRV_WELCOME_MESSAGE_*_TEMPLATE, itself defaulting
+	// to the compiled-in copy) the running owpengram-server process falls
+	// back to whenever the identity panel override is unset. Surfaced as
+	// "the effective default" in the Server Settings login-notifications
+	// panel, assuming both binaries share the same .env.
+	WelcomeMessagePhoneDefault string
+	WelcomeMessageEmailDefault string
+	// LoginCodeMessageDefault mirrors config.LoginCodeMessageTemplate -- the
+	// env-var-resolved fallback text (TELESRV_LOGIN_CODE_MESSAGE_TEMPLATE,
+	// itself defaulting to the compiled-in copy) the running owpengram-server
+	// process falls back to whenever the identity panel override is unset.
+	// Same "effective default" contract as WelcomeMessage{Phone,Email}Default.
+	LoginCodeMessageDefault string
 	// RepoRoot is where Server Settings' Restart/Update/.env-editing (see
 	// internal/procctl) operate: bin/, logs/, .env, .env.example and
 	// .server_panel.json are all expected directly under it, exactly as
@@ -167,6 +182,9 @@ func loadConfig() (uiConfig, error) {
 		Permissions:                appCfg.AdminUIPermissions,
 		HideThirdPartyVerification: appCfg.HideThirdPartyVerification,
 		IdentityDir:                appCfg.IdentityDir,
+		WelcomeMessagePhoneDefault: appCfg.WelcomeMessagePhoneTemplate,
+		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,
+		LoginCodeMessageDefault:    appCfg.LoginCodeMessageTemplate,
 		RepoRoot:                   repoRoot,
 	}, nil
 }

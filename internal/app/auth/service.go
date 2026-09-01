@@ -17,8 +17,8 @@ import (
 	"github.com/iamxvbaba/td/bin"
 	mtcrypto "github.com/iamxvbaba/td/crypto"
 
-	"telesrv/internal/branding"
 	"telesrv/internal/domain"
+	"telesrv/internal/identity"
 	"telesrv/internal/otpdelivery"
 	"telesrv/internal/store"
 )
@@ -114,6 +114,21 @@ type Service struct {
 	// stickerSets/defaultStickerSetID：新注册账号默认安装的贴纸集（见 WithDefaultStickerSet）。
 	stickerSets         userStickerSetInstaller
 	defaultStickerSetID int64
+	// welcomeMessageIdentity 是 identity.Store 的共享实例，recordWelcomeMessage
+	// 每次调用都重新读取（不缓存），使 admin 面板对登录通知模板的修改无需重启即可
+	// 生效 -- 与 identity 包自身的设计契约一致。nil 时该来源被跳过，直接落到
+	// welcomeMessage{Phone,Email}Default。
+	welcomeMessageIdentity     *identity.Store
+	welcomeMessagePhoneDefault string
+	welcomeMessageEmailDefault string
+	// loginCodeMessageIdentity/loginCodeMessageEnvDefault mirror
+	// welcomeMessageIdentity/welcomeMessage{Phone,Email}Default above, for
+	// the 777000 login-code delivery message instead of the post-sign-in
+	// welcome notification -- see WithLoginCodeMessageTemplate and
+	// resolveLoginCodeMessageTemplate. There is only one env default (not
+	// per-method) because the login-code message never varies by channel.
+	loginCodeMessageIdentity   *identity.Store
+	loginCodeMessageEnvDefault string
 }
 
 type loginEmailStore interface {
@@ -145,6 +160,53 @@ func WithLoginMessages(messages store.MessageStore, dialogs store.DialogStore) O
 		s.messages = messages
 		s.dialogs = dialogs
 	}
+}
+
+// WithLoginWelcomeMessages configures the resolution chain for the 777000
+// login-notification message's template text (see
+// domain.ResolveWelcomeMessageTemplate): store is read fresh on every
+// recordWelcomeMessage call (never cached, so admin-panel edits apply with
+// no restart), and phoneDefault/emailDefault are the config-supplied env-var
+// fallbacks (Config.WelcomeMessage{Phone,Email}Template), used whenever the
+// panel hasn't set an override. A nil store just skips that source.
+func WithLoginWelcomeMessages(store *identity.Store, phoneDefault, emailDefault string) Option {
+	return func(s *Service) {
+		s.welcomeMessageIdentity = store
+		s.welcomeMessagePhoneDefault = phoneDefault
+		s.welcomeMessageEmailDefault = emailDefault
+	}
+}
+
+// WithLoginCodeMessageTemplate configures the resolution chain for the
+// 777000 login-code delivery message's template text (see
+// domain.ResolveLoginCodeMessageTemplate): store is read fresh on every
+// deliverLoginCode/recordLoginMessage call (never cached, so admin-panel
+// edits apply with no restart), and envDefault is the config-supplied
+// env-var fallback (Config.LoginCodeMessageTemplate), used whenever the
+// panel hasn't set an override. A nil store just skips that source. Callers
+// normally pass the same *identity.Store instance already wired via
+// WithLoginWelcomeMessages, since both read/write the same identity.json.
+func WithLoginCodeMessageTemplate(store *identity.Store, envDefault string) Option {
+	return func(s *Service) {
+		s.loginCodeMessageIdentity = store
+		s.loginCodeMessageEnvDefault = envDefault
+	}
+}
+
+// resolveLoginCodeMessageTemplate resolves the 777000 login-code message
+// template fresh on every call (never cached), mirroring
+// recordWelcomeMessage's "always read fresh" contract so an admin-panel
+// edit takes effect with no restart. Every caller of
+// domain.OfficialLoginCodeMessage in this service must go through here
+// rather than hardcoding its own copy of the template.
+func (s *Service) resolveLoginCodeMessageTemplate() string {
+	panelOverride := ""
+	if s.loginCodeMessageIdentity != nil {
+		if info, err := s.loginCodeMessageIdentity.Get(); err == nil {
+			panelOverride = info.LoginCodeMessageTemplate
+		}
+	}
+	return domain.ResolveLoginCodeMessageTemplate(panelOverride, s.loginCodeMessageEnvDefault)
 }
 
 // WithLoginCodeDelivery 注入已有账号 app-code 的 durable 投递边界。
@@ -590,6 +652,7 @@ func (s *Service) deliverLoginCode(ctx context.Context, userID int64, phoneCodeH
 		UserID:        userID,
 		PhoneCodeHash: phoneCodeHash,
 		Code:          code,
+		Template:      s.resolveLoginCodeMessageTemplate(),
 		Date:          int(now.Unix()),
 		ExpiresAt:     now.Add(s.codeTTL).Unix(),
 	}); err != nil {
@@ -1579,31 +1642,24 @@ func (s *Service) passwordNeeded(ctx context.Context, userID int64) (bool, error
 	return found && settings.HasPassword, nil
 }
 
-func loginMessageTemplate() string {
-	return `Login code: %s. Do not give this code to anyone, even if they say they are from ` + branding.ProductName + `!
-
-This code can be used to log in to your ` + branding.ProductName + ` account. We never ask it for anything else.
-
-If you didn't request this code by trying to log in on another device, simply ignore this message.`
-}
-
+// recordLoginMessage writes the 777000 login-code message for the
+// bootstrap "new phone-channel account" path (see SignUp's rec.Channel ==
+// codeChannelPhone branch), where no owner/dialog exists yet so
+// WithLoginCodeDelivery's durable idempotent path cannot be used. It builds
+// the message the same way deliverLoginCode does -- via
+// domain.OfficialLoginCodeMessage with a freshly resolved template (see
+// resolveLoginCodeMessageTemplate) -- rather than keeping its own separate
+// copy of the template/entity logic, so an admin-panel edit and the
+// {{code}}-placeholder entity-offset fix apply here too.
 func (s *Service) recordLoginMessage(ctx context.Context, userID int64, code string) (domain.Message, error) {
 	if s.messages == nil || s.dialogs == nil {
 		return domain.Message{}, nil
 	}
-	body := fmt.Sprintf(loginMessageTemplate(), code)
-	codeOffset := len("Login code: ")
-	msg, err := s.messages.Create(ctx, domain.Message{
-		OwnerUserID: userID,
-		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
-		From:        domain.Peer{Type: domain.PeerTypeUser, ID: domain.OfficialSystemUserID},
-		Date:        int(time.Now().Unix()),
-		Body:        body,
-		Entities: []domain.MessageEntity{
-			{Type: domain.MessageEntityBold, Offset: 0, Length: len("Login code:")},
-			{Type: domain.MessageEntityBold, Offset: codeOffset, Length: len(code)},
-		},
-	})
+	base, err := domain.OfficialLoginCodeMessage(userID, s.resolveLoginCodeMessageTemplate(), code, int(time.Now().Unix()))
+	if err != nil {
+		return domain.Message{}, err
+	}
+	msg, err := s.messages.Create(ctx, base)
 	if err != nil {
 		return domain.Message{}, err
 	}
@@ -1626,7 +1682,24 @@ func (s *Service) recordWelcomeMessage(ctx context.Context, u domain.User) {
 	if s == nil || s.messages == nil || s.dialogs == nil {
 		return
 	}
-	msg, err := domain.OfficialWelcomeMessage(u.ID, domain.SignInMethodLabel(u), int(time.Now().Unix()))
+	method := domain.LoginMethodFromLabel(domain.SignInMethodLabel(u))
+	envDefault := s.welcomeMessagePhoneDefault
+	if method == domain.LoginMethodEmail {
+		envDefault = s.welcomeMessageEmailDefault
+	}
+	panelOverride := ""
+	if s.welcomeMessageIdentity != nil {
+		if info, err := s.welcomeMessageIdentity.Get(); err == nil {
+			if method == domain.LoginMethodEmail {
+				panelOverride = info.WelcomeMessageEmailTemplate
+			} else {
+				panelOverride = info.WelcomeMessagePhoneTemplate
+			}
+		}
+	}
+	template := domain.ResolveWelcomeMessageTemplate(method, panelOverride, envDefault)
+	body := domain.RenderWelcomeMessageTemplate(template)
+	msg, err := domain.OfficialWelcomeMessage(u.ID, body, int(time.Now().Unix()))
 	if err != nil {
 		return
 	}

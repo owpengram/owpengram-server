@@ -124,6 +124,19 @@ func SetOfficialSystemUserDisplayName(name string) {
 	officialSystemUserDisplayName = strings.TrimSpace(name)
 }
 
+// officialSystemDisplayName returns the official system account's current
+// effective display name: the operator's custom override if set via
+// SetOfficialSystemUserDisplayName, else branding.ProductName. Shared by
+// OfficialSystemUser (777000's FirstName) and the login-welcome-message
+// {{server_name}} placeholder (see login_welcome_template.go) so both stay
+// consistent with each other.
+func officialSystemDisplayName() string {
+	if officialSystemUserDisplayName != "" {
+		return officialSystemUserDisplayName
+	}
+	return branding.ProductName
+}
+
 // botFatherPhotoDCID/Stripped 由 files.Service.SeedBotFatherAvatar 在启动时
 // 通过 SetBotFatherAvatar 写入一次；写入前 BotFatherUser() 不带头像（PhotoID==0）。
 var (
@@ -189,15 +202,11 @@ func SetVerifyBotAvatar(dcID int, stripped []byte) {
 // config.ReservedUsernames (which it now is, by default, precisely because
 // nothing keeps another account from claiming it once this one has none).
 func OfficialSystemUser() User {
-	name := branding.ProductName
-	if officialSystemUserDisplayName != "" {
-		name = officialSystemUserDisplayName
-	}
 	u := User{
 		ID:         OfficialSystemUserID,
 		AccessHash: 6599886787491911851,
 		Phone:      "42777",
-		FirstName:  name,
+		FirstName:  officialSystemDisplayName(),
 		Verified:   true,
 		Support:    true,
 	}

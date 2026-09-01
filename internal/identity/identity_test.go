@@ -93,3 +93,107 @@ func TestStorePreservesIconAcrossTextEdits(t *testing.T) {
 		t.Fatalf("icon lost after unrelated SetText: ext=%q ok=%v", ext, ok)
 	}
 }
+
+func TestStoreWelcomeMessageTemplatesRoundTrip(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	info, err := s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.WelcomeMessagePhoneTemplate != "" || info.WelcomeMessageEmailTemplate != "" {
+		t.Fatalf("expected empty overrides before any write, got %+v", info)
+	}
+
+	if err := s.SetWelcomeMessageTemplates("  Custom phone template  ", "Custom email template"); err != nil {
+		t.Fatal(err)
+	}
+	info, err = s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.WelcomeMessagePhoneTemplate != "Custom phone template" || info.WelcomeMessageEmailTemplate != "Custom email template" {
+		t.Fatalf("got %+v", info)
+	}
+
+	// Clearing one override (empty string) must not disturb the other.
+	if err := s.SetWelcomeMessageTemplates("", "Custom email template"); err != nil {
+		t.Fatal(err)
+	}
+	info, err = s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.WelcomeMessagePhoneTemplate != "" || info.WelcomeMessageEmailTemplate != "Custom email template" {
+		t.Fatalf("got %+v after clearing phone override", info)
+	}
+}
+
+func TestStoreLoginCodeMessageTemplateRoundTrip(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	info, err := s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LoginCodeMessageTemplate != "" {
+		t.Fatalf("expected empty override before any write, got %+v", info)
+	}
+
+	if err := s.SetLoginCodeMessageTemplate("  Custom code template {{code}}  "); err != nil {
+		t.Fatal(err)
+	}
+	info, err = s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LoginCodeMessageTemplate != "Custom code template {{code}}" {
+		t.Fatalf("got %+v", info)
+	}
+
+	// Clearing (empty string) resets to "unset".
+	if err := s.SetLoginCodeMessageTemplate(""); err != nil {
+		t.Fatal(err)
+	}
+	info, err = s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LoginCodeMessageTemplate != "" {
+		t.Fatalf("expected override cleared, got %+v", info)
+	}
+}
+
+func TestStoreLoginCodeMessageTemplatePreservedAcrossTextEdits(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.SetLoginCodeMessageTemplate("code tpl {{code}}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetText("New Name", "New description"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LoginCodeMessageTemplate != "code tpl {{code}}" {
+		t.Fatalf("login code message template lost after unrelated SetText: %+v", info)
+	}
+}
+
+func TestStoreWelcomeMessageTemplatesPreservedAcrossTextEdits(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.SetWelcomeMessageTemplates("phone tpl", "email tpl"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetText("New Name", "New description"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.WelcomeMessagePhoneTemplate != "phone tpl" || info.WelcomeMessageEmailTemplate != "email tpl" {
+		t.Fatalf("welcome message templates lost after unrelated SetText: %+v", info)
+	}
+}

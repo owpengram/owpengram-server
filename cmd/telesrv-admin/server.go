@@ -178,6 +178,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/server/identity", s.serverManage(s.handleServerIdentityAPI))
 	mux.Handle("GET /api/server/icon", s.serverManage(s.handleServerIconAPI))
 	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))
+	mux.Handle("POST /api/actions/set-welcome-message-templates", s.serverManage(s.handleSetWelcomeMessageTemplatesAPI))
+	mux.Handle("POST /api/actions/set-login-code-message-template", s.serverManage(s.handleSetLoginCodeMessageTemplateAPI))
 	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
 	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
 	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))

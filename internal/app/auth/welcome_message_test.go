@@ -42,7 +42,7 @@ func TestEmailSignupSignUpWritesWelcomeMessageMentioningEmail(t *testing.T) {
 	if len(list.Messages) != 1 {
 		t.Fatalf("messages = %+v, want exactly the welcome message (email channel skips the code-echo message)", list.Messages)
 	}
-	if !strings.Contains(list.Messages[0].Body, "Welcome to OwpenGram") || !strings.Contains(list.Messages[0].Body, "via email") {
+	if !strings.Contains(list.Messages[0].Body, "Welcome to") || !strings.Contains(list.Messages[0].Body, "email address") {
 		t.Fatalf("welcome message body = %q, want greeting mentioning email", list.Messages[0].Body)
 	}
 }
