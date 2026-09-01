@@ -8,6 +8,7 @@ import (
 
 	privacyapp "telesrv/internal/app/privacy"
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
 
@@ -157,6 +158,84 @@ func TestResolveUsernameHidesMarksbotWhenThirdPartyVerificationHidden(t *testing
 	hidden := NewService(store, WithHideThirdPartyVerification(true))
 	if _, found, err := hidden.ResolveUsername(ctx, viewer.ID, "marksbot"); err != nil || found {
 		t.Fatalf("ResolveUsername (hidden) found=%v err=%v, want not found", found, err)
+	}
+}
+
+func TestByIDsForViewersRejectsOwnerSetAboveBound(t *testing.T) {
+	svc := NewService(memory.NewUserStore())
+	ids := make([]int64, maxBatchUsers+1)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+	}
+	if _, err := svc.ByIDsForViewers(context.Background(), []int64{1}, ids); !errors.Is(err, ErrBatchUsersLimit) {
+		t.Fatalf("ByIDsForViewers err = %v, want ErrBatchUsersLimit", err)
+	}
+}
+
+func TestByIDsRejectsOwnerSetAboveBoundInsteadOfTruncating(t *testing.T) {
+	svc := NewService(memory.NewUserStore())
+	ids := make([]int64, maxBatchUsers+1)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+	}
+	if _, err := svc.ByIDs(context.Background(), 1, ids); !errors.Is(err, ErrBatchUsersLimit) {
+		t.Fatalf("ByIDs err = %v, want ErrBatchUsersLimit", err)
+	}
+}
+
+func TestBotStatusReadsViewerIndependentBaseFact(t *testing.T) {
+	ctx := context.Background()
+	base := memory.NewUserStore()
+	bot, err := base.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000077", FirstName: "Bot", Bot: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(base)
+	got, found, err := svc.BotStatus(ctx, bot.ID)
+	if err != nil || !found || !got {
+		t.Fatalf("BotStatus = %v, found=%v, err=%v", got, found, err)
+	}
+	if got, found, err := svc.BotStatus(ctx, bot.ID+1000); err != nil || found || got {
+		t.Fatalf("missing BotStatus = %v, found=%v, err=%v", got, found, err)
+	}
+}
+
+func TestPrivacyBaseUsersRejectsViewerSetAboveBoundInsteadOfNegativeCachingTruncation(t *testing.T) {
+	svc := NewService(memory.NewUserStore())
+	ids := make([]int64, maxBatchUsers+1)
+	for i := range ids {
+		ids[i] = int64(i + 1)
+	}
+	if _, err := svc.PrivacyBaseUsers(context.Background(), ids); !errors.Is(err, ErrBatchUsersLimit) {
+		t.Fatalf("PrivacyBaseUsers err = %v, want ErrBatchUsersLimit", err)
+	}
+}
+
+func TestByIDsForViewersRejectsDenseCellSetAboveBound(t *testing.T) {
+	svc := NewService(memory.NewUserStore())
+	owners := make([]int64, maxBatchUsers)
+	for i := range owners {
+		owners[i] = int64(i + 1)
+	}
+	viewers := make([]int64, maxBatchViewerProjectionCells/maxBatchUsers+1)
+	for i := range viewers {
+		viewers[i] = int64(10_000 + i)
+	}
+	if _, err := svc.ByIDsForViewers(context.Background(), viewers, owners); !errors.Is(err, ErrBatchViewerCells) {
+		t.Fatalf("ByIDsForViewers err = %v, want ErrBatchViewerCells", err)
+	}
+	if !batchViewerProjectionCellsAllowed(1, maxBatchViewerProjectionCells) {
+		t.Fatal("cell limit rejected exact boundary")
+	}
+	if batchViewerProjectionCellsAllowed(2, maxBatchViewerProjectionCells) {
+		t.Fatal("cell limit accepted overflow boundary")
+	}
+}
+
+func TestByIDsForViewersRejectsMissingReferencedUser(t *testing.T) {
+	svc := NewService(memory.NewUserStore())
+	if _, err := svc.ByIDsForViewers(context.Background(), []int64{1001}, []int64{2001}); !errors.Is(err, ErrBatchUserMissing) {
+		t.Fatalf("ByIDsForViewers err = %v, want ErrBatchUserMissing", err)
 	}
 }
 
@@ -434,6 +513,48 @@ func TestServiceUsesBaseCacheWithoutCachingViewerOverlay(t *testing.T) {
 	}
 }
 
+func TestServiceUpdateLastSeenBatchIsMonotonicAndInvalidatesOnce(t *testing.T) {
+	ctx := context.Background()
+	base := memory.NewUserStore()
+	first, err := base.Create(ctx, domain.User{AccessHash: 1, Phone: "15550000881", FirstName: "First"})
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second, err := base.Create(ctx, domain.User{AccessHash: 2, Phone: "15550000882", FirstName: "Second"})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	cache := newMemoryBaseUserCache()
+	if err := cache.PutMany(ctx, []domain.User{first, second}); err != nil {
+		t.Fatalf("prime cache: %v", err)
+	}
+	svc := NewService(base, WithBaseUserCache(cache))
+	if err := svc.UpdateLastSeenBatch(ctx, []store.UserLastSeenUpdate{
+		{UserID: second.ID, LastSeenAt: 20},
+		{UserID: first.ID, LastSeenAt: 9},
+		{UserID: first.ID, LastSeenAt: 17},
+	}); err != nil {
+		t.Fatalf("UpdateLastSeenBatch: %v", err)
+	}
+	loadedFirst, found, err := base.ByID(ctx, first.ID)
+	if err != nil || !found || loadedFirst.LastSeenAt != 17 {
+		t.Fatalf("first last seen = %d found=%v err=%v, want 17", loadedFirst.LastSeenAt, found, err)
+	}
+	loadedSecond, found, err := base.ByID(ctx, second.ID)
+	if err != nil || !found || loadedSecond.LastSeenAt != 20 {
+		t.Fatalf("second last seen = %d found=%v err=%v, want 20", loadedSecond.LastSeenAt, found, err)
+	}
+	if cache.deleteCalls != 1 {
+		t.Fatalf("cache delete calls = %d, want one batch invalidation", cache.deleteCalls)
+	}
+	if _, ok := cache.users[first.ID]; ok {
+		t.Fatal("first user remained cached")
+	}
+	if _, ok := cache.users[second.ID]; ok {
+		t.Fatal("second user remained cached")
+	}
+}
+
 func TestServiceRefreshesBaseCacheAfterProfileUpdate(t *testing.T) {
 	ctx := context.Background()
 	base := memory.NewUserStore()
@@ -506,6 +627,9 @@ func TestServiceSetVerifiedRefreshesBaseCache(t *testing.T) {
 	}
 	if cleared.Verified {
 		t.Fatalf("cleared verified = true, want false")
+	}
+	if _, err := svc.SetVerified(ctx, domain.OfficialSystemUserID, false); !errors.Is(err, ErrSystemUserImmutable) {
+		t.Fatalf("clear system user verified err=%v, want ErrSystemUserImmutable", err)
 	}
 }
 
@@ -612,7 +736,8 @@ func (s *countingUserStore) ByIDs(ctx context.Context, ids []int64) ([]domain.Us
 }
 
 type memoryBaseUserCache struct {
-	users map[int64]domain.User
+	users       map[int64]domain.User
+	deleteCalls int
 }
 
 func newMemoryBaseUserCache() *memoryBaseUserCache {
@@ -639,6 +764,7 @@ func (c *memoryBaseUserCache) PutMany(_ context.Context, users []domain.User) er
 }
 
 func (c *memoryBaseUserCache) Delete(_ context.Context, ids []int64) error {
+	c.deleteCalls++
 	for _, id := range ids {
 		delete(c.users, id)
 	}

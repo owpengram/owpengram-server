@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 func (s *ChannelStore) GetParticipants(ctx context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
@@ -362,6 +363,70 @@ ORDER BY user_id`, channelID, candidates[start:end])
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out, nil
+}
+
+func (s *ChannelStore) FilterActiveChannelMemberPairs(ctx context.Context, userIDsByChannel map[int64][]int64) (map[int64][]int64, error) {
+	channelIDs, userIDs, err := flattenActiveChannelMemberPairs(userIDsByChannel)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64][]int64)
+	if len(channelIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+WITH requested(channel_id, user_id) AS (
+  SELECT * FROM unnest($1::bigint[], $2::bigint[])
+)
+SELECT r.channel_id, r.user_id
+FROM requested r
+JOIN channel_members m
+  ON m.channel_id = r.channel_id
+ AND m.user_id = r.user_id
+WHERE m.status = 'active'
+ORDER BY r.channel_id, r.user_id`, channelIDs, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("filter active channel member pairs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID, userID int64
+		if err := rows.Scan(&channelID, &userID); err != nil {
+			return nil, err
+		}
+		out[channelID] = append(out[channelID], userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func flattenActiveChannelMemberPairs(userIDsByChannel map[int64][]int64) ([]int64, []int64, error) {
+	channelIDs := make([]int64, 0)
+	userIDs := make([]int64, 0)
+	seen := make(map[[2]int64]struct{})
+	for channelID, candidates := range userIDsByChannel {
+		if channelID == 0 {
+			continue
+		}
+		for _, userID := range candidates {
+			if userID == 0 {
+				continue
+			}
+			pair := [2]int64{channelID, userID}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			if len(seen) >= store.MaxActiveChannelMemberPairs {
+				return nil, nil, fmt.Errorf("%w: maximum %d", store.ErrActiveChannelMemberPairsLimit, store.MaxActiveChannelMemberPairs)
+			}
+			seen[pair] = struct{}{}
+			channelIDs = append(channelIDs, channelID)
+			userIDs = append(userIDs, userID)
+		}
+	}
+	return channelIDs, userIDs, nil
 }
 
 func (s *ChannelStore) FilterChannelMessageAudienceIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error) {

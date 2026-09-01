@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
 )
@@ -129,7 +130,7 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		return nil, fmt.Errorf("public Web sticker set resolver is nil")
 	}
 	if strings.TrimSpace(cfg.AppName) == "" {
-		cfg.AppName = links.DefaultAppName
+		cfg.AppName = branding.ProductName
 	}
 	if cfg.PublicBaseURL, err = links.ValidateBaseURL(cfg.PublicBaseURL); err != nil {
 		return nil, fmt.Errorf("public base URL: %w", err)
@@ -213,6 +214,9 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		mux.Handle("POST /token", cfg.TelegramLogin)
 		mux.Handle("GET /telegram-login.js", cfg.TelegramLogin)
 		mux.Handle("GET /js/telegram-login.js", cfg.TelegramLogin)
+		mux.Handle("GET /telegram-widget.js", cfg.TelegramLogin)
+		mux.Handle("GET /js/telegram-widget.js", cfg.TelegramLogin)
+		mux.Handle("POST /telegram-widget/resolve", cfg.TelegramLogin)
 	}
 	mux.HandleFunc("GET /{username}", h.usernameLink)
 	mux.HandleFunc("GET /{username}/{$}", h.usernameLink)

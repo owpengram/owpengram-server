@@ -42,6 +42,7 @@ type captureMessages struct {
 	deleteMessagesRes domain.DeleteMessagesResult
 	deleteHistoryReq  domain.DeleteHistoryRequest
 	deleteHistoryRes  domain.DeleteMessagesResult
+	mediaReq          domain.MediaSearchRequest
 }
 
 type scheduledCaptureMessages struct {
@@ -392,7 +393,8 @@ func (s *captureMessages) Search(_ context.Context, _ int64, filter domain.Messa
 	return s.list, nil
 }
 
-func (s *captureMessages) SearchPrivateMedia(_ context.Context, _, _ int64, _ domain.MediaSearchRequest) (domain.MessageList, error) {
+func (s *captureMessages) SearchPrivateMedia(_ context.Context, _, _ int64, req domain.MediaSearchRequest) (domain.MessageList, error) {
+	s.mediaReq = req
 	return domain.MessageList{}, nil
 }
 

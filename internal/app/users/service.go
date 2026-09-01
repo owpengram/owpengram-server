@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -13,7 +14,14 @@ import (
 )
 
 // ErrNotAuthorized 表示当前 auth_key 尚未登录。
-var ErrNotAuthorized = errors.New("not authorized")
+var (
+	ErrNotAuthorized            = errors.New("not authorized")
+	ErrSystemUserImmutable      = errors.New("system user identity is immutable")
+	ErrBatchUsersLimit          = errors.New("batch users limit exceeded")
+	ErrBatchViewerCells         = errors.New("batch viewer projection cell limit exceeded")
+	ErrBatchUserMissing         = errors.New("batch user projection source is incomplete")
+	ErrLastSeenBatchUnsupported = errors.New("last seen batch store unsupported")
+)
 
 // ProfilePhotoProvider 批量返回用户当前头像（用于把 PhotoID/DCID/Stripped 富化到 domain.User）。
 type ProfilePhotoProvider = userprojection.ProfilePhotoProvider
@@ -93,6 +101,9 @@ const (
 	maxProfileAboutRunes        = 70
 	maxProfileAboutRunesPremium = 140
 	maxBatchUsers               = 1000
+	// A dense fan-out materializes one complete domain.User per viewer/owner
+	// cell in both the result and the batch cache. Bound the retained graph.
+	maxBatchViewerProjectionCells = 131072
 )
 
 // NewService 创建用户服务。
@@ -161,6 +172,19 @@ func (s *Service) AdminUser(ctx context.Context, userID int64) (domain.User, boo
 	return s.loadBaseUserByID(ctx, userID)
 }
 
+// BotStatus returns only the immutable viewer-independent bot fact. Presence
+// classification must not pay for contact/privacy/photo projection.
+func (s *Service) BotStatus(ctx context.Context, userID int64) (bool, bool, error) {
+	if userID == 0 {
+		return false, false, nil
+	}
+	u, found, err := s.loadBaseUserByID(ctx, userID)
+	if err != nil || !found {
+		return false, found, err
+	}
+	return u.Bot, true, nil
+}
+
 // PrivacyBaseUsers returns viewer-independent bot/premium facts through the
 // shared base-user read model. Privacy uses this as a batched cold loader behind
 // its bounded process cache; no viewer projection is performed, avoiding a
@@ -186,11 +210,11 @@ func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int6
 		if _, ok := seen[id]; ok {
 			continue
 		}
+		if len(ids) >= maxBatchUsers {
+			return nil, fmt.Errorf("%w: more than %d unique owners", ErrBatchUsersLimit, maxBatchUsers)
+		}
 		seen[id] = struct{}{}
 		ids = append(ids, id)
-		if len(ids) >= maxBatchUsers {
-			break
-		}
 	}
 	users, err := s.loadBaseUsersByIDs(ctx, ids)
 	if err != nil {
@@ -200,22 +224,68 @@ func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int6
 }
 
 // ByIDsForViewers 跨多个 viewer 批量投影同一组 user（fan-out 模板化）：base user 只加载一次，
-// 隐私/改名/头像投影经 userprojection.ForViewers 压成 O(owner) 查询。返回 map[viewerID][]User，
-// 每个切片与 ByIDs(viewer, ids) 字节等价——**唯一例外是 personal photo overlay**（ForViewers v1
-// 跳过，客户端下次 getChannelDifference/getHistory 自愈）。供 channel fan-out 预热每 viewer 投影，
+// 隐私/改名/头像投影经 userprojection.ForViewers 收敛成批量查询。返回 map[viewerID][]User，
+// 每个切片与 ByIDs(viewer, ids) 字节等价，包含 viewer-specific personal photo overlay。
+// 供 channel fan-out 预热每 viewer 投影，
 // 把 per-recipient 的 ByIDs(=ForViewer) 折叠成一次跨 viewer 投影。不做 ByIDs 的单 caller 鉴权
 // （viewer 是 fan-out 收件人集合，非 RPC 调用方）。
 func (s *Service) ByIDsForViewers(ctx context.Context, viewerUserIDs []int64, userIDs []int64) (map[int64][]domain.User, error) {
 	if len(viewerUserIDs) == 0 || len(userIDs) == 0 {
 		return map[int64][]domain.User{}, nil
 	}
-	ids := uniqueUserIDs(userIDs, maxBatchUsers)
+	ids := uniqueUserIDs(userIDs, 0)
+	if len(ids) > maxBatchUsers {
+		return nil, fmt.Errorf("%w: got %d unique owners, maximum %d", ErrBatchUsersLimit, len(ids), maxBatchUsers)
+	}
+	viewers := uniqueUserIDs(viewerUserIDs, 0)
+	if !batchViewerProjectionCellsAllowed(len(viewers), len(ids)) {
+		return nil, fmt.Errorf("%w: got %d viewers x %d owners, maximum %d cells", ErrBatchViewerCells, len(viewers), len(ids), maxBatchViewerProjectionCells)
+	}
 	base, err := s.loadBaseUsersByIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
+	base, err = requireBatchBaseUsers(ids, base)
+	if err != nil {
+		return nil, err
+	}
 	// projector 为 nil 时 ForViewers 返回各 viewer 的原始 base 副本（与 projectUsers 的 nil 分支一致）。
-	return s.projector.ForViewers(ctx, viewerUserIDs, base)
+	return s.projector.ForViewers(ctx, viewers, base)
+}
+
+func batchViewerProjectionCellsAllowed(viewers, owners int) bool {
+	if viewers <= 0 || owners <= 0 {
+		return true
+	}
+	// Division avoids overflow from viewers*owners on hostile inputs.
+	return viewers <= maxBatchViewerProjectionCells/owners
+}
+
+// requireBatchBaseUsers turns the fan-out projection API into a complete
+// envelope contract. Deleted users remain durable tombstones and therefore
+// still appear in base; a truly missing referenced user must fail closed rather
+// than produce a message whose sender cannot be resolved. System users are
+// protocol-local constants and do not require a backing users row.
+func requireBatchBaseUsers(ids []int64, base []domain.User) ([]domain.User, error) {
+	byID := make(map[int64]domain.User, len(base))
+	for _, user := range base {
+		if user.ID != 0 {
+			byID[user.ID] = user
+		}
+	}
+	out := make([]domain.User, 0, len(ids))
+	for _, id := range ids {
+		if user, ok := byID[id]; ok {
+			out = append(out, user)
+			continue
+		}
+		if system, ok := domain.SystemUserByID(id); ok {
+			out = append(out, system)
+			continue
+		}
+		return nil, fmt.Errorf("%w: user_id=%d", ErrBatchUserMissing, id)
+	}
+	return out, nil
 }
 
 // CheckUsername 校验当前用户是否可以占用 username。
@@ -277,35 +347,6 @@ func (s *Service) UpdateUsername(ctx context.Context, userID int64, username str
 	return s.projectOne(ctx, self.ID, u)
 }
 
-// SetPhone force-sets a user's phone number (admin use -- no code
-// verification, unlike the user-facing verified change-phone flow in
-// internal/app/account). Pre-checks availability via ByPhone before writing,
-// on top of the store's own unique-constraint backstop.
-func (s *Service) SetPhone(ctx context.Context, userID int64, phone string) (domain.User, error) {
-	self, err := s.loadSelf(ctx, userID)
-	if err != nil {
-		return domain.User{}, err
-	}
-	phone = domain.NormalizePhone(strings.TrimSpace(phone))
-	if !domain.ValidPhone(phone) {
-		return domain.User{}, domain.ErrPhoneNumberInvalid
-	}
-	if phone == self.Phone {
-		return s.projectOne(ctx, self.ID, self)
-	}
-	if existing, found, err := s.users.ByPhone(ctx, phone); err != nil {
-		return domain.User{}, err
-	} else if found && existing.ID != self.ID {
-		return domain.User{}, domain.ErrPhoneNumberOccupied
-	}
-	u, err := s.users.UpdatePhone(ctx, self.ID, phone)
-	if err != nil {
-		return domain.User{}, err
-	}
-	s.refreshCachedUsers(ctx, u)
-	return s.projectOne(ctx, self.ID, u)
-}
-
 // UpdateProfile 修改当前用户的基础资料。未设置的字段保持原值。
 func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain.UserProfileUpdate) (domain.User, error) {
 	self, err := s.loadSelf(ctx, userID)
@@ -345,6 +386,37 @@ func (s *Service) UpdateProfile(ctx context.Context, userID int64, update domain
 	return s.projectOne(ctx, self.ID, u)
 }
 
+// SetPhone force-sets the authoritative phone for the trusted admin path. It
+// remains a non-PTS profile mutation because updateUserPhone and updateUser
+// carry no pts/pts_count in every admitted exact layer.
+func (s *Service) SetPhone(ctx context.Context, userID int64, phone string) (domain.User, error) {
+	self, err := s.loadSelf(ctx, userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if self.Bot || domain.IsSystemUserID(self.ID) {
+		return domain.User{}, domain.ErrPhoneChangeForbidden
+	}
+	phone = domain.NormalizePhone(strings.TrimSpace(phone))
+	if !domain.ValidPhone(phone) {
+		return domain.User{}, domain.ErrPhoneNumberInvalid
+	}
+	if phone == self.Phone {
+		return s.projectOne(ctx, self.ID, self)
+	}
+	if existing, found, err := s.users.ByPhone(ctx, phone); err != nil {
+		return domain.User{}, err
+	} else if found && existing.ID != self.ID {
+		return domain.User{}, domain.ErrPhoneNumberOccupied
+	}
+	u, err := s.users.UpdatePhone(ctx, self.ID, phone)
+	if err != nil {
+		return domain.User{}, err
+	}
+	s.refreshCachedUsers(ctx, u)
+	return s.projectOne(ctx, self.ID, u)
+}
+
 // UpdateLastSeen records the latest visible account activity time.
 func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, lastSeenAt int) error {
 	if userID == 0 {
@@ -357,6 +429,45 @@ func (s *Service) UpdateLastSeen(ctx context.Context, userID int64, lastSeenAt i
 		return err
 	}
 	s.dropCachedUsers(ctx, userID)
+	return nil
+}
+
+// UpdateLastSeenBatch is the production lifecycle-presence write boundary. It
+// requires a real batch-capable store: silently looping over UpdateLastSeen
+// would recreate the exact per-account transaction fan-out this API exists to
+// remove. The cache delete is part of batch completion; callers may retry the
+// whole idempotent batch when Redis is temporarily unavailable.
+func (s *Service) UpdateLastSeenBatch(ctx context.Context, updates []store.UserLastSeenUpdate) error {
+	batch, ok := s.users.(store.UserLastSeenBatchStore)
+	if !ok {
+		return ErrLastSeenBatchUnsupported
+	}
+	latest := make(map[int64]int, len(updates))
+	for _, update := range updates {
+		if update.UserID == 0 || update.LastSeenAt <= 0 {
+			continue
+		}
+		if current := latest[update.UserID]; update.LastSeenAt > current {
+			latest[update.UserID] = update.LastSeenAt
+		}
+	}
+	if len(latest) == 0 {
+		return nil
+	}
+	merged := make([]store.UserLastSeenUpdate, 0, len(latest))
+	userIDs := make([]int64, 0, len(latest))
+	for userID, lastSeenAt := range latest {
+		merged = append(merged, store.UserLastSeenUpdate{UserID: userID, LastSeenAt: lastSeenAt})
+		userIDs = append(userIDs, userID)
+	}
+	if err := batch.UpdateLastSeenBatch(ctx, merged); err != nil {
+		return err
+	}
+	if s.cache != nil {
+		if err := s.cache.Delete(ctx, userIDs); err != nil {
+			return fmt.Errorf("invalidate last seen batch user cache: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -411,6 +522,9 @@ func (s *Service) GrantPremium(ctx context.Context, userID int64, months int) (d
 func (s *Service) SetVerified(ctx context.Context, userID int64, verified bool) (domain.User, error) {
 	if userID == 0 {
 		return domain.User{}, ErrNotAuthorized
+	}
+	if domain.IsSystemUserID(userID) && !verified {
+		return domain.User{}, ErrSystemUserImmutable
 	}
 	u, found, err := s.users.ByID(ctx, userID)
 	if err != nil {
@@ -630,6 +744,7 @@ func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, user
 		return domain.User{}, false, err
 	}
 	username = normalizeUsername(username)
+	_, reservedSystemUsername := domain.SystemUserByUsername(username)
 	// Resolution covers both the editable username slot (5..32) and
 	// Fragment-style collectible usernames (4..32). Keep the stricter
 	// validUsername check on create/update paths; only lookup accepts the
@@ -638,8 +753,7 @@ func (s *Service) ResolveUsername(ctx context.Context, currentUserID int64, user
 	// server-controlled handles, not user input -- but still resolve through
 	// the normal DB-backed path below, so caching/projection/hidden-bot
 	// handling stay exactly as for any other account.
-	_, isSystemUsername := domain.SystemUserByUsername(username)
-	if !isSystemUsername && !domain.ValidCollectibleUsername(username) {
+	if !reservedSystemUsername && !domain.ValidCollectibleUsername(username) {
 		return domain.User{}, false, domain.ErrUsernameInvalid
 	}
 	u, found, err := s.users.ByUsername(ctx, username)
@@ -664,7 +778,7 @@ func (s *Service) ResolvePhone(ctx context.Context, currentUserID int64, phone s
 	if _, err := s.loadSelf(ctx, currentUserID); err != nil {
 		return domain.User{}, false, err
 	}
-	phone = normalizePhone(phone)
+	phone = domain.NormalizePhone(phone)
 	if phone == "" {
 		return domain.User{}, false, domain.ErrPhoneNotOccupied
 	}
@@ -721,7 +835,10 @@ func (s *Service) loadBaseUserByID(ctx context.Context, userID int64) (domain.Us
 }
 
 func (s *Service) loadBaseUsersByIDs(ctx context.Context, userIDs []int64) ([]domain.User, error) {
-	ids := uniqueUserIDs(userIDs, maxBatchUsers)
+	ids := uniqueUserIDs(userIDs, maxBatchUsers+1)
+	if len(ids) > maxBatchUsers {
+		return nil, fmt.Errorf("%w: more than %d unique owners", ErrBatchUsersLimit, maxBatchUsers)
+	}
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -799,6 +916,15 @@ func (s *Service) dropCachedUsers(ctx context.Context, userIDs ...int64) {
 	_ = s.cache.Delete(ctx, userIDs)
 }
 
+// InvalidateUsers drops viewer-independent user snapshots after an aggregate
+// transaction updates users without passing through this service.
+func (s *Service) InvalidateUsers(ctx context.Context, userIDs ...int64) {
+	if s == nil {
+		return
+	}
+	s.dropCachedUsers(ctx, userIDs...)
+}
+
 func uniqueUserIDs(ids []int64, limit int) []int64 {
 	if len(ids) == 0 {
 		return nil
@@ -856,19 +982,4 @@ func validUsername(username string) bool {
 		}
 	}
 	return true
-}
-
-func normalizePhone(phone string) string {
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
-		return ""
-	}
-	var b strings.Builder
-	b.Grow(len(phone))
-	for _, r := range phone {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

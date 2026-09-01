@@ -45,8 +45,14 @@ func (r *Router) onPhotosUploadProfilePhoto(ctx context.Context, req *tg.PhotosU
 	if !ok || userID == 0 {
 		return nil, photoInvalidErr()
 	}
-	if bot, hasBot := req.GetBot(); hasBot && bot != nil {
-		return nil, inputConstructorInvalidErr()
+	targetUserID := userID
+	var botTarget domain.User
+	bot, hasBot := req.GetBot()
+	if target, isBotTarget, err := r.resolveProfilePhotoBotTarget(ctx, userID, bot, hasBot); err != nil {
+		return nil, err
+	} else if isBotTarget {
+		botTarget = target
+		targetUserID = target.ID
 	}
 	upload, mediaFlags, err := parseProfilePhotoUpload(req)
 	if err != nil {
@@ -63,12 +69,15 @@ func (r *Router) onPhotosUploadProfilePhoto(ctx context.Context, req *tg.PhotosU
 	if err != nil {
 		return nil, err
 	}
-	photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, userID, kind, photo.ID, int(r.clock.Now().Unix()))
+	photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, targetUserID, kind, photo.ID, int(r.clock.Now().Unix()))
 	if err != nil {
 		return nil, internalErr()
 	}
 	if !found {
 		return nil, photoInvalidErr()
+	}
+	if botTarget.ID != 0 {
+		return r.photosPhotoForBotTarget(ctx, userID, botTarget.ID, photo, kind), nil
 	}
 	return r.photosPhotoForSelf(ctx, userID, photo, kind), nil
 }
@@ -84,8 +93,14 @@ func (r *Router) onPhotosUpdateProfilePhoto(ctx context.Context, req *tg.PhotosU
 	if !ok || userID == 0 {
 		return nil, photoInvalidErr()
 	}
-	if bot, hasBot := req.GetBot(); hasBot && bot != nil {
-		return nil, inputConstructorInvalidErr()
+	targetUserID := userID
+	var botTarget domain.User
+	bot, hasBot := req.GetBot()
+	if target, isBotTarget, err := r.resolveProfilePhotoBotTarget(ctx, userID, bot, hasBot); err != nil {
+		return nil, err
+	} else if isBotTarget {
+		botTarget = target
+		targetUserID = target.ID
 	}
 	kind := domain.ProfilePhotoKindProfile
 	if req.GetFallback() {
@@ -93,21 +108,51 @@ func (r *Router) onPhotosUpdateProfilePhoto(ctx context.Context, req *tg.PhotosU
 	}
 	switch in := req.ID.(type) {
 	case *tg.InputPhoto:
-		photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, userID, kind, in.ID, int(r.clock.Now().Unix()))
+		photo, found, err := r.deps.Files.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, targetUserID, kind, in.ID, int(r.clock.Now().Unix()))
 		if err != nil {
 			return nil, internalErr()
 		}
 		if !found {
 			return nil, photoInvalidErr()
 		}
+		if botTarget.ID != 0 {
+			return r.photosPhotoForBotTarget(ctx, userID, botTarget.ID, photo, kind), nil
+		}
 		return r.photosPhotoForSelf(ctx, userID, photo, kind), nil
 	default:
 		// InputPhotoEmpty：移除当前头像（停用现有当前照片）。
-		if cur, found, err := r.deps.Files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, userID, kind); err == nil && found {
-			_, _ = r.deps.Files.DeleteProfilePhotosKind(ctx, domain.PeerTypeUser, userID, kind, []int64{cur.ID})
+		if cur, found, err := r.deps.Files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, targetUserID, kind); err == nil && found {
+			_, _ = r.deps.Files.DeleteProfilePhotosKind(ctx, domain.PeerTypeUser, targetUserID, kind, []int64{cur.ID})
+		}
+		if botTarget.ID != 0 {
+			return r.photosPhotoForBotTarget(ctx, userID, botTarget.ID, domain.Photo{}, kind), nil
 		}
 		return r.photosPhotoForSelf(ctx, userID, domain.Photo{}, kind), nil
 	}
+}
+
+func (r *Router) resolveProfilePhotoBotTarget(ctx context.Context, ownerUserID int64, bot tg.InputUserClass, hasBot bool) (domain.User, bool, error) {
+	if !hasBot {
+		return domain.User{}, false, nil
+	}
+	if bot == nil || ownerUserID == 0 || r.deps.Users == nil || r.deps.Bots == nil {
+		return domain.User{}, false, botInvalidErr()
+	}
+	target, found, err := r.userFromInput(ctx, ownerUserID, bot)
+	if err != nil {
+		return domain.User{}, false, internalErr()
+	}
+	if !found || target.ID == 0 {
+		return domain.User{}, false, botInvalidErr()
+	}
+	owns, err := r.deps.Bots.OwnsBot(ctx, ownerUserID, target.ID)
+	if err != nil {
+		return domain.User{}, false, internalErr()
+	}
+	if !owns {
+		return domain.User{}, false, botInvalidErr()
+	}
+	return target, true, nil
 }
 
 func (r *Router) onPhotosUploadContactProfilePhoto(ctx context.Context, req *tg.PhotosUploadContactProfilePhotoRequest) (*tg.PhotosPhoto, error) {
@@ -494,6 +539,29 @@ func (r *Router) photosPhotoForSelf(ctx context.Context, userID int64, photo dom
 	return out
 }
 
+func (r *Router) photosPhotoForBotTarget(ctx context.Context, viewerUserID, botUserID int64, photo domain.Photo, kind domain.ProfilePhotoKind) *tg.PhotosPhoto {
+	out := &tg.PhotosPhoto{Photo: tgPhoto(photo), Users: []tg.UserClass{}}
+	r.invalidateRPCProjectionForUser(botUserID)
+	if r.deps.Users == nil {
+		return out
+	}
+	bot, found, err := r.deps.Users.ByID(ctx, viewerUserID, botUserID)
+	if err != nil || !found {
+		return out
+	}
+	if kind == domain.ProfilePhotoKindProfile {
+		applyProfilePhotoToUser(&bot, photo)
+	}
+	projected := r.tgUser(bot)
+	_ = r.applyBotCanEditToUser(ctx, viewerUserID, bot, projected)
+	pushed := r.tgUser(bot)
+	_ = r.applyBotCanEditToUser(ctx, viewerUserID, bot, pushed)
+	r.applyUsernamesToPeerObjects(ctx, []tg.UserClass{projected, pushed}, nil)
+	out.Users = append(out.Users, projected)
+	r.pushBotPhotoUpdateToOwner(ctx, viewerUserID, bot, pushed)
+	return out
+}
+
 func (r *Router) photosPhotoForUser(ctx context.Context, viewerUserID, targetUserID int64, photo domain.Photo) *tg.PhotosPhoto {
 	out := &tg.PhotosPhoto{Photo: tgPhoto(photo), Users: []tg.UserClass{}}
 	if r.deps.Users == nil {
@@ -573,6 +641,15 @@ func (r *Router) pushSelfPhotoUpdateWithUser(ctx context.Context, self domain.Us
 	}
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, self.ID, updates)
+	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+}
+
+func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int64, bot domain.User, projected *tg.User) {
+	if ownerUserID == 0 || bot.ID == 0 || projected == nil {
+		return
+	}
+	updates := selfPhotoUpdates(bot, int(r.clock.Now().Unix()), projected)
+	r.pushUserUpdates(ctx, ownerUserID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
 }
 

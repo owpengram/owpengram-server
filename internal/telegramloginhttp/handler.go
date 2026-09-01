@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 
 	loginapp "telesrv/internal/app/telegramlogin"
+	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 )
 
@@ -31,11 +32,13 @@ const (
 	maxAuthorizationQueryBytes = 16 << 10
 	maxTokenFormBytes          = 16 << 10
 	maxStatusFormBytes         = 4 << 10
+	maxWidgetResolveFormBytes  = 1 << 10
 )
 
 type Config struct {
 	Service           *loginapp.Service
 	Tokens            *loginapp.IDTokenIssuer
+	BotUsernames      BotUsernameResolver
 	Limiter           RateLimiter
 	AppName           string
 	Logger            *zap.Logger
@@ -46,6 +49,7 @@ type Config struct {
 type Handler struct {
 	service        *loginapp.Service
 	tokens         *loginapp.IDTokenIssuer
+	botUsernames   BotUsernameResolver
 	appName        string
 	logger         *zap.Logger
 	limiter        RateLimiter
@@ -58,12 +62,16 @@ type RateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, retryAfterSeconds int, err error)
 }
 
+type BotUsernameResolver interface {
+	ByUsername(ctx context.Context, username string) (domain.User, bool, error)
+}
+
 func NewHandler(cfg Config) (*Handler, error) {
-	if cfg.Service == nil || cfg.Tokens == nil || cfg.Tokens.Issuer() == "" {
+	if cfg.Service == nil || cfg.Tokens == nil || cfg.Tokens.Issuer() == "" || cfg.BotUsernames == nil {
 		return nil, errors.New("telegram login HTTP dependencies are incomplete")
 	}
 	if strings.TrimSpace(cfg.AppName) == "" {
-		cfg.AppName = "Telesrv"
+		cfg.AppName = branding.ProductName
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()
@@ -76,7 +84,7 @@ func NewHandler(cfg Config) (*Handler, error) {
 		}
 		trustedProxies = append(trustedProxies, prefix.Masked())
 	}
-	h := &Handler{service: cfg.Service, tokens: cfg.Tokens, appName: strings.TrimSpace(cfg.AppName), logger: cfg.Logger, limiter: cfg.Limiter, trustedProxies: trustedProxies, allowHTTP: cfg.AllowHTTP}
+	h := &Handler{service: cfg.Service, tokens: cfg.Tokens, botUsernames: cfg.BotUsernames, appName: strings.TrimSpace(cfg.AppName), logger: cfg.Logger, limiter: cfg.Limiter, trustedProxies: trustedProxies, allowHTTP: cfg.AllowHTTP}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", h.discovery)
 	mux.HandleFunc("GET /.well-known/jwks.json", h.jwks)
@@ -87,6 +95,9 @@ func NewHandler(cfg Config) (*Handler, error) {
 	mux.HandleFunc("POST /token", h.token)
 	mux.HandleFunc("GET /telegram-login.js", h.loginJavaScript)
 	mux.HandleFunc("GET /js/telegram-login.js", h.loginJavaScript)
+	mux.HandleFunc("GET /telegram-widget.js", h.widgetJavaScript)
+	mux.HandleFunc("GET /js/telegram-widget.js", h.widgetJavaScript)
+	mux.HandleFunc("POST /telegram-widget/resolve", h.resolveWidgetClient)
 	h.mux = mux
 	return h, nil
 }
@@ -359,6 +370,55 @@ func (h *Handler) inApp(w http.ResponseWriter, r *http.Request) {
 func setInAppCORS(w http.ResponseWriter, origin string) {
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Vary", "Origin")
+}
+
+func (h *Handler) resolveWidgetClient(w http.ResponseWriter, r *http.Request) {
+	if !h.allow(w, r, "widget-resolve", h.requestIP(r), 60, time.Minute) {
+		return
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) != 1 || origins[0] == "" {
+		writeOAuthError(w, http.StatusForbidden, "access_denied", "browser origin is not authorized")
+		return
+	}
+	form, ok := parseBoundedForm(w, r, maxWidgetResolveFormBytes)
+	if !ok {
+		return
+	}
+	rawUsername, unique := requiredSingleValue(form, "username", domain.MaxCollectibleUsernameLength+1)
+	username := domain.NormalizeUsername(rawUsername)
+	if !unique || !domain.ValidCollectibleUsername(username) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "bot username is invalid")
+		return
+	}
+	user, found, err := h.botUsernames.ByUsername(r.Context(), username)
+	if err != nil {
+		h.logger.Error("telegram_widget_username_resolve_failed", zap.String("error", errorClass(err)))
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", "widget client lookup failed")
+		return
+	}
+	if !found || !user.Bot || user.ID <= 0 {
+		writeOAuthError(w, http.StatusNotFound, "invalid_client", "widget client is unavailable")
+		return
+	}
+	resolved, err := h.service.ResolveWidgetClient(r.Context(), user.ID, origins[0])
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrTelegramLoginClientInvalid), errors.Is(err, domain.ErrTelegramLoginClientDisabled):
+			writeOAuthError(w, http.StatusNotFound, "invalid_client", "widget client is unavailable")
+		case errors.Is(err, domain.ErrTelegramLoginOriginNotAllowed), errors.Is(err, domain.ErrTelegramLoginURLInvalid):
+			writeOAuthError(w, http.StatusForbidden, "access_denied", "browser origin is not authorized")
+		default:
+			h.logger.Error("telegram_widget_client_resolve_failed", zap.String("error", errorClass(err)))
+			writeOAuthError(w, http.StatusInternalServerError, "server_error", "widget client lookup failed")
+		}
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", resolved.Origin)
+	w.Header().Set("Vary", "Origin")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	writeJSON(w, http.StatusOK, map[string]string{"client_id": resolved.ClientID})
 }
 
 func nativeSDKPlatform(values url.Values) (domain.TelegramLoginNativePlatform, bool) {

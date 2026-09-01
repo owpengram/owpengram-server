@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -12,13 +13,31 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
+var errChannelDifferenceCutChanged = errors.New("channel difference stable cut changed")
+
 func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.ChannelDifferenceRequest) (domain.ChannelDifference, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		diff, retry, err := s.listChannelDifferenceAttempt(ctx, req)
+		if !retry {
+			return diff, err
+		}
+		if s.rowCache != nil {
+			s.rowCache.delete(req.ChannelID)
+		}
+		if s.differenceCache != nil {
+			s.differenceCache.deleteChannel(req.ChannelID)
+		}
+	}
+	return domain.ChannelDifference{}, fmt.Errorf("list channel difference: stable cut changed repeatedly for channel %d", req.ChannelID)
+}
+
+func (s *ChannelStore) listChannelDifferenceAttempt(ctx context.Context, req domain.ChannelDifferenceRequest) (domain.ChannelDifference, bool, error) {
 	channel, member, preview, err := s.getChannelForViewer(ctx, s.db, req.UserID, req.ChannelID)
 	if err != nil {
-		return domain.ChannelDifference{}, err
+		return domain.ChannelDifference{}, false, err
 	}
 	if req.Pts < 0 || req.Pts > channel.Pts {
-		return domain.ChannelDifference{}, domain.ErrPersistentTimestamp
+		return domain.ChannelDifference{}, false, domain.ErrPersistentTimestamp
 	}
 	if !preview && member.AvailableMinPts > req.Pts {
 		req.Pts = minInt(member.AvailableMinPts, channel.Pts)
@@ -27,32 +46,53 @@ func (s *ChannelStore) ListChannelDifference(ctx context.Context, req domain.Cha
 	if limit <= 0 || limit > domain.MaxChannelDifferenceLimit {
 		limit = domain.MaxChannelDifferenceLimit
 	}
-	checkpoint, err := getChannelUpdateCheckpoint(ctx, s.db, req.ChannelID)
-	if err != nil {
-		return domain.ChannelDifference{}, err
+	// A current-PTS request has no retention range to prove. Access, membership,
+	// available_min_pts and future/stale bounds were already checked above; do
+	// not spend two pool acquisitions reading a checkpoint and an empty event
+	// range during reconnect storms.
+	if req.Pts == channel.Pts {
+		diff := domain.ChannelDifference{
+			Channel: channel,
+			Self:    member,
+			Pts:     channel.Pts,
+			Final:   true,
+			Timeout: 30,
+		}
+		if preview {
+			diff.Dialog = previewChannelDialog(req.UserID, channel, member)
+		} else {
+			dialog, err := s.getChannelDialog(ctx, s.db, req.UserID, channel)
+			if err != nil {
+				return domain.ChannelDifference{}, false, err
+			}
+			diff.Dialog = dialog
+		}
+		return diff, false, nil
 	}
-	if req.Pts < checkpoint.RetainedThroughPts || channel.Pts-req.Pts > limit {
-		args := []any{req.ChannelID}
-		where := "channel_id = $1 AND NOT deleted"
-		if member.AvailableMinID > 0 {
-			args = append(args, member.AvailableMinID)
-			where += fmt.Sprintf(" AND id > $%d", len(args))
-		}
-		if channel.Monoforum && !member.CanManageDirectMessages() {
-			args = append(args, req.UserID)
-			where += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(args))
-		}
-		args = append(args, domain.MaxChannelDifferenceTooLongMessages)
-		rows, err := s.db.Query(ctx, `
-SELECT `+channelMessageColumns+`
-FROM channel_messages
-WHERE `+where+`
-ORDER BY id DESC
-LIMIT $`+fmt.Sprint(len(args)), args...)
-		if err != nil {
-			return domain.ChannelDifference{}, fmt.Errorf("list channel too long messages: %w", err)
-		}
-		defer rows.Close()
+	key := channelDifferenceBaseKey{
+		channelID:     req.ChannelID,
+		requestPts:    req.Pts,
+		capturedPts:   channel.Pts,
+		capturedTopID: channel.TopMessageID,
+		limit:         limit,
+	}
+	sharedBase := !channel.Monoforum && s.differenceCache != nil
+	load := func() (channelDifferenceBase, error) {
+		return s.loadChannelDifferenceBase(ctx, channel, member, req.UserID, req.Pts, limit, sharedBase)
+	}
+	var base channelDifferenceBase
+	if channel.Monoforum || s.differenceCache == nil {
+		base, err = load()
+	} else {
+		base, err = s.differenceCache.getOrLoad(ctx, key, load)
+	}
+	if errors.Is(err, errChannelDifferenceCutChanged) {
+		return domain.ChannelDifference{}, true, nil
+	}
+	if err != nil {
+		return domain.ChannelDifference{}, false, err
+	}
+	if base.tooLong {
 		diff := domain.ChannelDifference{
 			Channel: channel,
 			Self:    member,
@@ -61,102 +101,42 @@ LIMIT $`+fmt.Sprint(len(args)), args...)
 			TooLong: true,
 			Timeout: 30,
 		}
-		for rows.Next() {
-			msg, err := scanChannelMessage(rows)
-			if err != nil {
-				return domain.ChannelDifference{}, err
+		for _, msg := range base.messages {
+			if member.AvailableMinID > 0 && msg.ID <= member.AvailableMinID {
+				continue
+			}
+			if !channelMessageVisibleToViewer(channel, member, req.UserID, msg) {
+				continue
 			}
 			diff.NewMessages = append(diff.NewMessages, msg)
 		}
-		if err := rows.Err(); err != nil {
-			return domain.ChannelDifference{}, err
-		}
-		if err := populateChannelMessageUnreadFlags(ctx, s.db, req.UserID, diff.NewMessages); err != nil {
-			return domain.ChannelDifference{}, err
+		if err := populateChannelDifferenceUnreadFlags(ctx, s.db, req.UserID, diff.NewMessages, base); err != nil {
+			return domain.ChannelDifference{}, false, err
 		}
 		if preview {
 			diff.Dialog = previewChannelDialog(req.UserID, channel, member)
 		} else {
 			dialog, err := s.getChannelDialog(ctx, s.db, req.UserID, channel)
 			if err != nil {
-				return domain.ChannelDifference{}, err
+				return domain.ChannelDifference{}, false, err
 			}
 			diff.Dialog = dialog
 		}
-		return diff, nil
-	}
-	rows, err := s.db.Query(ctx, `
-SELECT channel_id, pts, pts_count, date, event_type, message_id, message_ids::text, sender_user_id, user_ids::text, payload::text
-FROM channel_update_events
-WHERE channel_id = $1 AND pts > $2
-ORDER BY pts ASC
-LIMIT $3`, req.ChannelID, req.Pts, limit)
-	if err != nil {
-		return domain.ChannelDifference{}, fmt.Errorf("list channel difference: %w", err)
+		return diff, false, nil
 	}
 	diff := domain.ChannelDifference{Channel: channel, Self: member, Pts: channel.Pts, Final: true, Timeout: 30}
-	userRefs := make(map[int64]struct{})
-	channelRefs := make(map[int64]struct{})
-	lastPts := req.Pts
-	type differenceEventRow struct {
-		event     domain.ChannelUpdateEvent
-		messageID int
-	}
-	eventRows := make([]differenceEventRow, 0, limit)
-	for rows.Next() {
-		event, messageID, err := scanChannelEvent(rows)
-		if err != nil {
-			return domain.ChannelDifference{}, err
-		}
-		ptsCount := event.PtsCount
-		if ptsCount <= 0 {
-			ptsCount = 1
-		}
-		if event.Pts != lastPts+ptsCount {
-			s.log.Warn("channel_difference_stopped_at_gap",
-				zap.String("scope", "channel"),
-				zap.Int64("user_id", req.UserID),
-				zap.Int64("channel_id", req.ChannelID),
-				zap.Int("request_pts", req.Pts),
-				zap.Int("channel_pts", channel.Pts),
-				zap.Int("returned_pts", lastPts),
-				zap.Int("expected_pts", lastPts+ptsCount),
-				zap.Int("got_pts", event.Pts),
-				zap.Int("got_pts_count", ptsCount),
-				zap.String("event_type", string(event.Type)),
-				zap.Int("limit", limit),
-			)
-			break
-		}
-		lastPts = event.Pts
-		eventRows = append(eventRows, differenceEventRow{event: event, messageID: messageID})
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return domain.ChannelDifference{}, err
-	}
-	rows.Close()
 	var visibleMonoforumMessageIDs map[int]struct{}
 	if channel.Monoforum && !member.CanManageDirectMessages() {
 		messageIDs := make([]int, 0)
-		for _, row := range eventRows {
-			messageIDs = append(messageIDs, row.event.MessageIDs...)
+		for _, event := range base.events {
+			messageIDs = append(messageIDs, event.MessageIDs...)
 		}
 		visibleMonoforumMessageIDs, err = s.monoforumVisibleMessageIDs(ctx, req.ChannelID, req.UserID, messageIDs)
 		if err != nil {
-			return domain.ChannelDifference{}, err
+			return domain.ChannelDifference{}, false, err
 		}
 	}
-	for _, row := range eventRows {
-		event := row.event
-		messageID := row.messageID
-		if messageID != 0 && event.Message.ID == 0 {
-			msg, err := s.getChannelMessage(ctx, s.db, req.ChannelID, messageID)
-			if err != nil {
-				return domain.ChannelDifference{}, err
-			}
-			event.Message = msg
-		}
+	for _, event := range base.events {
 		visibleEvent, ok := domain.FilterChannelUpdateEventForAvailableMinID(event, member.AvailableMinID)
 		if !ok {
 			continue
@@ -171,7 +151,6 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 		if preview && event.Type == domain.ChannelUpdateParticipant {
 			continue
 		}
-		collectChannelEventRefs(event, req.ChannelID, userRefs, channelRefs)
 		diff.Events = append(diff.Events, event)
 		diff.Pts = event.Pts
 		switch event.Type {
@@ -182,12 +161,12 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 		}
 	}
 	if len(diff.Events) == 0 {
-		diff.Pts = lastPts
-	} else if lastPts > diff.Pts {
-		diff.Pts = lastPts
+		diff.Pts = base.lastPts
+	} else if base.lastPts > diff.Pts {
+		diff.Pts = base.lastPts
 	}
-	if err := populateChannelMessageUnreadFlags(ctx, s.db, req.UserID, diff.NewMessages); err != nil {
-		return domain.ChannelDifference{}, err
+	if err := populateChannelDifferenceUnreadFlags(ctx, s.db, req.UserID, diff.NewMessages, base); err != nil {
+		return domain.ChannelDifference{}, false, err
 	}
 	// OtherUpdates 里带消息的事件未读/提及标记一次批量回填（原来逐事件一条 SQL 的 N+1）。
 	otherMsgs := make([]domain.ChannelMessage, 0, len(diff.OtherUpdates))
@@ -200,34 +179,259 @@ LIMIT $3`, req.ChannelID, req.Pts, limit)
 		otherIdx = append(otherIdx, i)
 	}
 	if len(otherMsgs) > 0 {
-		if err := populateChannelMessageUnreadFlags(ctx, s.db, req.UserID, otherMsgs); err != nil {
-			return domain.ChannelDifference{}, err
+		if err := populateChannelDifferenceUnreadFlags(ctx, s.db, req.UserID, otherMsgs, base); err != nil {
+			return domain.ChannelDifference{}, false, err
 		}
 		for j, i := range otherIdx {
 			diff.OtherUpdates[i].Message = otherMsgs[j]
 		}
 	}
-	users, err := listUsersByIDs(ctx, s.db, mapKeysInt64(userRefs))
-	if err != nil {
-		return domain.ChannelDifference{}, err
-	}
-	channels, err := listChannelsByIDs(ctx, s.db, mapKeysInt64(channelRefs))
-	if err != nil {
-		return domain.ChannelDifference{}, err
-	}
-	diff.Users = users
-	diff.Channels = channels
 	if preview {
 		diff.Dialog = previewChannelDialog(req.UserID, channel, member)
 	} else {
 		dialog, err := s.getChannelDialog(ctx, s.db, req.UserID, channel)
 		if err != nil {
-			return domain.ChannelDifference{}, err
+			return domain.ChannelDifference{}, false, err
 		}
 		diff.Dialog = dialog
 	}
-	diff.Final = lastPts >= channel.Pts
-	return diff, nil
+	diff.Final = base.lastPts >= channel.Pts
+	return diff, false, nil
+}
+
+func (s *ChannelStore) loadChannelDifferenceBase(
+	ctx context.Context,
+	channel domain.Channel,
+	member domain.ChannelMember,
+	viewerUserID int64,
+	requestPts int,
+	limit int,
+	loadMentionCandidates bool,
+) (channelDifferenceBase, error) {
+	checkpoint, err := getChannelUpdateCheckpoint(ctx, s.db, channel.ID)
+	if err != nil {
+		return channelDifferenceBase{}, err
+	}
+	base := channelDifferenceBase{
+		retainedThroughPts: checkpoint.RetainedThroughPts,
+		lastPts:            requestPts,
+	}
+	if requestPts < checkpoint.RetainedThroughPts || channel.Pts-requestPts > limit {
+		base.tooLong = true
+		args := []any{channel.ID, channel.TopMessageID}
+		where := "channel_id = $1 AND id <= $2 AND NOT deleted"
+		// Non-monoforum pages are viewer-independent: apply available_min after
+		// the shared lookup. Monoforum latest-100 selection is viewer-specific,
+		// so that path bypasses the shared cache and keeps its predicate here.
+		if channel.Monoforum {
+			if member.AvailableMinID > 0 {
+				args = append(args, member.AvailableMinID)
+				where += fmt.Sprintf(" AND id > $%d", len(args))
+			}
+			if !member.CanManageDirectMessages() {
+				args = append(args, viewerUserID)
+				where += fmt.Sprintf(" AND saved_peer_type = 'user' AND saved_peer_id = $%d", len(args))
+			}
+		}
+		args = append(args, domain.MaxChannelDifferenceTooLongMessages)
+		rows, err := s.db.Query(ctx, `
+SELECT `+channelMessageColumns+`
+FROM channel_messages
+WHERE `+where+`
+ORDER BY id DESC
+LIMIT $`+fmt.Sprint(len(args)), args...)
+		if err != nil {
+			return channelDifferenceBase{}, fmt.Errorf("list channel too long messages: %w", err)
+		}
+		for rows.Next() {
+			msg, err := scanChannelMessage(rows)
+			if err != nil {
+				rows.Close()
+				return channelDifferenceBase{}, err
+			}
+			base.messages = append(base.messages, msg)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return channelDifferenceBase{}, err
+		}
+		rows.Close()
+		if loadMentionCandidates {
+			if err := s.loadChannelDifferenceMentionCandidates(ctx, channel.ID, &base); err != nil {
+				return channelDifferenceBase{}, err
+			}
+		}
+		if err := s.verifyChannelDifferenceCut(ctx, channel, checkpoint.RetainedThroughPts); err != nil {
+			return channelDifferenceBase{}, err
+		}
+		return base, nil
+	}
+
+	rows, err := s.db.Query(ctx, `
+SELECT channel_id, pts, pts_count, date, event_type, message_id, message_ids::text, sender_user_id, user_ids::text, payload::text
+FROM channel_update_events
+WHERE channel_id = $1 AND pts > $2 AND pts <= $3
+ORDER BY pts ASC
+LIMIT $4`, channel.ID, requestPts, channel.Pts, limit)
+	if err != nil {
+		return channelDifferenceBase{}, fmt.Errorf("list channel difference: %w", err)
+	}
+	for rows.Next() {
+		event, messageID, err := scanChannelEvent(rows)
+		if err != nil {
+			rows.Close()
+			return channelDifferenceBase{}, err
+		}
+		ptsCount := event.PtsCount
+		if ptsCount <= 0 {
+			ptsCount = 1
+		}
+		if event.Pts != base.lastPts+ptsCount {
+			s.log.Warn("channel_difference_stopped_at_gap",
+				zap.String("scope", "channel"),
+				zap.Int64("channel_id", channel.ID),
+				zap.Int("request_pts", requestPts),
+				zap.Int("channel_pts", channel.Pts),
+				zap.Int("returned_pts", base.lastPts),
+				zap.Int("expected_pts", base.lastPts+ptsCount),
+				zap.Int("got_pts", event.Pts),
+				zap.Int("got_pts_count", ptsCount),
+				zap.String("event_type", string(event.Type)),
+				zap.Int("limit", limit),
+			)
+			break
+		}
+		if messageID != 0 && event.Message.ID == 0 {
+			event.Message, err = s.getChannelMessageAtOrBeforePts(ctx, channel.ID, messageID, channel.Pts)
+			if err != nil {
+				rows.Close()
+				return channelDifferenceBase{}, err
+			}
+		}
+		base.lastPts = event.Pts
+		base.events = append(base.events, event)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return channelDifferenceBase{}, err
+	}
+	rows.Close()
+	if loadMentionCandidates {
+		if err := s.loadChannelDifferenceMentionCandidates(ctx, channel.ID, &base); err != nil {
+			return channelDifferenceBase{}, err
+		}
+	}
+	if err := s.verifyChannelDifferenceCut(ctx, channel, checkpoint.RetainedThroughPts); err != nil {
+		return channelDifferenceBase{}, err
+	}
+	return base, nil
+}
+
+func (s *ChannelStore) loadChannelDifferenceMentionCandidates(ctx context.Context, channelID int64, base *channelDifferenceBase) error {
+	if base == nil {
+		return nil
+	}
+	base.candidatesKnown = true
+	base.mentionCandidateIDs = make(map[int]struct{})
+	messageIDs := make([]int, 0, len(base.messages)+len(base.events))
+	seen := make(map[int]struct{}, cap(messageIDs))
+	add := func(id int) {
+		if id <= 0 {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		messageIDs = append(messageIDs, id)
+	}
+	for _, message := range base.messages {
+		add(message.ID)
+	}
+	for _, event := range base.events {
+		add(event.Message.ID)
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT DISTINCT message_id
+FROM channel_unread_mention_index
+WHERE channel_id = $1 AND message_id = ANY($2::int[])`, channelID, int32s(messageIDs))
+	if err != nil {
+		return fmt.Errorf("load channel difference mention candidates: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID int
+		if err := rows.Scan(&messageID); err != nil {
+			return err
+		}
+		base.mentionCandidateIDs[messageID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read channel difference mention candidates: %w", err)
+	}
+	return nil
+}
+
+func populateChannelDifferenceUnreadFlags(
+	ctx context.Context,
+	db sqlcgen.DBTX,
+	viewerUserID int64,
+	messages []domain.ChannelMessage,
+	base channelDifferenceBase,
+) error {
+	if !base.candidatesKnown {
+		return populateChannelMessageUnreadFlags(ctx, db, viewerUserID, messages)
+	}
+	selected := make([]domain.ChannelMessage, 0, len(messages))
+	indexes := make([]int, 0, len(messages))
+	for i, message := range messages {
+		if _, ok := base.mentionCandidateIDs[message.ID]; !ok {
+			continue
+		}
+		selected = append(selected, message)
+		indexes = append(indexes, i)
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	if err := populateChannelMessageUnreadFlags(ctx, db, viewerUserID, selected); err != nil {
+		return err
+	}
+	for i, messageIndex := range indexes {
+		messages[messageIndex].Mentioned = selected[i].Mentioned
+		messages[messageIndex].MediaUnread = selected[i].MediaUnread
+	}
+	return nil
+}
+
+func (s *ChannelStore) verifyChannelDifferenceCut(ctx context.Context, captured domain.Channel, retainedThroughPts int) error {
+	var pts, topMessageID, floor int
+	err := s.db.QueryRow(ctx, `
+SELECT c.pts, c.top_message_id, cp.retained_through_pts
+FROM channels c
+JOIN channel_update_checkpoints cp ON cp.channel_id = c.id
+WHERE c.id = $1 AND NOT c.deleted`, captured.ID).Scan(&pts, &topMessageID, &floor)
+	if err != nil {
+		return fmt.Errorf("verify channel difference cut: %w", err)
+	}
+	if pts != captured.Pts || topMessageID != captured.TopMessageID || floor != retainedThroughPts {
+		return errChannelDifferenceCutChanged
+	}
+	return nil
+}
+
+func (s *ChannelStore) getChannelMessageAtOrBeforePts(ctx context.Context, channelID int64, messageID, capturedPts int) (domain.ChannelMessage, error) {
+	msg, err := scanChannelMessage(s.db.QueryRow(ctx, `
+SELECT `+channelMessageColumns+`
+FROM channel_messages
+WHERE channel_id = $1 AND id = $2 AND pts <= $3`, channelID, messageID, capturedPts))
+	if err != nil {
+		return domain.ChannelMessage{}, fmt.Errorf("load channel difference legacy message at stable cut: %w", err)
+	}
+	return msg, nil
 }
 
 func (s *ChannelStore) monoforumVisibleMessageIDs(ctx context.Context, channelID, userID int64, ids []int) (map[int]struct{}, error) {
@@ -492,24 +696,4 @@ func adminLogEventTypesForFilter(filter domain.ChannelAdminLogFilter) []string {
 	add(filter.Delete, domain.ChannelAdminLogDeleteMessage)
 	add(filter.Send, domain.ChannelAdminLogSendMessage)
 	return types
-}
-
-func collectChannelEventRefs(event domain.ChannelUpdateEvent, currentChannelID int64, userRefs, channelRefs map[int64]struct{}) {
-	if event.SenderUserID != 0 {
-		userRefs[event.SenderUserID] = struct{}{}
-	}
-	for _, id := range event.UserIDs {
-		if id != 0 {
-			userRefs[id] = struct{}{}
-		}
-	}
-	for _, member := range []domain.ChannelMember{event.Previous, event.Participant} {
-		if member.UserID != 0 {
-			userRefs[member.UserID] = struct{}{}
-		}
-		if member.InviterUserID != 0 {
-			userRefs[member.InviterUserID] = struct{}{}
-		}
-	}
-	collectChannelMessageRefs(event.Message, currentChannelID, userRefs, channelRefs)
 }

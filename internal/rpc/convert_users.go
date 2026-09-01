@@ -9,6 +9,7 @@ import (
 
 // tgSelfUser 把 domain.User 转为 self 标记的 tg.User（optional 字段由 Encode 自动 SetFlags）。
 func tgSelfUser(u domain.User) *tg.User {
+	u = officialSystemUserPresentation(u)
 	if u.Deleted {
 		return &tg.User{ID: u.ID, Deleted: true}
 	}
@@ -42,6 +43,7 @@ func tgSelfUser(u domain.User) *tg.User {
 }
 
 func tgUser(u domain.User) *tg.User {
+	u = officialSystemUserPresentation(u)
 	if u.Deleted {
 		return &tg.User{ID: u.ID, Deleted: true}
 	}
@@ -71,6 +73,22 @@ func tgUser(u domain.User) *tg.User {
 		out.Photo = photo
 	}
 	return out
+}
+
+// officialSystemUserPresentation keeps the durable reserved identity stable
+// while projecting the deployment brand from configuration. Older databases
+// may still contain "Telesrv" in users.first_name; without this boundary
+// normalization clients alternate between the database row and the synthetic
+// system-user snapshot as caches are refreshed.
+func officialSystemUserPresentation(u domain.User) domain.User {
+	if u.ID != domain.OfficialSystemUserID {
+		return u
+	}
+	official := domain.OfficialSystemUser()
+	u.FirstName = official.FirstName
+	u.LastName = official.LastName
+	u.Username = official.Username
+	return u
 }
 
 func applyTgUserRestrictionFields(out *tg.User, u domain.User) {

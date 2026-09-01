@@ -20,19 +20,22 @@ func TestAccountResetAuthorizationKeepsProtocolKeyAndReturnsRPC401(t *testing.T)
 	ctx := context.Background()
 	currentAuthKeyID := [8]byte{0x71}
 	targetAuthKeyID := [8]byte{0x72}
-	const (
-		userID     = int64(1000000001)
-		targetHash = int64(2026072401)
-	)
+	const targetHash = int64(2026072401)
 
 	authKeys := memory.NewAuthKeyStore()
 	authorizations := memory.NewAuthorizationStore()
+	users := memory.NewUserStore()
+	user, err := users.Create(ctx, domain.User{Phone: "15550009001", FirstName: "Auth"})
+	if err != nil {
+		t.Fatalf("create authorization owner: %v", err)
+	}
+	userID := user.ID
 	for _, authKeyID := range [][8]byte{currentAuthKeyID, targetAuthKeyID} {
 		if err := authKeys.Save(ctx, store.AuthKeyData{ID: authKeyID}); err != nil {
 			t.Fatalf("save auth key %x: %v", authKeyID, err)
 		}
 	}
-	authService := appauth.NewService(nil, authorizations, nil, authKeys, nil, "12345")
+	authService := appauth.NewService(users, authorizations, nil, authKeys, nil, "12345")
 	if err := authorizations.Bind(ctx, domain.Authorization{
 		AuthKeyID: currentAuthKeyID,
 		UserID:    userID,

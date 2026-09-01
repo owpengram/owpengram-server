@@ -219,6 +219,161 @@ func TestCachedReadModelVersionStoreEpochGuardRejectsStaleWriteback(t *testing.T
 	}
 }
 
+func TestCachedReadModelVersionStoreKeyGenerationDoesNotRejectUnrelatedRefill(t *testing.T) {
+	ctx := context.Background()
+	loading := ReadModelKey{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 10}
+	unrelated := ReadModelKey{Model: "dialog_light", OwnerUserID: 200, PeerType: domain.PeerTypeUser, PeerID: 300}
+	base := &blockingReadModelVersionStore{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		hashes:  map[ReadModelKey]int64{loading: 11},
+	}
+	cache := NewCachedReadModelVersionStore(base, time.Hour, 100)
+
+	resultCh := make(chan map[ReadModelKey]int64, 1)
+	go func() {
+		rows, _ := cache.ReadModelHashes(ctx, []ReadModelKey{loading})
+		resultCh <- rows
+	}()
+	<-base.started
+	cache.UpdateReadModelHash(unrelated, 99)
+	close(base.release)
+	if rows := <-resultCh; rows[loading] != 11 {
+		t.Fatalf("loading hash = %d, want 11", rows[loading])
+	}
+	if _, err := cache.ReadModelHashes(ctx, []ReadModelKey{loading}); err != nil {
+		t.Fatal(err)
+	}
+	if got := base.calls.Load(); got != 1 {
+		t.Fatalf("unrelated NOTIFY rejected refill: base calls = %d, want 1", got)
+	}
+}
+
+func TestCachedReadModelVersionStoreExactUpdateRejectsOnlyChangedBatchKey(t *testing.T) {
+	ctx := context.Background()
+	a := ReadModelKey{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 10}
+	b := ReadModelKey{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 11}
+	base := &blockingReadModelVersionStore{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		hashes: map[ReadModelKey]int64{
+			a: 11,
+			b: 22,
+		},
+	}
+	cache := NewCachedReadModelVersionStore(base, time.Hour, 100)
+	resultCh := make(chan map[ReadModelKey]int64, 1)
+	go func() {
+		rows, _ := cache.ReadModelHashes(ctx, []ReadModelKey{a, b})
+		resultCh <- rows
+	}()
+	<-base.started
+	cache.UpdateReadModelHash(a, 99)
+	close(base.release)
+	rows := <-resultCh
+	if rows[a] != 99 || rows[b] != 22 {
+		t.Fatalf("hashes = %+v, want A=99 B=22", rows)
+	}
+	if _, err := cache.ReadModelHashes(ctx, []ReadModelKey{b}); err != nil {
+		t.Fatal(err)
+	}
+	if got := base.calls.Load(); got != 1 {
+		t.Fatalf("exact A update rejected B refill: base calls = %d, want 1", got)
+	}
+}
+
+type staleThenFreshReadModelVersionStore struct {
+	key     ReadModelKey
+	first   int64
+	second  int64
+	started chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (s *staleThenFreshReadModelVersionStore) ReadModelHash(
+	ctx context.Context,
+	model string,
+	ownerUserID int64,
+	peerType domain.PeerType,
+	peerID int64,
+) (int64, bool, error) {
+	key := ReadModelKey{Model: model, OwnerUserID: ownerUserID, PeerType: peerType, PeerID: peerID}
+	rows, err := s.ReadModelHashes(ctx, []ReadModelKey{key})
+	if err != nil {
+		return 0, false, err
+	}
+	hash := rows[key]
+	return hash, hash != 0, nil
+}
+
+func (s *staleThenFreshReadModelVersionStore) ReadModelHashes(ctx context.Context, keys []ReadModelKey) (map[ReadModelKey]int64, error) {
+	call := s.calls.Add(1)
+	if call == 1 {
+		close(s.started)
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	hash := s.second
+	if call == 1 {
+		hash = s.first
+	}
+	out := make(map[ReadModelKey]int64, len(keys))
+	for _, key := range keys {
+		if key == s.key {
+			out[key] = hash
+		}
+	}
+	return out, nil
+}
+
+func TestCachedReadModelVersionStoreInvalidationAndFlushReloadInflight(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*CachedReadModelVersionStore, ReadModelKey)
+	}{
+		{name: "exact invalidation", mutate: func(cache *CachedReadModelVersionStore, key ReadModelKey) {
+			cache.InvalidateReadModel(key)
+		}},
+		{name: "listener flush", mutate: func(cache *CachedReadModelVersionStore, _ ReadModelKey) {
+			cache.FlushReadModelCache()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			key := ReadModelKey{Model: "channel_member", OwnerUserID: 100, PeerType: domain.PeerTypeChannel, PeerID: 10}
+			base := &staleThenFreshReadModelVersionStore{
+				key: key, first: 11, second: 22,
+				started: make(chan struct{}), release: make(chan struct{}),
+			}
+			cache := NewCachedReadModelVersionStore(base, time.Hour, 100)
+			resultCh := make(chan map[ReadModelKey]int64, 1)
+			go func() {
+				rows, _ := cache.ReadModelHashes(ctx, []ReadModelKey{key})
+				resultCh <- rows
+			}()
+			<-base.started
+			test.mutate(cache, key)
+			close(base.release)
+			if rows := <-resultCh; rows[key] != 22 {
+				t.Fatalf("in-flight read returned %d, want reloaded 22", rows[key])
+			}
+			if got := base.calls.Load(); got != 2 {
+				t.Fatalf("base calls = %d, want stale load + reload", got)
+			}
+			if _, err := cache.ReadModelHashes(ctx, []ReadModelKey{key}); err != nil {
+				t.Fatal(err)
+			}
+			if got := base.calls.Load(); got != 2 {
+				t.Fatalf("reloaded value was not cached: calls=%d", got)
+			}
+		})
+	}
+}
+
 func TestCachedReadModelVersionStoreUpdateReadModelHashWarmsCache(t *testing.T) {
 	ctx := context.Background()
 	key := ReadModelKey{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 10}
@@ -239,5 +394,53 @@ func TestCachedReadModelVersionStoreUpdateReadModelHashWarmsCache(t *testing.T) 
 	}
 	if got := base.calls.Load(); got != 0 {
 		t.Fatalf("base calls = %d, want cache warmed by notify", got)
+	}
+}
+
+func TestCachedReadModelVersionStoreEvictsOneLRUEntryWithoutFlush(t *testing.T) {
+	ctx := context.Background()
+	keys := []ReadModelKey{
+		{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 10},
+		{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 11},
+		{Model: "channel_base", PeerType: domain.PeerTypeChannel, PeerID: 12},
+	}
+	release := make(chan struct{})
+	close(release)
+	base := &blockingReadModelVersionStore{
+		started: make(chan struct{}),
+		release: release,
+		hashes: map[ReadModelKey]int64{
+			keys[0]: 10,
+			keys[1]: 11,
+			keys[2]: 12,
+		},
+	}
+	cache := NewCachedReadModelVersionStore(base, time.Hour, 2)
+	for _, key := range keys[:2] {
+		if _, _, err := cache.ReadModelHash(ctx, key.Model, key.OwnerUserID, key.PeerType, key.PeerID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Refresh key 0 so key 1 becomes the unique LRU victim.
+	if _, _, err := cache.ReadModelHash(ctx, keys[0].Model, 0, keys[0].PeerType, keys[0].PeerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cache.ReadModelHash(ctx, keys[2].Model, 0, keys[2].PeerType, keys[2].PeerID); err != nil {
+		t.Fatal(err)
+	}
+	if got := base.calls.Load(); got != 3 {
+		t.Fatalf("base calls after three unique loads = %d, want 3", got)
+	}
+	if _, _, err := cache.ReadModelHash(ctx, keys[0].Model, 0, keys[0].PeerType, keys[0].PeerID); err != nil {
+		t.Fatal(err)
+	}
+	if got := base.calls.Load(); got != 3 {
+		t.Fatalf("recent entry was flushed with capacity eviction: calls=%d", got)
+	}
+	if _, _, err := cache.ReadModelHash(ctx, keys[1].Model, 0, keys[1].PeerType, keys[1].PeerID); err != nil {
+		t.Fatal(err)
+	}
+	if got := base.calls.Load(); got != 4 {
+		t.Fatalf("LRU victim reload calls = %d, want 4", got)
 	}
 }

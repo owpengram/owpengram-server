@@ -56,6 +56,13 @@ func (s *ChannelStore) CreateChannel(_ context.Context, req domain.CreateChannel
 		AdminRights: domain.CreatorChannelAdminRights(),
 	}
 	s.channels[channelID] = channel
+	// Channel clients initialize an unknown message box at PTS 1. Reserve that
+	// state without emitting an event so the real create service message is 2/1.
+	s.ptsSeq[channelID] = domain.InitialChannelPts
+	s.retention[channelID] = domain.ChannelUpdateRetentionCheckpoint{
+		ChannelID:          channelID,
+		RetainedThroughPts: domain.InitialChannelPts,
+	}
 	s.invites[inviteHash] = domain.ChannelInvite{
 		ChannelID:   channelID,
 		InviteID:    inviteID,

@@ -14,14 +14,16 @@ import (
 // P1：在线推送（已读 durable 离线补偿见后续 encrypted_state_events）。typing 是 transient。
 // 设计见 docs/secret-chat-module.md §8。
 
-// resolveSecretChatPeer 校验调用方是密聊参与者且 access_hash 匹配，返回密聊、对端 user、
-// 对端绑定设备 auth_key。失败返回 CHAT_ID_INVALID。
+// resolveSecretChatPeer 校验调用方是 normal 密聊的绑定设备且 access_hash 匹配，返回密聊、
+// 对端 user、对端绑定设备 auth_key。失败返回 CHAT_ID_INVALID。
 func (r *Router) resolveSecretChatPeer(ctx context.Context, userID int64, peer tg.InputEncryptedChat) (domain.SecretChat, int64, int64, error) {
 	chat, ok, err := r.deps.SecretChats.GetSecretChat(ctx, peer.ChatID)
 	if err != nil {
 		return domain.SecretChat{}, 0, 0, internalErr()
 	}
-	if !ok || !chat.HasParticipant(userID) || chat.AccessHashFor(userID) != peer.AccessHash {
+	deviceAuthKeyID, hasDevice := businessAuthKeyIDFrom(ctx)
+	if !ok || !hasDevice || chat.State != domain.SecretChatStateNormal || !chat.HasParticipant(userID) ||
+		chat.AuthKeyOf(userID) != deviceAuthKeyID || chat.AccessHashFor(userID) != peer.AccessHash {
 		return domain.SecretChat{}, 0, 0, chatIDInvalidErr()
 	}
 	return chat, chat.PeerOf(userID), chat.PeerAuthKeyOf(userID), nil
@@ -49,11 +51,10 @@ func (r *Router) pushEncryptedPeerUpdate(ctx context.Context, peerUserID, peerAu
 		}
 		return
 	}
-	if transient {
-		r.pushUserMessageTransient(ctx, peerUserID, logMessage, upd)
-	} else {
-		r.pushUserMessage(ctx, peerUserID, logMessage, upd)
-	}
+	r.log.Error("secret chat targeted session binder unavailable",
+		zap.String("update", logMessage),
+		zap.Int64("target_user_id", peerUserID),
+		zap.Int64("target_auth_key_id", peerAuthKeyID))
 }
 
 func (r *Router) onMessagesReadEncryptedHistory(ctx context.Context, req *tg.MessagesReadEncryptedHistoryRequest) (bool, error) {

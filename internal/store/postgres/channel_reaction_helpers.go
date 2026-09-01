@@ -46,6 +46,18 @@ func emptyChannelMessageReactions(channel domain.Channel) domain.ChannelMessageR
 }
 
 func (s *ChannelStore) populateChannelMessagesReactions(ctx context.Context, db sqlcgen.DBTX, viewerUserID int64, channels []domain.Channel, messages []domain.ChannelMessage) error {
+	return s.populateChannelMessagesReactionsWhere(ctx, db, viewerUserID, channels, messages, nil, false)
+}
+
+func (s *ChannelStore) populateChannelMessagesReactionsWhere(
+	ctx context.Context,
+	db sqlcgen.DBTX,
+	viewerUserID int64,
+	channels []domain.Channel,
+	messages []domain.ChannelMessage,
+	reactionEligible func(domain.ChannelMessage) bool,
+	unreadAlreadyProjected bool,
+) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -53,8 +65,10 @@ func (s *ChannelStore) populateChannelMessagesReactions(ctx context.Context, db 
 	if err := s.populateChannelMessagesPolls(ctx, db, viewerUserID, messages); err != nil {
 		return err
 	}
-	if err := populateChannelMessageUnreadFlags(ctx, db, viewerUserID, messages); err != nil {
-		return err
+	if !unreadAlreadyProjected {
+		if err := populateChannelMessageUnreadFlags(ctx, db, viewerUserID, messages); err != nil {
+			return err
+		}
 	}
 	channelsByID := make(map[int64]domain.Channel, len(channels))
 	for _, ch := range channels {
@@ -66,6 +80,9 @@ func (s *ChannelStore) populateChannelMessagesReactions(ctx context.Context, db 
 	idsByChannel := make(map[int64][]int32)
 	for i := range messages {
 		if messages[i].ChannelID == 0 || messages[i].ID <= 0 {
+			continue
+		}
+		if reactionEligible != nil && !reactionEligible(messages[i]) {
 			continue
 		}
 		key := channelReactionMessageKey{channelID: messages[i].ChannelID, messageID: messages[i].ID}
@@ -200,6 +217,30 @@ ORDER BY channel_id ASC, message_id ASC, reaction_date DESC, reacted_user_id DES
 	}
 
 	return nil
+}
+
+// populateChannelDialogTopMessageReactions keeps poll and unread-mention
+// enrichment exact for every message, but uses the shared top-message
+// existence cache to avoid querying three reaction tables when no reaction row
+// can possibly contribute to the viewer projection.
+func (s *ChannelStore) populateChannelDialogTopMessageReactions(
+	ctx context.Context,
+	db sqlcgen.DBTX,
+	viewerUserID int64,
+	channels []domain.Channel,
+	messages []domain.ChannelMessage,
+	unreadAlreadyProjected bool,
+) error {
+	if !s.topMessageCacheActive(db) || len(messages) == 0 {
+		return s.populateChannelMessagesReactions(ctx, db, viewerUserID, channels, messages)
+	}
+	presence, err := s.topMsgCache.reactionPresenceFor(ctx, db, messages)
+	if err != nil {
+		return fmt.Errorf("load channel top reaction presence: %w", err)
+	}
+	return s.populateChannelMessagesReactionsWhere(ctx, db, viewerUserID, channels, messages, func(msg domain.ChannelMessage) bool {
+		return presence[channelMessageLookupKey{channelID: msg.ChannelID, id: msg.ID}].any()
+	}, unreadAlreadyProjected)
 }
 
 func channelReactionOffset(row domain.ChannelMessagePeerReaction) string {

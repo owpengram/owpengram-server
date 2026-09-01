@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -16,6 +17,93 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
+
+func TestMonoforumSendUpdatesIncludesCompleteMessageUserEnvelope(t *testing.T) {
+	const (
+		viewerID    = int64(1000000201)
+		savedPeerID = int64(1000000202)
+		viaBotID    = int64(1000000203)
+		replyPeerID = int64(1000000204)
+		quoteUserID = int64(1000000205)
+		monoforumID = int64(1000000291)
+		messageID   = 41
+		messagePts  = 51
+	)
+	users := map[int64]domain.User{}
+	for _, id := range []int64{viewerID, savedPeerID, viaBotID, replyPeerID, quoteUserID} {
+		users[id] = domain.User{ID: id, FirstName: "projected"}
+	}
+	router := New(Config{}, Deps{Users: mapUsersService{users: users}}, zaptest.NewLogger(t), clock.System)
+	savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: savedPeerID}
+	message := domain.ChannelMessage{
+		ChannelID: monoforumID, ID: messageID, SenderUserID: viewerID,
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: viewerID}, SavedPeer: savedPeer,
+		ViaBotID: viaBotID, Date: 1700000600,
+		ReplyTo: &domain.MessageReply{
+			MessageID: 40,
+			Peer:      domain.Peer{Type: domain.PeerTypeUser, ID: replyPeerID},
+			QuoteEntities: []domain.MessageEntity{{
+				Type: domain.MessageEntityMentionName, UserID: quoteUserID,
+			}},
+		},
+	}
+	result := domain.SendChannelMessageResult{
+		Channel: domain.Channel{ID: monoforumID, Monoforum: true},
+		Message: message,
+		Event: domain.ChannelUpdateEvent{
+			ChannelID: monoforumID, Type: domain.ChannelUpdateNewMessage,
+			Pts: messagePts, PtsCount: 1, Message: message,
+		},
+	}
+
+	updatesClass, err := router.monoforumSendUpdatesStrict(context.Background(), viewerID, result.Channel, savedPeer, result)
+	if err != nil {
+		t.Fatalf("monoforumSendUpdatesStrict: %v", err)
+	}
+	updates, ok := updatesClass.(*tg.Updates)
+	if !ok || updates == nil {
+		t.Fatalf("monoforumSendUpdates = %T, want *tg.Updates", updates)
+	}
+	got := make(map[int64]bool, len(updates.Users))
+	for _, item := range updates.Users {
+		if user, ok := item.(*tg.User); ok {
+			got[user.ID] = true
+		}
+	}
+	for _, id := range []int64{viewerID, savedPeerID, viaBotID, replyPeerID, quoteUserID} {
+		if !got[id] {
+			t.Fatalf("Users = %+v, missing referenced user %d", got, id)
+		}
+	}
+}
+
+func TestMonoforumSendUpdatesFailsClosedOnIncompleteUserEnvelope(t *testing.T) {
+	const (
+		viewerID    = int64(1000000301)
+		savedPeerID = int64(1000000302)
+		missingBot  = int64(1000000303)
+		monoforumID = int64(1000000391)
+	)
+	router := New(Config{}, Deps{Users: mapUsersService{users: map[int64]domain.User{
+		viewerID:    {ID: viewerID, FirstName: "viewer"},
+		savedPeerID: {ID: savedPeerID, FirstName: "saved peer"},
+	}}}, zaptest.NewLogger(t), clock.System)
+	savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: savedPeerID}
+	message := domain.ChannelMessage{
+		ChannelID: monoforumID, ID: 1, SenderUserID: viewerID,
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: viewerID}, SavedPeer: savedPeer,
+		ViaBotID: missingBot, Date: 1700000700,
+	}
+	result := domain.SendChannelMessageResult{
+		Channel: domain.Channel{ID: monoforumID, Monoforum: true}, Message: message,
+		Event: domain.ChannelUpdateEvent{ChannelID: monoforumID, Type: domain.ChannelUpdateNewMessage, Pts: 2, PtsCount: 1, Message: message},
+	}
+
+	updates, err := router.monoforumSendUpdatesStrict(context.Background(), viewerID, result.Channel, savedPeer, result)
+	if !errors.Is(err, ErrDurableUserProjectionIncomplete) || updates != nil {
+		t.Fatalf("monoforum strict envelope = %T, %v; want nil ErrDurableUserProjectionIncomplete", updates, err)
+	}
+}
 
 // TestMonoforumSavedDialogsAndHistory 验证频道私信(monoforum)读侧 RPC：管理员经
 // getSavedDialogs/getSavedHistory 看订阅者子会话，parent_peer 同时兼容 TDesktop 实际发送的

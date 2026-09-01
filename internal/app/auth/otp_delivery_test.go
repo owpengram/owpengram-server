@@ -73,6 +73,32 @@ func TestWebhookPhoneLoginUsesRandomSMSCode(t *testing.T) {
 	}
 }
 
+func TestWebhookPhoneLoginCanonicalizesNationalTrunkBeforeOTP(t *testing.T) {
+	ctx := context.Background()
+	sender := &captureOTPSender{}
+	svc := NewService(
+		memory.NewUserStore(),
+		memory.NewAuthorizationStore(),
+		memory.NewCodeStore(),
+		nil,
+		nil,
+		"fixed-code-must-not-leak",
+		WithPhoneCodeDelivery(sender, 6),
+	)
+
+	hash, err := svc.SendCode(ctx, "+98 0998 167 9461")
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if len(sender.requests) != 1 || sender.requests[0].Recipient != "989981679461" {
+		t.Fatalf("OTP requests = %+v, want canonical Iran recipient", sender.requests)
+	}
+	_, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{}, "989981679461", hash, sender.requests[0].Code)
+	if err != nil || !needSignUp {
+		t.Fatalf("SignIn canonical variant needSignUp=%v err=%v", needSignUp, err)
+	}
+}
+
 func TestWebhookExistingAccountRejectionKeepsDurableAppCode(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()

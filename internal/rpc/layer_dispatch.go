@@ -173,6 +173,7 @@ func (r *Router) PrepareAdmittedReplay(
 				restoreErr = fmt.Errorf("prepare delivered exact RPC replay metadata: %w", prepareErr)
 				return
 			}
+			defer updatesDelivery.releaseSessionActivation()
 			replayCtx = r.applyLayerRPCWrapperEffects(replayCtx, profile, profileKnown, identity, effects, msgID, admissionSeq, layerRPCWrapperApplyReplayRestore)
 			if profileKnown && layerRPCProfileEvidenceFresh(replayCtx) {
 				r.maybeMarkSessionReceivesUpdates(replayCtx)
@@ -184,7 +185,9 @@ func (r *Router) PrepareAdmittedReplay(
 				// base for ordinary post-response work. Replay restoration is a
 				// stricter ordered barrier, so every phase shares the overall deadline.
 				updatesDelivery.baseCtx = replayCtx
-				r.runUpdatesDeliveryPlan(updatesDelivery.snapshot())
+				snapshot := updatesDelivery.snapshot()
+				updatesDelivery.disownSessionActivation()
+				r.runUpdatesDeliveryPlan(snapshot)
 			}
 			if err := replayCtx.Err(); err != nil {
 				restoreErr = fmt.Errorf("restore delivered exact RPC replay metadata: %w", err)
@@ -236,6 +239,7 @@ func (r *Router) DispatchAdmitted(
 	if err != nil {
 		return nil, method, err
 	}
+	defer updatesDelivery.releaseSessionActivation()
 	ctx, err = r.applyLayerRPCWrappers(ctx, msgID, admissionSeq, request)
 	if err != nil {
 		return nil, method, err
@@ -274,7 +278,7 @@ func (r *Router) DispatchAdmitted(
 	}
 	dbBefore := dbtrace.SnapshotFromContext(ctx)
 	start := time.Now()
-	result, err := r.dispatcher.Dispatch(ctx, request)
+	result, err := r.dispatchGeneratedSafely(ctx, method, request)
 	dur := time.Since(start)
 	dbDelta := dbtrace.SnapshotFromContext(ctx).Sub(dbBefore)
 	fields := append([]zap.Field{
@@ -284,10 +288,8 @@ func (r *Router) DispatchAdmitted(
 		zap.Duration("dur", dur),
 	}, r.contextLogFields(ctx)...)
 	fields = dbtrace.AppendZapFields(fields, "handler_", dbDelta)
-	if err != nil || dur > 100*time.Millisecond {
-		if err != nil {
-			fields = append(fields, zap.Error(err))
-		}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
 		r.log.Info("RPC inner handled", fields...)
 	} else {
 		r.log.Debug("RPC inner handled", fields...)

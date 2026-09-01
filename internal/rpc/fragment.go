@@ -232,6 +232,7 @@ func (r *Router) deactivateAllRegistryUsernames(ctx context.Context, peer domain
 // invalidateRegistryProjection drops the cached user/channel projections that
 // embed the username vector, so the next getFullUser / getFullChannel rebuilds it.
 func (r *Router) invalidateRegistryProjection(peer domain.Peer) {
+	r.InvalidatePeerIdentityReadModel(peer)
 	switch peer.Type {
 	case domain.PeerTypeUser:
 		r.invalidateRPCProjectionForUser(peer.ID)
@@ -317,7 +318,7 @@ func appendUsernameProjectionPeers(peers []domain.Peer, seen map[domain.Peer]str
 		peers = append(peers, peer)
 	}
 	for _, item := range users {
-		if u, ok := item.(*tg.User); ok && u != nil {
+		if u, ok := item.(*tg.User); ok && u != nil && !u.Deleted {
 			addPeer(domain.Peer{Type: domain.PeerTypeUser, ID: u.ID})
 		}
 	}
@@ -338,7 +339,7 @@ func applyUsernamesFromRegistry(users []tg.UserClass, chats []tg.ChatClass, byPe
 	}
 	for _, item := range users {
 		u, ok := item.(*tg.User)
-		if !ok || u == nil {
+		if !ok || u == nil || u.Deleted {
 			continue
 		}
 		list, ok := byPeer[domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}]
@@ -383,16 +384,24 @@ func (r *Router) usernameRegistryMap(ctx context.Context, peers []domain.Peer) m
 	if r.deps.Usernames == nil || len(peers) == 0 {
 		return nil
 	}
+	usernames, _ := r.peerIdentityMaps(ctx, peers, true, false)
+	return usernames
+}
+
+func (r *Router) loadUsernameRegistryMap(ctx context.Context, peers []domain.Peer) (map[domain.Peer][]domain.Username, error) {
 	if len(peers) == 1 {
 		list, err := r.deps.Usernames.PeerUsernames(ctx, peers[0])
-		if err != nil || len(list) == 0 {
-			return nil
+		if err != nil {
+			return nil, err
 		}
-		return map[domain.Peer][]domain.Username{peers[0]: list}
+		if len(list) == 0 {
+			return map[domain.Peer][]domain.Username{}, nil
+		}
+		return map[domain.Peer][]domain.Username{peers[0]: list}, nil
 	}
 	byPeer, err := r.deps.Usernames.UsernamesBatch(ctx, peers)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return byPeer
+	return byPeer, nil
 }

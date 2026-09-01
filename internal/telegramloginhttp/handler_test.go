@@ -64,6 +64,13 @@ func (telegramLoginHTTPDenyLimiter) Allow(context.Context, string, int, time.Dur
 	return false, 17, nil
 }
 
+type telegramLoginHTTPBotUsernames map[string]domain.User
+
+func (u telegramLoginHTTPBotUsernames) ByUsername(_ context.Context, username string) (domain.User, bool, error) {
+	user, ok := u[strings.ToLower(domain.NormalizeUsername(username))]
+	return user, ok, nil
+}
+
 func newTelegramLoginHTTPFixture(t *testing.T) telegramLoginHTTPFixture {
 	return newTelegramLoginHTTPFixtureWithAppLinkBase(t, "")
 }
@@ -113,7 +120,13 @@ func newTelegramLoginHTTPFixtureWithAppLinkBase(t *testing.T, appLinkBase string
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(Config{Service: service, Tokens: tokens, AppName: "Telesrv", AllowHTTP: true})
+	handler, err := NewHandler(Config{
+		Service: service, Tokens: tokens, AppName: "Telesrv", AllowHTTP: true,
+		BotUsernames: telegramLoginHTTPBotUsernames{
+			"botname": {ID: 9001, Username: "BotName", Bot: true, BotInfoVersion: 1},
+			"alice":   {ID: 42, Username: "alice"},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,6 +725,7 @@ func TestTelegramLoginJavaScriptIsCacheableAndConditional(t *testing.T) {
 		!strings.Contains(first.Body.String(), "/auth/status") ||
 		!strings.Contains(first.Body.String(), "oauth_supported") ||
 		!strings.Contains(first.Body.String(), "/inapp?") ||
+		!strings.Contains(first.Body.String(), "openid:'openid'") ||
 		!strings.Contains(first.Body.String(), "data-client-id") {
 		t.Fatalf("SDK status=%d headers=%v body=%s", first.Code, first.Header(), first.Body.String())
 	}
@@ -721,5 +735,90 @@ func TestTelegramLoginJavaScriptIsCacheableAndConditional(t *testing.T) {
 	f.handler.ServeHTTP(second, request)
 	if second.Code != http.StatusNotModified {
 		t.Fatalf("conditional SDK status=%d", second.Code)
+	}
+}
+
+func TestTelegramWidgetJavaScriptIsSelfHostedCacheableAndAliased(t *testing.T) {
+	f := newTelegramLoginHTTPFixture(t)
+	for _, path := range []string{"/telegram-widget.js?23", "/js/telegram-widget.js?23"} {
+		recorder := httptest.NewRecorder()
+		f.handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		body := recorder.Body.String()
+		if recorder.Code != http.StatusOK || recorder.Header().Get("ETag") == "" ||
+			!strings.Contains(body, "/js/telegram-login.js") ||
+			!strings.Contains(body, "/telegram-widget/resolve") ||
+			!strings.Contains(body, "api.auth(options,finish)") ||
+			!strings.Contains(body, "data-client-id") ||
+			!strings.Contains(body, "data-telegram-login") ||
+			!strings.Contains(body, "data-size") ||
+			!strings.Contains(body, "data-radius") ||
+			!strings.Contains(body, "data-request-access") ||
+			!strings.Contains(body, "data-lang") ||
+			!strings.Contains(body, "data-onauth") ||
+			!strings.Contains(body, "openid profile telegram:bot_access") ||
+			strings.Contains(body, "telegram.org") {
+			t.Fatalf("widget SDK path=%q status=%d headers=%v body=%s", path, recorder.Code, recorder.Header(), body)
+		}
+	}
+	first := httptest.NewRecorder()
+	f.handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/js/telegram-widget.js", nil))
+	second := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/js/telegram-widget.js", nil)
+	request.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	f.handler.ServeHTTP(second, request)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("conditional widget SDK status=%d", second.Code)
+	}
+}
+
+func TestTelegramWidgetUsernameResolutionRequiresEnabledClientAndAllowedOrigin(t *testing.T) {
+	f := newTelegramLoginHTTPFixture(t)
+	resolve := func(username, origin string) *httptest.ResponseRecorder {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/telegram-widget/resolve", strings.NewReader(url.Values{"username": {username}}.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		f.handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	valid := resolve("@BotName", "https://rp.example")
+	if valid.Code != http.StatusOK || valid.Header().Get("Access-Control-Allow-Origin") != "https://rp.example" ||
+		!strings.Contains(valid.Header().Get("Vary"), "Origin") || valid.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("valid widget resolution status=%d headers=%v body=%s", valid.Code, valid.Header(), valid.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(valid.Body.Bytes(), &payload); err != nil || payload["client_id"] != "9001" {
+		t.Fatalf("valid widget resolution payload=%v err=%v", payload, err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		username string
+		origin   string
+		status   int
+	}{
+		{name: "unregistered origin", username: "BotName", origin: "https://evil.example", status: http.StatusForbidden},
+		{name: "missing origin", username: "BotName", status: http.StatusForbidden},
+		{name: "not a bot", username: "alice", origin: "https://rp.example", status: http.StatusNotFound},
+		{name: "unknown bot", username: "MissingBot", origin: "https://rp.example", status: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolve(tc.username, tc.origin)
+			if got.Code != tc.status || got.Header().Get("Access-Control-Allow-Origin") != "" {
+				t.Fatalf("status=%d headers=%v body=%s", got.Code, got.Header(), got.Body.String())
+			}
+		})
+	}
+
+	if err := f.service.SetClientEnabled(context.Background(), 9001, false); err != nil {
+		t.Fatal(err)
+	}
+	disabled := resolve("BotName", "https://rp.example")
+	if disabled.Code != http.StatusNotFound || disabled.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("disabled widget client status=%d headers=%v body=%s", disabled.Code, disabled.Header(), disabled.Body.String())
 	}
 }

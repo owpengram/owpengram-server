@@ -29,8 +29,8 @@ const (
 	UpdateEventDialogUnreadMark UpdateEventType = "dialog_unread_mark"
 	UpdateEventPeerSettings     UpdateEventType = "peer_settings"
 	UpdateEventPeerStoryBlocked UpdateEventType = "peer_story_blocked"
-	// UpdateEventUserPhone 映射 updateUserPhone。它是账号绝对状态更新，TL
-	// 构造器不携 pts；事件仍占账号 pts，以便其它设备在线/离线保持同一水位。
+	// UpdateEventUserPhone 只用于读取历史版本已落库的 updateUserPhone 事件。
+	// TL 构造器不携 pts，当前写路径禁止再产生该 event。
 	UpdateEventUserPhone UpdateEventType = "user_phone"
 	// UpdateEventUserEmojiStatus carries the exact immutable status snapshot.
 	// It consumes account pts even though updateUserEmojiStatus has no pts.

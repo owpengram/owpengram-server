@@ -2,12 +2,18 @@ package rpc
 
 import (
 	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
-	"reflect"
-	"strings"
+
 	appchannels "telesrv/internal/app/channels"
 	appcontacts "telesrv/internal/app/contacts"
 	appprivacy "telesrv/internal/app/privacy"
@@ -18,8 +24,6 @@ import (
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
-	"testing"
-	"time"
 )
 
 func TestContactsSearchFindsUsers(t *testing.T) {
@@ -187,6 +191,7 @@ func TestContactsEditCloseFriendsFanoutsCloseFriendStories(t *testing.T) {
 		Contacts: appcontacts.NewService(contactsStore, users),
 		Stories:  appstories.NewService(storyStore),
 		Updates:  appupdates.NewService(stateStore, updateStore),
+		Users:    appusers.NewService(users),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 
 	ownerAuth := [8]byte{1, 2, 3}
@@ -321,6 +326,7 @@ func TestContactsBlockUnblockFanoutsStoryVisibilityChanges(t *testing.T) {
 		Contacts: appcontacts.NewService(contactsStore, users),
 		Stories:  appstories.NewService(storyStore),
 		Updates:  appupdates.NewService(memory.NewUpdateStateStore(), updateStore),
+		Users:    appusers.NewService(users),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 
 	ownerAuth := [8]byte{7, 7, 1}
@@ -475,6 +481,7 @@ func TestContactsSetBlockedReplacesStoryBlocklistFanouts(t *testing.T) {
 		Contacts: appcontacts.NewService(contactsStore, users),
 		Stories:  appstories.NewService(storyStore),
 		Updates:  appupdates.NewService(memory.NewUpdateStateStore(), updateStore),
+		Users:    appusers.NewService(users),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 
 	ownerAuth := [8]byte{8, 8, 1}
@@ -1558,14 +1565,22 @@ func TestContactsBlockGetBlockedAndUnblockRPC(t *testing.T) {
 		Users:    appusers.NewService(userStore),
 		Contacts: appcontacts.NewService(memory.NewContactStore(), userStore),
 	}, zaptest.NewLogger(t), clock.System)
+	bobCtx := WithUserID(ctx, bob.ID)
+	userFull, err := r.onUsersGetFullUser(bobCtx, &tg.InputUser{UserID: alice.ID, AccessHash: alice.AccessHash})
+	if err != nil {
+		t.Fatalf("users.getFullUser before block: %v", err)
+	}
+	if userFull.FullUser.Blocked || userFull.FullUser.BlockedMyStoriesFrom || !userFull.FullUser.Settings.BlockContact {
+		t.Fatalf("full user before block = %+v, want unblocked flags and block action", userFull.FullUser)
+	}
 
-	ok, err := r.onContactsBlock(WithUserID(ctx, bob.ID), &tg.ContactsBlockRequest{
+	ok, err := r.onContactsBlock(bobCtx, &tg.ContactsBlockRequest{
 		ID: &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash},
 	})
 	if err != nil || !ok {
 		t.Fatalf("contacts.block = %v, %v", ok, err)
 	}
-	blocked, err := r.onContactsGetBlocked(WithUserID(ctx, bob.ID), &tg.ContactsGetBlockedRequest{Limit: 10})
+	blocked, err := r.onContactsGetBlocked(bobCtx, &tg.ContactsGetBlockedRequest{Limit: 10})
 	if err != nil {
 		t.Fatalf("contacts.getBlocked: %v", err)
 	}
@@ -1579,18 +1594,134 @@ func TestContactsBlockGetBlockedAndUnblockRPC(t *testing.T) {
 	if user, ok := full.Users[0].(*tg.User); !ok || user.ID != alice.ID || user.Phone != "" {
 		t.Fatalf("blocked user = %#v, want alice with hidden phone", full.Users[0])
 	}
+	userFull, err = r.onUsersGetFullUser(bobCtx, &tg.InputUser{UserID: alice.ID, AccessHash: alice.AccessHash})
+	if err != nil {
+		t.Fatalf("users.getFullUser after block: %v", err)
+	}
+	if !userFull.FullUser.Blocked || !userFull.FullUser.BlockedMyStoriesFrom || userFull.FullUser.Settings.BlockContact {
+		t.Fatalf("full user after block = %+v, want blocked flags and no block action", userFull.FullUser)
+	}
+	aliceView, err := r.onUsersGetFullUser(WithUserID(ctx, alice.ID), &tg.InputUser{UserID: bob.ID, AccessHash: bob.AccessHash})
+	if err != nil {
+		t.Fatalf("users.getFullUser for opposite owner: %v", err)
+	}
+	if aliceView.FullUser.Blocked || aliceView.FullUser.BlockedMyStoriesFrom || !aliceView.FullUser.Settings.BlockContact {
+		t.Fatalf("opposite owner full user = %+v, want unblocked owner-scoped state", aliceView.FullUser)
+	}
 
-	ok, err = r.onContactsUnblock(WithUserID(ctx, bob.ID), &tg.ContactsUnblockRequest{
+	ok, err = r.onContactsUnblock(bobCtx, &tg.ContactsUnblockRequest{
 		ID: &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash},
 	})
 	if err != nil || !ok {
 		t.Fatalf("contacts.unblock = %v, %v", ok, err)
 	}
-	blocked, err = r.onContactsGetBlocked(WithUserID(ctx, bob.ID), &tg.ContactsGetBlockedRequest{Limit: 10})
+	blocked, err = r.onContactsGetBlocked(bobCtx, &tg.ContactsGetBlockedRequest{Limit: 10})
 	if err != nil {
 		t.Fatalf("contacts.getBlocked after unblock: %v", err)
 	}
 	if full, ok := blocked.(*tg.ContactsBlocked); !ok || len(full.Blocked) != 0 {
 		t.Fatalf("blocked after unblock = %T %+v, want empty contacts.blocked", blocked, blocked)
+	}
+	userFull, err = r.onUsersGetFullUser(bobCtx, &tg.InputUser{UserID: alice.ID, AccessHash: alice.AccessHash})
+	if err != nil {
+		t.Fatalf("users.getFullUser after unblock: %v", err)
+	}
+	if userFull.FullUser.Blocked || userFull.FullUser.BlockedMyStoriesFrom || !userFull.FullUser.Settings.BlockContact {
+		t.Fatalf("full user after unblock = %+v, want unblocked flags and block action", userFull.FullUser)
+	}
+}
+
+func TestContactsBlockGetBlockedAndUnblockAcrossExactProfiles(t *testing.T) {
+	for profile := tlprofile.Profile225; profile <= tlprofile.Profile228; profile++ {
+		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
+			ctx := context.Background()
+			userStore := memory.NewUserStore()
+			alice, err := userStore.Create(ctx, domain.User{
+				AccessHash: 11,
+				Phone:      "15550009101",
+				FirstName:  "Alice",
+			})
+			if err != nil {
+				t.Fatalf("create alice: %v", err)
+			}
+			bob, err := userStore.Create(ctx, domain.User{
+				AccessHash: 22,
+				Phone:      "15550009102",
+				FirstName:  "Bob",
+			})
+			if err != nil {
+				t.Fatalf("create bob: %v", err)
+			}
+			r := New(Config{}, Deps{
+				Users:    appusers.NewService(userStore),
+				Contacts: appcontacts.NewService(memory.NewContactStore(), userStore),
+			}, zaptest.NewLogger(t), clock.System)
+			ownerCtx := WithUserID(ctx, bob.ID)
+			peer := &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash}
+
+			if _, method := dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.ContactsBlockRequest{ID: peer}); method != "contacts.block" {
+				t.Fatalf("block method = %q", method)
+			}
+			if _, method := dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.ContactsGetBlockedRequest{Limit: 10}); method != "contacts.getBlocked" {
+				t.Fatalf("getBlocked method = %q", method)
+			}
+			blocked, err := r.onContactsGetBlocked(ownerCtx, &tg.ContactsGetBlockedRequest{Limit: 10})
+			if err != nil {
+				t.Fatalf("read blocked after exact block: %v", err)
+			}
+			if full, ok := blocked.(*tg.ContactsBlocked); !ok || len(full.Blocked) != 1 {
+				t.Fatalf("blocked after exact block = %T %+v", blocked, blocked)
+			}
+			result, method := dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.UsersGetFullUserRequest{
+				ID: &tg.InputUser{UserID: alice.ID, AccessHash: alice.AccessHash},
+			})
+			if method != "users.getFullUser" {
+				t.Fatalf("getFullUser method = %q", method)
+			}
+			var responseWire bin.Buffer
+			if err := result.Encode(&responseWire); err != nil {
+				t.Fatalf("encode exact blocked full user: %v", err)
+			}
+			decoded, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: responseWire.Copy()}, tlprofile.Limits{})
+			if err != nil {
+				t.Fatalf("decode exact blocked full user: %v", err)
+			}
+			blockedFull, ok := decoded.(*tg.UsersUserFull)
+			if !ok || !blockedFull.FullUser.Blocked || !blockedFull.FullUser.BlockedMyStoriesFrom || blockedFull.FullUser.Settings.BlockContact {
+				t.Fatalf("Layer %d blocked full user = %T %+v", profile, decoded, decoded)
+			}
+
+			if _, method := dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.ContactsUnblockRequest{ID: peer}); method != "contacts.unblock" {
+				t.Fatalf("unblock method = %q", method)
+			}
+			if _, method := dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.ContactsGetBlockedRequest{Limit: 10}); method != "contacts.getBlocked" {
+				t.Fatalf("getBlocked after unblock method = %q", method)
+			}
+			blocked, err = r.onContactsGetBlocked(ownerCtx, &tg.ContactsGetBlockedRequest{Limit: 10})
+			if err != nil {
+				t.Fatalf("read blocked after exact unblock: %v", err)
+			}
+			if full, ok := blocked.(*tg.ContactsBlocked); !ok || len(full.Blocked) != 0 {
+				t.Fatalf("blocked after exact unblock = %T %+v", blocked, blocked)
+			}
+			result, method = dispatchExactLayerRPCTest(t, r, ownerCtx, profile, &tg.UsersGetFullUserRequest{
+				ID: &tg.InputUser{UserID: alice.ID, AccessHash: alice.AccessHash},
+			})
+			if method != "users.getFullUser" {
+				t.Fatalf("getFullUser after unblock method = %q", method)
+			}
+			responseWire.Reset()
+			if err := result.Encode(&responseWire); err != nil {
+				t.Fatalf("encode exact unblocked full user: %v", err)
+			}
+			decoded, err = tlprofile.DecodeObject(profile, &bin.Buffer{Buf: responseWire.Copy()}, tlprofile.Limits{})
+			if err != nil {
+				t.Fatalf("decode exact unblocked full user: %v", err)
+			}
+			unblockedFull, ok := decoded.(*tg.UsersUserFull)
+			if !ok || unblockedFull.FullUser.Blocked || unblockedFull.FullUser.BlockedMyStoriesFrom || !unblockedFull.FullUser.Settings.BlockContact {
+				t.Fatalf("Layer %d unblocked full user = %T %+v", profile, decoded, decoded)
+			}
+		})
 	}
 }

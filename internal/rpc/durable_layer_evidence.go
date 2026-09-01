@@ -83,9 +83,10 @@ func (r *Router) ResolveNegotiatedSessionLayerEvidence(
 
 // AdvanceNegotiatedSessionLayerEvidence commits the same-session watermark and
 // auth-key-wide default atomically before any connection/profile/readiness
-// state is mutated. publishShared is true only when this observation is still
-// the durable shared default; an old duplicate cannot overwrite a newer
-// session's local cache after restart.
+// state is mutated. publishShared is true only for a different durable profile
+// generation which still owns the shared default. A same-generation msg_id
+// advance remains fully durable and fresh for the exact session, but does not
+// re-read/re-publish the unchanged auth-key default.
 func (r *Router) AdvanceNegotiatedSessionLayerEvidence(
 	ctx context.Context,
 	rawAuthKeyID [8]byte,
@@ -106,6 +107,7 @@ func (r *Router) AdvanceNegotiatedSessionLayerEvidence(
 		}
 		return currentLayer, currentMsgID, currentLayer == layer && currentMsgID == msgID, nil
 	}
+	previousObservationID, hadPreviousGeneration := r.cachedDurableSessionLayerObservation(rawAuthKeyID, sessionID)
 	current, _, err := r.deps.AuthKeySessionLayers.AdvanceSessionLayer(
 		ctx,
 		rawAuthKeyID,
@@ -125,7 +127,23 @@ func (r *Router) AdvanceNegotiatedSessionLayerEvidence(
 	if err := r.cacheResolvedDurableSessionLayer(rawAuthKeyID, sessionID, current); err != nil {
 		return 0, 0, false, err
 	}
-	return current.Layer, current.MessageID, current.SharedDefault, nil
+	generationChanged := !hadPreviousGeneration || previousObservationID != current.ObservationID
+	return current.Layer, current.MessageID, current.SharedDefault && generationChanged, nil
+}
+
+func (r *Router) cachedDurableSessionLayerObservation(rawAuthKeyID [8]byte, sessionID int64) (int64, bool) {
+	if r == nil || rawAuthKeyID == ([8]byte{}) || sessionID == 0 {
+		return 0, false
+	}
+	key := clientInfoSessionKey{rawAuthKeyID: rawAuthKeyID, sessionID: sessionID}
+	now := r.clock.Now()
+	r.exactProfileMu.RLock()
+	entry, found := r.exactProfiles[key]
+	r.exactProfileMu.RUnlock()
+	if !found || entry.observationID <= 0 || !now.Before(entry.expiresAt) {
+		return 0, false
+	}
+	return entry.observationID, true
 }
 
 // cacheResolvedDurableSessionLayer updates only the bounded typed accelerator;
@@ -184,12 +202,18 @@ func (r *Router) cacheResolvedDurableSessionLayer(
 			// Advance which already refreshed the local cache. Do not roll it back.
 			return nil
 		case current.observationID == entry.observationID && entry.observationID > 0:
-			if current.layer != entry.layer || current.msgID != entry.msgID {
-				return fmt.Errorf("%w: observation %d maps to (%d,%d) and (%d,%d)",
-					store.ErrAuthKeySessionLayerConflict, entry.observationID,
-					current.layer, current.msgID, entry.layer, entry.msgID)
+			if current.layer != entry.layer {
+				return fmt.Errorf("%w: observation %d maps to Layer %d and %d",
+					store.ErrAuthKeySessionLayerConflict, entry.observationID, current.layer, entry.layer)
 			}
-			// The store row may have an authoritative expiry refresh; replace it.
+			if current.msgID > entry.msgID {
+				// One same-Layer fast advance refreshed this process after the
+				// current DB read linearized. Observation identifies the stable
+				// Layer generation; msg_id remains its monotonic high-water mark.
+				return nil
+			}
+			// The store row may have a newer same-generation high-water mark or
+			// an authoritative expiry refresh; replace it.
 		case entry.observationID <= 0 && current.msgID > entry.msgID:
 			// Defensive compatibility for an old custom store without observation
 			// ids. Production stores always take the branches above.

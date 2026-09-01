@@ -67,6 +67,155 @@ func TestDispatchMarksSessionReceivesUpdates(t *testing.T) {
 	}
 }
 
+type activationCaptureSessions struct {
+	*captureSessions
+	activationMu     sync.Mutex
+	nextToken        uint64
+	activeToken      uint64
+	beginCalls       int
+	grants           int
+	endCalls         int
+	bootstrapMu      sync.Mutex
+	bootstrapNext    uint64
+	bootstrapActive  uint64
+	bootstrapBegin   int
+	bootstrapEnd     int
+	bootstrapSuccess int
+	bootstrapProbed  bool
+}
+
+func (s *activationCaptureSessions) ReceivesUpdatesForAuthKey([8]byte, int64) bool {
+	return s.captureSessions.snapshot().receives
+}
+
+func (s *activationCaptureSessions) BeginSessionUpdatesActivation([8]byte, int64) (uint64, bool) {
+	s.activationMu.Lock()
+	defer s.activationMu.Unlock()
+	s.beginCalls++
+	if s.activeToken != 0 || s.captureSessions.snapshot().receives {
+		return 0, false
+	}
+	s.nextToken++
+	s.activeToken = s.nextToken
+	s.grants++
+	return s.activeToken, true
+}
+
+func (s *activationCaptureSessions) EndSessionUpdatesActivation(_ [8]byte, _ int64, token uint64) {
+	s.activationMu.Lock()
+	defer s.activationMu.Unlock()
+	s.endCalls++
+	if s.activeToken == token {
+		s.activeToken = 0
+	}
+}
+
+func (s *activationCaptureSessions) activationSnapshot() (begin, grants, end int, active uint64) {
+	s.activationMu.Lock()
+	defer s.activationMu.Unlock()
+	return s.beginCalls, s.grants, s.endCalls, s.activeToken
+}
+
+func (s *activationCaptureSessions) BeginSessionBootstrapProbe([8]byte, int64) (uint64, bool) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+	s.bootstrapBegin++
+	if s.bootstrapActive != 0 || s.bootstrapProbed {
+		return 0, false
+	}
+	s.bootstrapNext++
+	s.bootstrapActive = s.bootstrapNext
+	return s.bootstrapActive, true
+}
+
+func (s *activationCaptureSessions) EndSessionBootstrapProbe(_ [8]byte, _ int64, token uint64, success bool) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+	s.bootstrapEnd++
+	if s.bootstrapActive != token {
+		return
+	}
+	s.bootstrapActive = 0
+	if success {
+		s.bootstrapSuccess++
+		s.bootstrapProbed = true
+	}
+}
+
+func (s *activationCaptureSessions) bootstrapSnapshot() (begin, end, success int, active uint64, probed bool) {
+	s.bootstrapMu.Lock()
+	defer s.bootstrapMu.Unlock()
+	return s.bootstrapBegin, s.bootstrapEnd, s.bootstrapSuccess, s.bootstrapActive, s.bootstrapProbed
+}
+
+func TestDispatchCoalescesConcurrentSessionReadinessActivation(t *testing.T) {
+	sessions := &activationCaptureSessions{captureSessions: &captureSessions{}}
+	first := dispatchForReceivesUpdates(t, sessions, false, true)
+	second := dispatchForReceivesUpdates(t, sessions, false, true)
+
+	if begin, grants, end, active := sessions.activationSnapshot(); begin != 2 || grants != 1 || end != 0 || active == 0 {
+		t.Fatalf("activation before delivery = begin:%d grants:%d end:%d active:%d", begin, grants, end, active)
+	}
+	postresponse.Run(second)
+	if got := sessions.snapshot().receivesCalls; got != 0 {
+		t.Fatalf("non-owner delivery marked readiness %d times", got)
+	}
+	postresponse.Run(first)
+	if got := sessions.snapshot(); !got.receives || got.receivesCalls != 1 {
+		t.Fatalf("owner delivery readiness = receives:%v calls:%d", got.receives, got.receivesCalls)
+	}
+	if begin, grants, end, active := sessions.activationSnapshot(); begin != 2 || grants != 1 || end != 1 || active != 0 {
+		t.Fatalf("activation after delivery = begin:%d grants:%d end:%d active:%d", begin, grants, end, active)
+	}
+}
+
+func TestSessionReadinessActivationReleasedWhenCallbackRegistrationFails(t *testing.T) {
+	sessions := &activationCaptureSessions{captureSessions: &captureSessions{}}
+	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
+	ctx := WithSessionID(WithRawAuthKeyID(context.Background(), [8]byte{9}), 99)
+	r.stageSessionUpdatesReadyAfterDelivery(ctx, 1000000009)
+	if begin, grants, end, active := sessions.activationSnapshot(); begin != 1 || grants != 1 || end != 1 || active != 0 {
+		t.Fatalf("activation after missing callback registry = begin:%d grants:%d end:%d active:%d", begin, grants, end, active)
+	}
+}
+
+func TestSuppressSessionActivationReleasesClaimButKeepsCursorWork(t *testing.T) {
+	sessions := &activationCaptureSessions{captureSessions: &captureSessions{}}
+	bootstrap := &captureBootstrapReadyStore{BootstrapUpdateJobStore: memory.NewBootstrapUpdateJobStore()}
+	r := New(Config{}, Deps{Sessions: sessions, BootstrapUpdates: bootstrap}, zaptest.NewLogger(t), clock.System)
+	ctx := WithSessionID(WithRawAuthKeyID(context.Background(), [8]byte{8}), 88)
+	ctx, plan := withUpdatesDeliveryPlan(ctx)
+	r.tryStageSessionUpdatesReady(ctx, plan, 1000000008)
+	r.tryStageBootstrapProbe(ctx, plan, 1000000008)
+	plan.stageCursor([8]byte{7}, 1000000008, domain.UpdateState{Pts: 7}, domain.UpdateStateCommitDeliveredOnly)
+	plan.suppressSessionActivation()
+	if plan.markSessionReady || plan.publishBootstrap || !plan.commitCursor {
+		t.Fatalf("suppressed plan = ready:%v bootstrap:%v cursor:%v", plan.markSessionReady, plan.publishBootstrap, plan.commitCursor)
+	}
+	if begin, grants, end, active := sessions.activationSnapshot(); begin != 1 || grants != 1 || end != 1 || active != 0 {
+		t.Fatalf("activation after suppression = begin:%d grants:%d end:%d active:%d", begin, grants, end, active)
+	}
+	if begin, end, success, active, probed := sessions.bootstrapSnapshot(); begin != 1 || end != 1 || success != 0 || active != 0 || probed {
+		t.Fatalf("bootstrap after suppression = begin:%d end:%d success:%d active:%d probed:%v", begin, end, success, active, probed)
+	}
+}
+
+func TestBootstrapProbeReleasedWhenCallbackRegistrationFails(t *testing.T) {
+	sessions := &activationCaptureSessions{captureSessions: &captureSessions{}}
+	bootstrap := &captureBootstrapReadyStore{BootstrapUpdateJobStore: memory.NewBootstrapUpdateJobStore()}
+	r := New(Config{}, Deps{Sessions: sessions, BootstrapUpdates: bootstrap}, zaptest.NewLogger(t), clock.System)
+	ctx := WithAuthKeyID(context.Background(), [8]byte{7})
+	ctx = WithRawAuthKeyID(ctx, [8]byte{8})
+	ctx = WithSessionID(ctx, 88)
+	r.stageUpdatesBaselineAfterDelivery(ctx, 1000000008, nil, 0, nil, true)
+	if bootstrap.readyCalls != 0 {
+		t.Fatalf("bootstrap store called before an attached delivery callback: %d", bootstrap.readyCalls)
+	}
+	if begin, end, success, active, probed := sessions.bootstrapSnapshot(); begin != 1 || end != 1 || success != 0 || active != 0 || probed {
+		t.Fatalf("bootstrap after missing registry = begin:%d end:%d success:%d active:%d probed:%v", begin, end, success, active, probed)
+	}
+}
+
 // TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates 验证 invokeWithoutUpdates
 // 包装的请求（media/temp 连接）不会把该 session 标记为 updates 接收者。
 func TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates(t *testing.T) {
@@ -83,11 +232,52 @@ func TestDispatchSkipsReceivesUpdatesForInvokeWithoutUpdates(t *testing.T) {
 type captureBootstrapReadyStore struct {
 	*memory.BootstrapUpdateJobStore
 	readyCalls int
+	readyErr   error
 }
 
 func (s *captureBootstrapReadyStore) MarkReadyForSession(ctx context.Context, userID int64, authKeyID [8]byte, sessionID int64) (int, error) {
 	s.readyCalls++
+	if s.readyErr != nil {
+		err := s.readyErr
+		s.readyErr = nil
+		return 0, err
+	}
 	return s.BootstrapUpdateJobStore.MarkReadyForSession(ctx, userID, authKeyID, sessionID)
+}
+
+func TestBootstrapReadinessProbeIsOneShotAndRetriesFailure(t *testing.T) {
+	const userID int64 = 1000000199
+	rawAuthKeyID := [8]byte{19}
+	businessAuthKeyID := [8]byte{29}
+	const sessionID int64 = 199
+	sessions := &activationCaptureSessions{captureSessions: &captureSessions{}}
+	bootstrap := &captureBootstrapReadyStore{
+		BootstrapUpdateJobStore: memory.NewBootstrapUpdateJobStore(),
+		readyErr:                errors.New("temporary bootstrap lookup failure"),
+	}
+	r := New(Config{}, Deps{Sessions: sessions, BootstrapUpdates: bootstrap}, zaptest.NewLogger(t), clock.System)
+
+	baseline := func() {
+		ctx := postresponse.WithCallbacks(context.Background())
+		ctx = WithAuthKeyID(ctx, businessAuthKeyID)
+		ctx = WithRawAuthKeyID(ctx, rawAuthKeyID)
+		ctx = WithSessionID(ctx, sessionID)
+		ctx = WithUserID(ctx, userID)
+		r.stageUpdatesBaselineAfterDelivery(ctx, userID, nil, 0, nil, true)
+		postresponse.Run(ctx)
+	}
+
+	baseline() // authoritative query fails: release the physical-generation claim
+	baseline() // successful zero-row result: complete the one-shot
+	baseline() // no third store call on the same physical generation
+
+	if bootstrap.readyCalls != 2 {
+		t.Fatalf("bootstrap readiness calls = %d, want failure + one successful retry", bootstrap.readyCalls)
+	}
+	begin, end, success, active, probed := sessions.bootstrapSnapshot()
+	if begin != 3 || end != 2 || success != 1 || active != 0 || !probed {
+		t.Fatalf("bootstrap probe = begin:%d end:%d success:%d active:%d probed:%v", begin, end, success, active, probed)
+	}
 }
 
 func TestInvokeWithoutUpdatesBaselineCommitsResultAndSecretEventsWithoutSubscribing(t *testing.T) {
@@ -95,7 +285,7 @@ func TestInvokeWithoutUpdatesBaselineCommitsResultAndSecretEventsWithoutSubscrib
 	authKeyID := [8]byte{21}
 	deviceKey := businessAuthKeyInt64(authKeyID)
 	queue := memory.NewEncryptedQueueStore()
-	secret := appsecret.NewService(memory.NewSecretChatStore(), queue, &seqSecretChatIDAllocator{})
+	secret := appsecret.NewService(memory.NewSecretChatStore(), queue)
 	eventID, err := queue.AppendStateEvent(context.Background(), domain.EncryptedStateEvent{
 		TargetUserID: userID,
 		ChatID:       77,

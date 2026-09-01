@@ -14,11 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iamxvbaba/td/clock"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	messageapp "telesrv/internal/app/messages"
+	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/mtprotoedge"
 	"telesrv/internal/rpc"
@@ -104,11 +106,15 @@ func TestMessageSendBaseline(t *testing.T) {
 	// 让 outbox 走完整 claim→ListAfter→MarkDelivered 的 PG 往返，测排空而非网络 fanout。
 	binder := mtprotoedge.NewSessionManager(zap.NewNop())
 	metrics := &loadMetrics{}
+	projectionRouter := rpc.New(rpc.Config{}, rpc.Deps{
+		Users: appusers.NewService(userStore),
+	}, zap.NewNop(), clock.System)
 	dispatcher := rpc.NewOutboxDispatcher(updateEventStore, dispatchOutboxStore, binder, zap.NewNop(),
 		rpc.WithOutboxWorkers(workers),
 		rpc.WithOutboxBatch(outboxBatch),
 		rpc.WithOutboxInterval(outboxInterval),
 		rpc.WithOutboxMetrics(metrics),
+		rpc.WithOutboxUpdateBuilder(projectionRouter.BuildOutboxUpdates),
 	)
 	dispCtx, stopDispatcher := context.WithCancel(ctx)
 	dispDone := make(chan struct{})
@@ -317,11 +323,16 @@ type loadMetrics struct {
 	failed    atomic.Int64
 }
 
-func (m *loadMetrics) MessageSend(time.Duration, bool, error) {}
-func (m *loadMetrics) MessageRateLimited(int)                 {}
-func (m *loadMetrics) OutboxClaimed(n int)                    { m.claimed.Add(int64(n)) }
-func (m *loadMetrics) OutboxDelivered(time.Duration)          { m.delivered.Add(1) }
-func (m *loadMetrics) OutboxFailed(error)                     { m.failed.Add(1) }
+func (m *loadMetrics) MessageSend(time.Duration, bool, error)          {}
+func (m *loadMetrics) MessageRateLimited(int)                          {}
+func (m *loadMetrics) OutboxClaimed(n int)                             { m.claimed.Add(int64(n)) }
+func (m *loadMetrics) OutboxDelivered(time.Duration)                   { m.delivered.Add(1) }
+func (m *loadMetrics) OutboxFailed(error)                              { m.failed.Add(1) }
+func (m *loadMetrics) PresenceLastSeenBatch(int, time.Duration, error) {}
+func (m *loadMetrics) PresenceLastSeenSubmitted()                      {}
+func (m *loadMetrics) PresenceLastSeenPending(int)                     {}
+func (m *loadMetrics) PresenceLastSeenOverflow()                       {}
+func (m *loadMetrics) PresenceLastSeenDrainDropped(int)                {}
 
 func seedUsers(t *testing.T, ctx context.Context, store *postgres.UserStore, n int) []int64 {
 	t.Helper()

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,33 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
+
+func TestSuggestedPostApprovalUpdatesFailsClosedOnIncompleteUserEnvelope(t *testing.T) {
+	const (
+		viewerID    = int64(1000000401)
+		savedPeerID = int64(1000000402)
+		monoforumID = int64(1000000491)
+	)
+	router := New(Config{}, Deps{Users: mapUsersService{users: map[int64]domain.User{
+		viewerID: {ID: viewerID, FirstName: "viewer"},
+	}}}, zaptest.NewLogger(t), clock.System)
+	savedPeer := domain.Peer{Type: domain.PeerTypeUser, ID: savedPeerID}
+	message := domain.ChannelMessage{
+		ChannelID: monoforumID, ID: 1, SenderUserID: viewerID,
+		From: domain.Peer{Type: domain.PeerTypeUser, ID: viewerID}, SavedPeer: savedPeer,
+		Date: 1700000800,
+	}
+	result := domain.ToggleSuggestedPostApprovalResult{
+		Monoforum: domain.Channel{ID: monoforumID, Monoforum: true}, SavedPeer: savedPeer,
+		OriginalMessage: message,
+		OriginalEvent:   domain.ChannelUpdateEvent{ChannelID: monoforumID, Type: domain.ChannelUpdateEditMessage, Pts: 3, PtsCount: 1, Message: message},
+	}
+
+	updates, err := router.suggestedPostApprovalUpdatesStrict(context.Background(), viewerID, result)
+	if !errors.Is(err, ErrDurableUserProjectionIncomplete) || updates != nil {
+		t.Fatalf("suggested-post strict envelope = %T, %v; want nil ErrDurableUserProjectionIncomplete", updates, err)
+	}
+}
 
 func TestMessagesToggleSuggestedPostApprovalRegisteredAndProjectsLifecycle(t *testing.T) {
 	ctx := context.Background()

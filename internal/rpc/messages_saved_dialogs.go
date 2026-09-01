@@ -353,8 +353,7 @@ func (r *Router) savedDialogsProjection(ctx context.Context, userID int64, list 
 			}
 		}
 	}
-	r.applyUsernamesToPeerObjects(ctx, users, chats)
-	r.applyBotVerificationIconsToPeerObjects(ctx, users, chats)
+	r.applyPeerIdentitiesToPeerObjects(ctx, users, chats)
 	return users, chats
 }
 

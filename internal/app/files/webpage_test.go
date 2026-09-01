@@ -201,7 +201,8 @@ func TestResolveWebPageNonHTMLIsEmpty(t *testing.T) {
 	}
 }
 
-// TestResolveWebPageSSRFBlocksLoopback 验证生产配置（allowPrivate=false）拦截指向 loopback 的 URL。
+// TestResolveWebPageSSRFBlocksLoopback 验证生产配置（allowPrivate=false）拦截指向 loopback 的 URL，
+// 并把该确定性失败收敛为空预览。
 func TestResolveWebPageSSRFBlocksLoopback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -210,8 +211,12 @@ func TestResolveWebPageSSRFBlocksLoopback(t *testing.T) {
 	defer srv.Close()
 
 	svc := newWebpageTestService(t, false) // 生产口径：禁 loopback
-	if _, err := svc.ResolveWebPage(context.Background(), srv.URL+"/x"); err == nil {
-		t.Fatalf("expected SSRF guard to block loopback fetch")
+	page, err := svc.ResolveWebPage(context.Background(), srv.URL+"/x")
+	if err != nil {
+		t.Fatalf("SSRF guard should resolve as terminal-empty: %v", err)
+	}
+	if page.State != domain.MessageWebPageStateEmpty {
+		t.Fatalf("state = %q, want empty", page.State)
 	}
 }
 

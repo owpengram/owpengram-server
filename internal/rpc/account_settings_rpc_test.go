@@ -56,6 +56,10 @@ func TestAccountSettingsRoundTrip(t *testing.T) {
 		NewNoncontactPeersRequirePremium: true,
 	}
 	in.SetNoncontactPeersPaidStars(50)
+	in.SetDisallowedGifts(tg.DisallowedGiftsSettings{
+		DisallowLimitedStargifts: true,
+		DisallowPremiumGifts:     true,
+	})
 	saved, err := r.onAccountSetGlobalPrivacySettings(ctx, in)
 	if err != nil {
 		t.Fatalf("set global privacy: %v", err)
@@ -134,5 +138,11 @@ func assertGlobalPrivacy(t *testing.T, got *tg.GlobalPrivacySettings, want tg.Gl
 	gotStars, _ := got.GetNoncontactPeersPaidStars()
 	if gotStars != wantStars {
 		t.Fatalf("noncontact paid stars = %d, want %d", gotStars, wantStars)
+	}
+	wantGifts, wantGiftsOK := want.GetDisallowedGifts()
+	gotGifts, gotGiftsOK := got.GetDisallowedGifts()
+	if gotGiftsOK != wantGiftsOK || gotGifts != wantGifts {
+		t.Fatalf("disallowed gifts = %+v ok=%v, want %+v ok=%v",
+			gotGifts, gotGiftsOK, wantGifts, wantGiftsOK)
 	}
 }

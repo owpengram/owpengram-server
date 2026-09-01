@@ -80,6 +80,15 @@ func (s *AuthKeyStore) AdvanceSessionLayer(
 			return store.AuthKeySessionLayer{}, false, store.ErrAuthKeyBindingInvalid
 		}
 	}
+	if found && now.Before(current.ExpiresAt) && layer == current.Layer {
+		current.MessageID = msgID
+		current.ExpiresAt = expiresAt
+		stored := current
+		stored.SharedDefault = false
+		s.state.sessionLayers[key] = stored
+		current.SharedDefault = s.state.sessionLayerIsSharedDefaultLocked(rawAuthKeyID, current)
+		return current, true, nil
+	}
 	if s.state.nextLayerObservation == math.MaxInt64 {
 		return store.AuthKeySessionLayer{}, false, store.ErrAuthKeySessionLayerInvalid
 	}

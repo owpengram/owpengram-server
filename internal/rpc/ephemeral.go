@@ -27,10 +27,28 @@ func (r *Router) registerEphemeral(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.EphemeralGetCallbackAnswerRequest](d, tlprofile.SemanticMethodEphemeralGetCallbackAnswer, func(ctx context.Context, request *tg.EphemeralGetCallbackAnswerRequest) (any, error) {
 		return r.onEphemeralGetCallbackAnswer(ctx, request)
 	})
+	registerRPC[*tg.EphemeralEditMessageRequest](d, tlprofile.SemanticMethodEphemeralEditMessage, func(ctx context.Context, request *tg.EphemeralEditMessageRequest) (any, error) {
+		return r.onEphemeralEditWelcomeMessage(ctx, request)
+	})
+	registerRPC[*tg.EphemeralDeleteWelcomeMessageRequest](d, tlprofile.SemanticMethodEphemeralDeleteWelcomeMessage, func(ctx context.Context, request *tg.EphemeralDeleteWelcomeMessageRequest) (any, error) {
+		return r.onEphemeralDeleteWelcomeMessage(ctx, request)
+	})
+	registerRPC[*tg.EphemeralDeleteAllWelcomeMessagesRequest](d, tlprofile.SemanticMethodEphemeralDeleteAllWelcomeMessages, func(ctx context.Context, request *tg.EphemeralDeleteAllWelcomeMessagesRequest) (any, error) {
+		return r.onEphemeralDeleteAllWelcomeMessages(ctx, request)
+	})
+	registerRPC[*tg.EphemeralGetWelcomeMessagesRequest](d, tlprofile.SemanticMethodEphemeralGetWelcomeMessages, func(ctx context.Context, request *tg.EphemeralGetWelcomeMessagesRequest) (any, error) {
+		return r.onEphemeralGetWelcomeMessages(ctx, request)
+	})
 }
 
 func (r *Router) onEphemeralSendMessage(ctx context.Context, request *tg.EphemeralSendMessageRequest) (tg.UpdatesClass, error) {
-	if request == nil || r.deps.Ephemeral == nil {
+	if request == nil {
+		return nil, inputRequestInvalidErr()
+	}
+	if request.Welcome {
+		return r.onEphemeralSendWelcomeMessage(ctx, request)
+	}
+	if r.deps.Ephemeral == nil {
 		return nil, inputRequestInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)

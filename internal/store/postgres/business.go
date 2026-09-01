@@ -13,6 +13,25 @@ import (
 	"telesrv/internal/domain"
 )
 
+func (s *PasswordStore) HasBusinessAutomation(ctx context.Context, userID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx, `
+SELECT EXISTS (
+  SELECT 1
+  FROM user_business_profiles
+  WHERE user_id = $1
+    AND (greeting_message <> '{}'::jsonb OR away_message <> '{}'::jsonb)
+  UNION ALL
+  SELECT 1
+  FROM business_connected_bots
+  WHERE owner_user_id = $1
+)`, userID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check business automation: %w", err)
+	}
+	return exists, nil
+}
+
 func (s *PasswordStore) GetBusinessProfile(ctx context.Context, userID int64) (domain.BusinessProfile, bool, error) {
 	row := s.db.QueryRow(ctx, `
 SELECT

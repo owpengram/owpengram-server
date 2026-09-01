@@ -279,6 +279,62 @@ WHERE peer_type = 'user' AND peer_id = $1`, domain.OfficialSystemUserID).Scan(&u
 	}
 }
 
+func TestLoginCodeDeliveryPostgresSurvivesCompiledOfficialUsernameChange(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	recipient := createLoginCodeDeliveryTestUser(t, ctx, pool, "official-source-update-recipient")
+	decoy := createLoginCodeDeliveryTestUser(t, ctx, pool, "official-source-update-decoy")
+	canonical := strings.ToLower(domain.OfficialSystemUser().Username)
+	legacy := "legacy_" + strings.ToLower(randomSuffix(t))
+	if canonical == "" {
+		t.Fatal("official system username must be non-empty")
+	}
+
+	// Model an installation upgraded across a source revision: the persisted
+	// official account still has the old username and the newly compiled default
+	// has since been claimed. Login-code delivery must not attempt request-time
+	// identity migration and fail on the unique indexes.
+	if _, err := pool.Exec(ctx, `
+UPDATE peer_usernames SET username_lower = $2, username = $2, updated_at = now()
+WHERE peer_type = 'user' AND peer_id = $1 AND editable`, domain.OfficialSystemUserID, legacy); err != nil {
+		t.Fatalf("move official username registry to legacy value: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET username = $2 WHERE id = $1`, domain.OfficialSystemUserID, legacy); err != nil {
+		t.Fatalf("move official username to legacy value: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET username = $2 WHERE id = $1`, decoy.ID, canonical); err != nil {
+		t.Fatalf("assign compiled username to decoy: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO peer_usernames (username_lower, username, peer_type, peer_id, active, editable, sort_order)
+VALUES ($1, $1, 'user', $2, true, true, 0)`, canonical, decoy.ID); err != nil {
+		t.Fatalf("register compiled username for decoy: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM peer_usernames WHERE peer_type = 'user' AND peer_id = $1`, decoy.ID)
+		_, _ = pool.Exec(ctx, `UPDATE users SET username = '' WHERE id = $1`, decoy.ID)
+		_, _ = pool.Exec(ctx, `UPDATE users SET username = $2 WHERE id = $1`, domain.OfficialSystemUserID, canonical)
+		_, _ = pool.Exec(ctx, `
+UPDATE peer_usernames SET username_lower = $2, username = $2, updated_at = now()
+WHERE peer_type = 'user' AND peer_id = $1 AND editable`, domain.OfficialSystemUserID, canonical)
+	})
+
+	now := int(time.Now().Unix())
+	if _, err := NewMessageStore(pool).DeliverLoginCodeMessage(ctx, domain.LoginCodeDeliveryRequest{
+		UserID: recipient.ID, PhoneCodeHash: "official-source-update-" + randomSuffix(t),
+		Code: "12345", Date: now, ExpiresAt: int64(now + 300),
+	}); err != nil {
+		t.Fatalf("delivery with stale persisted official identity: %v", err)
+	}
+	var got string
+	if err := pool.QueryRow(ctx, `SELECT username FROM users WHERE id = $1`, domain.OfficialSystemUserID).Scan(&got); err != nil {
+		t.Fatalf("reload official identity: %v", err)
+	}
+	if got != legacy {
+		t.Fatalf("request-time delivery rewrote official username to %q, want persisted %q", got, legacy)
+	}
+}
+
 func TestLoginCodeDeliveryPostgresReceiptRetentionIsBoundedAndSeekOrdered(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -412,6 +468,14 @@ func (t *commitAckLossTx) Commit(ctx context.Context) error {
 
 func (a loginCodeFixedBoxAllocator) NextBoxID(context.Context, int64) (int, error) {
 	return a.boxID, nil
+}
+
+func (a loginCodeFixedBoxAllocator) NextBoxIDs(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		out[userID] = a.boxID
+	}
+	return out, nil
 }
 
 func (a loginCodeFixedBoxAllocator) CurrentBoxID(context.Context, int64) (int, error) {

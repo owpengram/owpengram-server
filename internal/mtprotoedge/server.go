@@ -164,8 +164,10 @@ type LayerRPCDurableSessionProfileResolver interface {
 }
 
 // LayerRPCDurableSessionProfileAdvancer atomically advances exact-session and
-// auth-key shared-default evidence. publishShared is true only when this exact
-// observation still owns the durable shared default.
+// auth-key shared-default evidence. publishShared is true only when this call
+// established a different durable profile generation which still owns the
+// shared default; a same-generation msg_id high-water advance needs no second
+// process-local default publication.
 type LayerRPCDurableSessionProfileAdvancer interface {
 	AdvanceNegotiatedSessionLayerEvidence(
 		ctx context.Context,
@@ -290,12 +292,20 @@ type Options struct {
 	RPCTimeout time.Duration
 	// RPCGlobalWorkers 是 Server 共享 inbound RPC worker 数。默认 256。
 	RPCGlobalWorkers int
-	// RPCGlobalMaxTasks 是全进程已预留、排队和执行中的 RPC 条数上限。默认 8192。
+	// RPCGlobalMaxTasks 是全进程已预留、排队和执行中的 RPC 条数上限。默认 32768；
+	// request materialization 仍独立受 RPCGlobalMaxBytes 硬限制。
 	RPCGlobalMaxTasks int
 	// RPCGlobalMaxBytes 是上述 RPC 的进程级 memory charge 预算。legacy charge
 	// 等于 copied body；exact charge 是 typed decode 前的保守 materialization
 	// 上界，因此该配置不表示可并发接收 512 MiB wire body。默认 512 MiB。
 	RPCGlobalMaxBytes int64
+	// RPCDeliveryHookWorkers bounds concurrent post-response correctness work
+	// such as delivered-cursor commits and first-session readiness. The pending
+	// limit separately covers reserved + queued + running hooks so a 10k startup
+	// burst remains bounded without forcing socket writers to wait. Defaults are
+	// 32 workers and 16,384 pending hooks.
+	RPCDeliveryHookWorkers    int
+	RPCDeliveryHookMaxPending int
 	// RPCExecution*Entries bound in-flight owners and compact completed
 	// receipts. Payload bytes are not charged here: the logical-session
 	// outbox owns them under OutboundTrackedGlobalMaxBytes until ACK. ACK removes
@@ -415,6 +425,12 @@ func (o *Options) setDefaults() {
 	if o.RPCGlobalMaxBytes <= 0 {
 		o.RPCGlobalMaxBytes = 512 << 20
 	}
+	if o.RPCDeliveryHookWorkers <= 0 {
+		o.RPCDeliveryHookWorkers = defaultRPCDeliveryHookWorkers
+	}
+	if o.RPCDeliveryHookMaxPending <= 0 {
+		o.RPCDeliveryHookMaxPending = defaultRPCDeliveryHookMaxPending
+	}
 	if o.RPCExecutionMaxEntries == 0 {
 		o.RPCExecutionMaxEntries = rpcExecutionMaxEntries
 	}
@@ -463,6 +479,10 @@ func (o *Options) setDefaults() {
 }
 
 func validateRPCExecutionOptions(o Options) error {
+	if o.RPCDeliveryHookWorkers <= 0 || o.RPCDeliveryHookMaxPending < o.RPCDeliveryHookWorkers {
+		return fmt.Errorf("rpc delivery hook capacity must satisfy pending >= workers > 0: %d/%d",
+			o.RPCDeliveryHookMaxPending, o.RPCDeliveryHookWorkers)
+	}
 	if o.RPCExecutionMaxEntries <= 0 || o.RPCExecutionAuthMaxEntries <= 0 || o.RPCExecutionSessionMaxEntries <= 0 {
 		return fmt.Errorf("rpc execution ledger entry limits must be positive")
 	}
@@ -498,6 +518,7 @@ type Server struct {
 	rpcQueueSize             int
 	rpcTimeout               time.Duration
 	rpcScheduler             *inboundRPCScheduler
+	rpcDeliveryHooks         *rpcDeliveryHookExecutor
 	frameBudget              *inboundFrameBudget
 	outboundQueueSize        int
 	outboundControlQueueSize int
@@ -560,6 +581,7 @@ func New(opts Options) *Server {
 		rpcQueueSize:             opts.RPCQueueSize,
 		rpcTimeout:               opts.RPCTimeout,
 		rpcScheduler:             newInboundRPCScheduler(opts.RPCGlobalWorkers, opts.RPCGlobalMaxTasks, opts.RPCGlobalMaxBytes),
+		rpcDeliveryHooks:         newRPCDeliveryHookExecutor(opts.RPCDeliveryHookWorkers, opts.RPCDeliveryHookMaxPending),
 		frameBudget:              newInboundFrameBudget(opts.InboundFrameGlobalMaxBytes),
 		outboundQueueSize:        opts.OutboundQueueSize,
 		outboundControlQueueSize: opts.OutboundControlQueueSize,
@@ -659,6 +681,7 @@ func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key
 		outboundTrackedBudget:        s.outboundTrackedBudget,
 		outboundControlTrackedBudget: s.outboundControlBudget,
 		outboundScratchPool:          s.outboundScratchPool,
+		rpcDeliveryHooks:             s.rpcDeliveryHooks,
 		rpcResultAcked: func(conn *Conn, reqMsgID int64) {
 			// The sole outbound actor invokes this only after resolving a client
 			// msgs_ack server msg_id through its tracked resend frame. The actor has
@@ -679,8 +702,10 @@ func (s *Server) buildConn(tc transport.Conn, lease *physicalTransportLease, key
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	// 共享 worker 池只在 Server 真正 Serve 后允许消费，并在首条 RPC 到达时懒启动。
 	// serveTCP/serveMixed 返回前会等待连接 goroutine 收敛，各 Conn 已先排空/取消任务；
-	// 最后再停止全局池，避免关闭过程中留下无人消费但仍占预算的队列。
+	// 最后再停止共享池并排空已预留 delivery hook，避免关闭过程中
+	// 留下无人消费但仍占预算的队列。
 	s.rpcScheduler.start()
+	defer s.rpcDeliveryHooks.stop(rpcCloseWaitTimeout)
 	defer s.conns.releaseAllLogicalSessions()
 	defer s.rpcScheduler.stop(rpcCloseWaitTimeout)
 	// 只在最外层 listener 包一次，确保 same-port mux 的 sniff/HTTP upgrade 也计入

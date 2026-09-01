@@ -222,6 +222,10 @@ func (s *Server) handleAdmittedLayerRPC(
 	}
 	dur := s.clock.Now().Sub(start)
 	s.metrics.RPCHandled(effectiveMethod, dur, err)
+	dbSnapshot := dbStats.Snapshot()
+	if databaseMetrics, ok := s.metrics.(RPCDatabaseMetrics); ok {
+		databaseMetrics.RPCDatabase(effectiveMethod, dbSnapshot.Queries, dbSnapshot.Duration, dbSnapshot.Errors)
+	}
 	fields := []zap.Field{
 		zap.String("method", effectiveMethod), zap.String("auth_key_id", c.authKeyHex),
 		zap.Int64("session_id", c.sessionID), zap.Int64("msg_id", msgID),
@@ -236,7 +240,7 @@ func (s *Server) handleAdmittedLayerRPC(
 	if userID := c.UserID(); userID != 0 {
 		fields = append(fields, zap.Int64("user_id", userID))
 	}
-	fields = dbtrace.AppendZapFields(fields, "", dbStats.Snapshot())
+	fields = dbtrace.AppendZapFields(fields, "", dbSnapshot)
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		var terminal bin.Encoder
@@ -273,7 +277,7 @@ func (s *Server) handleAdmittedLayerRPC(
 			ErrorCode: 500, ErrorMessage: "INTERNAL",
 		}, nil)
 	}
-	s.log.Info("RPC handled", fields...)
+	s.log.Debug("RPC handled", fields...)
 	return s.publishAdmittedLayerRPCResult(c, msgID, effectiveMethod, owner, true, exact, postresponse.Take(ctx))
 }
 

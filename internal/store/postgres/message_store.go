@@ -12,10 +12,11 @@ import (
 
 // MessageStore 用 PostgreSQL 实现 store.MessageStore。
 type MessageStore struct {
-	db     sqlcgen.DBTX
-	q      *sqlcgen.Queries
-	boxIDs store.BoxIDAllocator
-	log    *zap.Logger
+	db               sqlcgen.DBTX
+	q                *sqlcgen.Queries
+	boxIDs           store.BoxIDAllocator
+	privateSendLanes *userLaneActor
+	log              *zap.Logger
 }
 
 type txBeginner interface {
@@ -41,7 +42,7 @@ func WithMessageLogger(log *zap.Logger) MessageStoreOption {
 
 // NewMessageStore 基于 pgx 连接池（或事务）创建 MessageStore。
 func NewMessageStore(db sqlcgen.DBTX, opts ...MessageStoreOption) *MessageStore {
-	s := &MessageStore{db: db, q: sqlcgen.New(db)}
+	s := &MessageStore{db: db, q: sqlcgen.New(db), privateSendLanes: defaultPrivateSendLaneActor}
 	for _, opt := range opts {
 		opt(s)
 	}

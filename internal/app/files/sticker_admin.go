@@ -94,6 +94,47 @@ func isWebPData(data []byte) bool {
 	return len(data) >= 12 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WEBP"
 }
 
+// ValidateAdminAddStickerToSet is a pure check (no store writes), used by a
+// dry-run preview before AdminAddStickerToSet actually mutates the pack.
+func (s *Service) ValidateAdminAddStickerToSet(ctx context.Context, setID int64, emoji string) error {
+	set, _, found, err := s.ResolveStickerSet(ctx, domain.StickerSetRef{Kind: domain.StickerSetRefByID, ID: setID})
+	if err != nil {
+		return err
+	}
+	if !found || set.ID == 0 || set.Deleted || set.Kind == domain.StickerSetKindSystem {
+		return domain.ErrStickerSetInvalid
+	}
+	if len(set.DocumentIDs) >= domain.MaxStickerSetItems {
+		return domain.ErrStickerSetTooMuch
+	}
+	return validateStickerEmoji(strings.TrimSpace(emoji))
+}
+
+// ValidateAdminCreateStickerSet is a pure check (no store writes), used by a
+// dry-run preview before AdminCreateStickerSet actually creates the pack.
+func (s *Service) ValidateAdminCreateStickerSet(ctx context.Context, title, shortName, emoji string, kind domain.StickerSetKind) error {
+	if err := validateStickerSetTitle(strings.TrimSpace(title)); err != nil {
+		return err
+	}
+	if kind != domain.StickerSetKindEmoji && kind != domain.StickerSetKindMasks && kind != "" {
+		return domain.ErrStickerSetTypeInvalid
+	}
+	normalizedShortName := normalizeStickerSetShortName(shortName)
+	if normalizedShortName != "" {
+		if err := validateStickerSetShortName(normalizedShortName); err != nil {
+			return err
+		}
+		available, err := s.media.StickerSetShortNameAvailable(ctx, normalizedShortName)
+		if err != nil {
+			return err
+		}
+		if !available {
+			return domain.ErrStickerSetShortNameOccupied
+		}
+	}
+	return validateStickerEmoji(strings.TrimSpace(emoji))
+}
+
 // AdminAddStickerToSet appends an already-materialized document (from
 // AdminUploadStickerMaterial) to an existing pack with no ownership check —
 // same convention as AdminSetStickerSetArchived and friends.

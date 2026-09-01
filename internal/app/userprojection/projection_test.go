@@ -10,6 +10,15 @@ import (
 	"telesrv/internal/store/memory"
 )
 
+func TestCloneUsersDoesNotSharePhotoStripped(t *testing.T) {
+	source := []domain.User{{ID: 1, PhotoStripped: []byte{1, 2, 3}}}
+	cloned := cloneUsers(source)
+	cloned[0].PhotoStripped[0] = 9
+	if source[0].PhotoStripped[0] != 1 {
+		t.Fatalf("cloneUsers shared PhotoStripped backing storage: source=%v clone=%v", source[0].PhotoStripped, cloned[0].PhotoStripped)
+	}
+}
+
 func TestProjectorCombinesProfilePhotosAndViewerContacts(t *testing.T) {
 	ctx := context.Background()
 	const viewerID int64 = 1001
@@ -224,10 +233,8 @@ func TestProjectorAccountFreezeIsViewerScopedAndReversible(t *testing.T) {
 
 // TestForViewersEquivalentToForViewer 锁定 fan-out 模板化的核心安全网：ForViewers(viewers, users)
 // 的每个 viewer 切片必须与逐 viewer 的 ForViewer(viewer, users) 字节等价（隐私/改名/头像投影
-// 不能因 O(owner) 模板化而漂移泄漏）。**唯一允许的差异是 personal photo overlay**：v1 模板不做
-// per-viewer personal photo，故对「该 viewer 给该 owner 设过 personal photo」的对，比较前 mask 掉
-// 5 个头像字段；其余对做完整字节比较。覆盖：默认规则陌生人/联系人改名+电话/status 隐藏/profile
-// 头像隐藏走 fallback/self/bot/系统账号/viewer 自身也作为 owner 出现。
+// 不能因批量模板化而漂移泄漏）。覆盖：默认规则陌生人/联系人改名+电话/personal photo/status
+// 隐藏/profile 头像隐藏走 fallback/self/bot/系统账号/viewer 自身也作为 owner 出现。
 func TestForViewersEquivalentToForViewer(t *testing.T) {
 	ctx := context.Background()
 	const (
@@ -248,7 +255,7 @@ func TestForViewersEquivalentToForViewer(t *testing.T) {
 	if _, err := contacts.Upsert(ctx, v1, domain.ContactInput{ContactUserID: o2, Phone: "1111", FirstName: "Alice", LastName: "Friend"}); err != nil {
 		t.Fatalf("upsert contact: %v", err)
 	}
-	// v1 给 o2 设 personal photo（仅 v1 视角生效 → ForViewer 会带它，ForViewers v1 跳过 → 该对需 mask）。
+	// v1 给 o2 设 personal photo：ForViewers 必须与 ForViewer 一样带出 viewer-specific 头像。
 	if _, _, err := contacts.SetPersonalPhoto(ctx, v1, o2, 9300, 300); err != nil {
 		t.Fatalf("set personal photo: %v", err)
 	}
@@ -287,12 +294,12 @@ func TestForViewersEquivalentToForViewer(t *testing.T) {
 		{ID: v1, AccessHash: 16, Phone: "15550000016", FirstName: "Viewer1"}, // viewer 自身也作为 owner 出现
 	}
 
-	// 哪些 (viewer, owner) 对存在 personal photo —— 比较时需 mask 头像字段（v1 模板有意跳过）。
-	personalPairs := map[[2]int64]bool{{v1, o2}: true}
-
 	batch, err := projector.ForViewers(ctx, viewers, users)
 	if err != nil {
 		t.Fatalf("ForViewers: %v", err)
+	}
+	if got := projectionUser(t, batch[v1], o2); got.PhotoID != 9300 || !got.PhotoPersonal {
+		t.Fatalf("fanout personal photo = id %d personal %v, want personal 9300", got.PhotoID, got.PhotoPersonal)
 	}
 	for _, viewer := range viewers {
 		want, err := projector.ForViewer(ctx, viewer, users)
@@ -311,23 +318,11 @@ func TestForViewersEquivalentToForViewer(t *testing.T) {
 			if w.ID != g.ID {
 				t.Fatalf("viewer %d idx %d id mismatch got=%d want=%d", viewer, i, g.ID, w.ID)
 			}
-			if personalPairs[[2]int64{viewer, w.ID}] {
-				maskPhoto(&w)
-				maskPhoto(&g)
-			}
 			if !reflect.DeepEqual(w, g) {
 				t.Fatalf("viewer %d owner %d: ForViewers != ForViewer\n got=%+v\nwant=%+v", viewer, w.ID, g, w)
 			}
 		}
 	}
-}
-
-func maskPhoto(u *domain.User) {
-	u.PhotoID = 0
-	u.PhotoDCID = 0
-	u.PhotoStripped = nil
-	u.PhotoPersonal = false
-	u.PhotoHasVideo = false
 }
 
 func projectionUser(t *testing.T, users []domain.User, id int64) domain.User {

@@ -141,9 +141,3 @@ func (f *fakeAccountLifecycleStore) CancelAccountDeletion(_ context.Context, use
 func (*fakeAccountLifecycleStore) DueAccountDeletions(context.Context, time.Time, int) ([]domain.AccountDeletionCandidate, error) {
 	return nil, nil
 }
-func (*fakeAccountLifecycleStore) ClaimAccountDeletionNotifications(context.Context, time.Time, int, time.Duration) ([]domain.AccountDeletionNotification, error) {
-	return nil, nil
-}
-func (*fakeAccountLifecycleStore) CompleteAccountDeletionNotification(context.Context, int64, time.Time) error {
-	return nil
-}

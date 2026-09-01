@@ -60,6 +60,30 @@ func (c *tempKeyResolveCache) Get(rawAuthKeyID, expectedPermAuthKeyID [8]byte, n
 	return item.entry.perm, true
 }
 
+// GetResolved returns a previously-authoritative positive temp→permanent
+// binding when the caller does not yet have a session-local permanent identity
+// to compare against. Missing bindings are never stored in this cache, so a hit
+// always names the durable identity observed by an earlier resolver or the
+// successful bind transaction itself.
+func (c *tempKeyResolveCache) GetResolved(rawAuthKeyID [8]byte, now time.Time) ([8]byte, bool) {
+	if c == nil {
+		return [8]byte{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el := c.entries[rawAuthKeyID]
+	if el == nil {
+		return [8]byte{}, false
+	}
+	item := el.Value.(tempKeyResolveCacheItem)
+	if !item.entry.expireAt.After(now) {
+		c.removeElementLocked(el)
+		return [8]byte{}, false
+	}
+	c.order.MoveToBack(el)
+	return item.entry.perm, true
+}
+
 func (c *tempKeyResolveCache) Store(rawAuthKeyID, permAuthKeyID [8]byte, expireAt, _ time.Time) {
 	if c == nil || c.max <= 0 || rawAuthKeyID == ([8]byte{}) || permAuthKeyID == ([8]byte{}) {
 		return

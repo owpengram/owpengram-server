@@ -4,11 +4,12 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	compatandroid "telesrv/internal/compat/android"
+	"telesrv/internal/domain"
 	"telesrv/internal/seed/catalog"
 )
 
 const (
-	appConfigHash     = 18 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
+	appConfigHash     = 19 // app config 内容变更时必须递增，否则缓存端只会收到 notModified。
 	countriesListHash = 1
 	timezonesListHash = 1
 )
@@ -53,6 +54,7 @@ func readMarkAppConfig(mapboxToken string) *tg.JSONObject {
 		{Key: "boosts_channel_level_max", Value: &tg.JSONNumber{Value: 100}},
 		// TDesktop 富文本编辑入口：官方默认缺省 disabled，显式 enabled 才显示/允许进入编辑器。
 		{Key: "rich_message_posting", Value: &tg.JSONString{Value: "enabled"}},
+		{Key: "ephemeral_welcome_messages_max", Value: &tg.JSONNumber{Value: float64(domain.MaxWelcomeMessagesPerPeer)}},
 		// dialog_filters_enabled=true：TDesktop 据此(或已有文件夹)才显示 Settings→Folders 入口。
 		{Key: "dialog_filters_enabled", Value: &tg.JSONBool{Value: true}},
 		{Key: "chatlist_update_period", Value: &tg.JSONNumber{Value: 3600}},

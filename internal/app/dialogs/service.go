@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"reflect"
 	"sort"
+	"time"
 	"unicode/utf8"
 
 	"telesrv/internal/app/userprojection"
@@ -19,17 +20,20 @@ type PremiumChecker func(ctx context.Context, userID int64) bool
 
 // Service 提供会话列表查询。
 type Service struct {
-	dialogs       store.DialogStore
-	channels      store.ChannelStore
-	contacts      store.ContactStore
-	photos        userprojection.ProfilePhotoProvider
-	privacy       userprojection.PrivacyEvaluator
-	freezes       userprojection.AccountFreezeProvider
-	premium       PremiumChecker
-	projector     *userprojection.Projector
-	versions      store.ReadModelVersionStore
-	peerCache     *dialogPeerReadModelCache
-	listHashCache *dialogListHashCache
+	dialogs          store.DialogStore
+	channels         store.ChannelStore
+	contacts         store.ContactStore
+	photos           userprojection.ProfilePhotoProvider
+	privacy          userprojection.PrivacyEvaluator
+	freezes          userprojection.AccountFreezeProvider
+	premium          PremiumChecker
+	projector        *userprojection.Projector
+	versions         store.ReadModelVersionStore
+	privatePeerCache *dialogPeerReadModelCache
+	draftCache       *dialogDraftReadModelCache
+	listHashCache    *dialogListHashCache
+	listCache        *dialogListSnapshotCache
+	sharedListCache  store.DialogListSnapshotCache
 }
 
 // Option adjusts optional dialogs service dependencies.
@@ -64,12 +68,41 @@ func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 	return func(s *Service) { s.versions = v }
 }
 
+// WithDialogHydrationCaches configures the bounded structural-private-peer and
+// cloud-draft working sets. Channel structure has its own store-level cache and
+// is deliberately not duplicated here.
+func WithDialogHydrationCaches(privateMaxEntries int, privateMaxBytes int64, draftMaxEntries int, draftMaxBytes int64) Option {
+	return func(s *Service) {
+		s.privatePeerCache = newDialogPeerReadModelCacheWithLimits(privateMaxEntries, privateMaxBytes, defaultDialogPeerReadModelTTL)
+		s.draftCache = newDialogDraftReadModelCache(draftMaxEntries, draftMaxBytes, defaultDialogDraftReadModelTTL)
+	}
+}
+
+// WithDialogListSnapshotCache configures the bounded materialized owner working
+// set. maxHeaders is retained as the configuration/API name and measures
+// header-equivalent weighted units, so high-membership owners cannot turn
+// maxEntries into an unbounded heap commitment.
+func WithDialogListSnapshotCache(maxEntries int, maxHeaders int64, ttl time.Duration) Option {
+	return func(s *Service) {
+		s.listCache = newDialogListSnapshotCache(maxEntries, maxHeaders, ttl)
+	}
+}
+
+// WithSharedDialogListSnapshotCache installs the production Redis L2 for
+// process-cold materialized owner restoration. Errors are propagated; production
+// never silently replaces Redis failure with a full PostgreSQL scan.
+func WithSharedDialogListSnapshotCache(cache store.DialogListSnapshotCache) Option {
+	return func(s *Service) { s.sharedListCache = cache }
+}
+
 // NewService 创建 dialogs 服务。
 func NewService(dialogs store.DialogStore, channels ...store.ChannelStore) *Service {
 	s := &Service{
-		dialogs:       dialogs,
-		peerCache:     newDialogPeerReadModelCache(defaultDialogPeerReadModelTTL),
-		listHashCache: newDialogListHashCache(defaultDialogListHashCacheTTL),
+		dialogs:          dialogs,
+		privatePeerCache: newDialogPeerReadModelCache(defaultDialogPeerReadModelTTL),
+		draftCache:       newDialogDraftReadModelCache(defaultDialogDraftReadModelMaxEntries, defaultDialogDraftReadModelMaxBytes, defaultDialogDraftReadModelTTL),
+		listHashCache:    newDialogListHashCache(defaultDialogListHashCacheTTL),
+		listCache:        newDialogListSnapshotCache(0, 0, 0),
 	}
 	if len(channels) > 0 {
 		s.channels = channels[0]
@@ -129,19 +162,403 @@ func (s *Service) getDialogs(ctx context.Context, userID int64, filter domain.Di
 		}
 		filter.Folder = &folder
 	}
+	if filter.Limit <= 0 || filter.Limit > 100 {
+		filter.Limit = 100
+	}
+	if !lightweight {
+		if key, ok := dialogSnapshotKey(userID, filter); ok && s.supportsDialogListSnapshot() {
+			listHashEpoch := s.listHashCache.cacheEpoch()
+			if s.sharedListCache != nil {
+				page, err := s.stableDialogSnapshotPage(ctx, key, filter)
+				if err != nil {
+					return domain.DialogList{}, err
+				}
+				s.rememberDialogListHash(userID, filter, page, listHashEpoch)
+				return page, nil
+			}
+			snap, err := s.listCache.getOrLoad(ctx, key, func() (*dialogListSnapshot, error) {
+				return s.loadDialogListSnapshot(ctx, key)
+			})
+			if err != nil {
+				return domain.DialogList{}, err
+			}
+			page, err := s.hydrateDialogSnapshotPage(ctx, userID, dialogListSnapshotPageHeaders(snap, filter))
+			if err != nil {
+				return domain.DialogList{}, err
+			}
+			s.rememberDialogListHash(userID, filter, page, listHashEpoch)
+			return page, nil
+		}
+	}
+	return s.loadDialogs(ctx, userID, filter, lightweight)
+}
+
+const dialogListSnapshotStableReadAttempts = 4
+
+func (s *Service) stableDialogSnapshotPage(
+	ctx context.Context,
+	key dialogListSnapshotKey,
+	filter domain.DialogFilter,
+) (domain.DialogList, error) {
+	for attempt := 0; attempt < dialogListSnapshotStableReadAttempts; attempt++ {
+		ownerHash, err := s.dialogOwnerHash(ctx, key.userID)
+		if err != nil {
+			return domain.DialogList{}, err
+		}
+		snap, err := s.listCache.getOrLoadVersioned(ctx, key, ownerHash, func() (*dialogListSnapshot, error) {
+			return s.loadDialogListSnapshotAtOwnerHash(ctx, key, ownerHash)
+		})
+		if errors.Is(err, errDialogListSnapshotGenerationChanged) {
+			continue
+		}
+		if err != nil {
+			return domain.DialogList{}, err
+		}
+
+		page, hydrateErr := s.hydrateDialogSnapshotPage(ctx, key.userID, dialogListSnapshotPageHeaders(snap, filter))
+		currentOwnerHash, hashErr := s.dialogOwnerHash(ctx, key.userID)
+		if hashErr != nil {
+			return domain.DialogList{}, hashErr
+		}
+		if currentOwnerHash != ownerHash {
+			continue
+		}
+		if hydrateErr != nil {
+			return domain.DialogList{}, hydrateErr
+		}
+		return page, nil
+	}
+	return domain.DialogList{}, errDialogListSnapshotGenerationChanged
+}
+
+type dialogListSnapshotStore interface {
+	ListAllBuiltinDialogSnapshotHeaders(context.Context, int64) (domain.DialogList, error)
+}
+
+type channelDialogListSnapshotStore interface {
+	ListAllBuiltinChannelDialogSnapshot(context.Context, int64) (domain.ChannelDialogList, error)
+}
+
+type channelDialogSnapshotHydrator interface {
+	HydrateChannelDialogSnapshot(context.Context, int64, []domain.Dialog) (domain.ChannelDialogList, error)
+}
+
+type privateDialogPeerIDStore interface {
+	ListPrivateDialogPeerIDs(context.Context, int64, int) ([]int64, error)
+}
+
+// PrivateDialogPeerIDs returns the bounded private-peer candidate set used by
+// transient presence fan-out without entering the full dialogs projection.
+// A process-cold server first tries the version-addressed shared owner snapshot:
+// its private dialog headers are fully covered by dialog_owner and can be
+// sorted into the same narrow result without another PostgreSQL acquisition.
+func (s *Service) PrivateDialogPeerIDs(ctx context.Context, userID int64, limit int) ([]int64, error) {
+	if s == nil || s.dialogs == nil || userID == 0 {
+		return nil, nil
+	}
+	privateStore, ok := s.dialogs.(privateDialogPeerIDStore)
+	if !ok {
+		return nil, errors.New("dialog store does not provide private peer candidates")
+	}
+	if limit <= 0 || limit > 4096 {
+		limit = 4096
+	}
+	if s.sharedListCache == nil || s.versions == nil {
+		return privateStore.ListPrivateDialogPeerIDs(ctx, userID, limit)
+	}
+	for attempt := 0; attempt < dialogListSnapshotStableReadAttempts; attempt++ {
+		ownerHash, err := s.dialogOwnerHash(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		value, found, err := s.sharedListCache.GetDialogListSnapshot(
+			ctx,
+			store.DialogListSnapshotCacheKey{UserID: userID, OwnerHash: ownerHash},
+		)
+		if err != nil {
+			return nil, err
+		}
+		var ids []int64
+		if found {
+			ids = privateDialogPeerIDsFromDialogs(value.Dialogs, userID, limit)
+		} else {
+			ids, err = privateStore.ListPrivateDialogPeerIDs(ctx, userID, limit)
+			if err != nil {
+				return nil, err
+			}
+		}
+		currentOwnerHash, err := s.dialogOwnerHash(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if currentOwnerHash == ownerHash {
+			return ids, nil
+		}
+	}
+	return nil, errDialogListSnapshotGenerationChanged
+}
+
+func privateDialogPeerIDsFromDialogs(dialogs []domain.Dialog, userID int64, limit int) []int64 {
+	candidates := make([]domain.Dialog, 0, min(limit, len(dialogs)))
+	seen := make(map[int64]struct{}, min(limit, len(dialogs)))
+	for _, dialog := range dialogs {
+		if dialog.Peer.Type != domain.PeerTypeUser || dialog.Peer.ID == 0 || dialog.Peer.ID == userID {
+			continue
+		}
+		if _, duplicate := seen[dialog.Peer.ID]; duplicate {
+			continue
+		}
+		seen[dialog.Peer.ID] = struct{}{}
+		candidates = append(candidates, dialog)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].TopMessageDate != candidates[j].TopMessageDate {
+			return candidates[i].TopMessageDate > candidates[j].TopMessageDate
+		}
+		if candidates[i].TopMessage != candidates[j].TopMessage {
+			return candidates[i].TopMessage > candidates[j].TopMessage
+		}
+		return candidates[i].Peer.ID > candidates[j].Peer.ID
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	ids := make([]int64, len(candidates))
+	for index := range candidates {
+		ids[index] = candidates[index].Peer.ID
+	}
+	return ids
+}
+
+func (s *Service) supportsDialogListSnapshot() bool {
+	if s == nil || s.listCache == nil {
+		return false
+	}
+	if s.dialogs != nil {
+		if _, ok := s.dialogs.(dialogListSnapshotStore); !ok {
+			return false
+		}
+	}
+	if s.channels != nil {
+		if _, ok := s.channels.(channelDialogListSnapshotStore); !ok {
+			return false
+		}
+		if _, ok := s.channels.(channelDialogSnapshotHydrator); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) loadDialogOwnerSnapshotHeaders(ctx context.Context, userID int64) (domain.DialogList, error) {
+	var out domain.DialogList
+	if s.dialogs != nil {
+		headers, err := s.dialogs.(dialogListSnapshotStore).ListAllBuiltinDialogSnapshotHeaders(ctx, userID)
+		if err != nil {
+			return domain.DialogList{}, err
+		}
+		peers := make([]domain.Peer, 0, len(headers.Dialogs))
+		for _, dialog := range headers.Dialogs {
+			if dialog.Peer.Type == domain.PeerTypeUser && dialog.Peer.ID != 0 {
+				peers = append(peers, dialog.Peer)
+			}
+		}
+		materialized := headers
+		if len(peers) > 0 {
+			materialized, err = s.dialogs.ListByPeers(ctx, userID, peers)
+			if err != nil {
+				return domain.DialogList{}, err
+			}
+			materialized = orderMaterializedDialogList(headers, materialized)
+		}
+		out = mergeDialogLists(out, materialized)
+	}
+	if s.channels != nil {
+		materialized, err := s.channels.(channelDialogListSnapshotStore).ListAllBuiltinChannelDialogSnapshot(ctx, userID)
+		if err != nil {
+			return domain.DialogList{}, err
+		}
+		out = mergeChannelDialogs(out, materialized)
+	}
+	sortDialogList(out.Dialogs)
+	out.Count = len(out.Dialogs)
+	if err := s.attachArchiveSummaryFromOwnerHeaders(ctx, userID, &out); err != nil {
+		return domain.DialogList{}, err
+	}
+	if err := s.attachOwnerSnapshotDrafts(ctx, userID, &out); err != nil {
+		return domain.DialogList{}, err
+	}
+	return out, nil
+}
+
+// attachOwnerSnapshotDrafts materializes the complete bounded cloud-draft set
+// once under the dialog_owner stable-read fence. Draft writes bump
+// dialog_light and its aggregate dialog_owner generation, so storing these
+// overlays in the version-addressed owner snapshot is exact: page reads no
+// longer need one ListDraftsByPeers query apiece, and a concurrent draft write
+// forces the snapshot materialization retry before publication.
+func (s *Service) attachOwnerSnapshotDrafts(ctx context.Context, userID int64, out *domain.DialogList) error {
+	if s == nil || s.dialogs == nil || userID == 0 || out == nil || len(out.Dialogs) == 0 {
+		return nil
+	}
+	drafts, err := s.dialogs.ListDrafts(ctx, userID, domain.MaxDialogDraftsPerUser)
+	if err != nil {
+		return err
+	}
+	byPeer := make(map[domain.Peer]domain.DialogDraft, len(drafts))
+	for _, draft := range drafts {
+		if draft.TopMessageID == 0 && draft.Peer.Type != "" && draft.Peer.ID != 0 {
+			byPeer[draft.Peer] = cloneDraft(draft)
+		}
+	}
+	for index := range out.Dialogs {
+		out.Dialogs[index].Draft = nil
+		if draft, found := byPeer[out.Dialogs[index].Peer]; found {
+			draft := cloneDraft(draft)
+			out.Dialogs[index].Draft = &draft
+		}
+	}
+	return nil
+}
+
+func (s *Service) attachArchiveSummaryFromOwnerHeaders(ctx context.Context, userID int64, out *domain.DialogList) error {
+	if out == nil {
+		return nil
+	}
+	var top domain.Dialog
+	for _, dialog := range out.Dialogs {
+		if dialog.FolderID == domain.DialogArchiveFolderID {
+			top = dialog
+			break
+		}
+	}
+	if top.Peer.ID == 0 {
+		return nil
+	}
+	unreadPeers, unreadMessages := 0, 0
+	if s.dialogs != nil {
+		peers, messages, err := s.dialogs.CountArchiveUnread(ctx, userID)
+		if err != nil {
+			return err
+		}
+		unreadPeers += peers
+		unreadMessages += messages
+	}
+	if s.channels != nil {
+		peers, messages, err := s.channels.CountChannelArchiveUnread(ctx, userID)
+		if err != nil {
+			return err
+		}
+		unreadPeers += peers
+		unreadMessages += messages
+	}
+	archivePinned := true
+	if s.dialogs != nil {
+		pinned, err := s.dialogs.ArchivePinned(ctx, userID)
+		if err != nil {
+			return err
+		}
+		archivePinned = pinned
+	}
+	out.ArchiveSummary = &domain.DialogArchiveSummary{
+		TopPeer: top.Peer, TopMessage: top.TopMessage,
+		TopDialog:        cloneDialogPtr(top),
+		UnreadPeersCount: unreadPeers, UnreadMessagesCount: unreadMessages,
+		Pinned: archivePinned,
+	}
+	return nil
+}
+
+func (s *Service) hydrateDialogSnapshotPage(ctx context.Context, userID int64, headers domain.DialogList) (domain.DialogList, error) {
+	hydrated := cloneDialogList(headers)
+	if s.channels != nil {
+		channelDialogs := make([]domain.Dialog, 0, len(hydrated.Dialogs)+1)
+		present := make(map[domain.Peer]struct{}, len(hydrated.Dialogs))
+		for _, dialog := range hydrated.Dialogs {
+			present[dialog.Peer] = struct{}{}
+			if dialog.Peer.Type == domain.PeerTypeChannel && dialog.Peer.ID != 0 {
+				channelDialogs = append(channelDialogs, dialog)
+			}
+		}
+		if hydrated.ArchiveSummary != nil && hydrated.ArchiveSummary.TopDialog != nil {
+			top := *hydrated.ArchiveSummary.TopDialog
+			if top.Peer.Type == domain.PeerTypeChannel && top.Peer.ID != 0 {
+				if _, ok := present[top.Peer]; !ok {
+					channelDialogs = append(channelDialogs, top)
+				}
+			}
+		}
+		if len(channelDialogs) > 0 {
+			projection, err := s.channels.(channelDialogSnapshotHydrator).HydrateChannelDialogSnapshot(ctx, userID, channelDialogs)
+			if err != nil {
+				return domain.DialogList{}, err
+			}
+			byPeer := make(map[domain.Peer]domain.Dialog, len(projection.Dialogs))
+			for _, dialog := range projection.Dialogs {
+				byPeer[dialog.Peer] = dialog
+			}
+			for index := range hydrated.Dialogs {
+				if dialog, ok := byPeer[hydrated.Dialogs[index].Peer]; ok {
+					hydrated.Dialogs[index] = dialog
+				}
+			}
+			hydrated.ChannelMessages = append(hydrated.ChannelMessages, projection.Messages...)
+			hydrated.Channels = append(hydrated.Channels, projection.Channels...)
+			hydrated.Users = append(hydrated.Users, projection.Users...)
+		}
+	}
+	// Drafts are part of the version-addressed owner snapshot. Re-reading them
+	// per page would discard that materialization and recreate a PostgreSQL
+	// acquisition for every messages.getDialogs cursor.
+	if err := s.projectDialogUsers(ctx, userID, &hydrated); err != nil {
+		return domain.DialogList{}, err
+	}
+	return hydrated, nil
+}
+
+func orderMaterializedDialogList(headers, materialized domain.DialogList) domain.DialogList {
+	materialized.Dialogs = orderMaterializedDialogs(headers.Dialogs, materialized.Dialogs)
+	materialized.Count = len(materialized.Dialogs)
+	return materialized
+}
+
+func orderMaterializedDialogs(headers, materialized []domain.Dialog) []domain.Dialog {
+	byPeer := make(map[domain.Peer]domain.Dialog, len(materialized))
+	for _, dialog := range materialized {
+		byPeer[dialog.Peer] = dialog
+	}
+	ordered := make([]domain.Dialog, 0, len(headers))
+	for _, header := range headers {
+		if dialog, ok := byPeer[header.Peer]; ok {
+			ordered = append(ordered, dialog)
+			continue
+		}
+		// Keep the authoritative header so a concurrent disappearance remains
+		// visible to the generation/dependency guard instead of silently
+		// shrinking a page while the read model is being materialized.
+		ordered = append(ordered, header)
+	}
+	return ordered
+}
+
+func (s *Service) loadDialogs(ctx context.Context, userID int64, filter domain.DialogFilter, lightweight bool) (domain.DialogList, error) {
 	// 在加载任何会话状态前快照 list-hash epoch：若加载/投影期间发生 dialog_light 写失效，
 	// rememberDialogListHash 会据此拒绝写回 stale hash，避免后续 getDialogs 误返 NotModified。
 	listHashEpoch := s.listHashCache.cacheEpoch()
 	var out domain.DialogList
 	if s.dialogs != nil {
-		list, err := s.dialogs.ListByUser(ctx, userID, filter)
+		var list domain.DialogList
+		var err error
+		list, err = s.dialogs.ListByUser(ctx, userID, filter)
 		if err != nil {
 			return domain.DialogList{}, err
 		}
 		out = mergeDialogLists(out, list)
 	}
 	if s.channels != nil {
-		list, err := s.channels.ListChannelDialogs(ctx, userID, filter)
+		var list domain.ChannelDialogList
+		var err error
+		list, err = s.channels.ListChannelDialogs(ctx, userID, filter)
 		if err != nil {
 			return domain.DialogList{}, err
 		}
@@ -246,6 +663,7 @@ func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter
 	out.ArchiveSummary = &domain.DialogArchiveSummary{
 		TopPeer:             topDialog.Peer,
 		TopMessage:          topDialog.TopMessage,
+		TopDialog:           cloneDialogPtr(topDialog),
 		UnreadPeersCount:    unreadPeers,
 		UnreadMessagesCount: unreadMessages,
 		Pinned:              archivePinned,
@@ -257,6 +675,11 @@ func (s *Service) attachArchiveSummary(ctx context.Context, userID int64, filter
 	out.Users = append(out.Users, top.Users...)
 	out.Channels = append(out.Channels, top.Channels...)
 	return nil
+}
+
+func cloneDialogPtr(dialog domain.Dialog) *domain.Dialog {
+	clone := cloneDialog(dialog)
+	return &clone
 }
 
 // GetPeerDialogs 返回指定 peer 的会话摘要。缺失的 peer 由 store 按空会话占位返回。
@@ -291,6 +714,12 @@ func (s *Service) GetPeerDialogs(ctx context.Context, userID int64, peers []doma
 			return domain.DialogList{}, err
 		}
 		out = mergeDialogLists(out, channelOut)
+	}
+	if err := s.attachDrafts(ctx, userID, &out); err != nil {
+		return domain.DialogList{}, err
+	}
+	if err := s.projectDialogUsers(ctx, userID, &out); err != nil {
+		return domain.DialogList{}, err
 	}
 	return out, nil
 }
@@ -836,30 +1265,24 @@ func (s *Service) attachDrafts(ctx context.Context, userID int64, list *domain.D
 	if s == nil || s.dialogs == nil || userID == 0 || list == nil || len(list.Dialogs) == 0 {
 		return nil
 	}
-	drafts, err := s.dialogs.ListDrafts(ctx, userID, domain.MaxDialogDraftsPerUser)
+	peers := make([]domain.Peer, 0, len(list.Dialogs))
+	for _, dialog := range list.Dialogs {
+		if dialog.Peer.ID != 0 {
+			peers = append(peers, dialog.Peer)
+		}
+	}
+	drafts, err := s.dialogDraftsReadModel(ctx, userID, peers)
 	if err != nil {
 		return err
 	}
-	if len(drafts) == 0 {
-		return nil
-	}
-	byPeer := make(map[domain.Peer]domain.DialogDraft, len(drafts))
-	for _, draft := range drafts {
-		if draft.TopMessageID != 0 {
-			continue
-		}
-		byPeer[draft.Peer] = cloneDraft(draft)
-	}
-	if len(byPeer) == 0 {
-		return nil
-	}
 	attached := false
 	for i := range list.Dialogs {
-		draft, ok := byPeer[list.Dialogs[i].Peer]
-		if !ok {
+		list.Dialogs[i].Draft = nil
+		draft, ok := drafts[list.Dialogs[i].Peer]
+		if !ok || !draft.found {
 			continue
 		}
-		d := cloneDraft(draft)
+		d := cloneDraft(draft.draft)
 		list.Dialogs[i].Draft = &d
 		attached = true
 	}
@@ -996,7 +1419,8 @@ func writeDraftRichHash(h interface{ Write([]byte) (int, error) }, buf []byte, r
 	binary.LittleEndian.PutUint64(buf[2:10], uint64(len(rich.Blocks)))
 	binary.LittleEndian.PutUint64(buf[10:18], uint64(len(rich.Photos)))
 	binary.LittleEndian.PutUint64(buf[18:26], uint64(len(rich.Documents)))
-	_, _ = h.Write(buf[:26])
+	binary.LittleEndian.PutUint64(buf[26:34], uint64(rich.EffectiveBlocksLayer()))
+	_, _ = h.Write(buf[:34])
 	_, _ = h.Write(rich.Blocks)
 	for _, photo := range rich.Photos {
 		binary.LittleEndian.PutUint64(buf[:8], uint64(photo.ID))

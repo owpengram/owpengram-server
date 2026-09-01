@@ -2,11 +2,92 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"telesrv/internal/domain"
+	"telesrv/internal/observability/dbtrace"
 	"testing"
 	"time"
 )
+
+func TestChannelStoreReadHistorySenderFanoutUsesConstantStatements(t *testing.T) {
+	pool := testPool(t)
+	baseCtx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	reader, err := users.Create(baseCtx, domain.User{
+		AccessHash: 351, Phone: "+1776" + suffix + "00", FirstName: "SetReader",
+	})
+	if err != nil {
+		t.Fatalf("create reader: %v", err)
+	}
+	const senderCount = 12
+	senders := make([]domain.User, 0, senderCount)
+	userIDs := []int64{reader.ID}
+	for i := 0; i < senderCount; i++ {
+		sender, createErr := users.Create(baseCtx, domain.User{
+			AccessHash: int64(352 + i), Phone: fmt.Sprintf("+1776%s%02d", suffix, i+1), FirstName: "SetSender",
+		})
+		if createErr != nil {
+			t.Fatalf("create sender %d: %v", i, createErr)
+		}
+		senders = append(senders, sender)
+		userIDs = append(userIDs, sender.ID)
+	}
+	var channelID int64
+	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(baseCtx, "DELETE FROM channels WHERE id = $1", channelID)
+		}
+		_, _ = pool.Exec(baseCtx, "DELETE FROM users WHERE id = ANY($1::bigint[])", userIDs)
+	})
+
+	channels := NewChannelStore(pool)
+	created, err := channels.CreateChannel(baseCtx, domain.CreateChannelRequest{
+		CreatorUserID: reader.ID, Title: "Set Read Outbox " + suffix, Megagroup: true,
+		MemberUserIDs: userIDs[1:], Date: 1700000300,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID = created.Channel.ID
+	topID := 0
+	for i, sender := range senders {
+		sent, sendErr := channels.SendChannelMessage(baseCtx, domain.SendChannelMessageRequest{
+			UserID: sender.ID, ChannelID: channelID, RandomID: int64(936000 + i),
+			Message: "set-based channel read outbox", Date: 1700000310 + i,
+		})
+		if sendErr != nil {
+			t.Fatalf("send %d: %v", i, sendErr)
+		}
+		topID = sent.Message.ID
+	}
+
+	ctx, stats := dbtrace.WithStats(baseCtx)
+	read, err := channels.ReadChannelHistory(ctx, domain.ReadChannelHistoryRequest{
+		UserID: reader.ID, ChannelID: channelID, MaxID: topID, Date: 1700000400,
+	})
+	if err != nil {
+		t.Fatalf("read channel history: %v", err)
+	}
+	if len(read.OutboxUpdates) != senderCount {
+		t.Fatalf("outbox updates = %d, want %d: %+v", len(read.OutboxUpdates), senderCount, read.OutboxUpdates)
+	}
+	if snapshot := stats.Snapshot(); snapshot.Errors != 0 || snapshot.Queries > 16 {
+		t.Fatalf("read-history query stats = %+v, want constant <=16 queries for %d senders", snapshot, senderCount)
+	}
+	for i, sender := range senders {
+		var readOutbox int
+		if err := pool.QueryRow(baseCtx, `
+SELECT read_outbox_max_id FROM channel_members
+WHERE channel_id=$1 AND user_id=$2`, channelID, sender.ID).Scan(&readOutbox); err != nil {
+			t.Fatalf("load sender %d read outbox: %v", i, err)
+		}
+		if readOutbox <= 0 || readOutbox > topID {
+			t.Fatalf("sender %d read outbox = %d, want 1..%d", i, readOutbox, topID)
+		}
+	}
+}
 
 func TestChannelStoreReadOutboxDoesNotRegressSenderDialogUnread(t *testing.T) {
 	pool := testPool(t)

@@ -194,13 +194,16 @@ const (
 
 // verifierBotWhatText is the part of /start that is true whether or not an
 // operator has activated this bot, so it is said first and unconditionally.
-const verifierBotWhatText = `I hand out THIRD-PARTY verification.
+func verifierBotWhatText() string {
+	return `I hand out THIRD-PARTY verification.
 
 A third-party mark is a verifier's own icon, shown right before the name of a bot, a channel or an account, plus one line of description in its profile. It means "this verifier vouches for this peer" -- nothing more.
 
 It is NOT the official ` + branding.ProductName + ` checkmark. The platform badge is granted by the platform itself (@verifybot collects those applications); a third-party mark is granted by the company running a verifier bot. The two are stored, shown and taken away separately, and neither one implies the other.`
+}
 
-const verifierBotHelpText = `I am a verifier bot. I grant third-party marks: my icon before the name of your bot, channel or account, plus a description in its profile. This is not the official ` + branding.ProductName + ` checkmark.
+func verifierBotHelpText() string {
+	return `I am a verifier bot. I grant third-party marks: my icon before the name of your bot, channel or account, plus a description in its profile. This is not the official ` + branding.ProductName + ` checkmark.
 
 /start - what a third-party mark is and who grants it
 /verify - apply for the mark
@@ -210,6 +213,7 @@ const verifierBotHelpText = `I am a verifier bot. I grant third-party marks: my 
 /help - show this message
 
 I do not decide anything: I collect the application, an operator grants or refuses the mark, and I message you here with the outcome.`
+}
 
 const (
 	verifierBotIdleText = `I only hand out third-party verification marks. Send /verify to apply, /status to see where your applications stand, /revoke to remove a mark, or /help to see what I understand.`
@@ -363,7 +367,7 @@ func (s *Service) handleVerifier(ctx context.Context, userID int64, body string)
 
 func (s *Service) handleVerifierCommand(ctx context.Context, userID int64, cmd string, state domain.BotChatState, found bool) botReply {
 	if cmd == "help" {
-		return botReply{Text: verifierBotHelpText}
+		return botReply{Text: verifierBotHelpText()}
 	}
 	if s.customVerification == nil {
 		return botReply{Text: verifierUnavailableText}
@@ -386,7 +390,7 @@ func (s *Service) handleVerifierCommand(ctx context.Context, userID int64, cmd s
 	case "cancel":
 		return s.cancelVerifierDialog(ctx, userID, state, found)
 	default:
-		return botReply{Text: verifierBotHelpText}
+		return botReply{Text: verifierBotHelpText()}
 	}
 }
 
@@ -532,7 +536,7 @@ func (s *Service) verifierIntro(ctx context.Context, userID int64, state domain.
 	settings, refusal, ok := s.verifierSettings(ctx, userID)
 	if !ok {
 		// No keyboard, no state write: there is nothing for the applicant to press.
-		return botReply{Text: verifierJoin(verifierBotWhatText, refusal.Text)}
+		return botReply{Text: verifierJoin(verifierBotWhatText(), refusal.Text)}
 	}
 	state.Step = verifierStepIntro
 	markup := s.verifierOptionKeyboard(&state, [][]verifierOption{{
@@ -544,7 +548,7 @@ func (s *Service) verifierIntro(ctx context.Context, userID int64, state domain.
 	live := fmt.Sprintf("Verifier: %s\n\nThe mark I would put on your peer:\n%s\n\nTap the button below, or send /verify, to apply. An operator reads every application and decides; I only collect it. Send /help for the rest of my commands.",
 		verifierTruncate(strings.TrimSpace(settings.CompanyName), domain.MaxVerifierCompanyLength),
 		verifierDescriptionLine(settings))
-	return botReply{Text: verifierJoin(verifierBotWhatText, live), ReplyMarkup: markup}
+	return botReply{Text: verifierJoin(verifierBotWhatText(), live), ReplyMarkup: markup}
 }
 
 // ---------------------------------------------------------------------------

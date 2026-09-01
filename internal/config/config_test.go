@@ -33,14 +33,476 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.PublicWebBaseURL != "https://weba.telesrv.net" {
 		t.Fatalf("PublicWebBaseURL = %q, want https://weba.telesrv.net", cfg.PublicWebBaseURL)
 	}
-	if cfg.PublicAppName != "telesrv" {
-		t.Fatalf("PublicAppName = %q, want telesrv", cfg.PublicAppName)
+	if cfg.PublicAppName != "Telesrv" {
+		t.Fatalf("PublicAppName = %q, want Telesrv", cfg.PublicAppName)
 	}
 	if cfg.CallRegistryMaxEntries != 10_000 {
 		t.Fatalf("CallRegistryMaxEntries = %d, want 10000", cfg.CallRegistryMaxEntries)
 	}
 	if cfg.PremiumPromoSeedDir != "data/premium-promo" {
 		t.Fatalf("PremiumPromoSeedDir = %q, want data/premium-promo", cfg.PremiumPromoSeedDir)
+	}
+	if cfg.BlobBackendKind != string(domain.MediaBackendLocalFS) {
+		t.Fatalf("BlobBackendKind = %q, want localfs", cfg.BlobBackendKind)
+	}
+	if cfg.BlobDir != "data/blobs" {
+		t.Fatalf("BlobDir = %q, want data/blobs", cfg.BlobDir)
+	}
+	if !cfg.StorageLowSpaceGuardEnable || cfg.StorageMinFreeBytes != 1<<30 || cfg.StorageMaxTotalBytes != 0 || cfg.StorageUsageRefreshInterval != time.Minute {
+		t.Fatalf("unexpected storage capacity defaults: enabled=%v min=%d max=%d interval=%v", cfg.StorageLowSpaceGuardEnable, cfg.StorageMinFreeBytes, cfg.StorageMaxTotalBytes, cfg.StorageUsageRefreshInterval)
+	}
+	if cfg.MTProtoRPCGlobalMaxTasks != 32768 {
+		t.Fatalf("MTProtoRPCGlobalMaxTasks = %d, want 32768", cfg.MTProtoRPCGlobalMaxTasks)
+	}
+}
+
+func TestLoadDialogListSnapshotRedisTTL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_DIALOG_LIST_SNAPSHOT_REDIS_TTL", "37m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DialogListSnapshotRedisTTL != 37*time.Minute {
+		t.Fatalf("DialogListSnapshotRedisTTL = %v, want 37m", cfg.DialogListSnapshotRedisTTL)
+	}
+}
+
+func TestLoadRejectsInvalidDialogListSnapshotRedisTTL(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_DIALOG_LIST_SNAPSHOT_REDIS_TTL", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("zero dialog list snapshot Redis TTL accepted")
+	}
+}
+
+func TestLoadActiveChannelIDsReadModel(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_CACHE_MAX", "45678")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_CACHE_TTL", "9h")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_REDIS_TTL", "27h")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_BATCH_MAX", "73")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_BATCH_WAIT", "37ms")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_BATCH_QUEUE", "901")
+	t.Setenv("TELESRV_ACTIVE_CHANNEL_IDS_BATCH_TIMEOUT", "3s")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ActiveChannelIDsCacheMaxEntries != 45678 || cfg.ActiveChannelIDsCacheTTL != 9*time.Hour ||
+		cfg.ActiveChannelIDsRedisTTL != 27*time.Hour || cfg.ActiveChannelIDsBatchMax != 73 ||
+		cfg.ActiveChannelIDsBatchWait != 37*time.Millisecond || cfg.ActiveChannelIDsBatchQueue != 901 ||
+		cfg.ActiveChannelIDsBatchTimeout != 3*time.Second {
+		t.Fatalf("active channel IDs config = max=%d l1=%v redis=%v batch=%d/%v/%d/%v",
+			cfg.ActiveChannelIDsCacheMaxEntries, cfg.ActiveChannelIDsCacheTTL, cfg.ActiveChannelIDsRedisTTL,
+			cfg.ActiveChannelIDsBatchMax, cfg.ActiveChannelIDsBatchWait, cfg.ActiveChannelIDsBatchQueue,
+			cfg.ActiveChannelIDsBatchTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidActiveChannelIDsReadModel(t *testing.T) {
+	for _, test := range []struct{ key, value string }{
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_CACHE_MAX", value: "0"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_CACHE_TTL", value: "0s"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_REDIS_TTL", value: "0s"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_BATCH_MAX", value: "0"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_BATCH_WAIT", value: "0s"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_BATCH_QUEUE", value: "1"},
+		{key: "TELESRV_ACTIVE_CHANNEL_IDS_BATCH_TIMEOUT", value: "0s"},
+	} {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadChannelDifferenceCache(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_CHANNEL_DIFFERENCE_CACHE_MAX", "123")
+	t.Setenv("TELESRV_CHANNEL_DIFFERENCE_CACHE_BYTES_MAX", "456789")
+	t.Setenv("TELESRV_CHANNEL_DIFFERENCE_CACHE_TTL", "7m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ChannelDifferenceCacheMaxEntries != 123 || cfg.ChannelDifferenceCacheMaxBytes != 456789 || cfg.ChannelDifferenceCacheTTL != 7*time.Minute {
+		t.Fatalf("channel difference cache = %d/%d/%v",
+			cfg.ChannelDifferenceCacheMaxEntries, cfg.ChannelDifferenceCacheMaxBytes, cfg.ChannelDifferenceCacheTTL)
+	}
+}
+
+func TestLoadRejectsInvalidChannelDifferenceCache(t *testing.T) {
+	for _, test := range []struct{ key, value string }{
+		{key: "TELESRV_CHANNEL_DIFFERENCE_CACHE_BYTES_MAX", value: "0"},
+		{key: "TELESRV_CHANNEL_DIFFERENCE_CACHE_TTL", value: "0s"},
+		{key: "TELESRV_CHANNEL_DIFFERENCE_CACHE_TTL", value: "25h"},
+	} {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadLayerAdvanceBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_LAYER_ADVANCE_BATCH_MAX", "73")
+	t.Setenv("TELESRV_LAYER_ADVANCE_BATCH_WAIT", "400us")
+	t.Setenv("TELESRV_LAYER_ADVANCE_BATCH_QUEUE", "901")
+	t.Setenv("TELESRV_LAYER_ADVANCE_BATCH_TIMEOUT", "3s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LayerAdvanceBatchMax != 73 || cfg.LayerAdvanceBatchWait != 400*time.Microsecond ||
+		cfg.LayerAdvanceBatchQueue != 901 || cfg.LayerAdvanceBatchTimeout != 3*time.Second {
+		t.Fatalf("layer advance batch = %d/%v/%d/%v",
+			cfg.LayerAdvanceBatchMax, cfg.LayerAdvanceBatchWait,
+			cfg.LayerAdvanceBatchQueue, cfg.LayerAdvanceBatchTimeout)
+	}
+}
+
+func TestLoadReadModelVersionBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_READ_MODEL_VERSION_BATCH_MAX_KEYS", "3072")
+	t.Setenv("TELESRV_READ_MODEL_VERSION_BATCH_WAIT", "350us")
+	t.Setenv("TELESRV_READ_MODEL_VERSION_BATCH_QUEUE", "777")
+	t.Setenv("TELESRV_READ_MODEL_VERSION_BATCH_TIMEOUT", "4s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ReadModelVersionBatchMaxKeys != 3072 || cfg.ReadModelVersionBatchWait != 350*time.Microsecond ||
+		cfg.ReadModelVersionBatchQueue != 777 || cfg.ReadModelVersionBatchTimeout != 4*time.Second {
+		t.Fatalf("read-model version batch = %d/%v/%d/%v",
+			cfg.ReadModelVersionBatchMaxKeys, cfg.ReadModelVersionBatchWait,
+			cfg.ReadModelVersionBatchQueue, cfg.ReadModelVersionBatchTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidReadModelVersionBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max keys", key: "TELESRV_READ_MODEL_VERSION_BATCH_MAX_KEYS", value: "0"},
+		{name: "wait too large", key: "TELESRV_READ_MODEL_VERSION_BATCH_WAIT", value: "11ms"},
+		{name: "zero queue", key: "TELESRV_READ_MODEL_VERSION_BATCH_QUEUE", value: "0"},
+		{name: "timeout too large", key: "TELESRV_READ_MODEL_VERSION_BATCH_TIMEOUT", value: "31s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadAuthKeyGetBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_AUTH_KEY_GET_BATCH_MAX", "97")
+	t.Setenv("TELESRV_AUTH_KEY_GET_BATCH_WAIT", "425us")
+	t.Setenv("TELESRV_AUTH_KEY_GET_BATCH_QUEUE", "997")
+	t.Setenv("TELESRV_AUTH_KEY_GET_BATCH_TIMEOUT", "4s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AuthKeyGetBatchMax != 97 || cfg.AuthKeyGetBatchWait != 425*time.Microsecond ||
+		cfg.AuthKeyGetBatchQueue != 997 || cfg.AuthKeyGetBatchTimeout != 4*time.Second {
+		t.Fatalf("auth-key get batch = %d/%v/%d/%v",
+			cfg.AuthKeyGetBatchMax, cfg.AuthKeyGetBatchWait,
+			cfg.AuthKeyGetBatchQueue, cfg.AuthKeyGetBatchTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidAuthKeyGetBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max", key: "TELESRV_AUTH_KEY_GET_BATCH_MAX", value: "0"},
+		{name: "wait too large", key: "TELESRV_AUTH_KEY_GET_BATCH_WAIT", value: "11ms"},
+		{name: "queue below max", key: "TELESRV_AUTH_KEY_GET_BATCH_QUEUE", value: "1"},
+		{name: "timeout too large", key: "TELESRV_AUTH_KEY_GET_BATCH_TIMEOUT", value: "31s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadContactReverseBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_CONTACT_REVERSE_BATCH_MAX_PAIRS", "3073")
+	t.Setenv("TELESRV_CONTACT_REVERSE_BATCH_WAIT", "375us")
+	t.Setenv("TELESRV_CONTACT_REVERSE_BATCH_QUEUE", "778")
+	t.Setenv("TELESRV_CONTACT_REVERSE_BATCH_TIMEOUT", "4s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ContactReverseBatchMaxPairs != 3073 || cfg.ContactReverseBatchWait != 375*time.Microsecond ||
+		cfg.ContactReverseBatchQueue != 778 || cfg.ContactReverseBatchTimeout != 4*time.Second {
+		t.Fatalf("contact reverse batch = %d/%v/%d/%v",
+			cfg.ContactReverseBatchMaxPairs, cfg.ContactReverseBatchWait,
+			cfg.ContactReverseBatchQueue, cfg.ContactReverseBatchTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidContactReverseBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max pairs", key: "TELESRV_CONTACT_REVERSE_BATCH_MAX_PAIRS", value: "0"},
+		{name: "wait too large", key: "TELESRV_CONTACT_REVERSE_BATCH_WAIT", value: "11ms"},
+		{name: "zero queue", key: "TELESRV_CONTACT_REVERSE_BATCH_QUEUE", value: "0"},
+		{name: "timeout too large", key: "TELESRV_CONTACT_REVERSE_BATCH_TIMEOUT", value: "31s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidLayerAdvanceBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max", key: "TELESRV_LAYER_ADVANCE_BATCH_MAX", value: "0"},
+		{name: "wait too large", key: "TELESRV_LAYER_ADVANCE_BATCH_WAIT", value: "11ms"},
+		{name: "queue below max", key: "TELESRV_LAYER_ADVANCE_BATCH_QUEUE", value: "1"},
+		{name: "timeout too large", key: "TELESRV_LAYER_ADVANCE_BATCH_TIMEOUT", value: "31s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadBootstrapReadyBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_BOOTSTRAP_READY_BATCH_MAX", "41")
+	t.Setenv("TELESRV_BOOTSTRAP_READY_BATCH_WAIT", "37ms")
+	t.Setenv("TELESRV_BOOTSTRAP_READY_BATCH_QUEUE", "917")
+	t.Setenv("TELESRV_BOOTSTRAP_READY_BATCH_TIMEOUT", "4s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BootstrapReadyBatchMax != 41 || cfg.BootstrapReadyBatchWait != 37*time.Millisecond ||
+		cfg.BootstrapReadyBatchQueue != 917 || cfg.BootstrapReadyBatchTimeout != 4*time.Second {
+		t.Fatalf("bootstrap readiness batch = %d/%v/%d/%v",
+			cfg.BootstrapReadyBatchMax, cfg.BootstrapReadyBatchWait,
+			cfg.BootstrapReadyBatchQueue, cfg.BootstrapReadyBatchTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidBootstrapReadyBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max", key: "TELESRV_BOOTSTRAP_READY_BATCH_MAX", value: "0"},
+		{name: "wait too large", key: "TELESRV_BOOTSTRAP_READY_BATCH_WAIT", value: "1001ms"},
+		{name: "queue below max", key: "TELESRV_BOOTSTRAP_READY_BATCH_QUEUE", value: "1"},
+		{name: "timeout too large", key: "TELESRV_BOOTSTRAP_READY_BATCH_TIMEOUT", value: "31s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadPresenceLastSeenBatch(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_PRESENCE_LAST_SEEN_BATCH_MAX", "73")
+	t.Setenv("TELESRV_PRESENCE_LAST_SEEN_BATCH_WAIT", "12ms")
+	t.Setenv("TELESRV_PRESENCE_LAST_SEEN_BATCH_QUEUE", "901")
+	t.Setenv("TELESRV_PRESENCE_LAST_SEEN_BATCH_TIMEOUT", "3s")
+	t.Setenv("TELESRV_PRESENCE_LAST_SEEN_DRAIN_TIMEOUT", "17s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PresenceLastSeenBatchMax != 73 || cfg.PresenceLastSeenBatchWait != 12*time.Millisecond ||
+		cfg.PresenceLastSeenBatchQueue != 901 || cfg.PresenceLastSeenBatchTimeout != 3*time.Second ||
+		cfg.PresenceLastSeenDrainTimeout != 17*time.Second {
+		t.Fatalf("presence last-seen batch = %d/%v/%d/%v/%v",
+			cfg.PresenceLastSeenBatchMax, cfg.PresenceLastSeenBatchWait,
+			cfg.PresenceLastSeenBatchQueue, cfg.PresenceLastSeenBatchTimeout,
+			cfg.PresenceLastSeenDrainTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidPresenceLastSeenBatch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "zero max", key: "TELESRV_PRESENCE_LAST_SEEN_BATCH_MAX", value: "0"},
+		{name: "wait too large", key: "TELESRV_PRESENCE_LAST_SEEN_BATCH_WAIT", value: "6s"},
+		{name: "queue below max", key: "TELESRV_PRESENCE_LAST_SEEN_BATCH_QUEUE", value: "1"},
+		{name: "timeout too large", key: "TELESRV_PRESENCE_LAST_SEEN_BATCH_TIMEOUT", value: "31s"},
+		{name: "drain too large", key: "TELESRV_PRESENCE_LAST_SEEN_DRAIN_TIMEOUT", value: "61s"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("invalid %s=%s accepted", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadS3BlobStorageConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_BLOB_BACKEND", "s3")
+	t.Setenv("TELESRV_BLOB_STAGING_DIR", `D:\staging\telesrv`)
+	t.Setenv("TELESRV_S3_ENDPOINT", "minio.example.test:9000")
+	t.Setenv("TELESRV_S3_BUCKET", "telesrv-media")
+	t.Setenv("TELESRV_S3_ACCESS_KEY_ID", "access")
+	t.Setenv("TELESRV_S3_SECRET_ACCESS_KEY", "secret")
+	t.Setenv("TELESRV_S3_USE_SSL", "false")
+	t.Setenv("TELESRV_S3_PATH_STYLE", "true")
+	t.Setenv("TELESRV_S3_CREATE_BUCKET", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BlobBackendKind != "s3" || cfg.S3Endpoint != "minio.example.test:9000" || cfg.S3Bucket != "telesrv-media" {
+		t.Fatalf("unexpected s3 config: backend=%q endpoint=%q bucket=%q", cfg.BlobBackendKind, cfg.S3Endpoint, cfg.S3Bucket)
+	}
+	if cfg.S3UseSSL || !cfg.S3PathStyle || !cfg.S3CreateBucket {
+		t.Fatalf("unexpected s3 flags: ssl=%v path_style=%v create=%v", cfg.S3UseSSL, cfg.S3PathStyle, cfg.S3CreateBucket)
+	}
+}
+
+func TestLoadRejectsInvalidBlobStorageConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		backend  string
+		endpoint string
+		bucket   string
+		access   string
+		secret   string
+	}{
+		{name: "unknown backend", backend: "mirror"},
+		{name: "missing s3 endpoint", backend: "s3", bucket: "media", access: "access", secret: "secret"},
+		{name: "endpoint has scheme", backend: "s3", endpoint: "http://minio:9000", bucket: "media", access: "access", secret: "secret"},
+		{name: "missing s3 bucket", backend: "s3", endpoint: "minio:9000", access: "access", secret: "secret"},
+		{name: "missing s3 credentials", backend: "s3", endpoint: "minio:9000", bucket: "media"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_BLOB_BACKEND", tt.backend)
+			t.Setenv("TELESRV_S3_ENDPOINT", tt.endpoint)
+			t.Setenv("TELESRV_S3_BUCKET", tt.bucket)
+			t.Setenv("TELESRV_S3_ACCESS_KEY_ID", tt.access)
+			t.Setenv("TELESRV_S3_SECRET_ACCESS_KEY", tt.secret)
+			if _, err := Load(); err == nil {
+				t.Fatal("invalid blob storage config accepted")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidStorageCapacityConfig(t *testing.T) {
+	for _, item := range []struct{ key, value string }{
+		{"TELESRV_STORAGE_MIN_FREE_BYTES", "-1"},
+		{"TELESRV_STORAGE_MAX_TOTAL_BYTES", "-1"},
+		{"TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", "0s"},
+		{"TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", "-1s"},
+	} {
+		t.Run(item.key+"="+item.value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(item.key, item.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", item.key, item.value)
+			}
+		})
+	}
+}
+
+func TestLoadUpdateServiceConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_PUBLIC_URL", "https://updates.example.test/root/")
+	t.Setenv("TELESRV_UPDATE_SERVICE_URL", "http://127.0.0.1:2402/")
+	t.Setenv("TELESRV_UPDATE_REQUEST_TIMEOUT", "3s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdatePublicURL != "https://updates.example.test/root" || cfg.UpdateServiceURL != "http://127.0.0.1:2402" {
+		t.Fatalf("update URLs = %q / %q", cfg.UpdatePublicURL, cfg.UpdateServiceURL)
+	}
+	if cfg.UpdateRequestTimeout != 3*time.Second {
+		t.Fatalf("UpdateRequestTimeout = %v", cfg.UpdateRequestTimeout)
+	}
+}
+
+func TestLoadUpdateServiceDefaultsInternalURLToPublic(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_PUBLIC_URL", "https://updates.example.test")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdateServiceURL != cfg.UpdatePublicURL {
+		t.Fatalf("UpdateServiceURL = %q, want %q", cfg.UpdateServiceURL, cfg.UpdatePublicURL)
+	}
+}
+
+func TestLoadRejectsInvalidUpdateServiceConfig(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_UPDATE_PUBLIC_URL", "file:///updates")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid update public URL accepted")
 	}
 }
 
@@ -165,6 +627,18 @@ func TestLoadStrictDCCheck(t *testing.T) {
 	})
 }
 
+func TestLoadRejectsNonPositiveCanonicalDC(t *testing.T) {
+	for _, value := range []string{"0", "-2", "2147483648"} {
+		t.Run(value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_DC", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted TELESRV_DC=%s", value)
+			}
+		})
+	}
+}
+
 func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	disableDefaultConfigFile(t)
 	t.Setenv("TELESRV_MTPROTO_MAX_CONNECTIONS", "12345")
@@ -176,6 +650,8 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_WORKERS", "33")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_TASKS", "444")
 	t.Setenv("TELESRV_MTPROTO_RPC_GLOBAL_MAX_BYTES", "555555")
+	t.Setenv("TELESRV_MTPROTO_RPC_DELIVERY_HOOK_WORKERS", "17")
+	t.Setenv("TELESRV_MTPROTO_RPC_DELIVERY_HOOK_MAX_PENDING", "777")
 	t.Setenv("TELESRV_MTPROTO_RPC_EXECUTION_MAX_ENTRIES", "555")
 	t.Setenv("TELESRV_MTPROTO_RPC_EXECUTION_AUTH_MAX_ENTRIES", "444")
 	t.Setenv("TELESRV_MTPROTO_RPC_EXECUTION_SESSION_MAX_ENTRIES", "333")
@@ -188,6 +664,9 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	t.Setenv("TELESRV_TEMP_KEY_CACHE_MAX_ENTRIES", "666")
 	t.Setenv("TELESRV_TEMP_KEY_CACHE_TTL", "17m")
 	t.Setenv("TELESRV_ORPHAN_AUTH_KEY_RETENTION", "36h")
+	t.Setenv("TELESRV_CONTACT_SNAPSHOT_CACHE_MAX_VIEWERS", "1234")
+	t.Setenv("TELESRV_PROFILE_PHOTO_CACHE_MAX", "2345")
+	t.Setenv("TELESRV_PROFILE_PHOTO_CACHE_TTL", "36h")
 
 	cfg, err := Load()
 	if err != nil {
@@ -199,6 +678,9 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	if cfg.MTProtoRPCMaxInflight != 7 || cfg.MTProtoRPCQueueSize != 19 || cfg.MTProtoRPCTimeout != 9*time.Second ||
 		cfg.MTProtoRPCGlobalWorkers != 33 || cfg.MTProtoRPCGlobalMaxTasks != 444 || cfg.MTProtoRPCGlobalMaxBytes != 555555 {
 		t.Fatalf("rpc budget config = %d/%d/%v/%d/%d/%d", cfg.MTProtoRPCMaxInflight, cfg.MTProtoRPCQueueSize, cfg.MTProtoRPCTimeout, cfg.MTProtoRPCGlobalWorkers, cfg.MTProtoRPCGlobalMaxTasks, cfg.MTProtoRPCGlobalMaxBytes)
+	}
+	if cfg.MTProtoRPCDeliveryHookWorkers != 17 || cfg.MTProtoRPCDeliveryHookMaxPending != 777 {
+		t.Fatalf("rpc delivery hook config = %d/%d", cfg.MTProtoRPCDeliveryHookWorkers, cfg.MTProtoRPCDeliveryHookMaxPending)
 	}
 	if cfg.MTProtoRPCExecutionMaxEntries != 555 ||
 		cfg.MTProtoRPCExecutionAuthMaxEntries != 444 ||
@@ -219,6 +701,12 @@ func TestLoadMTProtoAdmissionAndRPCBudgets(t *testing.T) {
 	if cfg.TempKeyResolveCacheMaxEntries != 666 || cfg.TempKeyResolveCacheTTL != 17*time.Minute || cfg.OrphanAuthKeyRetention != 36*time.Hour {
 		t.Fatalf("auth key resource config = %d/%v/%v", cfg.TempKeyResolveCacheMaxEntries, cfg.TempKeyResolveCacheTTL, cfg.OrphanAuthKeyRetention)
 	}
+	if cfg.ContactSnapshotCacheMaxViewers != 1234 {
+		t.Fatalf("contact snapshot cache viewers = %d", cfg.ContactSnapshotCacheMaxViewers)
+	}
+	if cfg.ProfilePhotoCacheMaxEntries != 2345 || cfg.ProfilePhotoCacheTTL != 36*time.Hour {
+		t.Fatalf("profile photo cache = %d/%v", cfg.ProfilePhotoCacheMaxEntries, cfg.ProfilePhotoCacheTTL)
+	}
 }
 
 func TestLoadRPCExecutionFairBudgetDefaults(t *testing.T) {
@@ -237,6 +725,15 @@ func TestLoadRPCExecutionFairBudgetDefaults(t *testing.T) {
 			cfg.MTProtoRPCExecutionSessionMaxEntries,
 			cfg.MTProtoRPCExecutionPendingPerAuth)
 	}
+	if cfg.MTProtoRPCDeliveryHookWorkers != 32 || cfg.MTProtoRPCDeliveryHookMaxPending != 16_384 {
+		t.Fatalf("rpc delivery hook defaults = %d/%d", cfg.MTProtoRPCDeliveryHookWorkers, cfg.MTProtoRPCDeliveryHookMaxPending)
+	}
+	if cfg.ContactSnapshotCacheMaxViewers != 16_384 {
+		t.Fatalf("contact snapshot cache default = %d", cfg.ContactSnapshotCacheMaxViewers)
+	}
+	if cfg.ProfilePhotoCacheMaxEntries != 200_000 || cfg.ProfilePhotoCacheTTL != 24*time.Hour {
+		t.Fatalf("profile photo cache defaults = %d/%v", cfg.ProfilePhotoCacheMaxEntries, cfg.ProfilePhotoCacheTTL)
+	}
 }
 
 func TestLoadRejectsInvalidRPCExecutionFairBudgets(t *testing.T) {
@@ -246,10 +743,44 @@ func TestLoadRejectsInvalidRPCExecutionFairBudgets(t *testing.T) {
 		value string
 	}{
 		{name: "entry hierarchy", key: "TELESRV_MTPROTO_RPC_EXECUTION_MAX_ENTRIES", value: "1024"},
-		{name: "pending hierarchy", key: "TELESRV_MTPROTO_RPC_EXECUTION_PENDING_PER_AUTH", value: "9000"},
+		{name: "pending hierarchy", key: "TELESRV_MTPROTO_RPC_EXECUTION_PENDING_PER_AUTH", value: "33000"},
+		{name: "delivery workers", key: "TELESRV_MTPROTO_RPC_DELIVERY_HOOK_WORKERS", value: "0"},
+		{name: "delivery pending hierarchy", key: "TELESRV_MTPROTO_RPC_DELIVERY_HOOK_MAX_PENDING", value: "16"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv(test.key, test.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid %s=%s", test.key, test.value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonPositiveContactSnapshotCache(t *testing.T) {
+	for _, value := range []string{"0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_CONTACT_SNAPSHOT_CACHE_MAX_VIEWERS", value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted contact snapshot cache capacity %s", value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidProfilePhotoCache(t *testing.T) {
+	for _, test := range []struct {
+		key   string
+		value string
+	}{
+		{key: "TELESRV_PROFILE_PHOTO_CACHE_MAX", value: "0"},
+		{key: "TELESRV_PROFILE_PHOTO_CACHE_MAX", value: "-1"},
+		{key: "TELESRV_PROFILE_PHOTO_CACHE_TTL", value: "0s"},
+		{key: "TELESRV_PROFILE_PHOTO_CACHE_TTL", value: "169h"},
+	} {
+		t.Run(test.key+"="+test.value, func(t *testing.T) {
 			disableDefaultConfigFile(t)
 			t.Setenv(test.key, test.value)
 			if _, err := Load(); err == nil {
@@ -269,6 +800,7 @@ func TestLoadRejectsMalformedMTProtoCapacity(t *testing.T) {
 		{name: "receipt entries overflow", key: "TELESRV_MTPROTO_RPC_EXECUTION_MAX_ENTRIES", value: "999999999999999999999999"},
 		{name: "tracked bytes overflow", key: "TELESRV_MTPROTO_OUTBOUND_TRACKED_GLOBAL_MAX_BYTES", value: "999999999999999999999999"},
 		{name: "outbound queue malformed", key: "TELESRV_MTPROTO_OUTBOUND_QUEUE_SIZE", value: "many"},
+		{name: "profile photo entries malformed", key: "TELESRV_PROFILE_PHOTO_CACHE_MAX", value: "many"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			disableDefaultConfigFile(t)
@@ -536,6 +1068,21 @@ func TestLoadTranslationConfig(t *testing.T) {
 	}
 	if cfg.TranslationTimeout != 9*time.Second || cfg.TranslationRateLimit != 17 || cfg.TranslationRateWindow != 2*time.Minute {
 		t.Fatalf("translation limits = %v/%d/%v", cfg.TranslationTimeout, cfg.TranslationRateLimit, cfg.TranslationRateWindow)
+	}
+}
+
+func TestLoadStorySparseProjectionCacheConfig(t *testing.T) {
+	t.Setenv("TELESRV_CONFIG", "")
+	t.Setenv("TELESRV_STORY_ACTIVE_PEER_CACHE_MAX", "1234")
+	t.Setenv("TELESRV_STORY_HIDDEN_LIST_CACHE_MAX", "2345")
+	t.Setenv("TELESRV_STORY_HIDDEN_LIST_CACHE_BYTES_MAX", "3456")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StoryActivePeerCacheMaxEntries != 1234 || cfg.StoryHiddenListCacheMaxEntries != 2345 || cfg.StoryHiddenListCacheMaxBytes != 3456 {
+		t.Fatalf("story sparse cache config = %d/%d/%d, want 1234/2345/3456",
+			cfg.StoryActivePeerCacheMaxEntries, cfg.StoryHiddenListCacheMaxEntries, cfg.StoryHiddenListCacheMaxBytes)
 	}
 }
 

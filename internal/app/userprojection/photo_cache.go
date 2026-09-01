@@ -8,11 +8,16 @@ import (
 	"telesrv/internal/readmodelcache"
 )
 
-// DefaultPhotoCacheTTL 是头像投影缓存的兜底有效期；正常正确性依赖写入侧触发
-// read_model_versions/NOTIFY 后显式失效，TTL 只负责覆盖进程外漏通知或手工改库。
-const DefaultPhotoCacheTTL = 10 * time.Second
+const (
+	// DefaultPhotoCacheTTL 是头像投影缓存的兜底有效期；正常正确性依赖写入侧触发
+	// read_model_versions/NOTIFY 后显式失效，TTL 只负责覆盖漏通知或手工改库。
+	// 10s 会让 60s 的 10k 登录突发反复丢失稳定负结果，不能作为正常新鲜度机制。
+	DefaultPhotoCacheTTL = 24 * time.Hour
 
-const photoCacheMaxEntries = 200000
+	// DefaultPhotoCacheMaxEntries 覆盖 10k owner 的 profile/fallback 两种 key，
+	// 并为共享对话引用保留余量。底层是逐项 LRU，不允许整表清空。
+	DefaultPhotoCacheMaxEntries = 200_000
+)
 
 // combinedPhotoProvider 是同时具备 batch 与 kind 两种头像查询能力的底层 provider（postgres
 // MediaStore 即满足）。
@@ -50,21 +55,32 @@ type CachedPhotoProvider struct {
 
 // NewCachedPhotoProvider 包装底层 provider；ttl<=0 用 DefaultPhotoCacheTTL。
 func NewCachedPhotoProvider(inner combinedPhotoProvider, ttl time.Duration) *CachedPhotoProvider {
-	return newCachedPhotoProviderWithClock(inner, ttl, nil)
+	return NewCachedPhotoProviderWithMaxEntries(inner, ttl, DefaultPhotoCacheMaxEntries)
+}
+
+func NewCachedPhotoProviderWithMaxEntries(inner combinedPhotoProvider, ttl time.Duration, maxEntries int) *CachedPhotoProvider {
+	return newCachedPhotoProvider(inner, ttl, maxEntries, nil)
 }
 
 // newCachedPhotoProviderWithClock 允许注入时钟,仅供测试确定地推进 TTL;now=nil 用真实时钟。
 func newCachedPhotoProviderWithClock(inner combinedPhotoProvider, ttl time.Duration, now func() time.Time) *CachedPhotoProvider {
+	return newCachedPhotoProvider(inner, ttl, DefaultPhotoCacheMaxEntries, now)
+}
+
+func newCachedPhotoProvider(inner combinedPhotoProvider, ttl time.Duration, maxEntries int, now func() time.Time) *CachedPhotoProvider {
 	if inner == nil {
 		return nil
 	}
 	if ttl <= 0 {
 		ttl = DefaultPhotoCacheTTL
 	}
+	if maxEntries <= 0 {
+		maxEntries = DefaultPhotoCacheMaxEntries
+	}
 	return &CachedPhotoProvider{
 		inner: inner,
 		cache: readmodelcache.New[photoCacheKey, photoCacheValue](readmodelcache.Config[photoCacheKey, photoCacheValue]{
-			MaxEntries: photoCacheMaxEntries,
+			MaxEntries: maxEntries,
 			TTL:        ttl,
 			Now:        now,
 			Clone:      clonePhotoCacheValue,

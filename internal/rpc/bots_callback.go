@@ -59,6 +59,7 @@ func (r *Router) onMessagesGetBotCallbackAnswer(ctx context.Context, req *tg.Mes
 	if err != nil {
 		return nil, err
 	}
+	callback.ClientSession = clientSessionMetadataFromContext(ctx)
 	botUserID := callback.BotUserID
 
 	// 内置（进程内）service bot 分支：@verifybot 这类 bot 没有 MTProto session、也没有

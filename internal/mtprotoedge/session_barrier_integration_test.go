@@ -614,9 +614,6 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	if got := handler.max.Load(); got != 1 {
 		t.Fatalf("old and retry handlers overlapped: max active=%d, want 1", got)
 	}
-	if got := s.rpcResults.flightLimit.snapshot(); got != 0 {
-		t.Fatalf("sequential retry leaked flight claims: %d", got)
-	}
 
 	resultCount := 0
 	deadline = time.Now().Add(2 * time.Second)
@@ -640,6 +637,11 @@ func TestCrossConnectionInflightAbortRetriesOnlyAfterOldOwnerStops(t *testing.T)
 	if resultCount != 1 {
 		t.Fatalf("sequential retry result count = %d, want 1", resultCount)
 	}
+	// Scheduler task completion only proves that result encoding/enqueue has
+	// finished. The outbound actor publishes the terminal execution receipt
+	// after the physical write, so inspect the flight only after observing that
+	// result rather than racing the actor callback.
+	waitForRPCFlightClaims(t, s.rpcResults, 0)
 	if !firstConn.isRetired() || !secondConn.isRetired() || thirdConn == nil || !thirdConn.isActive() {
 		t.Fatalf("replacement lifecycle = first:%v second:%v third:%p active:%v", firstConn.lifecycleState(), secondConn.lifecycleState(), thirdConn, thirdConn != nil && thirdConn.isActive())
 	}
@@ -654,5 +656,16 @@ func waitForAtomicCalls(t *testing.T, calls interface{ Load() int32 }, want int3
 	}
 	if got := calls.Load(); got != want {
 		t.Fatalf("handler calls = %d, want %d", got, want)
+	}
+}
+
+func waitForRPCFlightClaims(t *testing.T, ledger *rpcExecutionLedger, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for ledger.flightLimit.snapshot() != want && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := ledger.flightLimit.snapshot(); got != want {
+		t.Fatalf("rpc flight claims = %d, want %d", got, want)
 	}
 }

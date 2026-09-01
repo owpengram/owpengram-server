@@ -310,7 +310,7 @@ func (s *ChannelStore) SetChannelEmojiStatusAdmin(_ context.Context, channelID i
 }
 
 func (s *ChannelStore) SetChannelPhotoAdmin(_ context.Context, channelID int64, photo domain.Photo) (domain.Channel, error) {
-	if channelID == 0 {
+	if channelID == 0 || photo.ID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	s.mu.Lock()

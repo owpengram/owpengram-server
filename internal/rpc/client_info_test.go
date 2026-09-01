@@ -95,6 +95,22 @@ func TestNormalizeClientInfoPreservesMetadataWithinLimits(t *testing.T) {
 	}
 }
 
+func TestClientSessionMetadataFromContextCarriesLanguageAndPhysicalSession(t *testing.T) {
+	var raw [8]byte
+	raw[0], raw[7] = 0x11, 0x77
+	ctx := WithClientInfo(context.Background(), ClientInfo{
+		SystemLangCode: "en-US", LangPack: "tdesktop", LangCode: "ru",
+	})
+	ctx = WithRawAuthKeyID(ctx, raw)
+	ctx = WithSessionID(ctx, 998877)
+	got := clientSessionMetadataFromContext(ctx)
+	if got.AuthKeyID != raw || got.SessionID != 998877 ||
+		got.SystemLangCode != "en-US" || got.LangPack != "tdesktop" || got.LangCode != "ru" ||
+		got.PreferredLanguage() != "ru" {
+		t.Fatalf("client session metadata = %+v", got)
+	}
+}
+
 func assertClientMetadataRunes(t *testing.T, field, value string, want int) {
 	t.Helper()
 	if got := utf8.RuneCountInString(value); got != want {

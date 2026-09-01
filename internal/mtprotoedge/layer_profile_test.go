@@ -99,7 +99,7 @@ func TestConnSeedLayerProfile(t *testing.T) {
 }
 
 func TestConnLayerProfileRejectsUnsupported(t *testing.T) {
-	for _, profile := range []tlprofile.Profile{0, 219, 229} {
+	for _, profile := range []tlprofile.Profile{0, 219, 230} {
 		t.Run(fmt.Sprintf("layer_%d", profile), func(t *testing.T) {
 			c := &Conn{}
 			if err := c.FreezeLayerProfile(profile); !errors.Is(err, ErrLayerProfileUnsupported) {
@@ -209,7 +209,7 @@ func TestSessionManagerSeedsOnlyUnknownRawAuthKeyConnections(t *testing.T) {
 	if got := inherited.LayerProfileState(); got.Profile != tlprofile.Profile226 || got.Origin != LayerProfileInherited {
 		t.Fatalf("existing inherited connection was overwritten = %#v", got)
 	}
-	if seeded := m.SeedInheritedLayerForRawAuthKey(authKeyID, 229); seeded != 0 {
+	if seeded := m.SeedInheritedLayerForRawAuthKey(authKeyID, 230); seeded != 0 {
 		t.Fatalf("unsupported layer seeded %d connections", seeded)
 	}
 }
@@ -433,7 +433,7 @@ func TestInitialProfileSeedAvoidsPermanentKeyResolverAndPrefersPermForTemp(t *te
 		resolver := &countingInheritedLayerResolver{layer: 227, found: true}
 		s := &Server{layerRPC: resolver}
 		c := &Conn{authKeyExpiresAt: 0}
-		if err := s.seedInitialLayerProfile(context.Background(), c, 229, LayerProfileSnapshot{}); err != nil {
+		if err := s.seedInitialLayerProfile(context.Background(), c, 230, LayerProfileSnapshot{}); err != nil {
 			t.Fatal(err)
 		}
 		if resolver.calls != 0 {
@@ -445,7 +445,7 @@ func TestInitialProfileSeedAvoidsPermanentKeyResolverAndPrefersPermForTemp(t *te
 	})
 
 	t.Run("unsupported bound permanent blocks raw temp shadow", func(t *testing.T) {
-		resolver := &countingInheritedLayerResolver{layer: 229, found: true}
+		resolver := &countingInheritedLayerResolver{layer: 230, found: true}
 		s := &Server{layerRPC: resolver}
 		c := &Conn{authKeyExpiresAt: 1_900_000_000}
 		if err := s.seedInitialLayerProfile(context.Background(), c, 225, LayerProfileSnapshot{}); err != nil {
@@ -491,7 +491,7 @@ func TestInheritedLayerResolverAvailabilityUsesOnlySupportedRawTempShadow(t *tes
 		wantOrigin   LayerProfileOrigin
 	}{
 		{name: "supported raw shadow", fetchedLayer: 225, wantProfile: tlprofile.Profile225, wantOrigin: LayerProfileInherited},
-		{name: "future raw shadow stays unknown", fetchedLayer: 229, wantOrigin: LayerProfileUnknown},
+		{name: "future raw shadow stays unknown", fetchedLayer: 230, wantOrigin: LayerProfileUnknown},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			resolver := &countingInheritedLayerResolver{err: layerDurabilityUnavailableTestError{}}
@@ -553,7 +553,7 @@ func TestActivationClaimRecheckClosesTempBindLayerRace(t *testing.T) {
 	})
 
 	t.Run("unsupported permanent clears preclaim raw shadow", func(t *testing.T) {
-		resolver := &countingInheritedLayerResolver{layer: 229, found: true}
+		resolver := &countingInheritedLayerResolver{layer: 230, found: true}
 		s := &Server{layerRPC: resolver}
 		c := &Conn{authKeyID: authKeyID, sessionID: 403, authKeyExpiresAt: 1_900_000_000}
 		if err := c.SeedInheritedLayerProfile(tlprofile.Profile225); err != nil {

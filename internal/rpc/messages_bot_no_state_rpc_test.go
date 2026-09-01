@@ -99,8 +99,8 @@ func TestMessagesEditInlineBotMessageEditsPrivateInlineMessage(t *testing.T) {
 
 	editReq := &tg.MessagesEditInlineBotMessageRequest{ID: msgID}
 	editReq.SetMessage("after edit")
-	editReq.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{
-		Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "done", Data: []byte("v2")}},
+	editReq.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{
+		Buttons: []tg.KeyboardInlineButton{{Text: "done", Type: &tg.InlineButtonTypeCallback{Data: []byte("v2")}}},
 	}}})
 	if ok, err := f.router.onMessagesEditInlineBotMessage(botCtx, editReq); err != nil || !ok {
 		t.Fatalf("edit inline bot message = %v,%v, want true,nil", ok, err)
@@ -291,8 +291,8 @@ func inlineArticleResultWithCallbackMarkup(id, message, button string, data []by
 		Title: id,
 		SendMessage: &tg.InputBotInlineMessageText{
 			Message: message,
-			ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{
-				Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: button, Data: data}},
+			ReplyMarkup: &tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{
+				Buttons: []tg.KeyboardInlineButton{{Text: button, Type: &tg.InlineButtonTypeCallback{Data: data}}},
 			}}},
 		},
 	}

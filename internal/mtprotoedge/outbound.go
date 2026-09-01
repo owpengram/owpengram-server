@@ -1297,7 +1297,7 @@ func (c *Conn) send(ctx context.Context, t proto.MessageType, msg bin.Encoder, c
 
 func (c *Conn) SendEncoded(ctx context.Context, t proto.MessageType, encoded *encodedOutboundMessage) error {
 	if encoded != nil {
-		if err := encoded.prepareDeliveryHook(defaultRPCDeliveryHookExecutor); err != nil {
+		if err := encoded.prepareDeliveryHook(c.deliveryHookExecutor()); err != nil {
 			return err
 		}
 	}
@@ -1336,7 +1336,7 @@ func (c *Conn) enqueueEncodedDeliveryReserved(
 		return ErrConnClosed
 	}
 	if encoded != nil {
-		if err := encoded.prepareDeliveryHook(defaultRPCDeliveryHookExecutor); err != nil {
+		if err := encoded.prepareDeliveryHook(c.deliveryHookExecutor()); err != nil {
 			return err
 		}
 	}
@@ -1382,6 +1382,13 @@ func (c *Conn) enqueueEncodedDeliveryReserved(
 	}
 	c.endOutboundEnqueue()
 	return nil
+}
+
+func (c *Conn) deliveryHookExecutor() *rpcDeliveryHookExecutor {
+	if c != nil && c.rpcDeliveryHooks != nil {
+		return c.rpcDeliveryHooks
+	}
+	return defaultRPCDeliveryHookExecutor
 }
 
 func (c *Conn) sendOutbound(ctx context.Context, t proto.MessageType, msg bin.Encoder, encoded *encodedOutboundMessage, control bool) error {
@@ -1491,10 +1498,11 @@ func (c *Conn) sendOutboundWithTerminalReserved(
 	}
 }
 
-// SendAsync 入队一条 server 消息但不等待发送结果（fire-and-forget），用于读循环里的控制消息
-// （ack/pong/bad_msg/future_salts/state_info）：避免读循环被 outbound 写
-// 阻塞而连带卡死。走优先(control)队列保证不被普通 push 拖后；队列满时丢弃并记 metrics——此时
-// 连接多已严重拥塞，控制消息丢失由客户端重传 / 读写超时兜底。返回非 nil 仅表示连接已关闭。
+// SendAsync enqueues a fire-and-forget server message without waiting for the
+// physical write. It is reserved for genuinely retryable/advisory control
+// traffic such as msgs_ack: a full control queue drops the message and records
+// a metric. Request-correlated service responses and protocol corrections must
+// use SendRequiredControl so they can never be reported as sent after a drop.
 func (c *Conn) SendAsync(ctx context.Context, t proto.MessageType, msg bin.Encoder) error {
 	if c.outbound == nil || c.outboundControl == nil {
 		return ErrConnClosed

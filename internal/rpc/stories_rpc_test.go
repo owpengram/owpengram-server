@@ -445,6 +445,9 @@ func TestStoriesReadStoriesRecordsDifferenceUpdate(t *testing.T) {
 	r := New(Config{}, Deps{
 		Stories: appstories.NewService(storyStore),
 		Updates: appupdates.NewService(memory.NewUpdateStateStore(), updateStore),
+		Users: mapUsersService{users: map[int64]domain.User{
+			owner.ID: {ID: owner.ID, FirstName: "Owner"},
+		}},
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 
 	readCtx := WithSessionID(WithAuthKeyID(WithUserID(ctx, 1000000002), authKeyID), 77)
@@ -617,6 +620,9 @@ func TestStoriesReadStoriesClampsFutureMaxID(t *testing.T) {
 	r := New(Config{}, Deps{
 		Stories: appstories.NewService(storyStore),
 		Updates: appupdates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
+		Users: mapUsersService{users: map[int64]domain.User{
+			owner.ID: {ID: owner.ID, FirstName: "Owner"},
+		}},
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 
 	readCtx := WithSessionID(WithAuthKeyID(WithUserID(ctx, 1000000002), authKeyID), 88)

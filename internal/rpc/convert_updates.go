@@ -23,9 +23,11 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 		addChannels(out, seenChats, event.UserID, event.Channels)
 		switch event.Type {
 		case domain.UpdateEventNewMessage:
-			if msg := tgMessage(event.Message); msg != nil {
-				out.NewMessages = append(out.NewMessages, msg)
-				addMessageUsers(out, seenUsers, event.Message)
+			if messageSnapshotVisible(event.Message) {
+				if msg := tgMessage(event.Message); msg != nil {
+					out.NewMessages = append(out.NewMessages, msg)
+					addMessageUsers(out, seenUsers, event.Message)
+				}
 			}
 		case domain.UpdateEventReadHistoryInbox:
 			if update := tgReadHistoryInboxUpdate(event); update != nil {
@@ -38,9 +40,11 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 		case domain.UpdateEventMessagePoll:
 			// 同时下发消息快照（含最新聚合）与对应通知 update；事件无 TL pts，
 			// pts 推进靠 difference state 本身。
-			if msg := tgMessage(event.Message); msg != nil {
-				out.NewMessages = append(out.NewMessages, msg)
-				addMessageUsers(out, seenUsers, event.Message)
+			if messageSnapshotVisible(event.Message) {
+				if msg := tgMessage(event.Message); msg != nil {
+					out.NewMessages = append(out.NewMessages, msg)
+					addMessageUsers(out, seenUsers, event.Message)
+				}
 			}
 			if update := tgOtherUpdateFromEvent(event); update != nil {
 				out.OtherUpdates = append(out.OtherUpdates, update)
@@ -88,6 +92,10 @@ func tgUpdatesDifference(viewerUserID int64, diff domain.UpdateDifference) tg.Up
 	}
 	out.State = tgUpdateState(diff.State)
 	return out
+}
+
+func messageSnapshotVisible(msg domain.Message) bool {
+	return !msg.Deleted
 }
 
 func tgChannelDifference(viewerUserID int64, diff domain.ChannelDifference) tg.UpdatesChannelDifferenceClass {

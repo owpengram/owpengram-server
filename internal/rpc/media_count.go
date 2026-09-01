@@ -100,3 +100,44 @@ func mediaSearchCanReusePeerWideCount(req *tg.MessagesSearchRequest) bool {
 	}
 	return searchFilterNeedsMediaStore(req.Filter)
 }
+
+func (r *Router) mediaSearchRequestFromMessagesSearch(
+	ctx context.Context,
+	userID int64,
+	req *tg.MessagesSearchRequest,
+	filter domain.MessageFilter,
+) (domain.MediaSearchRequest, error) {
+	out := domain.MediaSearchRequest{
+		Categories:     mediaCategoriesForFilter(req.Filter),
+		Query:          req.Q,
+		MinDate:        req.MinDate,
+		MaxDate:        req.MaxDate,
+		SavedPeer:      filter.SavedPeer,
+		SavedReactions: append([]domain.MessageReaction(nil), filter.SavedReactions...),
+		OffsetID:       req.OffsetID,
+		AddOffset:      domain.ClampMessageHistoryAddOffset(req.AddOffset),
+		Limit:          req.Limit,
+		MaxID:          req.MaxID,
+		MinID:          req.MinID,
+	}
+	if fromInput, present := req.GetFromID(); present {
+		if fromInput == nil {
+			return domain.MediaSearchRequest{}, peerIDInvalidErr()
+		}
+		from, err := r.checkedDomainPeerFromInputPeer(ctx, userID, fromInput)
+		if err != nil {
+			return domain.MediaSearchRequest{}, err
+		}
+		if from.Type != domain.PeerTypeUser || from.ID == 0 {
+			return domain.MediaSearchRequest{}, peerIDInvalidErr()
+		}
+		out.SenderUserID = from.ID
+	}
+	if topMsgID, present := req.GetTopMsgID(); present {
+		if topMsgID <= 0 || topMsgID > domain.MaxMessageBoxID {
+			return domain.MediaSearchRequest{}, msgIDInvalidErr()
+		}
+		out.TopMsgID = topMsgID
+	}
+	return out, nil
+}

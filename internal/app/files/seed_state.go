@@ -106,11 +106,10 @@ func seedDocumentJSONLocationKeys(dj seedDocumentJSON, index seedDirIndex) []str
 			keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, ps.Type))
 		}
 	}
+	if _, ok := seedBundledDocumentPreview(dj.ID); ok {
+		keys = append(keys, fmt.Sprintf("doc:%d:%s", dj.ID, seedBundledDocumentThumbType))
+	}
 	return keys
-}
-
-func seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj seedDocumentJSON) bool {
-	return dj.MimeType == "application/x-tgsticker" && len(dj.Thumbs) == 0
 }
 
 func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumentJSON, index seedDirIndex) (bool, error) {
@@ -152,26 +151,10 @@ func (s *Service) seedDocumentJSONsReady(ctx context.Context, docs []seedDocumen
 		if doc.DCID != s.dc || doc.MimeType != dj.MimeType || doc.Size != dj.Size {
 			return false, nil
 		}
-		// A catalog without its own thumbnail may share this document with a richer
-		// catalog. Readiness follows the preview that is actually stored instead of
-		// demanding the synthetic "m" key and repeatedly downgrading that richer
-		// document on every import.
-		if seedDocumentJSONNeedsSyntheticTGStickerPreviewThumb(dj) {
-			if len(doc.Thumbs) == 0 {
+		if _, bundled := seedBundledDocumentPreview(dj.ID); bundled {
+			thumb, ok := seedDocumentThumbByType(doc.Thumbs, seedBundledDocumentThumbType)
+			if !ok || seedPhotoSizePreviewTier(thumb) < 4 {
 				return false, nil
-			}
-			for _, thumb := range doc.Thumbs {
-				switch thumb.Kind {
-				case domain.PhotoSizeKindDefault, domain.PhotoSizeKindProgressive, domain.PhotoSizeKindCached:
-					if thumb.Type == "" {
-						return false, nil
-					}
-					key := fmt.Sprintf("doc:%d:%s", doc.ID, thumb.Type)
-					if _, seen := seenLocationKeys[key]; !seen {
-						seenLocationKeys[key] = struct{}{}
-						locationKeys = append(locationKeys, key)
-					}
-				}
 			}
 		}
 		delete(expected, doc.ID)

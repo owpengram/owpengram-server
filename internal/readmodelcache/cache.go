@@ -32,6 +32,11 @@ type Config[K comparable, V any] struct {
 	// MaxEntries 是 LRU 上界。<=0 时 New 返回 nil(等价"禁用缓存",沿用各处
 	// New*Cache(max<=0)->nil 的惯例;所有方法对 nil 安全,退化为直接 load)。
 	MaxEntries int
+	// MaxWeight 是可选的第二容量边界。>0 时每个值由 Weight 计算权重，缓存同时
+	// 满足 MaxEntries 与 MaxWeight；单项超过上限时本次仍可返回但不驻留。
+	MaxWeight int64
+	// Weight 计算一个缓存值的相对占用；仅 MaxWeight>0 时使用。nil 时每项权重为 1。
+	Weight func(V) int64
 	// TTL 仅作安全兜底(漏掉的带外写)。0 = 纯事件驱动,无时间过期。
 	TTL time.Duration
 	// Clone 在 store 与返回两个边界上对值做深拷贝,隔离调用方与缓存项的别名突变。
@@ -43,6 +48,10 @@ type Config[K comparable, V any] struct {
 	// Now 注入时钟,仅用于 TTL 过期判断;nil 时默认 time.Now。生产一律留空,
 	// 测试可注入假时钟以确定地推进 TTL。
 	Now func() time.Time
+	// OnStore/OnRemove 供依赖倒排索引同步生命周期。回调在缓存锁内执行，
+	// 不得回调本 Cache 或阻塞；收到的 value 是缓存持有的 immutable clone。
+	OnStore  func(K, V)
+	OnRemove func(K, V)
 }
 
 type lruEntry[K comparable, V any] struct {
@@ -50,6 +59,7 @@ type lruEntry[K comparable, V any] struct {
 	value    V
 	hash     int64
 	expireAt time.Time // 零值 = 不过期
+	weight   int64
 }
 
 // Cache 是泛型 read-model 缓存。零值不可用,必须经 New 构造。nil *Cache 合法:
@@ -59,12 +69,39 @@ type Cache[K comparable, V any] struct {
 	ll        *list.List // LRU 顺序,Front=最近使用
 	items     map[K]*list.Element
 	cap       int
+	maxWeight int64
+	weight    int64
 	ttl       time.Duration
 	epoch     uint64
 	sf        singleflight.Group
 	clone     func(V) V
+	weigh     func(V) int64
 	keyString func(K) string
 	now       func() time.Time
+	onStore   func(K, V)
+	onRemove  func(K, V)
+
+	// batchFlights coordinates individual keys across overlapping concurrent
+	// GetOrLoadBatch calls. A singleflight key for the whole input slice cannot
+	// coalesce {1,2,3} with {2,3,4}; tracking the misses per key lets the first
+	// caller own 2/3 while the second still loads 4 in its own backend batch.
+	batchMu      sync.Mutex
+	batchFlights map[batchFlightKey[K]]*batchFlight[V]
+}
+
+type batchFlightKey[K comparable] struct {
+	key       K
+	hash      int64
+	cacheable bool
+	epoch     uint64
+}
+
+type batchFlight[V any] struct {
+	done  chan struct{}
+	value V
+	ok    bool
+	err   error
+	retry bool
 }
 
 // New 构造一个 Cache。MaxEntries<=0 时返回 nil(禁用缓存,沿用既有惯例)。
@@ -81,13 +118,18 @@ func New[K comparable, V any](cfg Config[K, V]) *Cache[K, V] {
 		now = time.Now
 	}
 	return &Cache[K, V]{
-		ll:        list.New(),
-		items:     make(map[K]*list.Element, initialMapHint(cfg.MaxEntries)),
-		cap:       cfg.MaxEntries,
-		ttl:       cfg.TTL,
-		clone:     cfg.Clone,
-		keyString: keyString,
-		now:       now,
+		ll:           list.New(),
+		items:        make(map[K]*list.Element, initialMapHint(cfg.MaxEntries)),
+		cap:          cfg.MaxEntries,
+		maxWeight:    cfg.MaxWeight,
+		ttl:          cfg.TTL,
+		clone:        cfg.Clone,
+		weigh:        cfg.Weight,
+		keyString:    keyString,
+		now:          now,
+		onStore:      cfg.OnStore,
+		onRemove:     cfg.OnRemove,
+		batchFlights: make(map[batchFlightKey[K]]*batchFlight[V]),
 	}
 }
 
@@ -189,19 +231,38 @@ func (c *Cache[K, V]) storeIfEpoch(key K, v V, hash int64, loadEpoch uint64) boo
 }
 
 func (c *Cache[K, V]) storeLocked(key K, v V, hash int64) {
+	weight := c.valueWeight(v)
+	if c.maxWeight > 0 && weight > c.maxWeight {
+		if el, ok := c.items[key]; ok {
+			c.removeElement(el)
+		}
+		return
+	}
 	if el, ok := c.items[key]; ok {
 		ent := el.Value.(*lruEntry[K, V])
+		if c.onRemove != nil {
+			c.onRemove(ent.key, ent.value)
+		}
+		c.weight -= ent.weight
 		ent.value = c.cloneValue(v)
 		ent.hash = hash
 		ent.expireAt = c.expireAt()
+		ent.weight = weight
+		c.weight += weight
+		if c.onStore != nil {
+			c.onStore(ent.key, ent.value)
+		}
 		c.ll.MoveToFront(el)
+		c.evictOverflow()
 		return
 	}
-	ent := &lruEntry[K, V]{key: key, value: c.cloneValue(v), hash: hash, expireAt: c.expireAt()}
+	ent := &lruEntry[K, V]{key: key, value: c.cloneValue(v), hash: hash, expireAt: c.expireAt(), weight: weight}
 	c.items[key] = c.ll.PushFront(ent)
-	if c.ll.Len() > c.cap {
-		c.evictOldest()
+	c.weight += weight
+	if c.onStore != nil {
+		c.onStore(ent.key, ent.value)
 	}
+	c.evictOverflow()
 }
 
 // Store 把一个已在手的值写入缓存(warm-from-list 路径)。不自增 epoch:它不是失效,
@@ -292,30 +353,57 @@ func (c *Cache[K, V]) GetOrLoadBatch(
 		if len(missing) == 0 {
 			return out, nil
 		}
-		missingKeys := make([]K, len(missing))
-		for i := range missing {
-			missingKeys[i] = missing[i].key
+		waits, owned := c.claimBatchFlights(missing, loadEpoch)
+		if len(owned) > 0 {
+			ownedKeys := make([]K, len(owned))
+			for i := range owned {
+				ownedKeys[i] = owned[i].miss.key
+			}
+			loaded, loadErr := loadMissing(ctx, ownedKeys)
+			retry := false
+			if loadErr == nil {
+				entries := make([]batchStoreEntry[K, V], 0, len(owned))
+				for _, owner := range owned {
+					value, ok := loaded[owner.miss.key]
+					if ok && owner.miss.cacheable {
+						entries = append(entries, batchStoreEntry[K, V]{
+							key: owner.miss.key, value: value, hash: owner.miss.hash,
+						})
+					}
+				}
+				retry = !c.storeBatchIfEpoch(entries, loadEpoch)
+			}
+			for _, owner := range owned {
+				value, ok := loaded[owner.miss.key]
+				c.completeBatchFlight(owner.key, owner.flight, value, ok, loadErr, retry)
+			}
 		}
-		loaded, err := loadMissing(ctx, missingKeys)
-		if err != nil {
-			return nil, err
+
+		retry := false
+		for _, wait := range waits {
+			select {
+			case <-wait.flight.done:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			if wait.flight.err != nil {
+				return nil, wait.flight.err
+			}
+			if wait.flight.retry {
+				retry = true
+				continue
+			}
+			if wait.flight.ok {
+				out[wait.miss.key] = c.cloneValue(wait.flight.value)
+			}
 		}
-		if c.cacheEpoch() != loadEpoch {
-			// 失效在批量 load 期间到达:重试整趟,避免用 pre-invalidation 数据遮蔽它。
+		if retry {
+			// 失效在任一 owner 的批量 load 期间到达:所有参与者重查，
+			// 不让 pre-invalidation 的共享 flight 值越过 epoch 边界。
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 			continue
-		}
-		for _, m := range missing {
-			v, ok := loaded[m.key]
-			if !ok {
-				continue
-			}
-			out[m.key] = v
-			if m.cacheable {
-				c.storeIfEpoch(m.key, v, m.hash, loadEpoch)
-			}
 		}
 		return out, nil
 	}
@@ -325,6 +413,76 @@ type batchMiss[K comparable] struct {
 	key       K
 	hash      int64
 	cacheable bool
+}
+
+type batchWait[K comparable, V any] struct {
+	miss   batchMiss[K]
+	key    batchFlightKey[K]
+	flight *batchFlight[V]
+}
+
+type batchStoreEntry[K comparable, V any] struct {
+	key   K
+	value V
+	hash  int64
+}
+
+func (c *Cache[K, V]) claimBatchFlights(
+	missing []batchMiss[K],
+	epoch uint64,
+) (waits []batchWait[K, V], owned []batchWait[K, V]) {
+	waits = make([]batchWait[K, V], 0, len(missing))
+	owned = make([]batchWait[K, V], 0, len(missing))
+	c.batchMu.Lock()
+	for _, miss := range missing {
+		key := batchFlightKey[K]{key: miss.key, hash: miss.hash, cacheable: miss.cacheable, epoch: epoch}
+		flight, found := c.batchFlights[key]
+		wait := batchWait[K, V]{miss: miss, key: key, flight: flight}
+		if !found {
+			flight = &batchFlight[V]{done: make(chan struct{})}
+			c.batchFlights[key] = flight
+			wait.flight = flight
+			owned = append(owned, wait)
+		}
+		waits = append(waits, wait)
+	}
+	c.batchMu.Unlock()
+	return waits, owned
+}
+
+func (c *Cache[K, V]) completeBatchFlight(
+	key batchFlightKey[K],
+	flight *batchFlight[V],
+	value V,
+	ok bool,
+	err error,
+	retry bool,
+) {
+	c.batchMu.Lock()
+	flight.value = c.cloneValue(value)
+	flight.ok = ok
+	flight.err = err
+	flight.retry = retry
+	if current := c.batchFlights[key]; current == flight {
+		delete(c.batchFlights, key)
+	}
+	close(flight.done)
+	c.batchMu.Unlock()
+}
+
+// storeBatchIfEpoch makes the write side of one batch atomic with respect to
+// invalidation. Besides avoiding partial warm state, this gives every waiter
+// one unambiguous retry decision for the batch generation it joined.
+func (c *Cache[K, V]) storeBatchIfEpoch(entries []batchStoreEntry[K, V], expected uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.epoch != expected {
+		return false
+	}
+	for _, entry := range entries {
+		c.storeLocked(entry.key, entry.value, entry.hash)
+	}
+	return true
 }
 
 func dedupeKeys[K comparable](keys []K) []K {
@@ -391,6 +549,26 @@ func (c *Cache[K, V]) InvalidateWhere(pred func(K) bool) {
 	c.mu.Unlock()
 }
 
+// InvalidateWhereValue is the dependency-aware form of InvalidateWhere. It is
+// intended for bounded composite snapshots whose invalidation key is carried
+// by the immutable cached value (for example channel_id -> owner dialog page).
+// pred runs under the cache lock and therefore must be fast and must not call
+// back into this cache.
+func (c *Cache[K, V]) InvalidateWhereValue(pred func(K, V) bool) {
+	if c == nil || pred == nil {
+		return
+	}
+	c.mu.Lock()
+	c.epoch++
+	for key, el := range c.items {
+		ent := el.Value.(*lruEntry[K, V])
+		if pred(key, ent.value) {
+			c.removeElement(el)
+		}
+	}
+	c.mu.Unlock()
+}
+
 // Flush 清空缓存并自增 epoch(监听器断线重连兜底)。
 func (c *Cache[K, V]) Flush() {
 	if c == nil {
@@ -398,8 +576,15 @@ func (c *Cache[K, V]) Flush() {
 	}
 	c.mu.Lock()
 	c.epoch++
+	if c.onRemove != nil {
+		for el := c.ll.Front(); el != nil; el = el.Next() {
+			ent := el.Value.(*lruEntry[K, V])
+			c.onRemove(ent.key, ent.value)
+		}
+	}
 	c.ll.Init()
 	c.items = make(map[K]*list.Element, initialMapHint(c.cap))
+	c.weight = 0
 	c.mu.Unlock()
 }
 
@@ -412,6 +597,19 @@ func (c *Cache[K, V]) Len() int {
 	n := c.ll.Len()
 	c.mu.Unlock()
 	return n
+}
+
+// Weight returns the current aggregate configured weight. It is intended for
+// bounded observability and tests; callers must not use it as a correctness
+// input because Weight is deliberately an approximation chosen by each cache.
+func (c *Cache[K, V]) Weight() int64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	weight := c.weight
+	c.mu.Unlock()
+	return weight
 }
 
 func (c *Cache[K, V]) cacheEpoch() uint64 {
@@ -438,9 +636,34 @@ func (c *Cache[K, V]) evictOldest() {
 	}
 }
 
+func (c *Cache[K, V]) evictOverflow() {
+	for c.ll.Len() > c.cap || (c.maxWeight > 0 && c.weight > c.maxWeight) {
+		if c.ll.Back() == nil {
+			return
+		}
+		c.evictOldest()
+	}
+}
+
 func (c *Cache[K, V]) removeElement(el *list.Element) {
+	ent := el.Value.(*lruEntry[K, V])
+	if c.onRemove != nil {
+		c.onRemove(ent.key, ent.value)
+	}
+	c.weight -= ent.weight
 	c.ll.Remove(el)
-	delete(c.items, el.Value.(*lruEntry[K, V]).key)
+	delete(c.items, ent.key)
+}
+
+func (c *Cache[K, V]) valueWeight(v V) int64 {
+	if c.maxWeight <= 0 || c.weigh == nil {
+		return 1
+	}
+	weight := c.weigh(v)
+	if weight <= 0 {
+		return 1
+	}
+	return weight
 }
 
 func (c *Cache[K, V]) cloneValue(v V) V {

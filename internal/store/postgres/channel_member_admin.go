@@ -36,6 +36,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		return domain.EditChannelAdminResult{}, domain.ErrChannelAdminRequired
 	}
 	previous, err := s.getChannelMember(ctx, tx, req.ChannelID, req.MemberID)
+	membershipActivated := err != nil && errors.Is(err, domain.ErrChannelPrivate)
 	if err != nil {
 		if !errors.Is(err, domain.ErrChannelPrivate) {
 			return domain.EditChannelAdminResult{}, err
@@ -51,6 +52,9 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
+	}
+	if previous.Status != domain.ChannelMemberActive {
+		membershipActivated = true
 	}
 	if previous.Role == domain.ChannelRoleCreator {
 		if req.MemberID != req.UserID || channel.CreatorUserID != req.UserID || actor.Role != domain.ChannelRoleCreator {
@@ -100,6 +104,7 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 		member.Rank = req.Rank
 	}
 	if previous.Status != domain.ChannelMemberActive {
+		member.JoinedAt = req.Date
 		if minPts := channelInitialAvailableMinPts(channel); minPts > member.AvailableMinPts {
 			member.AvailableMinPts = minPts
 		}
@@ -136,6 +141,11 @@ func (s *ChannelStore) EditChannelAdmin(ctx context.Context, req domain.EditChan
 	msg, _ := s.getChannelMessage(ctx, tx, req.ChannelID, channel.TopMessageID)
 	if err := upsertChannelDialogTx(ctx, tx, member.UserID, channel, msg, member.ReadInboxMaxID, member.ReadOutboxMaxID); err != nil {
 		return domain.EditChannelAdminResult{}, err
+	}
+	if membershipActivated {
+		if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, []domain.ChannelMember{member}); err != nil {
+			return domain.EditChannelAdminResult{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.EditChannelAdminResult{}, fmt.Errorf("commit edit channel admin: %w", err)
@@ -446,6 +456,11 @@ func (s *ChannelStore) EditChannelBanned(ctx context.Context, req domain.EditCha
 	}
 	if member.Status == domain.ChannelMemberKicked && previous.Status == domain.ChannelMemberActive {
 		if err := clearChannelMentionsForUserTx(ctx, tx, req.ChannelID, req.Participant.ID); err != nil {
+			return domain.EditChannelBannedResult{}, err
+		}
+	}
+	if previous.Status == domain.ChannelMemberActive && member.Status != domain.ChannelMemberActive {
+		if err := deleteWelcomeMessageDeliveriesTx(ctx, tx, req.ChannelID, []int64{req.Participant.ID}); err != nil {
 			return domain.EditChannelBannedResult{}, err
 		}
 	}

@@ -335,10 +335,11 @@ func (s *channelFanoutShard) signalEligibleOverflow() {
 }
 
 // channelFanoutPrefetch 在 worker 解析出最终 recipient 集合后、逐 viewer build 之前调用一次，
-// 用于跨全部 recipient 一次性预热每 viewer 的用户投影（fan-out 模板化，O(owner)）。可选：为 nil
-// 时 build 仍逐 viewer 解析（行为不变）。在 worker goroutine 内串行执行，与 build 共享同一
-// viewerPeerCache，无跨 goroutine 竞态。
-type channelFanoutPrefetch func(ctx context.Context, viewers []int64)
+// 用于跨全部 recipient 一次性预热每 viewer 的用户投影（fan-out 模板化，O(owner)）。为 nil
+// 表示该 payload 不含需要预热的 user envelope。在 worker goroutine 内串行执行，与 build 共享同一
+// viewerPeerCache，无跨 goroutine 竞态。返回 false 表示批量预热失败；worker 必须 fail-closed，
+// 不能静默退回逐 viewer 投影。
+type channelFanoutPrefetch func(ctx context.Context, viewers []int64) bool
 
 // channelFanoutDispatcher 把频道 payload fan-out 移出发送者 RPC，按 channelID 分片串行处理。
 type channelFanoutDispatcher struct {
@@ -881,13 +882,22 @@ func (r *Router) runChannelFanoutJob(ctx context.Context, job channelFanoutJob) 
 	recipients := r.channelFanoutRecipients(ctx, job.scope, job.channelID, job.recipients)
 	// 预热跨 viewer 用户投影（fan-out 模板化）：在逐 viewer build 之前一次性算好每 recipient 的
 	// 投影并预热共享 cache，使 build 只命中缓存、不再 O(viewer) 逐个 ForViewer。覆盖 recipients +
-	// 兜底 origin（无在线 recipient 时 build 会回退给 origin）。失败/未实现时静默退化为逐 viewer。
+	// 兜底 origin（无在线 recipient 时 build 会回退给 origin）。失败时禁止构造真实 payload，
+	// 改发 viewer-independent too-long nudge，让客户端从 durable difference 恢复。
 	if job.prefetch != nil {
 		viewers := recipients
 		if job.originUserID != 0 {
 			viewers = append(append(make([]int64, 0, len(recipients)+1), recipients...), job.originUserID)
 		}
-		job.prefetch(ctx, viewers)
+		if !job.prefetch(ctx, viewers) {
+			r.log.Warn("channel fanout prefetch failed; replacing online payload with recovery nudge",
+				zap.Int64("channel_id", job.channelID),
+				zap.Int("pts", job.pts),
+				zap.Int("viewers", len(viewers)),
+			)
+			r.recoverFailedChannelFanoutPrefetch(pushCtx, job, recipients)
+			return
+		}
 	}
 	seen := make(map[int64]struct{}, len(recipients))
 	pushed := false
@@ -923,27 +933,82 @@ func (r *Router) runChannelFanoutJob(ctx context.Context, job channelFanoutJob) 
 	}
 }
 
+func (r *Router) recoverFailedChannelFanoutPrefetch(ctx context.Context, job channelFanoutJob, recipients []int64) {
+	if job.channelID == 0 || job.pts <= 0 {
+		return
+	}
+	targets := append([]int64(nil), recipients...)
+	if job.originUserID != 0 {
+		targets = append(targets, job.originUserID)
+	}
+	targets = uniquePeerIDs(targets)
+	delivered := make(map[int64]struct{}, len(targets))
+	date := int(r.clock.Now().Unix())
+	tooLong := &tg.UpdateChannelTooLong{ChannelID: job.channelID}
+	tooLong.SetPts(job.pts)
+	updates := &tg.Updates{
+		Updates: []tg.UpdateClass{tooLong},
+		Users:   []tg.UserClass{},
+		Chats:   []tg.ChatClass{},
+		Date:    date,
+	}
+	for _, userID := range targets {
+		if userID == 0 {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		r.pushUserUpdates(ctx, userID, updates)
+		delivered[userID] = struct{}{}
+	}
+	// Explicit monoforum/suggested-post recipients are the full authorized
+	// audience. Member/message-box scopes may have additional online viewers
+	// beyond the full-payload cap, so nudge that recovery audience too.
+	switch job.scope {
+	case channelFanoutMembers:
+		r.nudgeBeyondCapChannelMembers(ctx, job.channelID, job.pts, delivered)
+	case channelFanoutMessageBox:
+		r.nudgeBeyondCapChannelMessageAudience(ctx, job.channelID, job.pts, delivered)
+	}
+}
+
 // prefetchChannelFanoutUsers 跨全部 recipient 一次性投影 owner 用户（fan-out 模板化，O(owner)），
 // 把结果按 viewer 预热进共享 cache；之后每 viewer 的 build 只命中缓存，不再逐 viewer ForViewer。
-// ownerIDs 由调用方从消息/事件 peer refs 收集。deps.Users 未实现 BatchViewerUsersResolver 或解析
-// 失败时静默跳过——build 回退逐 viewer 解析，行为不变，仅退化为旧的 O(viewer) 成本。
-func (r *Router) prefetchChannelFanoutUsers(ctx context.Context, cache *viewerPeerCache, viewers, ownerIDs []int64) {
-	if cache == nil || len(viewers) == 0 || len(ownerIDs) == 0 || r.deps.Users == nil {
-		return
+// ownerIDs 由调用方从消息/事件 peer refs 收集。deps.Users 必须实现 BatchViewerUsersResolver；
+// 缺能力、解析失败或 envelope 不完整时返回 false，由 worker fail-closed，禁止逐 viewer 回退。
+func (r *Router) prefetchChannelFanoutUsers(ctx context.Context, cache *viewerPeerCache, viewers, ownerIDs []int64) bool {
+	viewers = uniquePeerIDs(viewers)
+	ownerIDs = uniquePeerIDs(ownerIDs)
+	if len(viewers) == 0 || len(ownerIDs) == 0 {
+		return true
+	}
+	if cache == nil || r.deps.Users == nil {
+		return false
 	}
 	resolver, ok := r.deps.Users.(BatchViewerUsersResolver)
 	if !ok {
-		return
+		return false
 	}
 	byViewer, err := resolver.ByIDsForViewers(ctx, viewers, ownerIDs)
 	if err != nil {
-		r.log.Warn("channel fanout user prefetch failed; falling back to per-viewer projection",
+		r.log.Warn("channel fanout user prefetch failed",
 			zap.Int("viewers", len(viewers)), zap.Int("owners", len(ownerIDs)), zap.Error(err))
-		return
+		return false
 	}
-	for viewer, users := range byViewer {
-		cache.primeUsers(viewer, users)
+	for _, viewer := range viewers {
+		if missingID, missing := missingProjectedUserID(ownerIDs, byViewer[viewer]); missing {
+			r.log.Warn("channel fanout user prefetch returned an incomplete envelope",
+				zap.Int64("viewer_user_id", viewer),
+				zap.Int64("missing_user_id", missingID),
+				zap.Int("owners", len(ownerIDs)))
+			return false
+		}
+		cache.primeExpectedUsers(viewer, ownerIDs, byViewer[viewer])
 	}
+	return true
 }
 
 // channelMessageFanoutOwnerIDs 收集一条频道消息 fan-out 会下发到 Users 数组里的全部 owner 用户 id
@@ -998,9 +1063,12 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 	skip := skipDeliverySet(res.SkipDeliveryUserIDs)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
 		0,
-		func(bgCtx context.Context, viewers []int64) {
-			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		func(bgCtx context.Context, viewers []int64) bool {
+			if !r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs) {
+				return false
+			}
 			usernames = r.usernameRegistryMap(bgCtx, usernamePeers)
+			return true
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			// privacy bot 在 send 时被 SkipDeliveryUserIDs 排除（命令/@/回复以外的消息不可见）。
@@ -1021,13 +1089,19 @@ func (r *Router) enqueueChannelMessageFanout(ctx context.Context, originUserID i
 func (r *Router) enqueueMonoforumMessageFanout(ctx context.Context, originUserID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) {
 	fanoutCache := newViewerPeerCache(r)
 	ownerIDs := channelMessageFanoutOwnerIDs(res, []int64{savedPeer.ID})
+	projectionPeers := monoforumProjectionPeers(mono.ID, mono.LinkedMonoforumID, ownerIDs)
+	var overlays *monoforumPeerOverlays
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutExplicit, originUserID, mono.ID, res.Event.Pts, res.Recipients,
 		0,
-		func(bgCtx context.Context, viewers []int64) {
-			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		func(bgCtx context.Context, viewers []int64) bool {
+			if !r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs) {
+				return false
+			}
+			overlays = r.loadMonoforumPeerOverlays(bgCtx, projectionPeers)
+			return true
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
-			return r.monoforumDeliveryUpdates(bgCtx, viewerUserID, mono, savedPeer, res)
+			return r.monoforumDeliveryUpdatesWithPeerCacheAndOverlays(bgCtx, viewerUserID, mono, savedPeer, res, fanoutCache, overlays)
 		})
 }
 
@@ -1099,9 +1173,12 @@ func (r *Router) enqueueChannelEditMessageFanout(ctx context.Context, originUser
 	nudgePts := max(res.Event.Pts, res.ServiceEvent.Pts)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, nudgePts, res.Recipients,
 		0,
-		func(bgCtx context.Context, viewers []int64) {
-			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		func(bgCtx context.Context, viewers []int64) bool {
+			if !r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs) {
+				return false
+			}
 			usernames = r.usernameRegistryMap(bgCtx, usernamePeers)
+			return true
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelEditMessageUpdatesWithPeerCacheAndUsernames(bgCtx, viewerUserID, res, fanoutCache, usernames)
@@ -1119,9 +1196,12 @@ func (r *Router) enqueueChannelMessagesFanout(ctx context.Context, originUserID,
 	var usernames map[domain.Peer][]domain.Username
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, channelID, pts, recipients,
 		int64(len(results))*(64<<10),
-		func(bgCtx context.Context, viewers []int64) {
-			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		func(bgCtx context.Context, viewers []int64) bool {
+			if !r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs) {
+				return false
+			}
 			usernames = r.usernameRegistryMap(bgCtx, usernamePeers)
+			return true
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelMessagesUpdatesWithPeerCacheAndUsernames(bgCtx, viewerUserID, results, nil, false, extraUserIDs, fanoutCache, usernames)

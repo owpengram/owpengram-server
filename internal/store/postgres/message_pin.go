@@ -53,6 +53,9 @@ func (s *MessageStore) PinPrivateMessage(ctx context.Context, req domain.PinPriv
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock pin users: %w", err)
 	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.OwnerUserID, req.Peer.ID}); err != nil {
+		return res, fmt.Errorf("lock pin dispatch append fences: %w", err)
+	}
 	owned, err := qtx.GetMessageBoxForPin(ctx, sqlcgen.GetMessageBoxForPinParams{
 		OwnerUserID: req.OwnerUserID,
 		PeerType:    string(req.Peer.Type),
@@ -195,6 +198,9 @@ func (s *MessageStore) UnpinAllPrivateMessages(ctx context.Context, req domain.U
 
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock unpin users: %w", err)
+	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.OwnerUserID, req.Peer.ID}); err != nil {
+		return res, fmt.Errorf("lock unpin dispatch append fences: %w", err)
 	}
 	ownRows, err := qtx.UnpinAllMessageBoxesByPeer(ctx, sqlcgen.UnpinAllMessageBoxesByPeerParams{
 		OwnerUserID: req.OwnerUserID,

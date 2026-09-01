@@ -47,6 +47,9 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	if err := lockUsersForUpdate(ctx, tx, req.OwnerUserID, req.Peer.ID); err != nil {
 		return res, fmt.Errorf("lock edit message users: %w", err)
 	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.OwnerUserID, req.Peer.ID}); err != nil {
+		return res, fmt.Errorf("lock edit message dispatch append fences: %w", err)
+	}
 
 	target, err := qtx.GetMessageBoxForEdit(ctx, sqlcgen.GetMessageBoxForEditParams{
 		OwnerUserID: req.OwnerUserID,

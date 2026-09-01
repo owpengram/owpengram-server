@@ -26,9 +26,9 @@ func TestAccountFreezeNotificationPushesCurrentViewerProjection(t *testing.T) {
 		RestrictionReasons: domain.AccountFrozenRestrictionReasons(),
 	}}
 	r := New(Config{}, Deps{
-		AccountFreeze: freezeSvc,
-		Users:         users,
-		Sessions:      sessions,
+		AccountFreezeNotifications: freezeSvc,
+		Users:                      users,
+		Sessions:                   sessions,
 	}, zaptest.NewLogger(t), clock.System)
 
 	r.dispatchAccountFreezeNotification(context.Background(), freezeSvc, domain.AccountFreezeNotification{
@@ -67,9 +67,9 @@ func TestAccountFreezeNotificationLoadsCurrentStateAndRetriesLoadFailure(t *test
 	freezeSvc := &freezeWorkerService{}
 	users := &freezeWorkerUsers{err: errors.New("projection unavailable")}
 	r := New(Config{}, Deps{
-		AccountFreeze: freezeSvc,
-		Users:         users,
-		Sessions:      sessions,
+		AccountFreezeNotifications: freezeSvc,
+		Users:                      users,
+		Sessions:                   sessions,
 	}, zaptest.NewLogger(t), clock.System)
 	notification := domain.AccountFreezeNotification{
 		ID: 8, TargetUserID: viewerID, FrozenUserID: frozenID, Version: 5, Frozen: true,

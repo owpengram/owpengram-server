@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
@@ -19,6 +21,20 @@ import (
 type UserStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
+}
+
+const officialUsernameClaimAttempts = 3
+
+var errOfficialUsernameClaimRetry = errors.New("official username claim changed concurrently")
+
+// OfficialUsernameClaimResult reports the authoritative 777000 username
+// reconciliation performed during startup. DisplacedUserID is set only when an
+// ordinary account's editable username was cleared; bots, other built-in users,
+// channels and collectible names are never silently seized.
+type OfficialUsernameClaimResult struct {
+	Official        domain.User
+	DisplacedUserID int64
+	Changed         bool
 }
 
 // NewUserStore 基于 pgx 连接池（或事务）创建 UserStore。
@@ -288,6 +304,202 @@ func (s *UserStore) UpdateUsername(ctx context.Context, userID int64, username s
 	return userFromModel(row), nil
 }
 
+// ClaimOfficialUsername makes the configured product username authoritative
+// for the official 777000 account. If an ordinary user currently owns that
+// editable username, the user's slot is cleared and 777000 claims it in the same
+// transaction. The method deliberately refuses to seize bots, other system
+// users, channels, collectible assets or non-editable registry rows.
+func (s *UserStore) ClaimOfficialUsername(ctx context.Context, username string) (OfficialUsernameClaimResult, error) {
+	username = strings.TrimSpace(strings.TrimPrefix(username, "@"))
+	usernameLower := strings.ToLower(username)
+	if usernameLower == "" {
+		return OfficialUsernameClaimResult{}, domain.ErrUsernameInvalid
+	}
+	var lastErr error
+	for attempt := 0; attempt < officialUsernameClaimAttempts; attempt++ {
+		result, err := s.claimOfficialUsernameOnce(ctx, username, usernameLower)
+		if err == nil {
+			return result, nil
+		}
+		if ctx.Err() != nil || (!errors.Is(err, errOfficialUsernameClaimRetry) && !isRetryablePostgresTxError(err)) {
+			return OfficialUsernameClaimResult{}, err
+		}
+		lastErr = err
+	}
+	return OfficialUsernameClaimResult{}, lastErr
+}
+
+func (s *UserStore) claimOfficialUsernameOnce(ctx context.Context, username, usernameLower string) (OfficialUsernameClaimResult, error) {
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return OfficialUsernameClaimResult{}, fmt.Errorf("claim official username: db does not support transactions")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return OfficialUsernameClaimResult{}, fmt.Errorf("begin official username claim: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Discover the user rows that can participate, then lock them in numeric
+	// order. Ordinary UpdateUsername locks its user before the registry row; this
+	// order avoids reversing that dependency during a rolling restart.
+	lockIDs := map[int64]struct{}{domain.OfficialSystemUserID: {}}
+	if holderID, found, err := usernameScalarHolder(ctx, tx, usernameLower); err != nil {
+		return OfficialUsernameClaimResult{}, err
+	} else if found {
+		lockIDs[holderID] = struct{}{}
+	}
+	if owner, found, err := getPeerUsernameOwner(ctx, tx, usernameLower, false); err != nil {
+		return OfficialUsernameClaimResult{}, err
+	} else if found && owner.peerType == peerUsernameTypeUser {
+		lockIDs[owner.peerID] = struct{}{}
+	}
+	ids := make([]int64, 0, len(lockIDs))
+	for id := range lockIDs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	type lockedUser struct {
+		bot bool
+	}
+	locked := make(map[int64]lockedUser, len(ids))
+	rows, err := tx.Query(ctx, `
+SELECT id, is_bot
+FROM users
+WHERE id = ANY($1::bigint[]) AND deleted_at IS NULL
+ORDER BY id
+FOR UPDATE`, ids)
+	if err != nil {
+		return OfficialUsernameClaimResult{}, fmt.Errorf("lock users for official username claim: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var item lockedUser
+		if err := rows.Scan(&id, &item.bot); err != nil {
+			rows.Close()
+			return OfficialUsernameClaimResult{}, fmt.Errorf("scan user for official username claim: %w", err)
+		}
+		locked[id] = item
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return OfficialUsernameClaimResult{}, fmt.Errorf("iterate users for official username claim: %w", err)
+	}
+	rows.Close()
+	if _, found := locked[domain.OfficialSystemUserID]; !found {
+		return OfficialUsernameClaimResult{}, domain.ErrUserNotFound
+	}
+
+	// Re-read both ownership facts after the row locks. A newly observed user was
+	// not locked in the stable order above, so retry the whole transaction.
+	owner, ownerFound, err := getPeerUsernameOwner(ctx, tx, usernameLower, true)
+	if err != nil {
+		return OfficialUsernameClaimResult{}, err
+	}
+	holderID, holderFound, err := usernameScalarHolder(ctx, tx, usernameLower)
+	if err != nil {
+		return OfficialUsernameClaimResult{}, err
+	}
+	if holderFound {
+		if _, found := locked[holderID]; !found {
+			return OfficialUsernameClaimResult{}, errOfficialUsernameClaimRetry
+		}
+	}
+	if ownerFound && owner.peerType == peerUsernameTypeUser {
+		if _, found := locked[owner.peerID]; !found {
+			return OfficialUsernameClaimResult{}, errOfficialUsernameClaimRetry
+		}
+	}
+
+	ordinaryUser := func(userID int64) bool {
+		item, found := locked[userID]
+		return found && !item.bot && !domain.IsSystemUserID(userID)
+	}
+	if holderFound && holderID != domain.OfficialSystemUserID && !ordinaryUser(holderID) {
+		return OfficialUsernameClaimResult{}, domain.ErrUsernameOccupied
+	}
+	if ownerFound {
+		allowedOfficialSlot := owner.matches(peerUsernameTypeUser, domain.OfficialSystemUserID) && owner.editable && !owner.collectible
+		allowedOrdinarySlot := owner.peerType == peerUsernameTypeUser && owner.editable && !owner.collectible && ordinaryUser(owner.peerID)
+		if !allowedOfficialSlot && !allowedOrdinarySlot {
+			return OfficialUsernameClaimResult{}, domain.ErrUsernameOccupied
+		}
+	}
+
+	qtx := s.q.WithTx(tx)
+	officialRow, err := qtx.GetUserByID(ctx, domain.OfficialSystemUserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OfficialUsernameClaimResult{}, domain.ErrUserNotFound
+		}
+		return OfficialUsernameClaimResult{}, fmt.Errorf("get official user during username claim: %w", err)
+	}
+	if holderFound && holderID == domain.OfficialSystemUserID && ownerFound && owner.matches(peerUsernameTypeUser, domain.OfficialSystemUserID) &&
+		owner.editable && !owner.collectible && officialRow.Username == username {
+		return OfficialUsernameClaimResult{Official: userFromModel(officialRow)}, nil
+	}
+
+	result := OfficialUsernameClaimResult{Changed: true}
+	if holderFound && holderID != domain.OfficialSystemUserID {
+		if _, err := tx.Exec(ctx, `UPDATE users SET username = '', updated_at = now() WHERE id = $1`, holderID); err != nil {
+			return OfficialUsernameClaimResult{}, fmt.Errorf("clear displaced product username: %w", err)
+		}
+		result.DisplacedUserID = holderID
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM peer_usernames WHERE username_lower = $1`, usernameLower); err != nil {
+		return OfficialUsernameClaimResult{}, fmt.Errorf("release product username registry slot: %w", err)
+	}
+	if err := deletePeerUsernameTx(ctx, tx, peerUsernameTypeUser, domain.OfficialSystemUserID); err != nil {
+		return OfficialUsernameClaimResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO peer_usernames (username_lower, peer_type, peer_id, username, active, editable, sort_order, collectible_id)
+VALUES ($1, 'user', $2, $3, true, true, 0, NULL)`, usernameLower, domain.OfficialSystemUserID, username); err != nil {
+		if isUniqueViolation(err) {
+			return OfficialUsernameClaimResult{}, errOfficialUsernameClaimRetry
+		}
+		return OfficialUsernameClaimResult{}, fmt.Errorf("claim official username registry slot: %w", err)
+	}
+	officialRow, err = qtx.UpdateUserUsername(ctx, sqlcgen.UpdateUserUsernameParams{
+		ID:       domain.OfficialSystemUserID,
+		Username: username,
+	})
+	if err != nil {
+		if isUniqueConstraint(err, "users_username_lower_unique_idx") {
+			return OfficialUsernameClaimResult{}, errOfficialUsernameClaimRetry
+		}
+		return OfficialUsernameClaimResult{}, fmt.Errorf("update official username: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return OfficialUsernameClaimResult{}, fmt.Errorf("commit official username claim: %w", err)
+	}
+	committed = true
+	result.Official = userFromModel(officialRow)
+	return result, nil
+}
+
+func usernameScalarHolder(ctx context.Context, db sqlcgen.DBTX, usernameLower string) (int64, bool, error) {
+	var userID int64
+	err := db.QueryRow(ctx, `
+SELECT id
+FROM users
+WHERE deleted_at IS NULL AND lower(username) = $1
+LIMIT 1`, usernameLower).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("get scalar username holder: %w", err)
+	}
+	return userID, true, nil
+}
+
 func (s *UserStore) UpdateLastSeen(ctx context.Context, userID int64, lastSeenAt int) error {
 	if lastSeenAt <= 0 {
 		return nil
@@ -297,6 +509,56 @@ func (s *UserStore) UpdateLastSeen(ctx context.Context, userID int64, lastSeenAt
 		LastSeenAt: int64(lastSeenAt),
 	}); err != nil {
 		return fmt.Errorf("update user last seen: %w", err)
+	}
+	return nil
+}
+
+// UpdateLastSeenBatch applies a set of monotonic presence watermarks with one
+// PostgreSQL round trip. Duplicate user IDs are collapsed to their maximum
+// timestamp before the query so UPDATE ... FROM never has an ambiguous source
+// row. Missing/deleted users are intentionally ignored, matching the ordinary
+// UpdateLastSeen WHERE boundary.
+func (s *UserStore) UpdateLastSeenBatch(ctx context.Context, updates []store.UserLastSeenUpdate) error {
+	latest := make(map[int64]int, len(updates))
+	for _, update := range updates {
+		if update.UserID == 0 || update.LastSeenAt <= 0 {
+			continue
+		}
+		if current := latest[update.UserID]; update.LastSeenAt > current {
+			latest[update.UserID] = update.LastSeenAt
+		}
+	}
+	if len(latest) == 0 {
+		return nil
+	}
+	userIDs := make([]int64, 0, len(latest))
+	for userID := range latest {
+		userIDs = append(userIDs, userID)
+	}
+	sort.Slice(userIDs, func(i, j int) bool { return userIDs[i] < userIDs[j] })
+	lastSeen := make([]int64, len(userIDs))
+	for index, userID := range userIDs {
+		lastSeen[index] = int64(latest[userID])
+	}
+	if _, err := s.db.Exec(ctx, `
+WITH incoming AS MATERIALIZED (
+  SELECT user_id, last_seen_at
+  FROM unnest($1::bigint[], $2::bigint[]) AS value(user_id, last_seen_at)
+), locked AS MATERIALIZED (
+  SELECT target.id, incoming.last_seen_at
+  FROM users AS target
+  JOIN incoming ON incoming.user_id = target.id
+  WHERE target.deleted_at IS NULL
+  ORDER BY target.id
+  FOR UPDATE OF target
+)
+UPDATE users AS target
+SET last_seen_at = GREATEST(target.last_seen_at, locked.last_seen_at),
+    updated_at = now()
+FROM locked
+WHERE target.id = locked.id
+`, userIDs, lastSeen); err != nil {
+		return fmt.Errorf("update user last seen batch: %w", err)
 	}
 	return nil
 }

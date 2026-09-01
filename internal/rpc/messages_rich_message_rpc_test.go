@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -19,6 +20,163 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
+
+func TestStoredRichMessageMissingLayerDecodesAsExact228(t *testing.T) {
+	legacyBlocks := []tg.PageBlockClass{&tg.PageBlockBlockquote{
+		Text:    &tg.TextPlain{Text: "legacy quote"},
+		Caption: &tg.TextEmpty{},
+	}}
+	var wire bin.Buffer
+	if err := tlprofile.EncodePageBlockVector(tlprofile.Profile228, legacyBlocks, &wire); err != nil {
+		t.Fatal(err)
+	}
+	raw := wire.Copy()
+	rich := &domain.MessageRichMessage{Blocks: raw}
+	got, err := tgRichMessage(rich)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rich.BlocksLayer != 0 || string(rich.Blocks) != string(raw) {
+		t.Fatal("legacy read mutated the persisted snapshot")
+	}
+	quote, ok := got.Blocks[0].(*tg.PageBlockBlockquote)
+	if !ok {
+		t.Fatalf("decoded block = %T", got.Blocks[0])
+	}
+	if quote.Collapsed {
+		t.Fatal("Layer 228 blockquote acquired Layer 229 collapsed state")
+	}
+	text, ok := quote.Text.(*tg.TextPlain)
+	if !ok || text.Text != "legacy quote" {
+		t.Fatalf("decoded quote text = %#v", quote.Text)
+	}
+}
+
+func TestNewRichMessageStoresExact229Profile(t *testing.T) {
+	r := &Router{}
+	rich, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessage{
+		Blocks: []tg.PageBlockClass{&tg.PageBlockBlockquote{
+			Collapsed: true,
+			Text:      &tg.TextPlain{Text: "current quote"},
+			Caption:   &tg.TextEmpty{},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rich.BlocksLayer != int(tlprofile.ProfileCanonical) {
+		t.Fatalf("stored blocks layer = %d, want canonical %d", rich.BlocksLayer, tlprofile.ProfileCanonical)
+	}
+	if got := binary.LittleEndian.Uint32(rich.Blocks[8:12]); got != 0x66d1670b {
+		t.Fatalf("stored blockquote constructor = %#08x, want Layer 229", got)
+	}
+}
+
+func TestLayer228SenderRichMessageProjectsToLayer229Receiver(t *testing.T) {
+	canonical := []tg.PageBlockClass{&tg.PageBlockBlockquote{
+		Text:    &tg.TextPlain{Text: "cross-layer quote"},
+		Caption: &tg.TextEmpty{},
+	}}
+	var senderWire bin.Buffer
+	if err := tlprofile.EncodePageBlockVector(tlprofile.Profile228, canonical, &senderWire); err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.LittleEndian.Uint32(senderWire.Raw()[8:12]); got != 0x263d7c26 {
+		t.Fatalf("Layer 228 sender constructor = %#08x", got)
+	}
+	decodedSender, err := tlprofile.DecodePageBlockVector(
+		tlprofile.Profile228,
+		&bin.Buffer{Buf: senderWire.Copy()},
+		tlprofile.Limits{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Router{}
+	stored, err := r.domainRichMessageFromInput(context.Background(), &tg.InputRichMessage{Blocks: decodedSender})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.BlocksLayer != int(tlprofile.ProfileCanonical) {
+		t.Fatalf("storage layer = %d, want canonical %d", stored.BlocksLayer, tlprofile.ProfileCanonical)
+	}
+	if got := binary.LittleEndian.Uint32(stored.Blocks[8:12]); got != 0x66d1670b {
+		t.Fatalf("storage constructor = %#08x, want Layer 229", got)
+	}
+
+	projected, err := tgRichMessage(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quote := projected.Blocks[0].(*tg.PageBlockBlockquote)
+	if quote.Collapsed {
+		t.Fatal("Layer 228 sender acquired collapsed=true")
+	}
+	var receiverWire bin.Buffer
+	if err := tlprofile.EncodePageBlockVector(tlprofile.Profile229, projected.Blocks, &receiverWire); err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.LittleEndian.Uint32(receiverWire.Raw()[8:12]); got != 0x66d1670b {
+		t.Fatalf("Layer 229 receiver constructor = %#08x", got)
+	}
+}
+
+func TestLayer228ReceiverSkipsLayer229OnlyRichBlocks(t *testing.T) {
+	message := &tg.Message{
+		ID:      42,
+		PeerID:  &tg.PeerUser{UserID: 1001},
+		Date:    1700000000,
+		Message: "base message",
+	}
+	message.SetRichMessage(tg.RichMessage{Blocks: []tg.PageBlockClass{
+		&tg.PageBlockParagraph{Text: &tg.TextPlain{Text: "compatible"}},
+		&tg.PageBlockButtonRow{},
+	}})
+
+	var wire bin.Buffer
+	if err := tlprofile.EncodeObject(tlprofile.Profile228, message, &wire); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := tlprofile.DecodeObject(tlprofile.Profile228, &bin.Buffer{Buf: wire.Copy()}, tlprofile.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projected, ok := decoded.(*tg.Message)
+	if !ok {
+		t.Fatalf("decoded message = %T", decoded)
+	}
+	if projected.Message != "base message" {
+		t.Fatalf("base message = %q", projected.Message)
+	}
+	rich, present := projected.GetRichMessage()
+	if !present {
+		t.Fatal("compatible rich_message was dropped")
+	}
+	if len(rich.Blocks) != 1 {
+		t.Fatalf("Layer 228 rich blocks = %d, want one compatible block", len(rich.Blocks))
+	}
+	if _, ok := rich.Blocks[0].(*tg.PageBlockParagraph); !ok {
+		t.Fatalf("remaining block = %T", rich.Blocks[0])
+	}
+}
+
+func TestInvalidStoredRichMessageDoesNotPanicBaseProjection(t *testing.T) {
+	projected, ok := tgMessage(domain.Message{
+		ID:   42,
+		Peer: domain.Peer{Type: domain.PeerTypeUser, ID: 1001},
+		RichMessage: &domain.MessageRichMessage{
+			BlocksLayer: 999,
+			Blocks:      []byte{1, 2, 3, 4},
+		},
+	}).(*tg.Message)
+	if !ok {
+		t.Fatal("base message projection was lost")
+	}
+	if _, present := projected.GetRichMessage(); present {
+		t.Fatal("invalid optional rich_message was projected")
+	}
+}
 
 // richTextBlocks 构造一组纯文本 IV 页面块，用于富文本往返断言。
 func richTextBlocks() []tg.PageBlockClass {

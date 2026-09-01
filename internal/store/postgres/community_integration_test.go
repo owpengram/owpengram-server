@@ -121,6 +121,33 @@ func TestCommunityStoreLifecycleIsAtomicInPostgres(t *testing.T) {
 	}, 0, 100); !errors.Is(err, domain.ErrCommunityAdminRequired) {
 		t.Fatalf("member Community banned list error = %v, want admin required", err)
 	}
+	welcomeContent := domain.WelcomeMessageContent{Message: "community welcome cleanup"}
+	welcomePeer := domain.Peer{Type: domain.PeerTypeChannel, ID: initial.Channel.ID}
+	welcomeFingerprint, err := domain.WelcomeCreateFingerprint(welcomePeer, owner.ID, 8_020_005, welcomeContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := NewWelcomeMessageStore(pool).CreateWelcomeMessage(ctx, domain.CreateWelcomeMessageRequest{
+		Peer: welcomePeer, CreatorUserID: owner.ID, Date: 1_800_200_004, RandomID: 8_020_005,
+		Content: welcomeContent, CreateFingerprint: welcomeFingerprint,
+	}); err != nil {
+		t.Fatalf("create community cleanup welcome: %v", err)
+	}
+	memberRow, err := channels.getChannelMember(ctx, pool, initial.Channel.ID, member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	welcomeTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := enqueueWelcomeMessageDeliveriesTx(ctx, welcomeTx, initial.Channel.ID, []domain.ChannelMember{memberRow}); err != nil {
+		_ = welcomeTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := welcomeTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 
 	ban, err := store.ToggleCommunityParticipantBanned(ctx, owner.ID, communityID, member.ID, false, 1_800_200_005)
 	if err != nil {
@@ -128,6 +155,10 @@ func TestCommunityStoreLifecycleIsAtomicInPostgres(t *testing.T) {
 	}
 	if !ban.Changed || len(ban.ChannelBans) != 1 || len(ban.RemovedLinks) != 1 {
 		t.Fatalf("ban result = %+v", ban)
+	}
+	var welcomeDeliveries int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM welcome_message_deliveries WHERE channel_id=$1 AND target_user_id=$2`, initial.Channel.ID, member.ID).Scan(&welcomeDeliveries); err != nil || welcomeDeliveries != 0 {
+		t.Fatalf("community ban welcome deliveries=%d err=%v", welcomeDeliveries, err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT linked_community_id FROM channels WHERE id=$1", owned.Channel.ID).Scan(&linkedID); err != nil || linkedID != 0 {
 		t.Fatalf("owned linked_community_id after ban = %d err=%v, want 0", linkedID, err)

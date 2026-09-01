@@ -54,11 +54,104 @@ WHERE auth_keys.body = EXCLUDED.body
 // 完成，GC 的 cutoff/final predicate 会看到新水位并跳过。这样连接不会在“读到旧 key、尚未
 // 注册进 SessionManager”的窗口被后台清理。
 func (s *AuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
+	data, err := scanAuthKeyData(s.db.QueryRow(ctx, `
+UPDATE auth_keys
+SET last_used_at = now()
+WHERE auth_key_id = $1
+RETURNING auth_key_id, body, server_salt, created_at,
+       expires_at, layer, layer_observation_id,
+       device_model, platform, system_version, api_id, app_version
+`, authKeyIDToInt64(id)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.AuthKeyData{}, false, nil
+		}
+		return store.AuthKeyData{}, false, fmt.Errorf("get auth key: %w", err)
+	}
+	if data.ID != id {
+		return store.AuthKeyData{}, false, fmt.Errorf("get auth key returned id %x, want %x", data.ID, id)
+	}
+	return data, true, nil
+}
+
+// Revalidate reads the immutable key/protocol tuple after an activation claim
+// is visible. It deliberately does not touch last_used_at: the physical
+// connection's initial Get already established the orphan lease and the claim
+// is now the local delete/revoke serialization boundary.
+func (s *AuthKeyStore) Revalidate(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
+	data, err := scanAuthKeyData(s.db.QueryRow(ctx, `
+SELECT auth_key_id, body, server_salt, created_at,
+       expires_at, layer, layer_observation_id,
+       device_model, platform, system_version, api_id, app_version
+FROM auth_keys
+WHERE auth_key_id = $1
+`, authKeyIDToInt64(id)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.AuthKeyData{}, false, nil
+		}
+		return store.AuthKeyData{}, false, fmt.Errorf("revalidate auth key: %w", err)
+	}
+	if data.ID != id {
+		return store.AuthKeyData{}, false, fmt.Errorf("revalidate auth key returned id %x, want %x", data.ID, id)
+	}
+	return data, true, nil
+}
+
+// LoadBindingKeys touches and returns both cryptographic proof keys in one
+// statement. Missing rows remain explicit in the result so the application can
+// preserve its temp-rotation versus invalid-encrypted-proof error split.
+func (s *AuthKeyStore) LoadBindingKeys(ctx context.Context, tempID, permID [8]byte) (store.AuthKeyBindingKeys, error) {
+	rows, err := s.db.Query(ctx, `
+UPDATE auth_keys
+SET last_used_at = now()
+WHERE auth_key_id = ANY($1::bigint[])
+RETURNING auth_key_id, body, server_salt, created_at,
+       expires_at, layer, layer_observation_id,
+       device_model, platform, system_version, api_id, app_version
+`, []int64{authKeyIDToInt64(tempID), authKeyIDToInt64(permID)})
+	if err != nil {
+		return store.AuthKeyBindingKeys{}, fmt.Errorf("load auth key binding pair: %w", err)
+	}
+	defer rows.Close()
+	var result store.AuthKeyBindingKeys
+	for rows.Next() {
+		data, scanErr := scanAuthKeyData(rows)
+		if scanErr != nil {
+			return store.AuthKeyBindingKeys{}, fmt.Errorf("scan auth key binding pair: %w", scanErr)
+		}
+		switch data.ID {
+		case tempID:
+			result.Temporary = data
+			result.TemporaryFound = true
+		case permID:
+			result.Permanent = data
+			result.PermanentFound = true
+		default:
+			return store.AuthKeyBindingKeys{}, fmt.Errorf("load auth key binding pair returned unexpected id %x", data.ID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return store.AuthKeyBindingKeys{}, fmt.Errorf("iterate auth key binding pair: %w", err)
+	}
+	if tempID == permID && result.TemporaryFound {
+		result.Permanent = result.Temporary
+		result.PermanentFound = true
+	}
+	return result, nil
+}
+
+type authKeyDataScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAuthKeyData(row authKeyDataScanner) (store.AuthKeyData, error) {
 	var (
+		storedID           int64
 		body               []byte
 		serverSalt         int64
-		expiresAt          int
 		createdAt          pgtype.Timestamptz
+		expiresAt          int
 		layer              int
 		layerObservationID int64
 		deviceModel        string
@@ -67,25 +160,18 @@ func (s *AuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, 
 		apiID              int
 		appVersion         string
 	)
-	err := s.db.QueryRow(ctx, `
-UPDATE auth_keys
-SET last_used_at = now()
-WHERE auth_key_id = $1
-RETURNING auth_key_id, body, server_salt, created_at,
-       expires_at, layer, layer_observation_id,
-       device_model, platform, system_version, api_id, app_version
-`, authKeyIDToInt64(id)).Scan(new(int64), &body, &serverSalt, &createdAt, &expiresAt, &layer, &layerObservationID, &deviceModel, &platform, &systemVersion, &apiID, &appVersion)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return store.AuthKeyData{}, false, nil
-		}
-		return store.AuthKeyData{}, false, fmt.Errorf("get auth key: %w", err)
+	if err := row.Scan(
+		&storedID, &body, &serverSalt, &createdAt,
+		&expiresAt, &layer, &layerObservationID,
+		&deviceModel, &platform, &systemVersion, &apiID, &appVersion,
+	); err != nil {
+		return store.AuthKeyData{}, err
 	}
 	if len(body) != len(store.AuthKeyData{}.Value) {
-		return store.AuthKeyData{}, false, fmt.Errorf("auth key body length = %d, want 256", len(body))
+		return store.AuthKeyData{}, fmt.Errorf("auth key body length = %d, want 256", len(body))
 	}
 	data := store.AuthKeyData{
-		ID:                 id,
+		ID:                 authKeyIDFromInt64(storedID),
 		ServerSalt:         serverSalt,
 		ExpiresAt:          expiresAt,
 		Layer:              layer,
@@ -100,7 +186,7 @@ RETURNING auth_key_id, body, server_salt, created_at,
 	if createdAt.Valid {
 		data.CreatedAt = createdAt.Time.Unix()
 	}
-	return data, true, nil
+	return data, nil
 }
 
 const activeAuthKeyHeartbeatBatch = 4096

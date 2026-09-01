@@ -130,13 +130,10 @@ func (s *BotStore) DeleteBotAccount(ctx context.Context, botUserID int64) (domai
 	}
 
 	now := time.Now().UTC()
-	if err := enqueueAccountDeletionNotifications(ctx, tx, botUserID); err != nil {
-		return domain.User{}, err
-	}
 	if _, err := revokeByUserExceptTx(ctx, tx, botUserID, 0); err != nil {
 		return domain.User{}, fmt.Errorf("delete bot account: revoke sessions: %w", err)
 	}
-	if err := purgeDeletedAccountPrivateState(ctx, tx, botUserID, now); err != nil {
+	if err := purgeDeletedBotPrivateState(ctx, tx, botUserID, now); err != nil {
 		return domain.User{}, err
 	}
 	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, botUserID, "", ""); err != nil {

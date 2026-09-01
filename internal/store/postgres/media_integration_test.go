@@ -29,20 +29,16 @@ func TestMediaStoreRoundTrip(t *testing.T) {
 		cleanupMediaStoreRoundTripRows(t, context.Background(), pool)
 	})
 
-	// ---- file blob（nil sha256 应被归一为空，不报 NOT NULL）----
-	if err := s.PutFileBlob(ctx, domain.FileBlob{
-		LocationKey: "doc:9100000000000000001",
-		ObjectKey:   "ab/cd/abcdef",
-		Size:        1234,
-		MimeType:    "application/x-tgsticker",
-	}); err != nil {
-		t.Fatalf("put file blob (nil sha256): %v", err)
+	// ---- file blob（backend/key/hash/size 是同一份合法永久对象事实）----
+	wantBlob := postgresTestBlob("doc:9100000000000000001", "media-round-trip", 1234, "application/x-tgsticker")
+	if err := s.PutFileBlob(ctx, wantBlob); err != nil {
+		t.Fatalf("put file blob: %v", err)
 	}
 	blob, ok, err := s.GetFileBlob(ctx, "doc:9100000000000000001")
 	if err != nil || !ok {
 		t.Fatalf("get file blob: ok=%v err=%v", ok, err)
 	}
-	if blob.ObjectKey != "ab/cd/abcdef" || blob.Size != 1234 || blob.Backend != domain.MediaBackendLocalFS {
+	if blob.ObjectKey != wantBlob.ObjectKey || blob.Size != 1234 || blob.Backend != domain.MediaBackendLocalFS || !bytes.Equal(blob.SHA256, wantBlob.SHA256) {
 		t.Fatalf("file blob mismatch: %+v", blob)
 	}
 

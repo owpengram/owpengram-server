@@ -13,11 +13,110 @@ import (
 
 var (
 	_ mtprotoedge.Metrics                 = (*Registry)(nil)
+	_ mtprotoedge.RPCDatabaseMetrics      = (*Registry)(nil)
 	_ mtprotoedge.RPCResultMetrics        = (*Registry)(nil)
 	_ mtprotoedge.LogicalOutboxMetrics    = (*Registry)(nil)
 	_ mtprotoedge.ConnectionIntakeMetrics = (*Registry)(nil)
 	_ rpc.Metrics                         = (*Registry)(nil)
 )
+
+func TestRegistryExportsRPCDatabaseWork(t *testing.T) {
+	registry := New()
+	registry.RPCDatabase("messages.getDialogs", 17, 25*time.Millisecond, 0)
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`telesrv_rpc_db_queries_total{method="messages.getDialogs"} 17`,
+		`telesrv_rpc_db_time_seconds_sum{method="messages.getDialogs"} 0.025`,
+		`telesrv_rpc_db_time_seconds_count{method="messages.getDialogs"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q from:\n%s", want, body)
+		}
+	}
+}
+
+func TestRegistryExportsPresenceLastSeenBatchWork(t *testing.T) {
+	registry := New()
+	registry.PresenceLastSeenBatch(37, 25*time.Millisecond, nil)
+	registry.PresenceLastSeenBatch(12, 50*time.Millisecond, errors.New("temporary"))
+	registry.PresenceLastSeenSubmitted()
+	registry.PresenceLastSeenSubmitted()
+	registry.PresenceLastSeenPending(9)
+	registry.PresenceLastSeenPending(-4)
+	registry.PresenceLastSeenOverflow()
+	registry.PresenceLastSeenDrainDropped(3)
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`telesrv_presence_last_seen_batches_total{outcome="ok"} 1`,
+		`telesrv_presence_last_seen_batches_total{outcome="error"} 1`,
+		`telesrv_presence_last_seen_updates_total{outcome="ok"} 37`,
+		`telesrv_presence_last_seen_updates_total{outcome="error"} 12`,
+		`telesrv_presence_last_seen_submitted_total 2`,
+		`telesrv_presence_last_seen_pending 5`,
+		`telesrv_presence_last_seen_overflow_total 1`,
+		`telesrv_presence_last_seen_drain_dropped_total 3`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q from:\n%s", want, body)
+		}
+	}
+}
+
+func TestRegistryExportsBootstrapReadyBatchWork(t *testing.T) {
+	registry := New()
+	registry.BootstrapReadyPending(7)
+	registry.BootstrapReadyBatch(7, 2, 25*time.Millisecond, nil)
+	registry.BootstrapReadyPending(-7)
+	registry.BootstrapReadyBatch(3, 0, 50*time.Millisecond, errors.New("temporary"))
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`telesrv_bootstrap_ready_batches_total{outcome="ok"} 1`,
+		`telesrv_bootstrap_ready_batches_total{outcome="error"} 1`,
+		`telesrv_bootstrap_ready_selectors_total{outcome="matched"} 2`,
+		`telesrv_bootstrap_ready_selectors_total{outcome="miss"} 5`,
+		`telesrv_bootstrap_ready_selectors_total{outcome="error"} 3`,
+		`telesrv_bootstrap_ready_pending 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q from:\n%s", want, body)
+		}
+	}
+}
+
+func TestRegistryExportsActiveChannelIDsReadModelWork(t *testing.T) {
+	registry := New()
+	registry.ActiveChannelIDsCache("hit")
+	registry.ActiveChannelIDsCache("miss")
+	registry.ActiveChannelIDsCache("served")
+	registry.ActiveChannelIDsPending(7)
+	registry.ActiveChannelIDsBatch(7, 19, 25*time.Millisecond, nil)
+	registry.ActiveChannelIDsPending(-7)
+	registry.ActiveChannelIDsBatch(3, 0, 50*time.Millisecond, errors.New("temporary"))
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`telesrv_active_channel_ids_cache_total{outcome="hit"} 1`,
+		`telesrv_active_channel_ids_cache_total{outcome="miss"} 1`,
+		`telesrv_active_channel_ids_cache_total{outcome="served"} 1`,
+		`telesrv_active_channel_ids_batches_total{outcome="ok"} 1`,
+		`telesrv_active_channel_ids_batches_total{outcome="error"} 1`,
+		`telesrv_active_channel_ids_selectors_total{outcome="ok"} 7`,
+		`telesrv_active_channel_ids_selectors_total{outcome="error"} 3`,
+		`telesrv_active_channel_ids_rows_total 19`,
+		`telesrv_active_channel_ids_pending 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q from:\n%s", want, body)
+		}
+	}
+}
 
 func TestRegistryExportsBoundedAggregateMetrics(t *testing.T) {
 	registry := New()

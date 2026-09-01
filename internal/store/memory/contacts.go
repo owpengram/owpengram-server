@@ -91,6 +91,122 @@ func (s *ContactStore) GetReverseContacts(_ context.Context, userID int64, owner
 	return out, nil
 }
 
+func (s *ContactStore) ContactProjectionForViewers(_ context.Context, viewerUserIDs, contactUserIDs []int64) (domain.ContactProjectionBatch, error) {
+	out := domain.ContactProjectionBatch{
+		Contacts:       make(map[int64]map[int64]domain.Contact, len(viewerUserIDs)),
+		PersonalPhotos: make(map[int64]map[int64]domain.ProfilePhotoRef, len(viewerUserIDs)),
+	}
+	if len(viewerUserIDs) == 0 || len(contactUserIDs) == 0 {
+		return out, nil
+	}
+	viewers := make(map[int64]struct{}, len(viewerUserIDs))
+	for _, id := range viewerUserIDs {
+		if id != 0 {
+			viewers[id] = struct{}{}
+		}
+	}
+	targets := make(map[int64]struct{}, len(contactUserIDs))
+	for _, id := range contactUserIDs {
+		if id != 0 {
+			targets[id] = struct{}{}
+		}
+	}
+	if len(viewers) == 0 || len(targets) == 0 {
+		return out, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for viewerID := range viewers {
+		list := s.m[viewerID]
+		for _, contact := range list.Contacts {
+			targetID := contact.User.ID
+			if _, ok := targets[targetID]; !ok {
+				continue
+			}
+			if out.Contacts[viewerID] == nil {
+				out.Contacts[viewerID] = make(map[int64]domain.Contact, len(targets))
+			}
+			out.Contacts[viewerID][targetID] = domain.Contact{
+				User:         domain.User{ID: targetID},
+				FirstName:    contact.FirstName,
+				LastName:     contact.LastName,
+				Phone:        contact.Phone,
+				Note:         contact.Note,
+				NoteEntities: append([]domain.MessageEntity(nil), contact.NoteEntities...),
+				Mutual:       contact.Mutual || contact.User.Mutual,
+				CloseFriend:  contact.CloseFriend || contact.User.CloseFriend,
+			}
+			if contact.User.PhotoID == 0 {
+				continue
+			}
+			if out.PersonalPhotos[viewerID] == nil {
+				out.PersonalPhotos[viewerID] = make(map[int64]domain.ProfilePhotoRef, len(targets))
+			}
+			out.PersonalPhotos[viewerID][targetID] = cloneProfilePhotoRef(domain.ProfilePhotoRef{
+				PhotoID:  contact.User.PhotoID,
+				DCID:     contact.User.PhotoDCID,
+				Stripped: contact.User.PhotoStripped,
+				Personal: true,
+				HasVideo: contact.User.PhotoHasVideo,
+			})
+		}
+	}
+	return out, nil
+}
+
+func (s *ContactStore) ContactProjectionForViewerUserIDs(_ context.Context, contactUserIDsByViewer map[int64][]int64) (domain.ContactProjectionBatch, error) {
+	out := domain.ContactProjectionBatch{
+		Contacts:       make(map[int64]map[int64]domain.Contact, len(contactUserIDsByViewer)),
+		PersonalPhotos: make(map[int64]map[int64]domain.ProfilePhotoRef, len(contactUserIDsByViewer)),
+	}
+	if len(contactUserIDsByViewer) == 0 {
+		return out, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for viewerID, contactUserIDs := range contactUserIDsByViewer {
+		if viewerID == 0 || len(contactUserIDs) == 0 {
+			continue
+		}
+		want := make(map[int64]struct{}, len(contactUserIDs))
+		for _, id := range contactUserIDs {
+			if id != 0 {
+				want[id] = struct{}{}
+			}
+		}
+		for _, contact := range s.m[viewerID].Contacts {
+			targetID := contact.User.ID
+			if _, ok := want[targetID]; !ok {
+				continue
+			}
+			if out.Contacts[viewerID] == nil {
+				out.Contacts[viewerID] = make(map[int64]domain.Contact, len(want))
+			}
+			out.Contacts[viewerID][targetID] = domain.Contact{
+				User:         domain.User{ID: targetID},
+				FirstName:    contact.FirstName,
+				LastName:     contact.LastName,
+				Phone:        contact.Phone,
+				Note:         contact.Note,
+				NoteEntities: append([]domain.MessageEntity(nil), contact.NoteEntities...),
+				Mutual:       contact.Mutual || contact.User.Mutual,
+				CloseFriend:  contact.CloseFriend || contact.User.CloseFriend,
+			}
+			if contact.User.PhotoID == 0 {
+				continue
+			}
+			if out.PersonalPhotos[viewerID] == nil {
+				out.PersonalPhotos[viewerID] = make(map[int64]domain.ProfilePhotoRef, len(want))
+			}
+			out.PersonalPhotos[viewerID][targetID] = cloneProfilePhotoRef(domain.ProfilePhotoRef{
+				PhotoID: contact.User.PhotoID, DCID: contact.User.PhotoDCID,
+				Stripped: contact.User.PhotoStripped, Personal: true, HasVideo: contact.User.PhotoHasVideo,
+			})
+		}
+	}
+	return out, nil
+}
+
 func (s *ContactStore) Upsert(_ context.Context, userID int64, input domain.ContactInput) (domain.Contact, error) {
 	contact := domain.Contact{
 		User: domain.User{
@@ -391,7 +507,13 @@ func cloneContacts(contacts []domain.Contact) []domain.Contact {
 
 func cloneContact(contact domain.Contact) domain.Contact {
 	contact.NoteEntities = append([]domain.MessageEntity(nil), contact.NoteEntities...)
+	contact.User.PhotoStripped = append([]byte(nil), contact.User.PhotoStripped...)
 	return contact
+}
+
+func cloneProfilePhotoRef(ref domain.ProfilePhotoRef) domain.ProfilePhotoRef {
+	ref.Stripped = append([]byte(nil), ref.Stripped...)
+	return ref
 }
 
 func contactListHash(contacts []domain.Contact) int64 {

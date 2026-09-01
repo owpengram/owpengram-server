@@ -282,6 +282,41 @@ func (s *Service) DeleteAllowedURL(ctx context.Context, botUserID int64, kind do
 	return s.store.DeleteTelegramLoginAllowedURL(ctx, botUserID, kind, normalized)
 }
 
+type WidgetClientResolution struct {
+	ClientID string
+	Origin   string
+}
+
+// ResolveWidgetClient verifies the public compatibility shim's username
+// resolution result against the authoritative Login client and registered Web
+// origin. The username lookup itself stays outside this aggregate; callers
+// must resolve it to a current bot user before entering this method.
+func (s *Service) ResolveWidgetClient(ctx context.Context, botUserID int64, rawOrigin string) (WidgetClientResolution, error) {
+	if botUserID <= 0 {
+		return WidgetClientResolution{}, domain.ErrTelegramLoginClientInvalid
+	}
+	origin, err := NormalizeWebOrigin(rawOrigin, s.allowHTTP)
+	if err != nil {
+		return WidgetClientResolution{}, domain.ErrTelegramLoginOriginNotAllowed
+	}
+	client, found, err := s.store.GetTelegramLoginClientByBot(ctx, botUserID)
+	if err != nil {
+		return WidgetClientResolution{}, err
+	}
+	if !found || !client.Enabled || !s.signingAlgorithmSupported(client.SigningAlgorithm) ||
+		client.BotUserID != botUserID || client.ClientID != strconv.FormatInt(botUserID, 10) {
+		return WidgetClientResolution{}, domain.ErrTelegramLoginClientDisabled
+	}
+	allowed, err := s.store.IsTelegramLoginURLAllowed(ctx, botUserID, domain.TelegramLoginAllowedWebOrigin, origin)
+	if err != nil {
+		return WidgetClientResolution{}, err
+	}
+	if !allowed {
+		return WidgetClientResolution{}, domain.ErrTelegramLoginOriginNotAllowed
+	}
+	return WidgetClientResolution{ClientID: client.ClientID, Origin: origin}, nil
+}
+
 func (s *Service) SetClientEnabled(ctx context.Context, botUserID int64, enabled bool) error {
 	if enabled {
 		client, found, err := s.store.GetTelegramLoginClientByBot(ctx, botUserID)

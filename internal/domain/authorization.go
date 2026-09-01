@@ -21,8 +21,11 @@ type Authorization struct {
 	// PasswordPending 表示该 auth_key 已通过短信验证码、但账号开启了两步验证且尚未通过
 	// auth.checkPassword。此状态下业务鉴权须视其为未登录，仅允许继续完成两步验证。
 	PasswordPending bool
-	CreatedAt       time.Time
-	ActiveAt        time.Time
+	// CreatedAt is the start of the current fully-authorized login session. Bind
+	// refreshes it for every login, and completing password_pending refreshes it
+	// again so time spent waiting for 2FA never satisfies payout freshness.
+	CreatedAt time.Time
+	ActiveAt  time.Time
 }
 
 // AuthKeyClientInfo 是未登录 auth_key 也需要保留的客户端协商元数据。

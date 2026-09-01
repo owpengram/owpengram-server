@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -85,6 +86,9 @@ type Config struct {
 	RtmpIngestURL string
 	// PublicBaseURL 是所有客户端可见 telesrv 链接的公开根 URL。
 	PublicBaseURL string
+	// UpdatePublicURL is advertised as help.getConfig.autoupdate_url_prefix.
+	// Empty keeps the native desktop updater disabled.
+	UpdatePublicURL string
 	// PublicAppScheme/PublicAppLinkBase 控制客户端 deep link；base 为空时
 	// 保持 <scheme>://<route>，非空时生成 <base>/<route>。
 	PublicAppScheme   string
@@ -92,10 +96,27 @@ type Config struct {
 	// TempKeyResolveCacheTTL 是 PFS temp→perm auth key 解析的进程内缓存有效期。>0 时同一 temp key
 	// 在 TTL 内复用上次解析、跳过每帧 ResolveAuthKey 的 PG 查询；0（默认/测试）关闭=每帧重校验。
 	// 显式撤销会删除协议 auth key、清缓存并断开活跃连接；TTL 只影响自然过期或异常路径下的
-	// 下一次重新解析。re-bind 由 onAuthBindTempAuthKey 显式失效，避免跨账号串号。
+	// 下一次重新解析。bind success replaces the exact entry with the committed mapping.
 	TempKeyResolveCacheTTL time.Duration
 	// TempKeyResolveCacheMaxEntries 是 temp→perm 解析缓存容量；<=0 用内置默认。
 	TempKeyResolveCacheMaxEntries int
+	// PeerIdentityCacheMaxEntries bounds the viewer-independent peer decoration
+	// cache (username vectors and third-party verification marks). Values are
+	// validated by the durable peer_identity token; this is not a permission cache.
+	PeerIdentityCacheMaxEntries int
+	// StoryActivePeerCacheMaxEntries bounds the shared viewer-independent
+	// active-story candidate cache. Hidden preferences are one sparse set per
+	// viewer and have independent entry/byte bounds.
+	StoryActivePeerCacheMaxEntries int
+	StoryHiddenListCacheMaxEntries int
+	StoryHiddenListCacheMaxBytes   int64
+	// PresenceLastSeenBatch* bounds the asynchronous server-lifecycle
+	// last-seen writer. Explicit account.updateStatus remains synchronous.
+	PresenceLastSeenBatchMax     int
+	PresenceLastSeenBatchWait    time.Duration
+	PresenceLastSeenBatchQueue   int
+	PresenceLastSeenBatchTimeout time.Duration
+	PresenceLastSeenDrainTimeout time.Duration
 }
 
 // Router 把解密后的 RPC 请求按 semantic method 路由到 typed handler（tlprofile.Dispatcher）。
@@ -132,6 +153,7 @@ type Router struct {
 	authUserSF                 singleflight.Group
 	mediaCountSF               singleflight.Group
 	dialogsPinnedSF            singleflight.Group
+	dialogsPinnedListSF        singleflight.Group
 	channelFullBotSF           singleflight.Group
 	presence                   *presenceTracker
 	callbacks                  *callbackRegistry
@@ -157,15 +179,18 @@ type Router struct {
 	// lastSeenPersist 记录每个 user 最近一次 last_seen 落库时刻（unix），用于写去抖：
 	// updateStatus 高频续期时数秒内只落一次 DB。
 	lastSeenPersist sync.Map // userID(int64) -> int64(unix)
+	lastSeenBatch   *presenceLastSeenBatchDispatcher
 	// tempKeyResolveCache 缓存 rawTempKeyID -> resolved perm（带过期），容量有界。
 	tempKeyResolveCache          *tempKeyResolveCache
 	storyProjectionCache         *storyProjectionCache
+	storySparseProjectionCache   *storySparseProjectionCache
 	storyPinnedCache             *storyPinnedAvailableCache
 	storyPinnedListCache         *storyPinnedStoriesCache
 	channelFullBotCache          *channelFullBotInfoCache
 	userFullProjectionCache      *userFullProjectionCache
 	peerSettingsProjectionCache  *peerSettingsProjectionCache
 	channelFullProjectionCache   *channelFullProjectionCache
+	peerIdentityCache            *peerIdentityCache
 	availableReactionDocuments   availableReactionDocumentMapCache
 	emojiStickers                *emojiStickerIndex
 	notifySettings               *notifySettingsCache
@@ -251,9 +276,23 @@ func New(cfg Config, deps Deps, log *zap.Logger, clk clock.Clock) *Router {
 	if instanceID == "" {
 		instanceID = fmt.Sprintf("%016x", randomNonZeroInt64())
 	}
-	r := &Router{cfg: cfg, appLinks: appLinks, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(deps.BotCallbacks), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), accountFreezeWake: make(chan struct{}, 1), instanceID: instanceID}
+	r := &Router{cfg: cfg, appLinks: appLinks, log: log, clock: clk, deps: deps, exactProfiles: make(map[clientInfoSessionKey]exactSessionProfileEntry), authLayerEvidence: make(map[[8]byte]authLayerDefaultEvidence), presence: newPresenceTracker(), callbacks: newCallbackRegistry(deps.BotCallbacks), inlines: newInlineRegistry(botInlineQueryTTL, deps.Inline), webviews: newWebViewRegistry(webViewSessionTTL, deps.Inline), loginTokens: newLoginTokenRegistry(), botAPIUpdates: newBotAPIUpdateNotifier(), tempKeyResolveCache: newTempKeyResolveCache(cfg.TempKeyResolveCacheMaxEntries), storyProjectionCache: newStoryProjectionCache(clk.Now), storySparseProjectionCache: newStorySparseProjectionCache(deps.ReadModelVersions, cfg.StoryActivePeerCacheMaxEntries, cfg.StoryHiddenListCacheMaxEntries, cfg.StoryHiddenListCacheMaxBytes), storyPinnedCache: newStoryPinnedAvailableCache(clk.Now), storyPinnedListCache: newStoryPinnedStoriesCache(clk.Now), channelFullBotCache: newChannelFullBotInfoCache(clk.Now), userFullProjectionCache: newUserFullProjectionCache(clk.Now), peerSettingsProjectionCache: newPeerSettingsProjectionCache(clk.Now), channelFullProjectionCache: newChannelFullProjectionCache(clk.Now), peerIdentityCache: newPeerIdentityCache(cfg.PeerIdentityCacheMaxEntries), emojiStickers: newEmojiStickerIndex(clk.Now), notifySettings: newNotifySettingsCache(clk.Now), stickerCatalog: newStickerCatalogCache(clk.Now), accountSettings: newAccountSettingsCache(clk.Now), accountFreezeWake: make(chan struct{}, 1), instanceID: instanceID}
 	r.channelFanout = newChannelFanoutDispatcher(r, defaultChannelFanoutShards, defaultChannelFanoutBuffer)
 	r.botAPIEnqueueQueue = newBotAPIEnqueueDispatcher(log, defaultBotAPIEnqueueBuffer)
+	// Zero-valued hand-built Router configs are used by focused unit tests and
+	// retain the direct fake-store path. Validated production config always
+	// supplies positive batch bounds, so the real server cannot disable this
+	// writer or fall back to per-account lifecycle transactions.
+	batchConfigured := cfg.PresenceLastSeenBatchMax > 0 || cfg.PresenceLastSeenBatchWait > 0 ||
+		cfg.PresenceLastSeenBatchQueue > 0 || cfg.PresenceLastSeenBatchTimeout > 0 ||
+		cfg.PresenceLastSeenDrainTimeout > 0
+	if updater, ok := deps.Users.(presenceLastSeenBatchUpdater); ok && batchConfigured {
+		r.lastSeenBatch = newPresenceLastSeenBatchDispatcher(updater, presenceLastSeenBatchConfig{
+			MaxSize: cfg.PresenceLastSeenBatchMax, MaxWait: cfg.PresenceLastSeenBatchWait,
+			QueueSize: cfg.PresenceLastSeenBatchQueue, QueryTimeout: cfg.PresenceLastSeenBatchTimeout,
+			DrainTimeout: cfg.PresenceLastSeenDrainTimeout,
+		}, log, r.metrics())
+	}
 	r.webPageResolveSem = make(chan struct{}, webPageResolveConcurrency)
 	r.selfPhotoEchoPushDelay = defaultSelfPhotoEchoPushDelay
 	if cfg.DC > 0 {
@@ -360,12 +399,36 @@ func (r *Router) DispatchWithMethod(ctx context.Context, authKeyID [8]byte, sess
 	if err != nil {
 		return nil, "", err
 	}
+	defer updatesDelivery.releaseSessionActivation()
 	meta := rpcDispatchMetadata{}
 	enc, err := r.dispatch(ctx, b, 0, &meta)
 	if err == nil && enc != nil {
 		r.registerUpdatesDeliveryPlan(ctx, updatesDelivery)
 	}
 	return enc, meta.method, err
+}
+
+// dispatchGeneratedSafely is the last process-safety boundary around business
+// RPC execution. Persisted snapshots and projection bugs must return a scoped
+// RPC failure; they must never terminate every MTProto connection in the
+// process. The stack is retained in structured logs so recovery is not silent.
+func (r *Router) dispatchGeneratedSafely(ctx context.Context, method string, request tlprofile.Admission) (result tlprofile.Result, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			fields := append([]zap.Field{
+				zap.String("method", method),
+				zap.Int("profile", int(request.Call().Profile())),
+				zap.Any("panic", recovered),
+				zap.ByteString("stack", debug.Stack()),
+			}, r.contextLogFields(ctx)...)
+			if r != nil && r.log != nil {
+				r.log.Error("RPC handler panic isolated", fields...)
+			}
+			result = nil
+			err = internalErr()
+		}
+	}()
+	return r.dispatcher.Dispatch(ctx, request)
 }
 
 func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, sessionID int64) ([8]byte, error) {
@@ -399,61 +462,72 @@ func (r *Router) effectiveAuthKeyID(ctx context.Context, rawAuthKeyID [8]byte, s
 			// durable resolver. Treating either as proof of permanence recreates the
 			// raw-temp identity split when an alternate SessionBinder is installed.
 		}
-		// temp→perm 解析缓存：PFS 连接每帧都要解析一次 temp key（ResolveAuthKey 打 PG）。TTL 内复用
-		// 上次解析、跳过 DB。仅当缓存的 perm 仍等于 session binder 当前 perm 才用（rebind 会改 binder
-		// 且 onAuthBindTempAuthKey / 授权撤销都会显式 Delete 缓存，双保险防跨账号串号和被踢滞后）。
-		ttl := r.cfg.TempKeyResolveCacheTTL
-		if ttl > 0 {
-			if perm, ok := r.tempKeyResolveCache.Get(rawAuthKeyID, cached, r.clock.Now()); ok {
-				return perm, nil
-			}
-		}
-		// cold burst 下并发 temp-key 解析用 singleflight 合并：同一 temp key 的 N 个并发 RPC 只打
-		// 1 次 PG ResolveAuthKey（其余共享），避免开群/重连首帧 ~50 并发 herd（曾让 auth_resolve 飙到
-		// ~1s）。解析结果 + 缓存写入在 SF 内（幂等共享）；session 绑定仍每 caller 各自做（按 session）。
-		// 顺序调用不合并（SF 仅合并真并发），「每帧重校验」语义与固化测试 resolveCount 不变。
-		v, sfErr, _ := r.authUserSF.Do(authKeyResolveSingleflightPrefix+string(rawAuthKeyID[:]), func() (any, error) {
-			if ttl > 0 {
-				if perm, ok := r.tempKeyResolveCache.Get(rawAuthKeyID, cached, r.clock.Now()); ok {
-					return tempResolveResult{perm: perm, ok: true}, nil
-				}
-			}
-			resolved, ok, err := r.deps.Auth.ResolveAuthKey(ctx, rawAuthKeyID)
-			if err != nil {
-				return tempResolveResult{}, err
-			}
-			if ok && ttl > 0 {
-				r.tempKeyResolveCache.Store(rawAuthKeyID, resolved, r.clock.Now().Add(ttl), r.clock.Now())
-			}
-			return tempResolveResult{perm: resolved, ok: ok}, nil
-		})
-		if sfErr != nil {
-			return [8]byte{}, sfErr
-		}
-		out := v.(tempResolveResult)
-		if out.ok {
-			if out.perm != cached {
-				r.bindEffectiveAuthKey(rawAuthKeyID, sessionID, out.perm)
-			}
-			return out.perm, nil
-		}
-		r.tempKeyResolveCache.Delete(rawAuthKeyID)
-		r.invalidateAuthUserCache(cached)
+	}
+	if r.deps.Auth == nil {
 		r.bindEffectiveAuthKey(rawAuthKeyID, sessionID, rawAuthKeyID)
 		return rawAuthKeyID, nil
 	}
-	effective := rawAuthKeyID
-	if r.deps.Auth != nil {
-		resolved, ok, err := r.deps.Auth.ResolveAuthKey(ctx, rawAuthKeyID)
-		if err != nil {
-			return [8]byte{}, err
-		}
-		if ok {
-			effective = resolved
-		}
+	resolved, found, err := r.resolveAuthKeyCached(ctx, rawAuthKeyID)
+	if err != nil {
+		return [8]byte{}, err
 	}
-	r.bindEffectiveAuthKey(rawAuthKeyID, sessionID, effective)
-	return effective, nil
+	if found {
+		if !hasCached || resolved != cached {
+			r.bindEffectiveAuthKey(rawAuthKeyID, sessionID, resolved)
+		}
+		return resolved, nil
+	}
+	r.tempKeyResolveCache.Delete(rawAuthKeyID)
+	if hasCached {
+		r.invalidateAuthUserCache(cached)
+	}
+	r.bindEffectiveAuthKey(rawAuthKeyID, sessionID, rawAuthKeyID)
+	return rawAuthKeyID, nil
+}
+
+// resolveAuthKeyCached is the single positive temp→permanent identity reader
+// for connection Layer inheritance, RPC dispatch and admitted Layer
+// publication. It never caches a miss: another physical session may commit the
+// first binding immediately after this read. Bind/revoke/destroy paths own exact
+// invalidation; TTL is only a bounded cross-instance/abnormal-path recheck.
+func (r *Router) resolveAuthKeyCached(ctx context.Context, rawAuthKeyID [8]byte) ([8]byte, bool, error) {
+	if r == nil || r.deps.Auth == nil || rawAuthKeyID == ([8]byte{}) {
+		return [8]byte{}, false, nil
+	}
+	ttl := r.cfg.TempKeyResolveCacheTTL
+	if ttl <= 0 {
+		return r.deps.Auth.ResolveAuthKey(ctx, rawAuthKeyID)
+	}
+	if perm, ok := r.tempKeyResolveCache.GetResolved(rawAuthKeyID, r.clock.Now()); ok {
+		return perm, true, nil
+	}
+	v, err, _ := r.authUserSF.Do(authKeyResolveSingleflightPrefix+string(rawAuthKeyID[:]), func() (any, error) {
+		now := r.clock.Now()
+		if perm, ok := r.tempKeyResolveCache.GetResolved(rawAuthKeyID, now); ok {
+			return tempResolveResult{perm: perm, ok: true}, nil
+		}
+		resolved, found, resolveErr := r.deps.Auth.ResolveAuthKey(ctx, rawAuthKeyID)
+		if resolveErr != nil {
+			return tempResolveResult{}, resolveErr
+		}
+		if found {
+			r.tempKeyResolveCache.Store(rawAuthKeyID, resolved, now.Add(ttl), now)
+		}
+		return tempResolveResult{perm: resolved, ok: found}, nil
+	})
+	if err != nil {
+		return [8]byte{}, false, err
+	}
+	result := v.(tempResolveResult)
+	return result.perm, result.ok, nil
+}
+
+func (r *Router) cacheResolvedAuthKey(rawAuthKeyID, permAuthKeyID [8]byte) {
+	if r == nil || r.cfg.TempKeyResolveCacheTTL <= 0 {
+		return
+	}
+	now := r.clock.Now()
+	r.tempKeyResolveCache.Store(rawAuthKeyID, permAuthKeyID, now.Add(r.cfg.TempKeyResolveCacheTTL), now)
 }
 
 func (r *Router) bindEffectiveAuthKey(rawAuthKeyID [8]byte, sessionID int64, effective [8]byte) {
@@ -746,7 +820,7 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 		if err != nil {
 			return nil, err
 		}
-		exact, err := r.dispatcher.Dispatch(ctx, admission)
+		exact, err := r.dispatchGeneratedSafely(ctx, tlTypeName(id), admission)
 		var enc bin.Encoder = exact
 		if err == nil && exact != nil {
 			if canonical, ok := exact.CanonicalValue().(bin.Encoder); ok {
@@ -761,10 +835,8 @@ func (r *Router) dispatch(ctx context.Context, b *bin.Buffer, depth int, meta *r
 			zap.Duration("dur", dur),
 		}, r.contextLogFields(ctx)...)
 		fields = dbtrace.AppendZapFields(fields, "handler_", dbDelta)
-		if err != nil || dur > 100*time.Millisecond {
-			if err != nil {
-				fields = append(fields, zap.Error(err))
-			}
+		if err != nil {
+			fields = append(fields, zap.Error(err))
 			r.log.Info("RPC inner handled", fields...)
 		} else {
 			r.log.Debug("RPC inner handled", fields...)

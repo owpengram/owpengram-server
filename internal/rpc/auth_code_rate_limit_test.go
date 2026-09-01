@@ -101,6 +101,26 @@ func TestAuthSendCodeRateLimitUsesOpaquePhoneAndRawAuthKeyKeys(t *testing.T) {
 	}
 }
 
+func TestAuthCodeRateLimitSharesBudgetAcrossNationalTrunkVariants(t *testing.T) {
+	limiter := &captureRateLimiter{}
+	r := New(Config{
+		AuthCodePhoneRateLimit: 5,
+		AuthCodeRateWindow:     time.Minute,
+	}, Deps{Limiter: limiter}, zaptest.NewLogger(t), clock.System)
+
+	for _, phone := range []string{"+98 0998 167 9461", "989981679461"} {
+		if err := r.checkAuthCodeRateLimit(context.Background(), phone); err != nil {
+			t.Fatalf("checkAuthCodeRateLimit(%q): %v", phone, err)
+		}
+	}
+	if len(limiter.calls) != 2 {
+		t.Fatalf("limiter calls = %d, want 2", len(limiter.calls))
+	}
+	if limiter.calls[0].key != limiter.calls[1].key {
+		t.Fatalf("equivalent phone variants used different limiter keys: %q != %q", limiter.calls[0].key, limiter.calls[1].key)
+	}
+}
+
 func TestAuthSendCodePhoneRateLimitPrecedesBusinessLookupAndWrite(t *testing.T) {
 	limiter := &captureRateLimiter{block: true, retryAfter: 17}
 	authService := &authCodeRateTestService{captureAuthService: &captureAuthService{}}

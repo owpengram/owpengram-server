@@ -49,6 +49,39 @@ func (c *ChannelRowCache) getOrLoad(ctx context.Context, id int64, load func() (
 	return c.cache.GetOrLoad(ctx, id, load)
 }
 
+// getOrLoadBatch resolves a page of shared channel rows with one database read
+// for all misses. A zero-ID Channel is the negative-cache sentinel for an ID
+// that disappeared between the owner-state query and shared-row hydration;
+// channel_base invalidation removes both positive and negative entries.
+func (c *ChannelRowCache) getOrLoadBatch(
+	ctx context.Context,
+	ids []int64,
+	load func(context.Context, []int64) (map[int64]domain.Channel, error),
+) (map[int64]domain.Channel, error) {
+	if c == nil {
+		return load(ctx, ids)
+	}
+	return c.cache.GetOrLoadBatch(
+		ctx,
+		ids,
+		func(int64) (int64, bool) { return 0, true },
+		func(ctx context.Context, missing []int64) (map[int64]domain.Channel, error) {
+			loaded, err := load(ctx, missing)
+			if err != nil {
+				return nil, err
+			}
+			// GetOrLoadBatch requires an explicit value for every key so absent
+			// rows do not immediately stampede the database again.
+			for _, id := range missing {
+				if _, ok := loaded[id]; !ok {
+					loaded[id] = domain.Channel{}
+				}
+			}
+			return loaded, nil
+		},
+	)
+}
+
 func (c *ChannelRowCache) put(ch domain.Channel) {
 	if c == nil || ch.ID == 0 {
 		return

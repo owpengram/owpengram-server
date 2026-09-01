@@ -293,7 +293,11 @@ func tgReadHistoryInboxUpdate(event domain.UpdateEvent) tg.UpdateClass {
 		}
 		return update
 	}
-	return tgReadHistoryInbox(event)
+	update := tgReadHistoryInbox(event)
+	if update == nil {
+		return nil
+	}
+	return update
 }
 
 func tgReadHistoryOutbox(event domain.UpdateEvent) *tg.UpdateReadHistoryOutbox {
@@ -316,5 +320,9 @@ func tgReadHistoryOutboxUpdate(event domain.UpdateEvent) tg.UpdateClass {
 			MaxID:     event.MaxID,
 		}
 	}
-	return tgReadHistoryOutbox(event)
+	update := tgReadHistoryOutbox(event)
+	if update == nil {
+		return nil
+	}
+	return update
 }

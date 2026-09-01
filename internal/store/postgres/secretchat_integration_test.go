@@ -9,8 +9,8 @@ import (
 )
 
 // TestSecretChatStorePostgres 验证密聊握手状态机 PG 实现的行为契约（与 memory 实现
-// 同构）：create/get、幂等去重、accept CAS、double-accept、discard 幂等、
-// accept-after-discard、部分唯一索引（discard 后同 random_id 可重建）。
+// 同构）：create/get、chat_id=random_id、duplicate、accept CAS、double-accept、
+// discard 幂等、accept-after-discard。
 // 门控于 TELESRV_TEST_POSTGRES_DSN。
 func TestSecretChatStorePostgres(t *testing.T) {
 	pool := testPool(t)
@@ -31,7 +31,7 @@ func TestSecretChatStorePostgres(t *testing.T) {
 	cleanup()
 	t.Cleanup(cleanup)
 
-	mk := func(id int, randomID int32) domain.SecretChat {
+	mk := func(id int) domain.SecretChat {
 		return domain.SecretChat{
 			ID:                    id,
 			AdminAccessHash:       111,
@@ -41,13 +41,13 @@ func TestSecretChatStorePostgres(t *testing.T) {
 			ParticipantUserID:     partUser,
 			State:                 domain.SecretChatStateRequested,
 			GA:                    []byte{0x0a, 0x0b, 0x0c},
-			RandomID:              randomID,
+			RandomID:              int32(id),
 			Date:                  1000,
 		}
 	}
 
 	// create + get round-trip。
-	chat := mk(base, 555)
+	chat := mk(base)
 	if err := store.CreateSecretChat(ctx, chat); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -55,19 +55,25 @@ func TestSecretChatStorePostgres(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
-	if got.AdminUserID != adminUser || got.RandomID != 555 || string(got.GA) != string(chat.GA) {
+	if got.AdminUserID != adminUser || got.RandomID != int32(base) || string(got.GA) != string(chat.GA) {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
-
-	// 重复 chat_id → ID conflict。
-	if err := store.CreateSecretChat(ctx, mk(base, 556)); !errors.Is(err, domain.ErrSecretChatIDConflict) {
-		t.Fatalf("duplicate chat_id err = %v, want ErrSecretChatIDConflict", err)
+	negative := mk(-base)
+	if err := store.CreateSecretChat(ctx, negative); err != nil {
+		t.Fatalf("create negative chat id: %v", err)
+	}
+	if got, found, err := store.GetSecretChat(ctx, -base); err != nil || !found || got.ID != -base || got.RandomID != -base {
+		t.Fatalf("negative round-trip = %+v found=%v err=%v", got, found, err)
+	}
+	invalid := mk(base + 1)
+	invalid.RandomID = int32(base + 2)
+	if err := store.CreateSecretChat(ctx, invalid); !errors.Is(err, domain.ErrSecretChatRandomIDDuplicate) {
+		t.Fatalf("mismatched id/random err = %v, want ErrSecretChatRandomIDDuplicate", err)
 	}
 
-	// 幂等查询（非终态）。
-	idem, found, err := store.GetByAdminRandom(ctx, adminKey, 555)
-	if err != nil || !found || idem.ID != base {
-		t.Fatalf("GetByAdminRandom: found=%v id=%d err=%v", found, idem.ID, err)
+	// 重复 chat_id/random_id → 显式 duplicate，禁止另分配 ID。
+	if err := store.CreateSecretChat(ctx, mk(base)); !errors.Is(err, domain.ErrSecretChatRandomIDDuplicate) {
+		t.Fatalf("duplicate chat_id err = %v, want ErrSecretChatRandomIDDuplicate", err)
 	}
 
 	// accept CAS。
@@ -101,15 +107,9 @@ func TestSecretChatStorePostgres(t *testing.T) {
 		t.Fatalf("accept after discard err = %v, want ErrSecretChatAlreadyDeclined", err)
 	}
 
-	// 部分唯一索引：discarded 旧 chat 不阻塞同 (admin_auth_key_id, random_id) 重建。
-	if err := store.CreateSecretChat(ctx, mk(base+1, 555)); err != nil {
-		t.Fatalf("recreate after discard with same random_id: %v", err)
-	}
-
-	// MaxSecretChatID 反映最大 chat_id（≥ base+1）。
-	maxID, err := store.MaxSecretChatID(ctx)
-	if err != nil || maxID < base+1 {
-		t.Fatalf("max chat id = %d err = %v, want >= %d", maxID, err, base+1)
+	// discarded 后也不能复用同一 wire chat ID。
+	if err := store.CreateSecretChat(ctx, mk(base)); !errors.Is(err, domain.ErrSecretChatRandomIDDuplicate) {
+		t.Fatalf("recreate discarded chat err = %v, want ErrSecretChatRandomIDDuplicate", err)
 	}
 
 	// 不存在 chat：accept/discard 返回 not found。
@@ -137,16 +137,18 @@ func TestSecretChatListActiveByAuthKeyPostgres(t *testing.T) {
 		keyOther  = int64(0xCC03)
 		base      = 7701001
 	)
-	cleanup := func() { _, _ = pool.Exec(ctx, `DELETE FROM secret_chats WHERE admin_user_id IN ($1, $2)`, adminUser, partUser) }
+	cleanup := func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM secret_chats WHERE admin_user_id IN ($1, $2)`, adminUser, partUser)
+	}
 	cleanup()
 	t.Cleanup(cleanup)
 
-	mk := func(id int, randomID int32, adminUID, adminKey, partUID, partKeyV int64, state domain.SecretChatState) domain.SecretChat {
+	mk := func(id int, adminUID, adminKey, partUID, partKeyV int64, state domain.SecretChatState) domain.SecretChat {
 		return domain.SecretChat{
 			ID: id, AdminAccessHash: 1, ParticipantAccessHash: 2,
 			AdminUserID: adminUID, AdminAuthKeyID: adminKey,
 			ParticipantUserID: partUID, ParticipantAuthKeyID: partKeyV,
-			State: state, GA: []byte{0x01}, RandomID: randomID, Date: 1,
+			State: state, GA: []byte{0x01}, RandomID: int32(id), Date: 1,
 		}
 	}
 	idsOf := func(chats []domain.SecretChat) []int {
@@ -171,10 +173,10 @@ func TestSecretChatListActiveByAuthKeyPostgres(t *testing.T) {
 	// chat1 admin=keyA participant=keyB normal；chat2 admin=keyA 未绑定 requested；
 	// chat3 admin=keyOther participant=keyB normal；chat4 admin=keyA participant=keyB 已 discard。
 	for _, c := range []domain.SecretChat{
-		mk(base+1, 1, adminUser, keyA, partUser, keyB, domain.SecretChatStateNormal),
-		mk(base+2, 2, adminUser, keyA, partUser, 0, domain.SecretChatStateRequested),
-		mk(base+3, 3, partUser, keyOther, adminUser, keyB, domain.SecretChatStateNormal),
-		mk(base+4, 4, adminUser, keyA, partUser, keyB, domain.SecretChatStateNormal),
+		mk(base+1, adminUser, keyA, partUser, keyB, domain.SecretChatStateNormal),
+		mk(base+2, adminUser, keyA, partUser, 0, domain.SecretChatStateRequested),
+		mk(base+3, partUser, keyOther, adminUser, keyB, domain.SecretChatStateNormal),
+		mk(base+4, adminUser, keyA, partUser, keyB, domain.SecretChatStateNormal),
 	} {
 		if err := store.CreateSecretChat(ctx, c); err != nil {
 			t.Fatalf("create %d: %v", c.ID, err)

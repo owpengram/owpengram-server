@@ -23,7 +23,15 @@ func TestAccountLifecycleScheduleCancelAndTombstonePostgres(t *testing.T) {
 	users := NewUserStore(pool)
 	deleted := createTestUser(t, ctx, users, fmt.Sprintf("15571%d", nonce), "Delete", "Me")
 	peer := createTestUser(t, ctx, users, fmt.Sprintf("15572%d", nonce), "Keep", "Peer")
+	var channelID int64
+	var collectiblePhoneID int64
 	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(ctx, `DELETE FROM channels WHERE id = $1`, channelID)
+		}
+		if collectiblePhoneID != 0 {
+			_, _ = pool.Exec(ctx, `DELETE FROM collectible_phones WHERE id = $1`, collectiblePhoneID)
+		}
 		_, _ = pool.Exec(ctx, `DELETE FROM stars_transactions WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
 		_, _ = pool.Exec(ctx, `DELETE FROM ton_transactions WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
 		_, _ = pool.Exec(ctx, `DELETE FROM stars_balances WHERE user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
@@ -33,6 +41,11 @@ func TestAccountLifecycleScheduleCancelAndTombstonePostgres(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM private_messages WHERE sender_user_id = ANY($1) OR recipient_user_id = ANY($1)`, []int64{deleted.ID, peer.ID})
 		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = ANY($1)`, []int64{deleted.ID, peer.ID})
 	})
+	deletedUsername := fmt.Sprintf("deleteme%d", nonce)
+	deleted, err := users.UpdateUsername(ctx, deleted.ID, deletedUsername)
+	if err != nil {
+		t.Fatalf("set deleted user username: %v", err)
+	}
 
 	authOne := saveLifecycleTestAuthorization(t, ctx, pool, deleted.ID, 1)
 	authTwo := saveLifecycleTestAuthorization(t, ctx, pool, deleted.ID, 2)
@@ -54,6 +67,36 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO ton_balances (user_id, balance_nanoton) VALUES ($1, 100)`, deleted.ID); err != nil {
 		t.Fatalf("insert TON balance: %v", err)
+	}
+	collectiblePhone := fmt.Sprintf("888%010d", nonce%10_000_000_000)
+	if err := pool.QueryRow(ctx, `INSERT INTO collectible_phones
+(phone, tier, status, owner_user_id, purchase_date, currency, amount, created_at, updated_at)
+VALUES ($1, 'standard', 'owned', $2, $3, 'XTR', 100, $3, $3)
+RETURNING id`, collectiblePhone, deleted.ID, time.Now().UTC()).Scan(&collectiblePhoneID); err != nil {
+		t.Fatalf("insert collectible phone: %v", err)
+	}
+	createdChannel, err := NewChannelStore(pool).CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: deleted.ID,
+		Title:         "Retained deletion membership",
+		Megagroup:     true,
+		Date:          int(time.Now().Unix()),
+	})
+	if err != nil {
+		t.Fatalf("create retained channel membership: %v", err)
+	}
+	channelID = createdChannel.Channel.ID
+	var contactVersionBefore, channelParticipantsVersionBefore int64
+	if err := pool.QueryRow(ctx, `
+SELECT COALESCE((SELECT version FROM read_model_versions
+                 WHERE model = 'contact_account' AND owner_user_id = $1
+                   AND peer_type = 'user' AND peer_id = $1), 0)`, peer.ID).Scan(&contactVersionBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT COALESCE((SELECT version FROM read_model_versions
+                 WHERE model = 'channel_participants' AND owner_user_id = 0
+                   AND peer_type = 'channel' AND peer_id = $1), 0)`, channelID).Scan(&channelParticipantsVersionBefore); err != nil {
+		t.Fatal(err)
 	}
 
 	lifecycle := NewAccountLifecycleStore(pool)
@@ -80,6 +123,15 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	if _, found, err := NewAuthKeyStore(pool).Get(ctx, authTwo); err != nil || !found {
 		t.Fatalf("other auth key after cancel found=%v err=%v, want retained", found, err)
 	}
+	digestTwo := sha256.Sum256([]byte("confirm-two"))
+	pendingBeforeDelete, created, err := lifecycle.ScheduleAccountDeletion(ctx, domain.ScheduleAccountDeletion{
+		UserID: deleted.ID, RequesterAuthKeyID: authTwo, Reason: "Delete account",
+		ConfirmHashDigest: digestTwo, ServiceMessage: "tg://confirmphone?phone=hidden&hash=confirm-two",
+		RequestedAt: now.Add(time.Minute), ExecuteAt: now.Add(7 * 24 * time.Hour),
+	})
+	if err != nil || !created {
+		t.Fatalf("schedule deletion before tombstone = %+v created=%v err=%v", pendingBeforeDelete, created, err)
+	}
 
 	result, err := lifecycle.ExecuteAccountDeletion(ctx, deleted.ID, domain.AccountDeletionManual, "manual", now.Add(2*time.Minute))
 	if err != nil {
@@ -91,8 +143,47 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	if _, found, err := users.ByPhone(ctx, deleted.Phone); err != nil || found {
 		t.Fatalf("released phone found=%v err=%v", found, err)
 	}
+	if _, found, err := users.ByUsername(ctx, deletedUsername); err != nil || found {
+		t.Fatalf("released username found=%v err=%v", found, err)
+	}
 	if tombstone, found, err := users.ByID(ctx, deleted.ID); err != nil || !found || !tombstone.Deleted || tombstone.FirstName != "" {
 		t.Fatalf("tombstone = %+v found=%v err=%v", tombstone, found, err)
+	}
+	if _, found, err := NewAuthorizationStore(pool).ByAuthKey(ctx, authTwo); err != nil || found {
+		t.Fatalf("authorization after tombstone found=%v err=%v, want revoked", found, err)
+	}
+	if _, found, err := NewAuthKeyStore(pool).Get(ctx, authTwo); err != nil || !found {
+		t.Fatalf("permanent protocol auth key after tombstone found=%v err=%v, want retained", found, err)
+	}
+	var requestState string
+	if err := pool.QueryRow(ctx, `SELECT state FROM account_deletion_requests WHERE id = $1`, pendingBeforeDelete.ID).Scan(&requestState); err != nil {
+		t.Fatal(err)
+	}
+	if requestState != "executed" {
+		t.Fatalf("pending request state after tombstone = %q, want executed", requestState)
+	}
+	var deletedVersion, contactVersionAfter, channelParticipantsVersionAfter int64
+	if err := pool.QueryRow(ctx, `
+SELECT version FROM read_model_versions
+WHERE model = 'user_deleted' AND owner_user_id = $1
+  AND peer_type = 'user' AND peer_id = $1`, deleted.ID).Scan(&deletedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT COALESCE((SELECT version FROM read_model_versions
+                 WHERE model = 'contact_account' AND owner_user_id = $1
+                   AND peer_type = 'user' AND peer_id = $1), 0)`, peer.ID).Scan(&contactVersionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT COALESCE((SELECT version FROM read_model_versions
+                 WHERE model = 'channel_participants' AND owner_user_id = 0
+                   AND peer_type = 'channel' AND peer_id = $1), 0)`, channelID).Scan(&channelParticipantsVersionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if deletedVersion < 1 || contactVersionAfter != contactVersionBefore || channelParticipantsVersionAfter != channelParticipantsVersionBefore {
+		t.Fatalf("logical-delete read-model fanout deleted=%d contact=%d->%d channel=%d->%d",
+			deletedVersion, contactVersionBefore, contactVersionAfter, channelParticipantsVersionBefore, channelParticipantsVersionAfter)
 	}
 	if _, err := users.UpdateProfile(ctx, deleted.ID, "Resurrected", "", ""); err == nil {
 		t.Fatal("deleted account profile mutation unexpectedly succeeded")
@@ -105,7 +196,10 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	if err != nil || len(history.Messages) != 1 || history.Messages[0].Body != "keep shared history" || history.Messages[0].From.ID != deleted.ID {
 		t.Fatalf("peer history after deletion = %+v err=%v", history, err)
 	}
-	var peerBoxes, settings, contacts, notifications int
+	var ownerBoxes, peerBoxes, settings, contacts, notifications int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM message_boxes WHERE owner_user_id = $1`, deleted.ID).Scan(&ownerBoxes); err != nil {
+		t.Fatal(err)
+	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM message_boxes WHERE owner_user_id = $1 AND from_user_id = $2`, peer.ID, deleted.ID).Scan(&peerBoxes); err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +212,13 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM account_deletion_notifications WHERE target_user_id = $1 AND deleted_user_id = $2`, peer.ID, deleted.ID).Scan(&notifications); err != nil {
 		t.Fatal(err)
 	}
-	if peerBoxes != 1 || settings != 0 || contacts != 0 || notifications != 1 {
-		t.Fatalf("post-delete state peerBoxes=%d settings=%d contacts=%d notifications=%d", peerBoxes, settings, contacts, notifications)
+	var memberStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM channel_members WHERE channel_id = $1 AND user_id = $2`, channelID, deleted.ID).Scan(&memberStatus); err != nil {
+		t.Fatal(err)
+	}
+	if ownerBoxes == 0 || peerBoxes != 1 || settings != 1 || contacts != 1 || notifications != 0 || memberStatus != "active" {
+		t.Fatalf("logical-delete retained state ownerBoxes=%d peerBoxes=%d settings=%d contacts=%d notifications=%d memberStatus=%q",
+			ownerBoxes, peerBoxes, settings, contacts, notifications, memberStatus)
 	}
 	var stars, ton, starClear, tonClear int64
 	if err := pool.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id = $1`, deleted.ID).Scan(&stars); err != nil {
@@ -134,8 +233,16 @@ VALUES ($1, $2, 'stale-phone', 'Stale', 'Alias')`, peer.ID, deleted.ID); err != 
 	if err := pool.QueryRow(ctx, `SELECT COALESCE(sum(amount_nanoton), 0) FROM ton_transactions WHERE user_id = $1 AND reason = 'account_deleted'`, deleted.ID).Scan(&tonClear); err != nil {
 		t.Fatal(err)
 	}
-	if stars != 0 || ton != 0 || starClear != -50 || tonClear != -100 {
-		t.Fatalf("financial clearing stars=%d ton=%d star_tx=%d ton_tx=%d", stars, ton, starClear, tonClear)
+	if stars != 50 || ton != 100 || starClear != 0 || tonClear != 0 {
+		t.Fatalf("logical-delete retained finances stars=%d ton=%d star_tx=%d ton_tx=%d", stars, ton, starClear, tonClear)
+	}
+	var collectibleStatus string
+	var collectibleOwner int64
+	if err := pool.QueryRow(ctx, `SELECT status, owner_user_id FROM collectible_phones WHERE id = $1`, collectiblePhoneID).Scan(&collectibleStatus, &collectibleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if collectibleStatus != "owned" || collectibleOwner != deleted.ID {
+		t.Fatalf("logical-delete collectible phone status=%q owner=%d, want owned by tombstone %d", collectibleStatus, collectibleOwner, deleted.ID)
 	}
 }
 

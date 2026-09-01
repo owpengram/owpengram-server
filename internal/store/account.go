@@ -78,6 +78,7 @@ type SavedMusicStore interface {
 
 // BusinessAutomationStore persists account-local Telegram Business settings.
 type BusinessAutomationStore interface {
+	HasBusinessAutomation(ctx context.Context, userID int64) (bool, error)
 	GetBusinessProfile(ctx context.Context, userID int64) (domain.BusinessProfile, bool, error)
 	SaveBusinessProfile(ctx context.Context, profile domain.BusinessProfile) error
 	ListBusinessChatLinks(ctx context.Context, ownerUserID int64) ([]domain.BusinessChatLink, error)

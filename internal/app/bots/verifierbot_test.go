@@ -431,7 +431,7 @@ func TestVerifierBotHiddenByThirdPartyVerificationFlag(t *testing.T) {
 	svc.OnPrivateMessage(context.Background(), domain.VerifierBotUserID, domain.Message{
 		From: domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID},
 		Body: "/start",
-	})
+	}, domain.ClientSessionMetadata{})
 	if replies := verifierReplies(t, messages, owner.ID); len(replies) != 0 {
 		t.Fatalf("hidden @verifierbot replied: %+v", replies)
 	}
@@ -811,7 +811,7 @@ func TestVerifierBotHelpAndIdleText(t *testing.T) {
 	// /help answers even with no verification service wired at all: it describes the
 	// bot rather than reading any state.
 	help := sendToVerifierBot(t, svc, messages, owner.ID, "/help")
-	if help.Body != verifierBotHelpText {
+	if help.Body != verifierBotHelpText() {
 		t.Fatalf("/help = %q", help.Body)
 	}
 	for _, want := range []string{"/start", "/verify", "/status", "/revoke", "/help", "not the official"} {
@@ -846,7 +846,7 @@ func TestVerifierBotGlobalCommandsWorkMidStep(t *testing.T) {
 	pressVerifierButton(t, svc, owner.ID, latestVerifierReply(t, messages, owner.ID), "@examplenews")
 
 	// /help and /status in the middle of the reason step answer and keep the step.
-	if help := sendToVerifierBot(t, svc, messages, owner.ID, "/help"); help.Body != verifierBotHelpText {
+	if help := sendToVerifierBot(t, svc, messages, owner.ID, "/help"); help.Body != verifierBotHelpText() {
 		t.Fatalf("/help mid-step = %q", help.Body)
 	}
 	if status := sendToVerifierBot(t, svc, messages, owner.ID, "/status"); status.Body != verifierNoRequestsText {

@@ -110,7 +110,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/create-bot", s.requireAuthAPI(http.HandlerFunc(s.handleCreateBotAPI)))
 	mux.Handle("POST /api/actions/create-broadcast", s.requireAuthAPI(http.HandlerFunc(s.handleCreateBroadcastAPI)))
 	mux.Handle("POST /api/actions/delete-bot", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteBotAPI)))
-	mux.Handle("POST /api/actions/export-bot-token", s.requireAuthAPI(http.HandlerFunc(s.handleExportBotTokenAPI)))
+	mux.Handle("POST /api/actions/export-bot-token", s.requireAuthAPI(s.requirePermission(permissionBotTokenRead, http.HandlerFunc(s.handleExportBotTokenAPI))))
 	mux.Handle("POST /api/actions/set-channel-verified", s.requireAuthAPI(http.HandlerFunc(s.handleSetChannelVerifiedAPI)))
 	mux.Handle("POST /api/actions/revoke-sessions", s.requireAuthAPI(http.HandlerFunc(s.handleRevokeSessionsAPI)))
 	mux.Handle("POST /api/actions/delete-messages", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteMessagesAPI)))

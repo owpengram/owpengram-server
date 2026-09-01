@@ -15,7 +15,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-func TestAccountChangePhoneRPCReturnsSelfPushesOthersAndReplaysDifference(t *testing.T) {
+func TestAccountChangePhoneRPCReturnsSelfAndPushesNonPTSUpdate(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
 	auths := memory.NewAuthorizationStore()
@@ -39,7 +39,7 @@ func TestAccountChangePhoneRPCReturnsSelfPushesOthersAndReplaysDifference(t *tes
 		{Username: "Alice", Editable: true, Active: true, SortOrder: 0},
 		{Username: "aliceCollect0728b", Active: true, SortOrder: 1, CollectibleID: 2},
 	}
-	sessions := &captureSessions{}
+	sessions := &captureSessions{onlineUserIDs: []int64{user.ID}}
 	r := New(Config{}, Deps{Account: accountSvc, Sessions: sessions, Usernames: registry}, zaptest.NewLogger(t), clock.System)
 	reqCtx := WithSessionID(WithAuthKeyID(WithUserID(ctx, user.ID), authKeyID), 77)
 
@@ -70,22 +70,23 @@ func TestAccountChangePhoneRPCReturnsSelfPushesOthersAndReplaysDifference(t *tes
 	assertVectorOnlyUsernames(t, "account.changePhone", self, []string{"Alice", "aliceCollect0728b"})
 
 	otherPush, ok := sessions.lastUserPush().(*tg.Updates)
-	if !ok || len(otherPush.Updates) != 2 {
+	if !ok || len(otherPush.Updates) != 1 {
 		t.Fatalf("other-session push = %T %+v", sessions.lastUserPush(), sessions.lastUserPush())
 	}
-	phoneUpdate, ok := otherPush.Updates[0].(*tg.UpdateUserPhone)
-	if !ok || phoneUpdate.UserID != user.ID || phoneUpdate.Phone != "15550013002" {
-		t.Fatalf("phone update = %T %+v", otherPush.Updates[0], otherPush.Updates[0])
+	userUpdate, ok := otherPush.Updates[0].(*tg.UpdateUser)
+	if !ok || userUpdate.UserID != user.ID {
+		t.Fatalf("user update = %T %+v", otherPush.Updates[0], otherPush.Updates[0])
 	}
-	if _, ok := otherPush.Updates[1].(*tg.UpdateDeleteMessages); !ok {
-		t.Fatalf("pts bookkeeping = %T", otherPush.Updates[1])
+	if len(otherPush.Users) != 1 {
+		t.Fatalf("push users = %+v", otherPush.Users)
 	}
-	currentPush, ok := sessions.snapshot().message.(*tg.Updates)
-	if !ok || len(currentPush.Updates) != 1 {
-		t.Fatalf("current-session bookkeeping = %T %+v", sessions.snapshot().message, sessions.snapshot().message)
+	pushedSelf, ok := otherPush.Users[0].(*tg.User)
+	if !ok || pushedSelf.Phone != "15550013002" {
+		t.Fatalf("pushed self = %T %+v", otherPush.Users[0], otherPush.Users[0])
 	}
-	if _, ok := currentPush.Updates[0].(*tg.UpdateDeleteMessages); !ok {
-		t.Fatalf("current bookkeeping update = %T", currentPush.Updates[0])
+	snapshot := sessions.snapshot()
+	if sessions.rawAuthKeyID != authKeyID || snapshot.sessionID != 77 {
+		t.Fatalf("push exclusion = %x/%d", sessions.rawAuthKeyID, snapshot.sessionID)
 	}
 
 	updateSvc := appupdates.NewService(memory.NewUpdateStateStore(), events)
@@ -93,13 +94,8 @@ func TestAccountChangePhoneRPCReturnsSelfPushesOthersAndReplaysDifference(t *tes
 	if err != nil {
 		t.Fatalf("get difference: %v", err)
 	}
-	tgDiff, ok := tgUpdatesDifference(user.ID, diff).(*tg.UpdatesDifference)
-	if !ok || len(tgDiff.OtherUpdates) != 1 {
-		t.Fatalf("difference = %T %+v", tgUpdatesDifference(user.ID, diff), tgUpdatesDifference(user.ID, diff))
-	}
-	replayed, ok := tgDiff.OtherUpdates[0].(*tg.UpdateUserPhone)
-	if !ok || replayed.UserID != user.ID || replayed.Phone != "15550013002" {
-		t.Fatalf("replayed update = %T %+v", tgDiff.OtherUpdates[0], tgDiff.OtherUpdates[0])
+	if diff.State.Pts != 0 || len(diff.Events) != 0 {
+		t.Fatalf("difference unexpectedly changed = %+v", diff)
 	}
 }
 

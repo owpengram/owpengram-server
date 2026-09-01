@@ -183,7 +183,7 @@ func tgChannelMessage(viewerUserID int64, m domain.ChannelMessage) tg.MessageCla
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
-	if rich := mustTGRichMessage(m.RichMessage); rich != nil {
+	if rich := optionalTGRichMessage("channel_message", m.ID, m.RichMessage); rich != nil {
 		msg.SetRichMessage(*rich)
 	}
 	if replies := tgChannelMessageReplies(m.Replies); replies != nil {
@@ -549,7 +549,13 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		CanViewParticipants: channelMemberIsAdmin(view.Self) || !ch.MembersListAdminOnly(),
 		CanSetUsername:      view.Self.Role == domain.ChannelRoleCreator,
 		CanDeleteChannel:    view.Self.Role == domain.ChannelRoleCreator,
-		ID:                  ch.ID,
+		// TDesktop only exposes the Statistics entry after channelFull.can_view_stats.
+		// The stats RPCs enforce the same creator/admin boundary, so project the
+		// capability from the membership instead of leaving a reachable service
+		// hidden behind a permanently false wire flag. Monoforum is an internal
+		// direct-message container and has no independent statistics surface.
+		CanViewStats: !ch.Monoforum && channelMemberIsAdmin(view.Self),
+		ID:           ch.ID,
 		// Official clients render localized warnings from scam/fake flags.
 		// About remains the owner's unmodified description.
 		About:           ch.About,
@@ -646,6 +652,23 @@ func tgChannelFull(view domain.ChannelView, publicBaseURL ...string) *tg.Channel
 		full.SetReactionsLimit(ch.ReactionPolicy.Limit)
 	}
 	return full
+}
+
+// applyChannelStatsCapability completes the config-dependent half of the
+// channelFull statistics capability. TDLib deliberately clears
+// can_view_stats when stats_dc is absent or invalid, so these fields must be
+// projected as one invariant rather than as independent optional hints.
+// A manually constructed zero-value Router config is treated as unavailable;
+// production config validation requires a positive canonical DC.
+func (r *Router) applyChannelStatsCapability(full *tg.ChannelFull) {
+	if full == nil || !full.CanViewStats {
+		return
+	}
+	if r.cfg.DC <= 0 {
+		full.CanViewStats = false
+		return
+	}
+	full.SetStatsDC(r.cfg.DC)
 }
 
 func channelMemberIsAdmin(member domain.ChannelMember) bool {
@@ -848,23 +871,24 @@ func tgAdminLogMessage(viewerUserID, channelID int64, msg *domain.ChannelMessage
 
 func tgChatAdminRights(rights domain.ChannelAdminRights) tg.ChatAdminRights {
 	return tg.ChatAdminRights{
-		ChangeInfo:        rights.ChangeInfo,
-		PostMessages:      rights.PostMessages,
-		EditMessages:      rights.EditMessages,
-		DeleteMessages:    rights.DeleteMessages,
-		PostStories:       rights.PostStories,
-		EditStories:       rights.EditStories,
-		DeleteStories:     rights.DeleteStories,
-		BanUsers:          rights.BanUsers,
-		InviteUsers:       rights.InviteUsers,
-		PinMessages:       rights.PinMessages,
-		AddAdmins:         rights.AddAdmins,
-		Anonymous:         rights.Anonymous,
-		ManageCall:        rights.ManageCall,
-		Other:             true,
-		ManageTopics:      rights.ManageTopics,
-		ManageRanks:       rights.ManageRanks,
-		ManageLinkedPeers: rights.ManageLinkedPeers,
+		ChangeInfo:            rights.ChangeInfo,
+		PostMessages:          rights.PostMessages,
+		EditMessages:          rights.EditMessages,
+		DeleteMessages:        rights.DeleteMessages,
+		PostStories:           rights.PostStories,
+		EditStories:           rights.EditStories,
+		DeleteStories:         rights.DeleteStories,
+		BanUsers:              rights.BanUsers,
+		InviteUsers:           rights.InviteUsers,
+		PinMessages:           rights.PinMessages,
+		AddAdmins:             rights.AddAdmins,
+		Anonymous:             rights.Anonymous,
+		ManageCall:            rights.ManageCall,
+		Other:                 true,
+		ManageTopics:          rights.ManageTopics,
+		ManageRanks:           rights.ManageRanks,
+		ManageLinkedPeers:     rights.ManageLinkedPeers,
+		ManageWelcomeMessages: rights.ManageWelcomeMessages,
 		// manage_direct_messages(flags.17):客户端据此在母频道上判定 canAccessMonoforum,
 		// 从而为关联 monoforum 派生 MonoforumAdmin(Direct-Messages 容器渲染所需)。
 		ManageDirectMessages: rights.ManageDirectMessages,
@@ -877,24 +901,25 @@ func creatorProjectionAdminRights(rights domain.ChannelAdminRights) domain.Chann
 
 func domainChannelAdminRights(rights tg.ChatAdminRights) domain.ChannelAdminRights {
 	return domain.ChannelAdminRights{
-		ChangeInfo:           rights.ChangeInfo,
-		PostMessages:         rights.PostMessages,
-		EditMessages:         rights.EditMessages,
-		DeleteMessages:       rights.DeleteMessages,
-		PostStories:          rights.PostStories,
-		EditStories:          rights.EditStories,
-		DeleteStories:        rights.DeleteStories,
-		BanUsers:             rights.BanUsers,
-		InviteUsers:          rights.InviteUsers,
-		PinMessages:          rights.PinMessages,
-		AddAdmins:            rights.AddAdmins,
-		Anonymous:            rights.Anonymous,
-		ManageCall:           rights.ManageCall,
-		ManageChat:           rights.Other,
-		ManageTopics:         rights.ManageTopics,
-		ManageRanks:          rights.ManageRanks,
-		ManageLinkedPeers:    rights.ManageLinkedPeers,
-		ManageDirectMessages: rights.ManageDirectMessages,
+		ChangeInfo:            rights.ChangeInfo,
+		PostMessages:          rights.PostMessages,
+		EditMessages:          rights.EditMessages,
+		DeleteMessages:        rights.DeleteMessages,
+		PostStories:           rights.PostStories,
+		EditStories:           rights.EditStories,
+		DeleteStories:         rights.DeleteStories,
+		BanUsers:              rights.BanUsers,
+		InviteUsers:           rights.InviteUsers,
+		PinMessages:           rights.PinMessages,
+		AddAdmins:             rights.AddAdmins,
+		Anonymous:             rights.Anonymous,
+		ManageCall:            rights.ManageCall,
+		ManageChat:            rights.Other,
+		ManageTopics:          rights.ManageTopics,
+		ManageRanks:           rights.ManageRanks,
+		ManageLinkedPeers:     rights.ManageLinkedPeers,
+		ManageWelcomeMessages: rights.ManageWelcomeMessages,
+		ManageDirectMessages:  rights.ManageDirectMessages,
 	}
 }
 

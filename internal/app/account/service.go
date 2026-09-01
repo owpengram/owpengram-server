@@ -1053,6 +1053,12 @@ func (s *Service) SetLoginEmail(ctx context.Context, userID int64, email string)
 	return s.passwords.Save(ctx, userID, settings)
 }
 
+// ValidLoginEmail exposes the same normalization/shape gate to trusted
+// administrative dry-runs without duplicating the address policy.
+func (s *Service) ValidLoginEmail(email string) bool {
+	return validLoginEmail(normalizeLoginEmail(email))
+}
+
 // LoginEmail 返回已登录用户的登录邮箱原始地址（用于 verifyEmail 回显 emailVerified.email）。
 func (s *Service) LoginEmail(ctx context.Context, userID int64) (string, bool, error) {
 	if s == nil || s.passwords == nil || userID == 0 {

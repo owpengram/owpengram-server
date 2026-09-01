@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"
@@ -38,23 +39,23 @@ type ephemeralPushSessions struct {
 type ephemeralPushCapture struct {
 	userID   int64
 	authKey  [8]byte
-	minLayer int
+	semantic tlprofile.SemanticID
 	message  tg.UpdatesClass
 }
 
 func (s *ephemeralPushSessions) IsUserOnline(int64) bool { return s.online }
 
-func (s *ephemeralPushSessions) PushToUserTransientAtLeastLayer(_ context.Context, userID int64, minLayer int, _ proto.MessageType, message tg.UpdatesClass, _ time.Duration) (int, error) {
+func (s *ephemeralPushSessions) PushToUserTransientCompatible(_ context.Context, userID int64, semantic tlprofile.SemanticID, _ proto.MessageType, message tg.UpdatesClass, _ time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.broadcasts = append(s.broadcasts, ephemeralPushCapture{userID: userID, minLayer: minLayer, message: message})
+	s.broadcasts = append(s.broadcasts, ephemeralPushCapture{userID: userID, semantic: semantic, message: message})
 	return 1, nil
 }
 
-func (s *ephemeralPushSessions) PushToUserAuthKeyTransientAtLeastLayer(_ context.Context, userID int64, authKey [8]byte, minLayer int, _ proto.MessageType, message tg.UpdatesClass, _ time.Duration) (int, error) {
+func (s *ephemeralPushSessions) PushToUserAuthKeyTransientCompatible(_ context.Context, userID int64, authKey [8]byte, semantic tlprofile.SemanticID, _ proto.MessageType, message tg.UpdatesClass, _ time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.targeted = append(s.targeted, ephemeralPushCapture{userID: userID, authKey: authKey, minLayer: minLayer, message: message})
+	s.targeted = append(s.targeted, ephemeralPushCapture{userID: userID, authKey: authKey, semantic: semantic, message: message})
 	return 1, nil
 }
 
@@ -135,8 +136,8 @@ func TestEphemeralPushMultiInstanceSourceDedupAndLayerRouting(t *testing.T) {
 	if broadcast, targeted := sessions2.counts(); broadcast != 1 || targeted != 0 {
 		t.Fatalf("remote delivery broadcast=%d targeted=%d", broadcast, targeted)
 	}
-	if sessions1.broadcasts[0].minLayer != 228 || sessions2.broadcasts[0].minLayer != 228 {
-		t.Fatalf("min layers source=%d remote=%d", sessions1.broadcasts[0].minLayer, sessions2.broadcasts[0].minLayer)
+	if sessions1.broadcasts[0].semantic != tlprofile.SemanticTypeUpdateNewEphemeralMessage || sessions2.broadcasts[0].semantic != tlprofile.SemanticTypeUpdateNewEphemeralMessage {
+		t.Fatalf("semantics source=%#x remote=%#x", sessions1.broadcasts[0].semantic, sessions2.broadcasts[0].semantic)
 	}
 	if len(broker.published) != 1 || broker.published[0].SourceID != "one" {
 		t.Fatalf("published=%+v", broker.published)
@@ -151,7 +152,7 @@ func TestEphemeralPushMultiInstanceSourceDedupAndLayerRouting(t *testing.T) {
 		TargetBusinessAuthKey: key, Message: message, Date: int(time.Now().Unix()),
 	})
 	_, targeted := sessions2.counts()
-	if targeted != 1 || sessions2.targeted[0].authKey != key || sessions2.targeted[0].minLayer != 228 {
+	if targeted != 1 || sessions2.targeted[0].authKey != key || sessions2.targeted[0].semantic != tlprofile.SemanticTypeUpdateDeleteEphemeralMessages {
 		t.Fatalf("targeted=%+v", sessions2.targeted)
 	}
 	deletedUpdates, ok := sessions2.targeted[0].message.(*tg.Updates)

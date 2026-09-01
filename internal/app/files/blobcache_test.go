@@ -69,7 +69,7 @@ func TestGetFileCachesMetadataAndSmallBlobBytes(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	media := newFakeMediaStore()
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:42", ObjectKey: objectKey, Size: 10, MimeType: "application/octet-stream"}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:42", Backend: domain.MediaBackendLocalFS, ObjectKey: objectKey, Size: 10, MimeType: "application/octet-stream"}); err != nil {
 		t.Fatalf("put blob: %v", err)
 	}
 	counting := &countingMediaStore{fakeMediaStore: media}
@@ -121,7 +121,7 @@ func TestGetFileLogsCacheHitMiss(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 	media := newFakeMediaStore()
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:log", ObjectKey: objectKey, Size: 10, MimeType: "application/octet-stream"}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:log", Backend: domain.MediaBackendLocalFS, ObjectKey: objectKey, Size: 10, MimeType: "application/octet-stream"}); err != nil {
 		t.Fatalf("put blob: %v", err)
 	}
 	blobs := &countingBlobBackend{BlobBackend: local}
@@ -176,6 +176,7 @@ func TestGetFileDoesNotByteCacheLargeBlob(t *testing.T) {
 	media := newFakeMediaStore()
 	if err := media.PutFileBlob(ctx, domain.FileBlob{
 		LocationKey: "doc:large",
+		Backend:     domain.MediaBackendLocalFS,
 		ObjectKey:   objectKey,
 		Size:        int64(len(content)),
 		MimeType:    "application/octet-stream",
@@ -196,6 +197,33 @@ func TestGetFileDoesNotByteCacheLargeBlob(t *testing.T) {
 	}
 	if blobs.getRangeCalls != 2 {
 		t.Errorf("getRangeCalls = %d, want 2 (large blob is not byte cached)", blobs.getRangeCalls)
+	}
+}
+
+func TestGetFileRejectsStoredBackendMismatch(t *testing.T) {
+	ctx := context.Background()
+	local, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("local fs: %v", err)
+	}
+	objectKey, err := local.Put(ctx, []byte("must-not-fallback"))
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	media := newFakeMediaStore()
+	if err := media.PutFileBlob(ctx, domain.FileBlob{
+		LocationKey: "doc:mismatch",
+		Backend:     domain.MediaBackendS3,
+		ObjectKey:   objectKey,
+		Size:        int64(len("must-not-fallback")),
+	}); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	svc := NewService(media, local, 2)
+	if _, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{
+		LocationKey: "doc:mismatch", Limit: 128 << 10,
+	}); err == nil || found {
+		t.Fatalf("mismatched backend found=%v err=%v", found, err)
 	}
 }
 
@@ -227,10 +255,10 @@ func TestWarmCachesPreloadsStickerSetAndSmallBlobs(t *testing.T) {
 	if err := media.PutDocument(ctx, doc); err != nil {
 		t.Fatalf("put doc: %v", err)
 	}
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100", ObjectKey: mainKey, Size: 7, MimeType: doc.MimeType}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100", Backend: domain.MediaBackendLocalFS, ObjectKey: mainKey, Size: 7, MimeType: doc.MimeType}); err != nil {
 		t.Fatalf("put main blob: %v", err)
 	}
-	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", ObjectKey: thumbKey, Size: 5, MimeType: "image/jpeg"}); err != nil {
+	if err := media.PutFileBlob(ctx, domain.FileBlob{LocationKey: "doc:100:m", Backend: domain.MediaBackendLocalFS, ObjectKey: thumbKey, Size: 5, MimeType: "image/jpeg"}); err != nil {
 		t.Fatalf("put thumb blob: %v", err)
 	}
 	set := domain.StickerSet{

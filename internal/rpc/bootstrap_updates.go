@@ -106,26 +106,27 @@ func (r *Router) enqueueLoginMessageBootstrap(ctx context.Context, msg domain.Me
 // publishBootstrapAfterBaseline runs only from the ordered post-response plan.
 // It must never be called while the baseline rpc_result is merely encoded or
 // queued, otherwise the bootstrap update can overtake that baseline on wire.
-func (r *Router) publishBootstrapAfterBaseline(ctx context.Context, userID int64) {
+func (r *Router) publishBootstrapAfterBaseline(ctx context.Context, userID int64) bool {
 	if r.deps.BootstrapUpdates == nil || userID == 0 {
-		return
+		return false
 	}
 	authKeyID, hasAuthKeyID := AuthKeyIDFrom(ctx)
 	sessionID, hasSessionID := SessionIDFrom(ctx)
 	if !hasAuthKeyID || !hasSessionID {
-		return
+		return false
 	}
 	cbCtx, cancel := context.WithTimeout(ctx, updatesDeliveryPhaseTimeout)
 	defer cancel()
 	ready, err := r.deps.BootstrapUpdates.MarkReadyForSession(cbCtx, userID, authKeyID, sessionID)
 	if err != nil {
 		r.log.Warn("mark bootstrap updates ready", zap.Int64("user_id", userID), zap.Int64("session_id", sessionID), zap.Error(err))
-		return
+		return false
 	}
 	if ready == 0 {
-		return
+		return true
 	}
 	r.publishReadyBootstrapUpdates(cbCtx, ready, defaultBootstrapLease, r.log.Named("bootstrap"))
+	return true
 }
 
 func (r *Router) publishReadyBootstrapUpdates(ctx context.Context, batch int, leaseTimeout time.Duration, log *zap.Logger) int {

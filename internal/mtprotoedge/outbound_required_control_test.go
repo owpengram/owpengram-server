@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/iamxvbaba/td/bin"
+	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/crypto"
 	"github.com/iamxvbaba/td/mt"
 	"github.com/iamxvbaba/td/proto"
@@ -54,6 +55,75 @@ func (t *gatedRequiredControlTransport) Close() error {
 
 func (t *gatedRequiredControlTransport) unblock() {
 	t.closeOnce.Do(func() { close(t.release) })
+}
+
+func TestServiceTaskResponsesWaitForPhysicalWrite(t *testing.T) {
+	tests := []struct {
+		name string
+		send func(*Server, context.Context, *Conn) error
+	}{
+		{
+			name: "pong",
+			send: func(s *Server, ctx context.Context, c *Conn) error {
+				return s.sendPong(ctx, c, 11, 22)
+			},
+		},
+		{
+			name: "future_salts",
+			send: func(s *Server, ctx context.Context, c *Conn) error {
+				return s.sendFutureSalts(ctx, c, 11, 32)
+			},
+		},
+		{
+			name: "msgs_state_info",
+			send: func(s *Server, ctx context.Context, c *Conn) error {
+				return s.sendMsgsStateInfo(ctx, c, 11, []byte{4})
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := newGatedRequiredControlTransport(nil)
+			c := newOutboundTestConn(t, tr, newOutboundTrackedBudget(1<<20))
+			c.outboundControlTrackedBudget = newOutboundTrackedBudget(1 << 20)
+			srv := &Server{clock: clock.System}
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- tc.send(srv, ctx, c)
+			}()
+
+			select {
+			case <-tr.started:
+			case <-time.After(time.Second):
+				t.Fatal("service response did not reach the physical writer")
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("service response returned before physical write completed: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+
+			tr.unblock()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("service response: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("service response did not return after physical write")
+			}
+			if c.isRetired() {
+				t.Fatal("successful service response terminally closed the connection")
+			}
+			if got := tr.sends.Load(); got != 1 {
+				t.Fatalf("physical sends = %d, want 1", got)
+			}
+		})
+	}
 }
 
 func TestSendRequiredControlWaitsForPhysicalWriteAndReturnsBudget(t *testing.T) {

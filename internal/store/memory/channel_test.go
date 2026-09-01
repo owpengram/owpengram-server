@@ -10,6 +10,46 @@ import (
 	"telesrv/internal/domain"
 )
 
+func TestChannelCreateInitialPtsBaseline(t *testing.T) {
+	ctx := context.Background()
+	store := NewChannelStore()
+	created, err := store.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: 1,
+		Title:         "initial pts",
+		Megagroup:     true,
+		Date:          1_700_000_080,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	if created.Channel.Pts != domain.FirstChannelEventPts || created.Message.Pts != domain.FirstChannelEventPts ||
+		created.Event.Pts != domain.FirstChannelEventPts || created.Event.PtsCount != 1 {
+		t.Fatalf("create result = channel:%+v message:%+v event:%+v, want first event 2/1", created.Channel, created.Message, created.Event)
+	}
+	checkpoint := store.retention[created.Channel.ID]
+	if checkpoint.RetainedThroughPts != domain.InitialChannelPts || checkpoint.LatestPts != domain.FirstChannelEventPts {
+		t.Fatalf("checkpoint = %+v, want floor/latest 1/2", checkpoint)
+	}
+	fromBaseline, err := store.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+		UserID: 1, ChannelID: created.Channel.ID, Pts: domain.InitialChannelPts, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("difference from baseline: %v", err)
+	}
+	if fromBaseline.TooLong || len(fromBaseline.Events) != 1 || fromBaseline.Events[0].Pts != domain.FirstChannelEventPts {
+		t.Fatalf("difference from baseline = %+v, want create event at pts=2", fromBaseline)
+	}
+	fromZero, err := store.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+		UserID: 1, ChannelID: created.Channel.ID, Pts: 0, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("difference from zero: %v", err)
+	}
+	if !fromZero.TooLong || fromZero.Pts != domain.FirstChannelEventPts || len(fromZero.NewMessages) != 1 {
+		t.Fatalf("difference from zero = %+v, want complete snapshot at pts=2", fromZero)
+	}
+}
+
 func TestChannelCreateCreatesPermanentInviteAndHasLink(t *testing.T) {
 	ctx := context.Background()
 	store := NewChannelStore()

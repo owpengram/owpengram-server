@@ -344,7 +344,10 @@ func (r *Router) onChannelsInviteToChannel(ctx context.Context, req *tg.Channels
 	r.addOnlineChannelMemberships(res.Channel.ID, channelMemberUserIDs(res.Members)...)
 	cache := newViewerPeerCache(r)
 	updates := r.channelOperationUpdatesWithPeerCache(ctx, userID, res, cache)
-	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+	// Durable membership is not a realtime audience. Production fan-out derives
+	// online active members from the session fabric; offline members converge via
+	// the committed channel event/difference and must not pay payload-build cost.
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, nil, func(viewerUserID int64) *tg.Updates {
 		return r.channelOperationUpdatesWithPeerCache(ctx, viewerUserID, res, cache)
 	})
 	return &tg.MessagesInvitedUsers{Updates: updates, MissingInvitees: missingInvitees}, nil

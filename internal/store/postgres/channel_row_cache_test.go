@@ -164,3 +164,30 @@ func TestChannelRowCacheSingleflightsColdLoad(t *testing.T) {
 		t.Fatalf("cache hit called load again: calls=%d", got)
 	}
 }
+
+func TestChannelRowCacheBatchesMissesAndNegativeRows(t *testing.T) {
+	c := NewChannelRowCache(8)
+	loads := 0
+	load := func(_ context.Context, ids []int64) (map[int64]domain.Channel, error) {
+		loads++
+		out := make(map[int64]domain.Channel, len(ids))
+		for _, id := range ids {
+			if id != 2 {
+				out[id] = domain.Channel{ID: id, Title: "channel"}
+			}
+		}
+		return out, nil
+	}
+	for i := 0; i < 2; i++ {
+		got, err := c.getOrLoadBatch(context.Background(), []int64{1, 2, 3}, load)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[1].ID != 1 || got[2].ID != 0 || got[3].ID != 3 {
+			t.Fatalf("batch result = %+v", got)
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("batch loads = %d, want 1", loads)
+	}
+}

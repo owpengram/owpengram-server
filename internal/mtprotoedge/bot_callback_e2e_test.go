@@ -230,9 +230,9 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 				return fmt.Errorf("bot getUsers(owner) = %d, want 1", len(got))
 			}
 			ownerSeen := got[0].(*tg.User)
-			markup := &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{
-				&tg.KeyboardButtonCallback{Text: "Press", Data: callbackData},
-				&tg.KeyboardButtonURL{Text: "Site", URL: "https://example.com/x"},
+			markup := &tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{Buttons: []tg.KeyboardInlineButton{
+				{Text: "Press", Type: &tg.InlineButtonTypeCallback{Data: callbackData}},
+				{Text: "Site", Type: &tg.InlineButtonTypeURL{URL: "https://example.com/x"}},
 			}}}}
 			req := &tg.MessagesSendMessageRequest{
 				Peer:     &tg.InputPeerUser{UserID: ownerSeen.ID, AccessHash: ownerSeen.AccessHash},
@@ -312,14 +312,14 @@ func TestBotInlineKeyboardCallbackFlow(t *testing.T) {
 				if !ok || len(inline.Rows) != 1 || len(inline.Rows[0].Buttons) != 2 {
 					t.Fatalf("unexpected markup shape: %#v", rm)
 				}
-				cbBtn, ok := inline.Rows[0].Buttons[0].(*tg.KeyboardButtonCallback)
+				cbBtn, ok := inline.Rows[0].Buttons[0].Type.(*tg.InlineButtonTypeCallback)
 				if !ok {
 					t.Fatalf("first button not callback: %#v", inline.Rows[0].Buttons[0])
 				}
 				if string(cbBtn.Data) != string(callbackData) {
 					t.Fatalf("callback data round-trip mismatch: got %v want %v", cbBtn.Data, callbackData)
 				}
-				if _, ok := inline.Rows[0].Buttons[1].(*tg.KeyboardButtonURL); !ok {
+				if _, ok := inline.Rows[0].Buttons[1].Type.(*tg.InlineButtonTypeURL); !ok {
 					t.Fatalf("second button not url: %#v", inline.Rows[0].Buttons[1])
 				}
 				msgID = msg.ID

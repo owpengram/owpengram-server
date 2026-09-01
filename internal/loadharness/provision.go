@@ -29,6 +29,10 @@ type ProvisionConfig struct {
 	FirstNamePrefix string
 }
 
+// DefaultPhonePrefix plus the six-digit account index produces the repository's
+// structurally possible reserved NANP range (for example +1 555 000 0001).
+const DefaultPhonePrefix = "+15550"
+
 type ProvisionEvent struct {
 	Completed int
 	Total     int

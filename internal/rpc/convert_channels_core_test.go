@@ -68,6 +68,46 @@ func TestTGChannelFullIncludesExportedInvite(t *testing.T) {
 	}
 }
 
+func TestChannelFullStatsCapabilityRequiresEligibleViewerAndExactDC(t *testing.T) {
+	tests := []struct {
+		name      string
+		dc        int
+		monoforum bool
+		role      domain.ChannelMemberRole
+		want      bool
+	}{
+		{name: "creator", dc: 2, role: domain.ChannelRoleCreator, want: true},
+		{name: "ordinary member", dc: 2, role: domain.ChannelRoleMember},
+		{name: "monoforum creator", dc: 2, monoforum: true, role: domain.ChannelRoleCreator},
+		{name: "invalid canonical dc", role: domain.ChannelRoleCreator},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			view := domain.ChannelView{
+				Channel: domain.Channel{ID: 1003, Monoforum: tc.monoforum},
+				Self: domain.ChannelMember{
+					ChannelID: 1003,
+					UserID:    10,
+					Status:    domain.ChannelMemberActive,
+					Role:      tc.role,
+				},
+			}
+			full := tgChannelFull(view)
+			(&Router{cfg: Config{DC: tc.dc}}).applyChannelStatsCapability(full)
+			statsDC, ok := full.GetStatsDC()
+			if tc.want {
+				if !full.CanViewStats || !ok || statsDC != tc.dc {
+					t.Fatalf("can_view_stats=%v stats_dc=(%d,%v), want true and (%d,true)", full.CanViewStats, statsDC, ok, tc.dc)
+				}
+				return
+			}
+			if full.CanViewStats || ok {
+				t.Fatalf("can_view_stats=%v stats_dc=(%d,%v), want false and absent", full.CanViewStats, statsDC, ok)
+			}
+		})
+	}
+}
+
 func TestChannelBannedRightsRoundTripModernFields(t *testing.T) {
 	in := tg.ChatBannedRights{
 		ViewMessages:    true,

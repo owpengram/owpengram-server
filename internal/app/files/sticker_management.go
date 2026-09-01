@@ -142,7 +142,7 @@ func (s *Service) AdminSetStickerSetArchived(ctx context.Context, setID int64, a
 	if err != nil {
 		return false, err
 	}
-	if !found {
+	if !found || set.Deleted {
 		return false, domain.ErrStickerSetInvalid
 	}
 	if set.Archived == archived {
@@ -163,7 +163,7 @@ func (s *Service) AdminSetStickerSetSortOrder(ctx context.Context, setID int64, 
 	if err != nil {
 		return false, err
 	}
-	if !found {
+	if !found || set.Deleted {
 		return false, domain.ErrStickerSetInvalid
 	}
 	if set.SortOrder == order {
@@ -188,7 +188,7 @@ func (s *Service) AdminRenameStickerSet(ctx context.Context, setID int64, title 
 	if err != nil {
 		return domain.StickerSet{}, err
 	}
-	if !found {
+	if !found || set.Deleted {
 		return domain.StickerSet{}, domain.ErrStickerSetInvalid
 	}
 	set.Title = title
@@ -203,15 +203,15 @@ func (s *Service) AdminRenameStickerSet(ctx context.Context, setID int64, title 
 // AdminDeleteStickerSet deletes (soft-delete) a set with no ownership check;
 // see AdminSetStickerSetArchived for why that's needed here. Safe to bypass
 // ownership for: sticker_sets has no incoming foreign keys, so there's no
-// cascade to worry about (unlike star gifts, which have ~15 dependent
-// tables). Seed-imported sets will reappear on next restart if their source
-// files are still under data/sticker-seed — this only removes the DB row.
+// cascade to worry about. Seed-imported sets will reappear on next restart
+// if their source files are still under data/sticker-seed — this only
+// removes the DB row.
 func (s *Service) AdminDeleteStickerSet(ctx context.Context, setID int64) (domain.StickerSetKind, error) {
 	set, found, err := s.media.GetStickerSetByID(ctx, setID)
 	if err != nil {
 		return "", err
 	}
-	if !found {
+	if !found || set.Deleted {
 		return "", domain.ErrStickerSetInvalid
 	}
 	if err := s.media.AdminDeleteStickerSet(ctx, setID); err != nil {

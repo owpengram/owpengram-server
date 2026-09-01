@@ -144,7 +144,7 @@ func TestDeleteExpiredChannelUpdateEventsIsBoundedMemory(t *testing.T) {
 		t.Fatalf("deleted = %d, want bounded batch 2", deleted)
 	}
 	checkpoint := store.retention[created.Channel.ID]
-	if checkpoint.RetainedThroughPts != 2 || len(store.events[created.Channel.ID]) != 2 {
-		t.Fatalf("after bounded prune checkpoint=%+v events=%d, want floor=2 and 2 rows", checkpoint, len(store.events[created.Channel.ID]))
+	if checkpoint.RetainedThroughPts != 3 || len(store.events[created.Channel.ID]) != 2 {
+		t.Fatalf("after bounded prune checkpoint=%+v events=%d, want floor=3 and 2 rows", checkpoint, len(store.events[created.Channel.ID]))
 	}
 }

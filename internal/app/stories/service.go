@@ -190,6 +190,28 @@ func (s *Service) GetPeerStoryProjections(ctx context.Context, viewerUserID int6
 	return s.stories.GetPeerStoryProjections(ctx, viewerUserID, peers, now)
 }
 
+// ActiveStoryPeerExpirations returns the viewer-independent active-story gate
+// used before the privacy-sensitive peer projection. A missing peer is a
+// durable negative fact until its story_peer token advances.
+func (s *Service) ActiveStoryPeerExpirations(ctx context.Context, peers []domain.Peer, now int) (map[domain.Peer]int, error) {
+	if len(peers) > domain.MaxStoryIDs {
+		return nil, domain.ErrStoryIDInvalid
+	}
+	if s == nil || s.stories == nil || len(peers) == 0 {
+		return map[domain.Peer]int{}, nil
+	}
+	return s.stories.ActiveStoryPeerExpirations(ctx, peers, now)
+}
+
+// ListHiddenStoryPeers returns one sparse viewer-owned preference snapshot.
+// It is intentionally separate from active-story visibility and may be empty.
+func (s *Service) ListHiddenStoryPeers(ctx context.Context, viewerUserID int64) ([]domain.Peer, error) {
+	if s == nil || s.stories == nil || viewerUserID == 0 {
+		return nil, nil
+	}
+	return s.stories.ListHiddenStoryPeers(ctx, viewerUserID)
+}
+
 func (s *Service) ReadStories(ctx context.Context, viewerUserID int64, peer domain.Peer, maxID, date int) (domain.StoryReadResult, error) {
 	if maxID <= 0 || maxID > domain.MaxStoryID {
 		return domain.StoryReadResult{}, domain.ErrStoryIDInvalid

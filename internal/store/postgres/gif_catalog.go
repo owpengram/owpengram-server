@@ -20,6 +20,13 @@ func (s *GifCatalogStore) CreateGifCatalogEntry(ctx context.Context, entry domai
 	if entry.ID == 0 || entry.DocumentID == 0 {
 		return domain.GifCatalogEntry{}, fmt.Errorf("create gif catalog entry: id and document_id are required")
 	}
+	var count int64
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM gif_catalog`).Scan(&count); err != nil {
+		return domain.GifCatalogEntry{}, fmt.Errorf("count gif catalog entries: %w", err)
+	}
+	if count >= domain.MaxGifCatalogEntries {
+		return domain.GifCatalogEntry{}, domain.ErrGifCatalogFull
+	}
 	row := s.db.QueryRow(ctx, `
 INSERT INTO gif_catalog (id, title, document_id, enabled, sort_order, created_by, source_filename, category)
 VALUES ($1, $2, $3, true, $4, $5, $6, $7)

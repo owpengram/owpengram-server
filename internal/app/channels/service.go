@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"telesrv/internal/app/readmodel"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
@@ -22,6 +24,9 @@ type Service struct {
 	mediaCountCache   *mediaCountReadModelCache
 	participantCache  *participantsReadModelCache
 	activeIDsCache    *activeChannelIDsReadModelCache
+	activeIDsShared   store.ActiveChannelIDsPageCache
+	activeIDsLoader   store.ActiveChannelIDsPageLoader
+	activeIDsMetrics  ActiveChannelIDsReadModelMetrics
 	botMemberIDsCache *activeBotMemberIDsCache
 	// reserved blocks the self-service UpdateUsername (not AdminSetUsername)
 	// from claiming a config.ReservedUsernames entry -- see
@@ -35,6 +40,15 @@ type SendPermissionChecker interface {
 	CanSendMessages(ctx context.Context, userID int64) error
 }
 
+// channelStatsStore is an optional capability kept out of the broad
+// store.ChannelStore contract.  It lets focused test stores stay small while
+// both production backends expose the complete bounded stats read model.
+type channelStatsStore interface {
+	GetChannelStats(ctx context.Context, req domain.ChannelStatsRequest) (domain.ChannelStats, error)
+	GetChannelMessageStats(ctx context.Context, req domain.ChannelMessageStatsRequest) (domain.ChannelMessageStats, error)
+	ListChannelMessagePublicForwards(ctx context.Context, req domain.ChannelMessagePublicForwardListRequest) (domain.ChannelMessagePublicForwardList, error)
+}
+
 // NewService creates a channel service.
 func NewService(channels store.ChannelStore, opts ...Option) *Service {
 	s := &Service{
@@ -43,7 +57,7 @@ func NewService(channels store.ChannelStore, opts ...Option) *Service {
 		resolveCache:      newChannelResolveReadModelCache(defaultChannelResolveReadModelTTL),
 		mediaCountCache:   newMediaCountReadModelCache(defaultMediaCountReadModelTTL),
 		participantCache:  newParticipantsReadModelCache(defaultParticipantsReadModelTTL),
-		activeIDsCache:    newActiveChannelIDsReadModelCache(defaultActiveChannelIDsReadModelTTL),
+		activeIDsCache:    newActiveChannelIDsReadModelCache(0, defaultActiveChannelIDsReadModelTTL),
 		botMemberIDsCache: newActiveBotMemberIDsCache(),
 	}
 	for _, opt := range opts {
@@ -63,6 +77,25 @@ func WithBotProfileResolver(bots BotProfileResolver) Option {
 func WithReadModelVersions(v store.ReadModelVersionStore) Option {
 	return func(s *Service) {
 		s.versions = v
+	}
+}
+
+// WithActiveChannelIDsReadModel installs the production shared readiness page
+// cache and its bounded authoritative cold loader. Supplying the shared cache
+// without either durable versions or a loader is a configuration error at read
+// time; the service never silently falls back to per-session PostgreSQL reads.
+func WithActiveChannelIDsReadModel(
+	shared store.ActiveChannelIDsPageCache,
+	loader store.ActiveChannelIDsPageLoader,
+	maxEntries int,
+	ttl time.Duration,
+	metrics ActiveChannelIDsReadModelMetrics,
+) Option {
+	return func(s *Service) {
+		s.activeIDsShared = shared
+		s.activeIDsLoader = loader
+		s.activeIDsMetrics = metrics
+		s.activeIDsCache = newActiveChannelIDsReadModelCache(maxEntries, ttl)
 	}
 }
 
@@ -200,6 +233,51 @@ func (s *Service) CountChannelMediaCategories(ctx context.Context, userID, chann
 		return domain.MediaCategoryCounts{}, domain.ErrChannelInvalid
 	}
 	return s.cachedChannelMediaCounts(ctx, userID, channelID)
+}
+
+// GetStats returns bounded aggregates derived from durable channel facts.
+func (s *Service) GetStats(ctx context.Context, userID int64, req domain.ChannelStatsRequest) (domain.ChannelStats, error) {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || !req.Period.Valid() {
+		return domain.ChannelStats{}, domain.ErrChannelInvalid
+	}
+	provider, ok := s.channels.(channelStatsStore)
+	if !ok {
+		return domain.ChannelStats{}, domain.ErrChannelInvalid
+	}
+	req.ViewerUserID = userID
+	return provider.GetChannelStats(ctx, req)
+}
+
+// GetMessageStats returns view/reaction event buckets for one exact post.
+func (s *Service) GetMessageStats(ctx context.Context, userID int64, req domain.ChannelMessageStatsRequest) (domain.ChannelMessageStats, error) {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 ||
+		req.MessageID > domain.MaxMessageBoxID || !req.Period.Valid() {
+		return domain.ChannelMessageStats{}, domain.ErrMessageIDInvalid
+	}
+	provider, ok := s.channels.(channelStatsStore)
+	if !ok {
+		return domain.ChannelMessageStats{}, domain.ErrChannelInvalid
+	}
+	req.ViewerUserID = userID
+	return provider.GetChannelMessageStats(ctx, req)
+}
+
+// ListMessagePublicForwards returns only public destination posts with a
+// validated seek cursor; private forwards never cross this boundary.
+func (s *Service) ListMessagePublicForwards(ctx context.Context, userID int64, req domain.ChannelMessagePublicForwardListRequest) (domain.ChannelMessagePublicForwardList, error) {
+	if s == nil || s.channels == nil || userID == 0 || req.ChannelID == 0 || req.MessageID <= 0 ||
+		req.MessageID > domain.MaxMessageBoxID || req.Limit <= 0 || req.Limit > domain.MaxChannelMessagePublicForwards {
+		return domain.ChannelMessagePublicForwardList{}, domain.ErrChannelInvalid
+	}
+	if _, err := domain.ParseChannelMessagePublicForwardCursor(req.Offset); err != nil {
+		return domain.ChannelMessagePublicForwardList{}, err
+	}
+	provider, ok := s.channels.(channelStatsStore)
+	if !ok {
+		return domain.ChannelMessagePublicForwardList{}, domain.ErrChannelInvalid
+	}
+	req.ViewerUserID = userID
+	return provider.ListChannelMessagePublicForwards(ctx, req)
 }
 
 // GetChannels returns channel data personalized for userID, ordered by the first occurrence in channelIDs.
@@ -584,7 +662,7 @@ func (s *Service) AdminSetEmojiStatus(ctx context.Context, channelID int64, stat
 // AdminSetPhoto force-sets a channel's avatar through the admin path (no
 // permission checks, no "changed photo" service message).
 func (s *Service) AdminSetPhoto(ctx context.Context, channelID int64, photo domain.Photo) (domain.Channel, error) {
-	if s == nil || s.channels == nil || channelID == 0 {
+	if s == nil || s.channels == nil || channelID == 0 || photo.ID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	return s.channels.SetChannelPhotoAdmin(ctx, channelID, photo)
@@ -1968,7 +2046,15 @@ func (s *Service) SendMonoforumMessage(ctx context.Context, req domain.SendMonof
 	if err := s.ensureCanSend(ctx, req.SenderUserID); err != nil {
 		return domain.SendChannelMessageResult{}, err
 	}
-	return s.channels.SendMonoforumMessage(ctx, req)
+	result, err := s.channels.SendMonoforumMessage(ctx, req)
+	if err != nil {
+		return result, err
+	}
+	// The saved-peer owner gains (or refreshes) monoforum readiness visibility.
+	// Evict locally at commit return; migration 20260901000022 advances the durable token
+	// and NOTIFY handles every other process.
+	s.invalidateActiveChannelIDs(req.SavedPeer.ID)
+	return result, nil
 }
 
 // ListMonoforumHistory 拉取某订阅者在频道私信(monoforum)内的历史。
@@ -2375,7 +2461,20 @@ func activeMembershipUserIDsFromMembers(primary int64, members []domain.ChannelM
 }
 
 func (s *Service) invalidateActiveChannelIDs(userIDs ...int64) {
-	if s == nil || s.activeIDsCache == nil {
+	if s == nil {
+		return
+	}
+	if versionCache, ok := s.versions.(store.ReadModelVersionCache); ok {
+		for _, userID := range uniqueNonZero(userIDs) {
+			versionCache.InvalidateReadModel(store.ReadModelKey{
+				Model:       readmodel.ModelChannelActiveIDs,
+				OwnerUserID: userID,
+				PeerType:    domain.PeerTypeUser,
+				PeerID:      userID,
+			})
+		}
+	}
+	if s.activeIDsCache == nil {
 		return
 	}
 	s.activeIDsCache.invalidateUsers(userIDs...)

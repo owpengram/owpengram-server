@@ -74,11 +74,11 @@ const (
 	maxVerificationIconNameBytes = 512
 	maxVerifierCompanyBytes      = 512
 	// Rune-counting domain limits use their worst-case UTF-8 byte size in SQL.
-	// The final generated description may be longer than the 70-rune custom input.
-	maxVerifierDescriptionBytes           = 280
+	// The final generated description may be longer than the custom-input limit.
+	maxVerifierDescriptionBytes           = 4 * domain.MaxCustomVerificationDescriptionLength
 	maxVerifierGrantReasonBytes           = 4096
 	maxCustomVerificationDescriptionBytes = 4096
-	maxCustomVerificationInputBytes       = 280
+	maxCustomVerificationInputBytes       = 4 * domain.MaxCustomVerificationDescriptionLength
 	maxCustomVerificationTitleBytes       = 1024
 	maxCustomVerificationUsernameBytes    = 64
 	maxCustomVerificationReasonBytes      = 16384

@@ -11,12 +11,68 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
+
+func TestTempAuthKeyBindingStoreUsesOneDatabaseStatementPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	keys := NewAuthKeyStore(pool)
+	handshakeExpiry := int(time.Now().Add(time.Hour).Unix())
+	temp := saveTempIdentityTestAuthKey(t, ctx, pool, keys, handshakeExpiry)
+	perm := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+	counter := &tempAuthKeyBindStatementCounter{Pool: pool}
+
+	err := NewTempAuthKeyBindingStore(counter).Save(ctx, domain.TempAuthKeyBinding{
+		TempAuthKeyID: temp, PermAuthKeyID: authKeyIDToInt64(perm),
+		Nonce: 801, TempSessionID: 802, ExpiresAt: handshakeExpiry,
+		EncryptedMessage: []byte("one database statement"),
+	})
+	if err != nil {
+		t.Fatalf("bind temporary auth key: %v", err)
+	}
+	if counter.statements != 1 {
+		t.Fatalf("binding transaction statements = %d, want 1", counter.statements)
+	}
+}
+
+type tempAuthKeyBindStatementCounter struct {
+	*pgxpool.Pool
+	statements int
+}
+
+func (c *tempAuthKeyBindStatementCounter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := c.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &tempAuthKeyBindCountingTx{Tx: tx, statements: &c.statements}, nil
+}
+
+type tempAuthKeyBindCountingTx struct {
+	pgx.Tx
+	statements *int
+}
+
+func (tx *tempAuthKeyBindCountingTx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	*tx.statements++
+	return tx.Tx.Exec(ctx, sql, arguments...)
+}
+
+func (tx *tempAuthKeyBindCountingTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	*tx.statements++
+	return tx.Tx.Query(ctx, sql, args...)
+}
+
+func (tx *tempAuthKeyBindCountingTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	*tx.statements++
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
 
 func TestTempAuthKeyBindingStoreRejectsIntegerWraparoundPostgres(t *testing.T) {
 	if strconv.IntSize < 64 {
@@ -188,7 +244,7 @@ UPDATE authorizations SET layer = $2 WHERE auth_key_id = $1`, authKeyIDToInt64(p
 				ExpiresAt:        handshakeExpiry,
 				EncryptedMessage: []byte("layer merge proof"),
 			}
-			err := bindings.Save(ctx, binding)
+			result, err := bindings.SaveWithState(ctx, binding)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("bind error = %v, want %v", err, tt.wantErr)
@@ -204,10 +260,17 @@ UPDATE authorizations SET layer = $2 WHERE auth_key_id = $1`, authKeyIDToInt64(p
 			if err != nil {
 				t.Fatalf("bind: %v", err)
 			}
+			if result.Layer != tt.wantLayer || result.LayerObservationID != tt.wantObs {
+				t.Fatalf("bind result = %+v, want layer=%d observation=%d", result, tt.wantLayer, tt.wantObs)
+			}
 			// A normalized proof replay is idempotent and repeats the same merge.
 			binding.Nonce++
-			if err := bindings.Save(ctx, binding); err != nil {
+			replayed, err := bindings.SaveWithState(ctx, binding)
+			if err != nil {
 				t.Fatalf("replay merged binding: %v", err)
+			}
+			if replayed != result {
+				t.Fatalf("replay bind result = %+v, want %+v", replayed, result)
 			}
 			assertTempIdentityLayerTuple(t, ctx, pool, tempID, tt.wantLayer, tt.wantObs)
 			assertTempIdentityLayerTuple(t, ctx, pool, permID, tt.wantLayer, tt.wantObs)

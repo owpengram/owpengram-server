@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/domain"
@@ -118,20 +119,45 @@ func (r *Router) onUpdatesGetDifference(ctx context.Context, req *tg.UpdatesGetD
 		}
 	}
 	// 密聊设备级 qts 消息（独立于账号级 pts 事件）：按当前设备 req.Qts 补回。
-	encMsgs, newQts := r.encryptedDifference(ctx, req.Qts)
+	encMsgs, newQts, encryptedPartial, err := r.encryptedDifference(ctx, req.Qts)
+	if err != nil {
+		r.log.Error("load secret chat qts difference", zap.Error(err))
+		return nil, internalErr()
+	}
 	// 密聊握手/已读状态事件（无 qts）：按未投递标记补回 OtherUpdates。
-	stateUpdates, statePeerUserIDs, stateEventIDs := r.encryptedStateUpdates(ctx, userID)
+	stateUpdates, statePeerUserIDs, stateEventIDs, encryptedStatePartial, err := r.encryptedStateUpdates(ctx, userID)
+	if err != nil {
+		r.log.Error("load secret chat state difference", zap.Error(err))
+		return nil, internalErr()
+	}
+	// 账号 pts、设备 qts 和无序号状态事件任一被截断，都必须返回 differenceSlice。
+	st.Partial = st.Partial || encryptedPartial || encryptedStatePartial
 	if !st.Partial && len(st.Events) == 0 && len(st.ChannelNudges) == 0 && len(encMsgs) == 0 && len(stateUpdates) == 0 {
 		// differenceEmpty carries no pts/qts. Both audited clients retain their
 		// request cursor, so only that normalized cursor is proven delivered.
 		emptyCursor := domain.UpdateState{Pts: from.Pts, Qts: from.Qts, Date: st.State.Date, Seq: st.State.Seq}
-		r.stageUpdatesBaselineAfterDelivery(ctx, userID, &emptyCursor, domain.UpdateStateCommitDeliveredOnly, nil, true)
+		// 账号级密聊邀请在 accept 后对获胜 auth key 是可确认但无可见 update 的收敛事件；
+		// 即使返回 differenceEmpty，也必须在 rpc_result 成功投递后登记这些 event id。
+		r.stageUpdatesBaselineAfterDelivery(ctx, userID, &emptyCursor, domain.UpdateStateCommitDeliveredOnly, stateEventIDs, true)
 		return &tg.UpdatesDifferenceEmpty{Date: st.State.Date, Seq: st.State.Seq}, nil
 	}
-	st.Events = r.enrichUpdateEvents(ctx, userID, st.Events)
+	peerCache := newViewerPeerCache(r)
+	st.Events, err = r.enrichUpdateEventsWithPeerCacheStrict(ctx, userID, st.Events, peerCache)
+	if err != nil {
+		r.log.Error("project durable account difference users",
+			zap.Int64("viewer_user_id", userID),
+			zap.Error(err))
+		return nil, internalErr()
+	}
 	diff := r.tgUpdatesDifference(ctx, userID, st)
 	diff = injectEncryptedMessages(diff, encMsgs, newQts)
-	diff = r.injectEncryptedOtherUpdates(ctx, userID, diff, stateUpdates, statePeerUserIDs)
+	diff, err = r.injectEncryptedOtherUpdatesStrict(ctx, userID, diff, stateUpdates, statePeerUserIDs, peerCache)
+	if err != nil {
+		r.log.Error("project durable encrypted difference users",
+			zap.Int64("viewer_user_id", userID),
+			zap.Error(err))
+		return nil, internalErr()
+	}
 	returnedCursor := st.State
 	returnedCursor.Qts = newQts
 	r.stageUpdatesBaselineAfterDelivery(ctx, userID, &returnedCursor, domain.UpdateStateCommitDeliveredOnly, stateEventIDs, true)

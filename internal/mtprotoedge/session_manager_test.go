@@ -1071,6 +1071,110 @@ func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) 
 	}
 }
 
+func TestSessionUpdatesActivationIsSingleFlightAndGenerationFenced(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	key := sessionKey{authKeyID: [8]byte{0x51}, sessionID: 5100}
+	old := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	if err := sm.Register(old); err != nil {
+		t.Fatal(err)
+	}
+	oldToken, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID)
+	if !ok || oldToken == 0 {
+		t.Fatal("first physical generation did not acquire activation")
+	}
+	if token, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatalf("concurrent activation acquired token %d", token)
+	}
+	sm.EndSessionUpdatesActivation(key.authKeyID, key.sessionID, oldToken+1)
+	if token, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatal("wrong-token release cleared active claim")
+	}
+
+	replacement := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	if err := sm.Register(replacement); err != nil {
+		t.Fatal(err)
+	}
+	newToken, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID)
+	if !ok || newToken == 0 || newToken == oldToken {
+		t.Fatalf("replacement activation token = %d, old %d", newToken, oldToken)
+	}
+	sm.EndSessionUpdatesActivation(key.authKeyID, key.sessionID, oldToken)
+	if token, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatal("old generation callback cleared replacement claim")
+	}
+	sm.EndSessionUpdatesActivation(key.authKeyID, key.sessionID, newToken)
+	if token, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID); !ok || token == 0 {
+		t.Fatal("matching replacement token did not release claim")
+	}
+}
+
+func TestSessionUpdatesActivationLeaseRecoversAbandonedClaim(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	key := sessionKey{authKeyID: [8]byte{0x52}, sessionID: 5200}
+	now := time.Unix(1700000000, 0)
+	c := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID, now: func() time.Time { return now }}
+	if err := sm.Register(c); err != nil {
+		t.Fatal(err)
+	}
+	first, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID)
+	if !ok {
+		t.Fatal("first activation claim rejected")
+	}
+	now = now.Add(updatesActivationClaimTTL - time.Second)
+	if token, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatal("live activation lease was stolen")
+	}
+	now = now.Add(2 * time.Second)
+	second, ok := sm.BeginSessionUpdatesActivation(key.authKeyID, key.sessionID)
+	if !ok || second == 0 || second == first {
+		t.Fatalf("expired activation lease was not replaced: first=%d second=%d", first, second)
+	}
+}
+
+func TestSessionBootstrapProbeIsOneShotRetryableAndGenerationFenced(t *testing.T) {
+	sm := NewSessionManager(zaptest.NewLogger(t))
+	key := sessionKey{authKeyID: [8]byte{0x53}, sessionID: 5300}
+	old := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	if err := sm.Register(old); err != nil {
+		t.Fatal(err)
+	}
+	failedToken, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID)
+	if !ok || failedToken == 0 {
+		t.Fatal("first bootstrap probe was not claimed")
+	}
+	if token, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatalf("concurrent bootstrap probe acquired token %d", token)
+	}
+	sm.EndSessionBootstrapProbe(key.authKeyID, key.sessionID, failedToken, false)
+	oldToken, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID)
+	if !ok || oldToken == 0 || oldToken == failedToken {
+		t.Fatalf("failed probe did not become retryable: failed=%d retry=%d", failedToken, oldToken)
+	}
+
+	replacement := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	if err := sm.Register(replacement); err != nil {
+		t.Fatal(err)
+	}
+	newToken, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID)
+	if !ok || newToken == 0 || newToken == oldToken {
+		t.Fatalf("replacement bootstrap token = %d, old %d", newToken, oldToken)
+	}
+	sm.EndSessionBootstrapProbe(key.authKeyID, key.sessionID, oldToken, true)
+	if token, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatal("old generation callback cleared replacement probe")
+	}
+	sm.EndSessionBootstrapProbe(key.authKeyID, key.sessionID, newToken, true)
+	if token, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID); ok || token != 0 {
+		t.Fatal("successful bootstrap probe was not one-shot")
+	}
+
+	sm.BindUserForAuthKey(key.authKeyID, key.sessionID, 100)
+	sm.BindUserForAuthKey(key.authKeyID, key.sessionID, 200)
+	if token, ok := sm.BeginSessionBootstrapProbe(key.authKeyID, key.sessionID); !ok || token == 0 {
+		t.Fatal("user identity change did not reset bootstrap probe")
+	}
+}
+
 func TestPendingPushBodiesUseGlobalByteBudgetAndReleaseOnDrop(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	msg := &tg.UpdateShort{Update: &tg.UpdateLoginToken{}, Date: 1700000000}

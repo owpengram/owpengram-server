@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -216,29 +217,43 @@ func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTemp
 		id, _ = AuthKeyIDFrom(ctx)
 	}
 	sessionID, _ := SessionIDFrom(ctx)
-	if err := r.deps.Auth.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
+	boundState, err := r.deps.Auth.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
 		TempAuthKeyID:    id,
 		PermAuthKeyID:    req.PermAuthKeyID,
 		Nonce:            req.Nonce,
 		ExpiresAt:        req.ExpiresAt,
 		EncryptedMessage: append([]byte(nil), req.EncryptedMessage...),
-	}); err != nil {
+	})
+	if err != nil {
 		return false, bindTempAuthKeyErr(err)
 	}
 	permID := authKeyIDFromInt64(req.PermAuthKeyID)
-	// temp key (re)bind 后立即作废其 temp→perm 解析缓存，确保下一帧按新绑定重新解析，
-	// 不被 TTL 内的旧 perm 缓存命中（防跨账号串号）。
+	// The committed bind transaction is authoritative for this immutable
+	// temp→permanent identity. Replace any prior local entry, then publish the
+	// exact positive mapping so Layer publication and the first business RPC do
+	// not re-read the same row. A competing different-permanent bind has already
+	// failed in the store before reaching this point.
 	if id != ([8]byte{}) {
 		r.tempKeyResolveCache.Delete(id)
+		r.cacheResolvedAuthKey(id, permID)
 	}
-	// Save atomically merged raw/permanent Layer observations. Both identities
-	// must now re-read that durable permanent primary; pre-bind process caches
-	// are not ordering evidence and cannot overwrite the transaction's winner.
+	// Save atomically merged raw/permanent Layer observations and returned the
+	// exact committed tuple. Project that generation directly; a post-commit
+	// read could observe a later selector and wrongly attribute it to this bind.
 	r.invalidateAuthUserCache(id)
 	r.invalidateAuthUserCache(permID)
 	unlockLayerCommit := r.lockAuthLayerCommit(id, permID)
 	defer unlockLayerCommit()
-	r.invalidateBoundAuthKeyLayerResolution(id, permID)
+	layer, blocked, err := r.cacheBoundAuthKeyLayerResolution(id, permID, boundState)
+	if err != nil {
+		if r.log != nil {
+			r.log.Error("project committed temp auth key bind Layer failed",
+				zap.String("raw_auth_key_id", fmt.Sprintf("%x", id[:])),
+				zap.String("perm_auth_key_id", fmt.Sprintf("%x", permID[:])),
+				zap.Error(err))
+		}
+		return false, internalErr()
+	}
 	if r.deps.Sessions != nil {
 		if all, ok := r.deps.Sessions.(RawAuthKeySessionBinder); ok {
 			all.BindAuthKeyForRawAuthKey(id, permID)
@@ -246,72 +261,86 @@ func (r *Router) onAuthBindTempAuthKey(ctx context.Context, req *tg.AuthBindTemp
 			r.deps.Sessions.BindAuthKeyForSession(id, sessionID, permID)
 		}
 	}
-	layer, _, err := r.resolveAuthKeyLayerDefault(ctx, permID)
-	if err != nil {
-		if clearer, ok := r.deps.Sessions.(AuthKeyInheritedLayerClearer); ok {
-			clearer.ClearInheritedLayerForRawAuthKey(id)
-		}
-		if r.log != nil {
-			r.log.Warn("reload merged permanent layer after temp auth key bind failed",
-				zap.String("raw_auth_key_id", fmt.Sprintf("%x", id[:])),
-				zap.String("perm_auth_key_id", fmt.Sprintf("%x", permID[:])),
-				zap.Error(err))
-		}
-		return false, internalErr()
-	}
-	r.cacheBoundAuthKeyLayerResolution(id, permID)
 	if isSupportedLayer(layer) {
 		if refresher, ok := r.deps.Sessions.(AuthKeyLayerRefresher); ok {
 			refresher.RefreshInheritedLayerForRawAuthKey(id, layer)
 		} else if binder, ok := r.deps.Sessions.(AuthKeyLayerBinder); ok {
 			binder.SeedInheritedLayerForRawAuthKey(id, layer)
 		}
-	} else if clearer, ok := r.deps.Sessions.(AuthKeyInheritedLayerClearer); ok {
-		clearer.ClearInheritedLayerForRawAuthKey(id)
+	} else if blocked || layer == 0 {
+		if clearer, ok := r.deps.Sessions.(AuthKeyInheritedLayerClearer); ok {
+			clearer.ClearInheritedLayerForRawAuthKey(id)
+		}
 	}
 	return true, nil
 }
 
-func (r *Router) invalidateBoundAuthKeyLayerResolution(authKeyIDs ...[8]byte) {
+func (r *Router) cacheBoundAuthKeyLayerResolution(
+	rawAuthKeyID, permAuthKeyID [8]byte,
+	result domain.TempAuthKeyBindingResult,
+) (layer int, blocked bool, err error) {
+	if result.Layer < 0 || result.LayerObservationID < 0 ||
+		(result.LayerObservationID > 0 && result.Layer == 0) {
+		return 0, false, fmt.Errorf(
+			"invalid bound auth-key Layer result layer=%d observation=%d",
+			result.Layer, result.LayerObservationID,
+		)
+	}
+	outcome := clientSessionInfo{layerObservationID: result.LayerObservationID}
+	if isSupportedLayer(result.Layer) {
+		outcome.layer = result.Layer
+	} else if result.Layer != 0 {
+		outcome.layerBlocked = true
+		outcome.layerBlockedByAuthKey = true
+	}
+
 	r.clientInfoMu.Lock()
 	defer r.clientInfoMu.Unlock()
-	for _, authKeyID := range authKeyIDs {
-		if info, ok := r.authInfo[authKeyID]; ok {
-			info.layer = 0
-			info.layerObservationID = 0
-			info.layerAdmissionSeq = 0
-			info.authKeyInfoChecked = false
-			info.authorizationChecked = false
-			info.layerBlocked = false
-			info.layerBlockedByAuthKey = false
-			r.authInfo[authKeyID] = info
+	for _, authKeyID := range [][8]byte{rawAuthKeyID, permAuthKeyID} {
+		current := r.authInfo[authKeyID]
+		switch {
+		case current.layerObservationID > outcome.layerObservationID:
+			outcome.layer = current.layer
+			outcome.layerObservationID = current.layerObservationID
+			outcome.layerBlocked = current.layerBlocked
+			outcome.layerBlockedByAuthKey = current.layerBlockedByAuthKey
+		case current.layerObservationID == outcome.layerObservationID && outcome.layerObservationID > 0:
+			currentBlocked := current.layerBlocked || current.layerBlockedByAuthKey
+			outcomeBlocked := outcome.layerBlocked || outcome.layerBlockedByAuthKey
+			if current.layer != 0 && outcome.layer != 0 && current.layer != outcome.layer {
+				return 0, false, fmt.Errorf(
+					"conflicting cached bound auth-key Layer observation %d: %d != %d",
+					outcome.layerObservationID, current.layer, outcome.layer,
+				)
+			}
+			if currentBlocked != outcomeBlocked &&
+				(current.layer != 0 || outcome.layer != 0 || currentBlocked || outcomeBlocked) {
+				return 0, false, fmt.Errorf(
+					"conflicting cached bound auth-key blocked observation %d",
+					outcome.layerObservationID,
+				)
+			}
+			if outcome.layer == 0 {
+				outcome.layer = current.layer
+			}
 		}
 	}
-}
-
-func (r *Router) cacheBoundAuthKeyLayerResolution(rawAuthKeyID, permAuthKeyID [8]byte) {
-	r.clientInfoMu.Lock()
-	defer r.clientInfoMu.Unlock()
 	if r.authInfo == nil {
 		r.authInfo = make(map[[8]byte]clientSessionInfo)
 	}
-	if _, exists := r.authInfo[rawAuthKeyID]; !exists {
-		evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+	for _, authKeyID := range [][8]byte{rawAuthKeyID, permAuthKeyID} {
+		if _, exists := r.authInfo[authKeyID]; !exists {
+			evictMapEntryIfFullLocked(r.authInfo, maxAuthInfoEntries)
+		}
+		info := r.authInfo[authKeyID]
+		info.layer = outcome.layer
+		info.layerObservationID = outcome.layerObservationID
+		info.layerAdmissionSeq = 0
+		info.layerBlocked = outcome.layerBlocked
+		info.layerBlockedByAuthKey = outcome.layerBlockedByAuthKey
+		r.authInfo[authKeyID] = info
 	}
-	canonical := r.authInfo[permAuthKeyID]
-	info := r.authInfo[rawAuthKeyID]
-	// The bind transaction made the permanent row authoritative for both
-	// identities. Copy its complete resolution tuple: a Layer without the same
-	// observation token (or a stale blocked bit) would let later cache merging
-	// manufacture an ordering state that never existed durably.
-	info.layer = canonical.layer
-	info.layerObservationID = canonical.layerObservationID
-	info.layerAdmissionSeq = canonical.layerAdmissionSeq
-	info.layerBlocked = canonical.layerBlocked
-	info.layerBlockedByAuthKey = canonical.layerBlockedByAuthKey
-	info.authKeyInfoChecked = canonical.authKeyInfoChecked
-	info.authorizationChecked = canonical.authorizationChecked
-	r.authInfo[rawAuthKeyID] = info
+	return outcome.layer, outcome.layerBlocked || outcome.layerBlockedByAuthKey, nil
 }
 
 // onAuthExportLoginToken 给 QR 登录请求方返回短期 token；扫码端接受后，同一目标
@@ -473,9 +502,25 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 			errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, phoneNumberInvalidErr()
 		}
+		// The public MTProto error intentionally stays opaque, but operators need
+		// the wrapped store/provider cause to repair an update-related failure.
+		// Hash the normalized phone so neither the number nor the OTP reaches logs.
+		phoneDigest := sha256.Sum256([]byte(domain.NormalizePhone(req.PhoneNumber)))
+		fields := append(r.contextLogFields(ctx),
+			zap.Int("api_id", req.APIID),
+			zap.String("phone_digest", hex.EncodeToString(phoneDigest[:8])),
+			zap.Error(err),
+		)
+		r.log.Error("auth.sendCode failed", fields...)
 		return nil, internalErr()
 	}
-	return r.tgSentCodeForHash(ctx, hash)
+	sent, err := r.tgSentCodeForHash(ctx, hash)
+	if err != nil {
+		fields := append(r.contextLogFields(ctx), zap.Error(err))
+		r.log.Error("auth.sendCode delivery lookup failed", fields...)
+		return nil, err
+	}
+	return sent, nil
 }
 
 func (r *Router) onAuthReportMissingCode(ctx context.Context, req *tg.AuthReportMissingCodeRequest) (bool, error) {
@@ -828,7 +873,7 @@ func (r *Router) completePendingPasswordSignIn(ctx context.Context, authKeyID [8
 	if r.deps.Auth == nil {
 		return nil
 	}
-	if err := r.deps.Auth.CompletePasswordSignIn(ctx, authKeyID); err != nil {
+	if err := r.deps.Auth.CompletePasswordSignIn(ctx, authKeyID, userID); err != nil {
 		return err
 	}
 	r.invalidateAuthUserCache(authKeyID)

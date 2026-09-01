@@ -7,6 +7,7 @@ import (
 
 const (
 	ModelDialogLight         = "dialog_light"
+	ModelDialogOwner         = "dialog_owner"
 	ModelContactAccount      = "contact_account"
 	ModelChannelBase         = "channel_base"
 	ModelChannelMember       = "channel_member"
@@ -15,6 +16,9 @@ const (
 	ModelPrivateMediaCounts  = "private_media_counts"
 	ModelChannelParticipants = "channel_participants"
 	ModelChannelSelfBoosts   = "channel_self_boosts"
+	ModelUserVisibility      = "user_visibility"
+	ModelStoryPeer           = "story_peer"
+	ModelStoryHiddenList     = "story_hidden_list"
 )
 
 func MixHashes(values ...int64) int64 {

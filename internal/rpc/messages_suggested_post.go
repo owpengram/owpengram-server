@@ -65,7 +65,7 @@ func (r *Router) onMessagesToggleSuggestedPostApproval(ctx context.Context, req 
 	if !result.Duplicate {
 		r.enqueueSuggestedPostApprovalFanout(ctx, userID, result)
 	}
-	return r.suggestedPostApprovalUpdates(ctx, userID, result), nil
+	return r.suggestedPostApprovalUpdatesStrict(ctx, userID, result)
 }
 
 func suggestedPostApprovalErr(err error) error {

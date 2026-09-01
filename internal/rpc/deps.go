@@ -6,11 +6,13 @@ import (
 
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/sfu"
 	"telesrv/internal/store"
 	"telesrv/internal/turnsrv"
+	"telesrv/internal/updatecdn"
 )
 
 // 本文件按「消费者定义接口」惯例，在 rpc 包定义 Router 依赖的业务服务接口。
@@ -19,11 +21,11 @@ import (
 
 // AuthService 抽象登录/注册业务。
 type AuthService interface {
-	BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) error
+	BindTempAuthKey(ctx context.Context, sessionID int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error)
 	ResolveAuthKey(ctx context.Context, authKeyID [8]byte) ([8]byte, bool, error)
 	UserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error)
 	PendingPasswordUserID(ctx context.Context, authKeyID [8]byte) (int64, bool, error)
-	CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte) error
+	CompletePasswordSignIn(ctx context.Context, authKeyID [8]byte, expectedUserID int64) error
 	SendCode(ctx context.Context, phone string) (string, error)
 	CodeDelivery(ctx context.Context, phoneCodeHash string) (domain.AuthCodeDelivery, bool, error)
 	ResendCode(ctx context.Context, phone, phoneCodeHash string) (string, error)
@@ -97,6 +99,29 @@ type ImmediateSessionPusher interface {
 // 用于按 RPC 置位 receivesUpdates 时的幂等短路；不实现时每次都走完整置位（幂等，仅多余开销）。
 type SessionUpdatesStateProvider interface {
 	ReceivesUpdatesForAuthKey(rawAuthKeyID [8]byte, sessionID int64) bool
+}
+
+// SessionUpdatesActivationProvider serializes the expensive transition from an
+// authenticated physical session to updates-ready. A successful claim belongs
+// to exactly one physical connection generation; the token prevents a delayed
+// callback from an old connection clearing a replacement's claim.
+//
+// This capability gates only membership synchronization and readiness. Each
+// updates.getState/getDifference delivery keeps its own cursor commit and must
+// never be coalesced with another RPC.
+type SessionUpdatesActivationProvider interface {
+	BeginSessionUpdatesActivation(rawAuthKeyID [8]byte, sessionID int64) (token uint64, ok bool)
+	EndSessionUpdatesActivation(rawAuthKeyID [8]byte, sessionID int64, token uint64)
+}
+
+// SessionBootstrapProbeProvider makes the durable bootstrap-job readiness
+// lookup a one-shot per physical connection generation. A successful probe
+// includes an authoritative zero-row result. Failed delivery work releases the
+// claim so a later delivered baseline can retry; replacement connections own
+// independent state and reject completion from an older generation.
+type SessionBootstrapProbeProvider interface {
+	BeginSessionBootstrapProbe(rawAuthKeyID [8]byte, sessionID int64) (token uint64, ok bool)
+	EndSessionBootstrapProbe(rawAuthKeyID [8]byte, sessionID int64, token uint64, success bool)
 }
 
 // ClientLayerBinder 把协商 TL layer 即时下推到连接（可选能力）。
@@ -193,20 +218,20 @@ type TransientSessionBinder interface {
 }
 
 // AuthKeyTargetedSessionBinder 把 update 定向投递给某用户【绑定到具体 business auth_key
-// 这台设备】的就绪连接（密聊设备级投递）。SessionManager 实现；测试替身/未装配时
-// rpc 层回退账号级推送。未就绪连接跳过、不进 pending（密聊离线靠 getDifference 补）。
+// 这台设备】的就绪连接（密聊设备级投递）。SessionManager 实现；密聊启用时必须装配，
+// 缺失时 fail-closed，严禁回退账号级推送。未就绪连接跳过、不进 pending（离线靠 difference 补）。
 type AuthKeyTargetedSessionBinder interface {
 	PushToUserAuthKey(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass) (int, error)
 	PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+	PushToUserExceptBusinessAuthKey(ctx context.Context, userID int64, excludeBusinessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
-// ExactLayerTransientSessionBinder is the admission boundary for updates whose
-// constructors do not exist in older profiles. Implementations must filter the
-// live session index before encoding, skip unknown/not-ready profiles, and must
-// never queue the transient payload for later delivery.
-type ExactLayerTransientSessionBinder interface {
-	PushToUserTransientAtLeastLayer(ctx context.Context, userID int64, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
-	PushToUserAuthKeyTransientAtLeastLayer(ctx context.Context, userID int64, businessAuthKeyID [8]byte, minLayer int, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+// SemanticTransientSessionBinder filters by generated exact-profile metadata
+// instead of a hard-coded minimum layer. A newly generated profile therefore
+// becomes eligible automatically when it has a wire constructor for semantic.
+type SemanticTransientSessionBinder interface {
+	PushToUserTransientCompatible(ctx context.Context, userID int64, semantic tlprofile.SemanticID, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
+	PushToUserAuthKeyTransientCompatible(ctx context.Context, userID int64, businessAuthKeyID [8]byte, semantic tlprofile.SemanticID, t proto.MessageType, msg tg.UpdatesClass, timeout time.Duration) (int, error)
 }
 
 // OnlineUserProvider exposes a bounded runtime snapshot for best-effort fanout.
@@ -271,6 +296,17 @@ type UsersService interface {
 	ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error)
 }
 
+// BaseUserBotStatusProvider exposes the immutable, viewer-independent bot bit
+// without constructing a full user projection. Production users.Service
+// implements it through the shared base-user Redis read model.
+type BaseUserBotStatusProvider interface {
+	BotStatus(ctx context.Context, userID int64) (bot bool, found bool, err error)
+}
+
+type UserProjectionFactInvalidator interface {
+	InvalidateAccountFreezeFact(userID int64)
+}
+
 // TelegramLoginService is the domain-only boundary shared by the MTProto RPC
 // edge and the public OIDC provider. PostgreSQL remains authoritative for all
 // consent transitions; the RPC layer only projects domain state to TL.
@@ -291,10 +327,18 @@ type TelegramLoginService interface {
 
 // BatchViewerUsersResolver 是 UsersService 的可选能力：跨多个 viewer 一次性投影同一组 user
 // （fan-out 模板化，把 per-recipient 的 ByIDs(=ForViewer) 折叠成 O(owner) 查询）。结果按 viewer
-// 与 ByIDs(viewer, ids) 字节等价（personal photo overlay 除外，见 users.ByIDsForViewers）。
-// 未实现时 fan-out 预热静默跳过，回退逐 viewer 解析（行为不变，仅退化为旧的 O(viewer) 成本）。
+// 与 ByIDs(viewer, ids) 字节等价，包含 viewer-specific personal photo overlay。
+// 声明需要 fan-out 预热的路径必须具备该能力；缺失或失败时在线 fan-out fail-closed，
+// 不得在同一请求里改走逐 recipient 查询。
 type BatchViewerUsersResolver interface {
 	ByIDsForViewers(ctx context.Context, viewerUserIDs []int64, userIDs []int64) (map[int64][]domain.User, error)
+}
+
+// SparseBatchViewerUsersResolver projects only the explicitly supplied
+// viewer->user edges. Local Durable Outbox uses this instead of widening one
+// claim into viewers x union(users).
+type SparseBatchViewerUsersResolver interface {
+	ByIDsForViewerUserIDs(ctx context.Context, userIDsByViewer map[int64][]int64) (map[int64][]domain.User, error)
 }
 
 // BotsService 抽象 bot 元数据查询与管理（bots.* RPC + userFull.bot_info hydrate）。
@@ -429,6 +473,7 @@ type AccountService interface {
 	GetPasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck) (domain.PrivatePasswordSettings, error)
 	UpdatePasswordSettings(ctx context.Context, userID int64, check domain.PasswordCheck, input domain.PasswordInputSettings) error
 	CheckPassword(ctx context.Context, userID int64, check domain.PasswordCheck) error
+	RevenueWithdrawalPasswordState(ctx context.Context, userID int64) (domain.RevenueWithdrawalPasswordState, error)
 	RequestPasswordRecovery(ctx context.Context, userID int64) (string, error)
 	CheckRecoveryPassword(ctx context.Context, userID int64, code string) error
 	RecoverPassword(ctx context.Context, userID int64, code string, input *domain.PasswordInputSettings) error
@@ -503,6 +548,15 @@ type HelpService interface {
 // central RPC mutation gate. It is domain-only and shared with app/help.
 type AccountFreezeService interface {
 	AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
+}
+
+// AccountFreezeNotificationService owns the durable non-PTS notification
+// queue. It is intentionally separate from AccountFreezeService so hot
+// read-only gates can use a versioned fact cache without disabling queue
+// consumption.
+type AccountFreezeNotificationService interface {
+	ClaimAccountFreezeNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountFreezeNotification, error)
+	CompleteAccountFreezeNotification(ctx context.Context, id, version int64, now time.Time) error
 }
 
 // UpdatesService 抽象 update 状态查询。
@@ -808,6 +862,9 @@ type ChannelsService interface {
 	GetHistory(ctx context.Context, userID int64, filter domain.ChannelHistoryFilter) (domain.ChannelHistory, error)
 	SearchChannelMedia(ctx context.Context, userID, channelID int64, req domain.MediaSearchRequest) (domain.ChannelHistory, error)
 	CountChannelMediaCategories(ctx context.Context, userID, channelID int64) (domain.MediaCategoryCounts, error)
+	GetStats(ctx context.Context, userID int64, req domain.ChannelStatsRequest) (domain.ChannelStats, error)
+	GetMessageStats(ctx context.Context, userID int64, req domain.ChannelMessageStatsRequest) (domain.ChannelMessageStats, error)
+	ListMessagePublicForwards(ctx context.Context, userID int64, req domain.ChannelMessagePublicForwardListRequest) (domain.ChannelMessagePublicForwardList, error)
 	SearchPosts(ctx context.Context, userID int64, req domain.ChannelSearchPostsRequest) (domain.ChannelHistory, error)
 	SearchJoinedMessages(ctx context.Context, userID int64, req domain.ChannelGlobalSearchRequest) (domain.ChannelHistory, error)
 	GetMessages(ctx context.Context, userID, channelID int64, ids []int) (domain.ChannelHistory, error)
@@ -973,6 +1030,18 @@ type EphemeralService interface {
 	ReportTarget(ctx context.Context, userID int64, device domain.EphemeralDevice, peer domain.Peer, id int) (domain.EphemeralMessage, error)
 }
 
+// WelcomeMessageService owns the independent durable Layer 229 peer templates.
+// It has no transient device, PTS, difference, push or outbox responsibility.
+type WelcomeMessageService interface {
+	Authorize(ctx context.Context, userID int64, peer domain.Peer) error
+	Create(ctx context.Context, userID int64, peer domain.Peer, randomID int64, content domain.WelcomeMessageContent) (domain.WelcomeMessage, bool, error)
+	Edit(ctx context.Context, userID int64, peer domain.Peer, id int, fields domain.WelcomeMessageEditFields) (domain.WelcomeMessage, error)
+	List(ctx context.Context, userID int64, peer domain.Peer, hash int64) (domain.WelcomeMessageList, error)
+	Delete(ctx context.Context, userID int64, peer domain.Peer, id int) (bool, error)
+	DeleteAll(ctx context.Context, userID int64, peer domain.Peer) (bool, error)
+	HasAny(ctx context.Context, peer domain.Peer) (bool, error)
+}
+
 // ModerationService accepts only final report choices. Implementations must
 // validate and snapshot referenced evidence, then durably commit the immutable
 // submission before returning success.
@@ -1066,50 +1135,55 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers    store.AuthKeySessionLayerStore
-	Account                 AccountService
-	Privacy                 PrivacyService
-	Help                    HelpService
-	AccountFreeze           AccountFreezeService
-	AICompose               AIComposeService
-	Ephemeral               EphemeralService
-	EphemeralPush           store.EphemeralPushBroker
-	Moderation              ModerationService
-	Users                   UsersService
-	Usernames               UsernameRegistryService
-	BotVerifications        BotVerificationService
-	TelegramLogin           TelegramLoginService
-	Updates                 UpdatesService
-	BootstrapUpdates        store.BootstrapUpdateJobStore
-	BotAPIUpdates           store.BotAPIUpdateStore
-	BotCallbacks            store.BotCallbackRegistryStore
-	Contacts                ContactsService
-	Dialogs                 DialogsService
-	Chatlists               ChatlistsService
-	Messages                MessagesService
-	Translation             TranslationService
-	Stories                 StoriesService
-	Channels                ChannelsService
-	Communities             CommunitiesService
-	Files                   FilesService
-	PremiumPromo            PremiumPromoService
-	Bots                    BotsService
-	ServiceBotCallbacks     ServiceBotCallbacks
-	ServiceBotInlineResults ServiceBotInlineResults
-	Polls                   PollsService
-	Phone                   PhoneService
-	GroupCalls              GroupCallsService
-	LiveStreams             LiveStreamsService
-	SFU                     sfu.Service
-	TURN                    turnsrv.Service
-	LangPack                LangPackService
-	Sessions                SessionBinder
-	Inline                  store.InlineRegistryStore
-	Limiter                 RateLimiter
-	Metrics                 Metrics
-	SecretChats             SecretChatService
-	Passkey                 PasskeyService
-	Themes                  ThemeService
+	AuthKeySessionLayers       store.AuthKeySessionLayerStore
+	ReadModelVersions          store.ReadModelVersionStore
+	UserProjectionFacts        UserProjectionFactInvalidator
+	Account                    AccountService
+	Privacy                    PrivacyService
+	Help                       HelpService
+	AppUpdates                 updatecdn.Resolver
+	AccountFreeze              AccountFreezeService
+	AccountFreezeNotifications AccountFreezeNotificationService
+	AICompose                  AIComposeService
+	Ephemeral                  EphemeralService
+	EphemeralPush              store.EphemeralPushBroker
+	WelcomeMessages            WelcomeMessageService
+	Moderation                 ModerationService
+	Users                      UsersService
+	Usernames                  UsernameRegistryService
+	BotVerifications           BotVerificationService
+	TelegramLogin              TelegramLoginService
+	Updates                    UpdatesService
+	BootstrapUpdates           store.BootstrapUpdateJobStore
+	BotAPIUpdates              store.BotAPIUpdateStore
+	BotCallbacks               store.BotCallbackRegistryStore
+	Contacts                   ContactsService
+	Dialogs                    DialogsService
+	Chatlists                  ChatlistsService
+	Messages                   MessagesService
+	Translation                TranslationService
+	Stories                    StoriesService
+	Channels                   ChannelsService
+	Communities                CommunitiesService
+	Files                      FilesService
+	PremiumPromo               PremiumPromoService
+	Bots                       BotsService
+	ServiceBotCallbacks        ServiceBotCallbacks
+	ServiceBotInlineResults    ServiceBotInlineResults
+	Polls                      PollsService
+	Phone                      PhoneService
+	GroupCalls                 GroupCallsService
+	LiveStreams                LiveStreamsService
+	SFU                        sfu.Service
+	TURN                       turnsrv.Service
+	LangPack                   LangPackService
+	Sessions                   SessionBinder
+	Inline                     store.InlineRegistryStore
+	Limiter                    RateLimiter
+	Metrics                    Metrics
+	SecretChats                SecretChatService
+	Passkey                    PasskeyService
+	Themes                     ThemeService
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。
@@ -1143,12 +1217,12 @@ type PasskeyService interface {
 type SecretChatService interface {
 	RequestEncryption(ctx context.Context, req domain.SecretChatRequest) (domain.SecretChat, error)
 	AcceptEncryption(ctx context.Context, chatID int, viewerUserID, participantAuthKeyID, accessHash int64, gb []byte, keyFingerprint int64) (domain.SecretChat, error)
-	DiscardEncryption(ctx context.Context, chatID int, viewerUserID int64, deleteHistory bool) (domain.SecretChat, bool, error)
+	DiscardEncryption(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID int64, deleteHistory bool) (domain.SecretChat, bool, error)
 	// DiscardForAuthKey 级联 discard 绑定该 perm auth_key 的全部活跃密聊（设备登出/授权撤销），
 	// 返回实际迁移到 discarded 的密聊供通知对端。
 	DiscardForAuthKey(ctx context.Context, authKeyID int64) ([]domain.SecretChat, error)
 	GetSecretChat(ctx context.Context, chatID int) (domain.SecretChat, bool, error)
-	SendEncrypted(ctx context.Context, chatID int, viewerUserID, accessHash int64, delivery domain.SecretMessageDelivery) (domain.SecretChat, domain.SecretChatMessage, error)
+	SendEncrypted(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID, accessHash int64, delivery domain.SecretMessageDelivery) (domain.SecretChat, domain.SecretChatMessage, error)
 	ListNewMessages(ctx context.Context, deviceAuthKeyID int64, sinceQts, limit int) ([]domain.SecretChatMessage, error)
 	DeviceReservedQts(ctx context.Context, deviceAuthKeyID int64) (int, error)
 	AckQueue(ctx context.Context, deviceAuthKeyID int64, maxQts int) error

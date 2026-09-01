@@ -20,22 +20,21 @@ import (
 
 type activationGatedAuthKeyStore struct {
 	store.AuthKeyStore
-	gets         atomic.Int32
+	revalidates  atomic.Int32
 	finalStarted chan struct{}
 	finalRelease chan struct{}
 	startOnce    sync.Once
 }
 
-func (s *activationGatedAuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
-	if s.gets.Add(1) == 2 {
-		s.startOnce.Do(func() { close(s.finalStarted) })
-		select {
-		case <-s.finalRelease:
-		case <-ctx.Done():
-			return store.AuthKeyData{}, false, ctx.Err()
-		}
+func (s *activationGatedAuthKeyStore) Revalidate(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
+	s.revalidates.Add(1)
+	s.startOnce.Do(func() { close(s.finalStarted) })
+	select {
+	case <-s.finalRelease:
+	case <-ctx.Done():
+		return store.AuthKeyData{}, false, ctx.Err()
 	}
-	return s.AuthKeyStore.Get(ctx, id)
+	return s.AuthKeyStore.Revalidate(ctx, id)
 }
 
 func waitForManagedSessionAbsent(t *testing.T, manager *SessionManager, key sessionKey) {
@@ -79,11 +78,17 @@ func TestBadSaltStormRevalidatesStoreOnlyAtActivationBoundary(t *testing.T) {
 	if got := keys.gets.Load(); got != 1 {
 		t.Fatalf("AuthKeyStore.Get during bad-salt storm = %d, want initial lookup only", got)
 	}
+	if got := keys.revalidates.Load(); got != 0 {
+		t.Fatalf("AuthKeyStore.Revalidate during bad-salt storm = %d, want 0", got)
+	}
 
 	sendEncrypted(t, conn, cipher, auth, firstID, &tg.HelpGetConfigRequest{})
 	collectReplyFrames(t, conn, cipher, auth.AuthKey, map[uint32]int{proto.ResultTypeID: 1})
-	if got := keys.gets.Load(); got != 2 {
-		t.Fatalf("AuthKeyStore.Get after activation boundary = %d, want 2", got)
+	if got := keys.gets.Load(); got != 1 {
+		t.Fatalf("AuthKeyStore.Get after activation boundary = %d, want initial lookup only", got)
+	}
+	if got := keys.revalidates.Load(); got != 1 {
+		t.Fatalf("AuthKeyStore.Revalidate after activation boundary = %d, want 1", got)
 	}
 	waitForAtomicCalls(t, &handler.calls, 1)
 }
@@ -108,8 +113,9 @@ func TestActivationFinalAuthKeyCheckRunsAfterClaim(t *testing.T) {
 	conn, auth, cipher := dialHandshake(t, addr, dc, pub)
 	msgID := proto.NewMessageIDGen(time.Now).New(proto.MessageFromClient)
 
-	// The first Get is serveConn's decrypt lookup. The second is deliberately
-	// blocked: it must start only after BeginActivation indexed the claim.
+	// Get is serveConn's activity-bearing decrypt lookup. Revalidate is deliberately
+	// blocked: it must start only after BeginActivation indexed the claim and must
+	// not create another durable last_used_at write.
 	sendEncrypted(t, conn, cipher, auth, msgID, &tg.HelpGetConfigRequest{})
 	select {
 	case <-keys.finalStarted:

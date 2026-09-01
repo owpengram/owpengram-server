@@ -115,7 +115,9 @@ func (s *ChannelStore) CreateChannel(ctx context.Context, req domain.CreateChann
 	if err != nil {
 		return domain.CreateChannelResult{}, fmt.Errorf("allocate channel message id: %w", err)
 	}
-	pts := 1
+	// PTS 1 is the empty channel message-box baseline. The create service
+	// message is the first real event, so its post-event state is 2.
+	pts := domain.FirstChannelEventPts
 	channel := domain.Channel{
 		ID:                channelID,
 		AccessHash:        accessHash,
@@ -166,6 +168,13 @@ func (s *ChannelStore) CreateChannel(ctx context.Context, req domain.CreateChann
 	}
 	if err := insertChannelEventTx(ctx, tx, event); err != nil {
 		return domain.CreateChannelResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE channel_update_checkpoints
+SET retained_through_pts = $2,
+    updated_at = now()
+WHERE channel_id = $1`, channelID, domain.InitialChannelPts); err != nil {
+		return domain.CreateChannelResult{}, fmt.Errorf("initialize channel pts baseline: %w", err)
 	}
 	for _, member := range members {
 		readMax := 0
@@ -300,6 +309,13 @@ func (s *ChannelStore) ResolveChannel(ctx context.Context, viewerUserID, channel
 	}
 	return view, nil
 }
+
+// AuthoritativeResolveChannelCache declares that ResolveChannel is already
+// protected by ChannelRowCache + ChannelMemberCache. Both consume exact
+// channel_base/channel_member invalidations, reject stale in-flight writes by
+// epoch, and flush after listener reconnect. The app layer must therefore not
+// place a second read_model_versions gate in front of this store path.
+func (*ChannelStore) AuthoritativeResolveChannelCache() {}
 
 func (s *ChannelStore) GetChannels(ctx context.Context, viewerUserID int64, channelIDs []int64) ([]domain.ChannelView, error) {
 	if viewerUserID == 0 || len(channelIDs) == 0 {
@@ -571,19 +587,6 @@ WHERE id = $1`, channel.ID, participants, admins, kicked, banned); err != nil {
 	channel.KickedCount = kicked
 	channel.BannedCount = banned
 	return channel, nil
-}
-
-func addPeerRef(peer domain.Peer, currentChannelID int64, userRefs, channelRefs map[int64]struct{}) {
-	switch peer.Type {
-	case domain.PeerTypeUser:
-		if peer.ID != 0 {
-			userRefs[peer.ID] = struct{}{}
-		}
-	case domain.PeerTypeChannel:
-		if peer.ID != 0 && peer.ID != currentChannelID {
-			channelRefs[peer.ID] = struct{}{}
-		}
-	}
 }
 
 func mapKeysInt64(items map[int64]struct{}) []int64 {

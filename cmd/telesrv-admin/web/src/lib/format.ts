@@ -193,3 +193,20 @@ export function parseIDs(value: string, invalidMessage = "msg ids invalid"): num
   }
   return ids;
 }
+
+// toUnixSeconds reads a datetime-local input. Such an input carries no zone, so
+// the value parses as the operator's local time — which is the time they picked.
+// 0 means "empty or unparseable", which every caller treats as "not scheduled".
+export function toUnixSeconds(value: string): number {
+  if (!value.trim()) return 0;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
+
+// localInputValue formats a datetime-local default some seconds out, so a
+// scheduling form never opens on a value the server would reject as past.
+export function localInputValue(offsetSeconds: number): string {
+  const at = new Date(Date.now() + offsetSeconds * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}

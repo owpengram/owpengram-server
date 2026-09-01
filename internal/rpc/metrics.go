@@ -9,6 +9,11 @@ type Metrics interface {
 	OutboxClaimed(count int)
 	OutboxDelivered(d time.Duration)
 	OutboxFailed(err error)
+	PresenceLastSeenBatch(count int, d time.Duration, err error)
+	PresenceLastSeenSubmitted()
+	PresenceLastSeenPending(delta int)
+	PresenceLastSeenOverflow()
+	PresenceLastSeenDrainDropped(count int)
 }
 
 // NopMetrics 是 Metrics 的空实现。
@@ -23,3 +28,13 @@ func (NopMetrics) OutboxClaimed(int) {}
 func (NopMetrics) OutboxDelivered(time.Duration) {}
 
 func (NopMetrics) OutboxFailed(error) {}
+
+func (NopMetrics) PresenceLastSeenBatch(int, time.Duration, error) {}
+
+func (NopMetrics) PresenceLastSeenSubmitted() {}
+
+func (NopMetrics) PresenceLastSeenPending(int) {}
+
+func (NopMetrics) PresenceLastSeenOverflow() {}
+
+func (NopMetrics) PresenceLastSeenDrainDropped(int) {}

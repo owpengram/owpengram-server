@@ -222,6 +222,9 @@ WHERE channel_id = $1 AND user_id = $2`, channel.ID, userID, member.ReadInboxMax
 	if err := refreshChannelUnreadReactionsCountTx(ctx, tx, userID, channel.ID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, []domain.ChannelMember{member}); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	return domain.CreateChannelResult{Channel: channel, Members: []domain.ChannelMember{member}, Message: msg, Event: event}, nil
 }
 

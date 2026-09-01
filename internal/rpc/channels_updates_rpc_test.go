@@ -104,8 +104,8 @@ func TestChannelSendHistoryAndDifferenceRPC(t *testing.T) {
 		t.Fatalf("message id update = %#v, want id=3 random_id=99", sendUpdates.Updates[0])
 	}
 	newMsg, ok := sendUpdates.Updates[1].(*tg.UpdateNewChannelMessage)
-	if !ok || newMsg.Pts != 3 || newMsg.PtsCount != 1 {
-		t.Fatalf("new channel update = %#v, want pts=3", sendUpdates.Updates[1])
+	if !ok || newMsg.Pts != 4 || newMsg.PtsCount != 1 {
+		t.Fatalf("new channel update = %#v, want pts=4", sendUpdates.Updates[1])
 	}
 	msg := newMsg.Message.(*tg.Message)
 	if msg.PeerID.(*tg.PeerChannel).ChannelID != channel.ID || msg.Message != "hello channel" || !msg.Out {

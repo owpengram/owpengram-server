@@ -446,7 +446,7 @@ INSERT INTO public.secret_chats (
 ) VALUES (
   860086, 86, 87,
   $1, $2, $3, $4,
-  'waiting', 86, 1
+  'waiting', 860086, 1
 )`, adminUserID, adminAuthKeyID, participantUserID, participantAuthKeyID); err != nil {
 		t.Fatalf("insert temporary-key secret chat fixture: %v", err)
 	}

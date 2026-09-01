@@ -7,7 +7,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"telesrv/internal/store"
@@ -92,6 +95,80 @@ func TestAuthKeyStoreRoundTrip(t *testing.T) {
 	if _, found, err := NewAuthKeyStore(pool).Get(ctx, missing); err != nil || found {
 		t.Fatalf("missing key: found=%v err=%v, want found=false err=nil", found, err)
 	}
+}
+
+func TestAuthKeyStoreSeparatesActivationRevalidationAndBindingPairTouchPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	keys := NewAuthKeyStore(pool)
+	temp := saveTempIdentityTestAuthKey(t, ctx, pool, keys, int(time.Now().Add(time.Hour).Unix()))
+	perm := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+	old := time.Now().Add(-48 * time.Hour).UTC().Truncate(time.Microsecond)
+
+	if _, err := pool.Exec(ctx, `
+UPDATE auth_keys SET last_used_at = $2
+WHERE auth_key_id = ANY($1::bigint[])`,
+		[]int64{authKeyIDToInt64(temp), authKeyIDToInt64(perm)}, old,
+	); err != nil {
+		t.Fatalf("seed old auth-key activity: %v", err)
+	}
+	got, found, err := keys.Revalidate(ctx, temp)
+	if err != nil || !found || got.ID != temp {
+		t.Fatalf("revalidate temp auth key = (%+v,%v,%v)", got, found, err)
+	}
+	var revalidatedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT last_used_at FROM auth_keys WHERE auth_key_id = $1`, authKeyIDToInt64(temp)).Scan(&revalidatedAt); err != nil {
+		t.Fatalf("read activity after revalidate: %v", err)
+	}
+	if !revalidatedAt.Equal(old) {
+		t.Fatalf("activation revalidate touched last_used_at: got %s want %s", revalidatedAt, old)
+	}
+
+	counter := &authKeyStatementCounter{Pool: pool}
+	pair, err := NewAuthKeyStore(counter).LoadBindingKeys(ctx, temp, perm)
+	if err != nil {
+		t.Fatalf("load binding keys: %v", err)
+	}
+	if counter.statements != 1 {
+		t.Fatalf("binding key load statements = %d, want 1", counter.statements)
+	}
+	if !pair.TemporaryFound || pair.Temporary.ID != temp ||
+		!pair.PermanentFound || pair.Permanent.ID != perm {
+		t.Fatalf("binding key pair = %+v", pair)
+	}
+	var touched int
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)::int
+FROM auth_keys
+WHERE auth_key_id = ANY($1::bigint[])
+  AND last_used_at > $2`,
+		[]int64{authKeyIDToInt64(temp), authKeyIDToInt64(perm)}, old,
+	).Scan(&touched); err != nil {
+		t.Fatalf("read paired activity: %v", err)
+	}
+	if touched != 2 {
+		t.Fatalf("binding key rows touched = %d, want 2", touched)
+	}
+}
+
+type authKeyStatementCounter struct {
+	*pgxpool.Pool
+	statements int
+}
+
+func (c *authKeyStatementCounter) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	c.statements++
+	return c.Pool.Exec(ctx, sql, arguments...)
+}
+
+func (c *authKeyStatementCounter) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	c.statements++
+	return c.Pool.Query(ctx, sql, args...)
+}
+
+func (c *authKeyStatementCounter) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	c.statements++
+	return c.Pool.QueryRow(ctx, sql, args...)
 }
 
 func TestAuthKeyStoreClientInfoRoundTrip(t *testing.T) {

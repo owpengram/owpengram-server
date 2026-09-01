@@ -679,7 +679,7 @@ func TestVerifyBotGlobalCommandsWorkMidStep(t *testing.T) {
 
 	// /help in the middle of the description step answers help and keeps the step.
 	help := sendToVerifyBot(t, svc, messages, owner.ID, "/help")
-	if help.Body != verifyBotHelpText {
+	if help.Body != verifyBotHelpText() {
 		t.Fatalf("/help mid-step = %q", help.Body)
 	}
 	status := sendToVerifyBot(t, svc, messages, owner.ID, "/status")
@@ -855,7 +855,7 @@ func TestVerifyBotWithoutServiceReportsUnavailable(t *testing.T) {
 	if reply := sendToVerifyBot(t, svc, messages, owner.ID, "/new"); reply.Body != verifyUnavailableText {
 		t.Fatalf("/new without a verification service = %q", reply.Body)
 	}
-	if reply := sendToVerifyBot(t, svc, messages, owner.ID, "/help"); reply.Body != verifyBotHelpText {
+	if reply := sendToVerifyBot(t, svc, messages, owner.ID, "/help"); reply.Body != verifyBotHelpText() {
 		t.Fatalf("/help without a verification service = %q", reply.Body)
 	}
 }

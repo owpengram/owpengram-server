@@ -2,10 +2,17 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"telesrv/internal/domain"
 )
+
+// MaxActiveChannelMemberPairs bounds every exact channel-membership store
+// request independently of caller-side privacy projection admission.
+const MaxActiveChannelMemberPairs = 65536
+
+var ErrActiveChannelMemberPairsLimit = errors.New("active channel membership pair limit exceeded")
 
 // ChannelStore persists Telegram channels/supergroups and their single-copy messages.
 type ChannelStore interface {
@@ -189,6 +196,10 @@ type ChannelStore interface {
 	ListActiveChannelMembers(ctx context.Context, viewerUserID, channelID int64, limit int) (domain.Channel, domain.ChannelMember, []domain.ChannelMember, error)
 	ListChannelInviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveChannelMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+	// FilterActiveChannelMemberPairs intersects only the supplied channel->user
+	// edges. Implementations must keep this as one bounded batch rather than
+	// widening it into channels x users or issuing one query per channel.
+	FilterActiveChannelMemberPairs(ctx context.Context, userIDsByChannel map[int64][]int64) (map[int64][]int64, error)
 	// FilterChannelMessageAudienceIDs authoritatively intersects a bounded online
 	// candidate set with users allowed to receive channel message-box updates:
 	// active members plus non-banned public-channel preview subscribers.

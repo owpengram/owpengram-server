@@ -40,9 +40,12 @@ type AuthKeySessionLayer struct {
 // processes and restarts. AdvanceSessionLayer never replaces a live row with a
 // lower msg_id. applied is true only for an insert, a strictly newer msg_id, or
 // replacement of an expired row; duplicate/older evidence returns the current
-// row with applied=false. A successful advance and the auth-key-wide default
-// update share one store transaction and one globally ordered ObservationID;
-// callers must not persist the default in a second best-effort write.
+// row with applied=false. A strictly newer selector at the same Layer advances
+// only the exact-session msg_id/expiry and retains its ObservationID because no
+// shared profile generation changed. Inserts, expiry replacements and Layer
+// changes update the auth-key-wide default in the same transaction and allocate
+// one globally ordered ObservationID; callers must not persist the default in a
+// second best-effort write.
 // AdvanceSessionLayer derives ExpiresAt from a fresh client msg_id at the store
 // boundary; no caller-controlled retention duration is accepted.
 type AuthKeySessionLayerStore interface {

@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildConfigIncludesDefaultReaction(t *testing.T) {
-	config := BuildConfig(2, "127.0.0.1", 2398, time.Unix(1, 0), "https://telesrv.net")
+	config := BuildConfig(2, "127.0.0.1", 2398, time.Unix(1, 0), "https://telesrv.net", "https://updates.example.test/root/")
 	reaction, ok := config.GetReactionsDefault()
 	if !ok {
 		t.Fatal("reactions_default is absent")
@@ -16,6 +16,9 @@ func TestBuildConfigIncludesDefaultReaction(t *testing.T) {
 	emoji, ok := reaction.(*tg.ReactionEmoji)
 	if !ok || emoji.Emoticon != DefaultReactionEmoticon {
 		t.Fatalf("reactions_default = %#v, want %q emoji", reaction, DefaultReactionEmoticon)
+	}
+	if got, ok := config.GetAutoupdateURLPrefix(); !ok || got != "https://updates.example.test/root" {
+		t.Fatalf("autoupdate_url_prefix = %q, %v", got, ok)
 	}
 }
 
@@ -32,7 +35,7 @@ func TestBuildConfigAdvertisesCanonicalPrimaryDC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := BuildConfig(2, tt.ip, 2398, time.Unix(1, 0), "https://telesrv.net")
+			config := BuildConfig(2, tt.ip, 2398, time.Unix(1, 0), "https://telesrv.net", "")
 			if len(config.DCOptions) != 1 {
 				t.Fatalf("len(DCOptions) = %d, want 1", len(config.DCOptions))
 			}

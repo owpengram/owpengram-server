@@ -15,10 +15,11 @@ type mapUsersService struct {
 
 type countingMapUsersService struct {
 	mapUsersService
-	selfCalls  int
-	byIDCalls  int
-	byIDsCalls int
-	lastByIDs  []int64
+	selfCalls    int
+	byIDCalls    int
+	byIDsCalls   int
+	lastByIDs    []int64
+	byIDsBatches [][]int64
 }
 
 func (s staticUsersService) Self(context.Context, int64) (domain.User, error) {
@@ -33,6 +34,11 @@ func (s staticUsersService) ByID(_ context.Context, _, userID int64) (domain.Use
 		return domain.OfficialSystemUser(), true, nil
 	}
 	return domain.User{}, false, nil
+}
+
+func (s staticUsersService) BotStatus(_ context.Context, userID int64) (bool, bool, error) {
+	u, found, err := s.ByID(context.Background(), userID, userID)
+	return u.Bot, found, err
 }
 
 func (s staticUsersService) ByIDs(_ context.Context, _ int64, userIDs []int64) ([]domain.User, error) {
@@ -59,6 +65,11 @@ func (s mapUsersService) Self(_ context.Context, userID int64) (domain.User, err
 func (s mapUsersService) ByID(_ context.Context, _, userID int64) (domain.User, bool, error) {
 	u, ok := s.users[userID]
 	return u, ok, nil
+}
+
+func (s mapUsersService) BotStatus(_ context.Context, userID int64) (bool, bool, error) {
+	u, found := s.users[userID]
+	return u.Bot, found, nil
 }
 
 func (s mapUsersService) ByIDs(_ context.Context, _ int64, userIDs []int64) ([]domain.User, error) {
@@ -89,6 +100,7 @@ func (s *countingMapUsersService) Self(ctx context.Context, userID int64) (domai
 func (s *countingMapUsersService) ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
 	s.byIDsCalls++
 	s.lastByIDs = append([]int64(nil), userIDs...)
+	s.byIDsBatches = append(s.byIDsBatches, append([]int64(nil), userIDs...))
 	return s.mapUsersService.ByIDs(ctx, currentUserID, userIDs)
 }
 

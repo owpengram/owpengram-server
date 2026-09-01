@@ -563,6 +563,18 @@ base AS NOT MATERIALIZED (
       )
     )
     AND (
+      NOT sqlc.arg(phone_calls_only)::boolean
+      OR m.media #>> '{service_action,kind}' = 'phone_call'
+    )
+    AND (
+      NOT sqlc.arg(missed_phone_calls_only)::boolean
+      OR (
+        NOT m.outgoing
+        AND m.media #>> '{service_action,kind}' = 'phone_call'
+        AND m.media #>> '{service_action,call,reason}' = 'missed'
+      )
+    )
+    AND (
       sqlc.arg(saved_peer_type)::text = ''
       OR (m.saved_peer_type = sqlc.arg(saved_peer_type)::text AND m.saved_peer_id = sqlc.arg(saved_peer_id)::bigint)
     )
@@ -841,6 +853,18 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
     )
   )
   AND (
+    NOT sqlc.arg(phone_calls_only)::boolean
+    OR m.media #>> '{service_action,kind}' = 'phone_call'
+  )
+  AND (
+    NOT sqlc.arg(missed_phone_calls_only)::boolean
+    OR (
+      NOT m.outgoing
+      AND m.media #>> '{service_action,kind}' = 'phone_call'
+      AND m.media #>> '{service_action,call,reason}' = 'missed'
+    )
+  )
+  AND (
     sqlc.arg(saved_peer_type)::text = ''
     OR (m.saved_peer_type = sqlc.arg(saved_peer_type)::text AND m.saved_peer_id = sqlc.arg(saved_peer_id)::bigint)
   )
@@ -897,6 +921,18 @@ WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
         WHERE attr->>'kind' = 'audio'
           AND COALESCE((attr->>'voice')::boolean, false) = false
       )
+    )
+  )
+  AND (
+    NOT sqlc.arg(phone_calls_only)::boolean
+    OR m.media #>> '{service_action,kind}' = 'phone_call'
+  )
+  AND (
+    NOT sqlc.arg(missed_phone_calls_only)::boolean
+    OR (
+      NOT m.outgoing
+      AND m.media #>> '{service_action,kind}' = 'phone_call'
+      AND m.media #>> '{service_action,call,reason}' = 'missed'
     )
   )
   AND (

@@ -1006,7 +1006,7 @@ func TestCustomVerificationRequestQueuePostgres(t *testing.T) {
 }
 
 // TestBotVerificationDescriptionsAcceptEmojiPostgres pins the app-configured
-// 70-rune custom-description limit against UTF-8 byte constraints.
+// configured custom-description limit against UTF-8 byte constraints.
 func TestBotVerificationDescriptionsAcceptEmojiPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

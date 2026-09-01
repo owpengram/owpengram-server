@@ -57,7 +57,8 @@ func TestUserModerationFlagsPushStandardNonPTSUpdate(t *testing.T) {
 		audience: []int64{targetID, onlineViewerID, offlineViewerID},
 	}
 	sessions := &captureSessions{onlineUserIDs: []int64{targetID, onlineViewerID}}
-	r := New(Config{}, Deps{Users: users, Sessions: sessions}, zap.NewNop(), clock.System)
+	dialogs := &captureDialogs{}
+	r := New(Config{}, Deps{Users: users, Sessions: sessions, Dialogs: dialogs}, zap.NewNop(), clock.System)
 
 	if err := r.NotifyUserModerationFlagsChanged(context.Background(), domain.User{
 		ID: targetID, FirstName: "Flagged", Scam: true,
@@ -70,6 +71,15 @@ func TestUserModerationFlagsPushStandardNonPTSUpdate(t *testing.T) {
 	}
 	if len(users.viewers) != 2 || users.viewers[0] != targetID || users.viewers[1] != onlineViewerID {
 		t.Fatalf("projected viewers = %v", users.viewers)
+	}
+	if len(dialogs.invalidatedDialogs) != 3 {
+		t.Fatalf("dialog hash invalidations = %+v, want online and offline audience", dialogs.invalidatedDialogs)
+	}
+	for i, viewerID := range []int64{targetID, onlineViewerID, offlineViewerID} {
+		got := dialogs.invalidatedDialogs[i]
+		if got.userID != viewerID || got.peer != (domain.Peer{Type: domain.PeerTypeUser, ID: targetID}) {
+			t.Fatalf("dialog hash invalidation[%d] = %+v", i, got)
+		}
 	}
 	updates, ok := sessions.lastUserPush().(*tg.Updates)
 	if !ok || len(updates.Updates) != 1 {

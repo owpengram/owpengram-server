@@ -35,9 +35,17 @@ type updatesDeliveryPlan struct {
 
 	markSessionReady bool
 	readyUserID      int64
+	activation       SessionUpdatesActivationProvider
+	activationRaw    [8]byte
+	activationSess   int64
+	activationToken  uint64
 
 	publishBootstrap bool
 	bootstrapUserID  int64
+	bootstrapProbe   SessionBootstrapProbeProvider
+	bootstrapRaw     [8]byte
+	bootstrapSess    int64
+	bootstrapToken   uint64
 }
 
 func withUpdatesDeliveryPlan(ctx context.Context) (context.Context, *updatesDeliveryPlan) {
@@ -79,6 +87,63 @@ func (p *updatesDeliveryPlan) stageSessionReady(userID int64) {
 	p.readyUserID = userID
 }
 
+func (p *updatesDeliveryPlan) ownSessionActivation(provider SessionUpdatesActivationProvider, rawAuthKeyID [8]byte, sessionID int64, token uint64) {
+	if p == nil || provider == nil || token == 0 {
+		return
+	}
+	p.activation = provider
+	p.activationRaw = rawAuthKeyID
+	p.activationSess = sessionID
+	p.activationToken = token
+}
+
+func (p *updatesDeliveryPlan) disownSessionActivation() {
+	if p == nil {
+		return
+	}
+	p.activation = nil
+	p.activationRaw = [8]byte{}
+	p.activationSess = 0
+	p.activationToken = 0
+}
+
+func (p *updatesDeliveryPlan) releaseSessionActivation() {
+	if p == nil || p.activation == nil || p.activationToken == 0 {
+		return
+	}
+	provider := p.activation
+	rawAuthKeyID := p.activationRaw
+	sessionID := p.activationSess
+	token := p.activationToken
+	p.disownSessionActivation()
+	provider.EndSessionUpdatesActivation(rawAuthKeyID, sessionID, token)
+}
+
+func (p *updatesDeliveryPlan) ownBootstrapProbe(provider SessionBootstrapProbeProvider, rawAuthKeyID [8]byte, sessionID int64, token uint64) {
+	if p == nil || provider == nil || token == 0 {
+		return
+	}
+	p.bootstrapProbe = provider
+	p.bootstrapRaw = rawAuthKeyID
+	p.bootstrapSess = sessionID
+	p.bootstrapToken = token
+}
+
+func (p *updatesDeliveryPlan) finishBootstrapProbe(success bool) {
+	if p == nil || p.bootstrapProbe == nil || p.bootstrapToken == 0 {
+		return
+	}
+	provider := p.bootstrapProbe
+	rawAuthKeyID := p.bootstrapRaw
+	sessionID := p.bootstrapSess
+	token := p.bootstrapToken
+	p.bootstrapProbe = nil
+	p.bootstrapRaw = [8]byte{}
+	p.bootstrapSess = 0
+	p.bootstrapToken = 0
+	provider.EndSessionBootstrapProbe(rawAuthKeyID, sessionID, token, success)
+}
+
 // suppressSessionActivation removes only effects which would make the current
 // physical session eligible for proactive updates. Delivery-gated cursor and
 // secret-event facts remain valid for a generated wire-invariant RPC result.
@@ -87,13 +152,34 @@ func (p *updatesDeliveryPlan) suppressSessionActivation() {
 	if p == nil {
 		return
 	}
+	p.releaseSessionActivation()
+	p.finishBootstrapProbe(false)
 	p.markSessionReady = false
 	p.readyUserID = 0
 	p.publishBootstrap = false
 	p.bootstrapUserID = 0
 }
 
-func (p *updatesDeliveryPlan) stageBaseline(userID, secretDeviceKey int64, secretEventIDs []int64, subscribe, bootstrap bool) {
+func (r *Router) tryStageBootstrapProbe(ctx context.Context, plan *updatesDeliveryPlan, userID int64) {
+	if plan == nil || userID == 0 || plan.publishBootstrap || r.deps.BootstrapUpdates == nil {
+		return
+	}
+	if provider, ok := r.deps.Sessions.(SessionBootstrapProbeProvider); ok {
+		rawAuthKeyID, hasRaw := RawAuthKeyIDFrom(ctx)
+		sessionID, hasSession := SessionIDFrom(ctx)
+		if hasRaw && hasSession {
+			token, claimed := provider.BeginSessionBootstrapProbe(rawAuthKeyID, sessionID)
+			if !claimed {
+				return
+			}
+			plan.ownBootstrapProbe(provider, rawAuthKeyID, sessionID, token)
+		}
+	}
+	plan.publishBootstrap = true
+	plan.bootstrapUserID = userID
+}
+
+func (p *updatesDeliveryPlan) stageBaseline(secretDeviceKey int64, secretEventIDs []int64) {
 	if p == nil {
 		return
 	}
@@ -101,14 +187,6 @@ func (p *updatesDeliveryPlan) stageBaseline(userID, secretDeviceKey int64, secre
 		p.markSecretDelivered = true
 		p.secretDeviceKey = secretDeviceKey
 		p.secretEventIDs = appendUniqueInt64s(p.secretEventIDs, secretEventIDs...)
-	}
-	if !subscribe {
-		return
-	}
-	p.stageSessionReady(userID)
-	if bootstrap && userID != 0 {
-		p.publishBootstrap = true
-		p.bootstrapUserID = userID
 	}
 }
 
@@ -148,12 +226,30 @@ func (r *Router) stageSessionUpdatesReadyAfterDelivery(ctx context.Context, user
 		return
 	}
 	if plan, ok := updatesDeliveryPlanFrom(ctx); ok {
-		plan.stageSessionReady(userID)
+		r.tryStageSessionUpdatesReady(ctx, plan, userID)
 		return
 	}
 	plan := updatesDeliveryPlan{baseCtx: context.WithoutCancel(ctx)}
-	plan.stageSessionReady(userID)
+	r.tryStageSessionUpdatesReady(ctx, &plan, userID)
 	r.registerUpdatesDeliveryPlan(ctx, &plan)
+}
+
+func (r *Router) tryStageSessionUpdatesReady(ctx context.Context, plan *updatesDeliveryPlan, userID int64) {
+	if plan == nil || userID == 0 || plan.markSessionReady {
+		return
+	}
+	if provider, ok := r.deps.Sessions.(SessionUpdatesActivationProvider); ok {
+		rawAuthKeyID, hasRaw := RawAuthKeyIDFrom(ctx)
+		sessionID, hasSession := SessionIDFrom(ctx)
+		if hasRaw && hasSession {
+			token, claimed := provider.BeginSessionUpdatesActivation(rawAuthKeyID, sessionID)
+			if !claimed {
+				return
+			}
+			plan.ownSessionActivation(provider, rawAuthKeyID, sessionID, token)
+		}
+	}
+	plan.stageSessionReady(userID)
 }
 
 // stageUpdatesBaselineAfterDelivery adds the extra actions justified by a
@@ -177,7 +273,13 @@ func (r *Router) stageUpdatesBaselineAfterDelivery(
 			authKeyID, _ := AuthKeyIDFrom(ctx)
 			plan.stageCursor(authKeyID, userID, *cursor, mode)
 		}
-		plan.stageBaseline(userID, secretDeviceKey, secretEventIDs, subscribe, bootstrap)
+		plan.stageBaseline(secretDeviceKey, secretEventIDs)
+		if subscribe {
+			r.tryStageSessionUpdatesReady(ctx, plan, userID)
+			if bootstrap && userID != 0 {
+				r.tryStageBootstrapProbe(ctx, plan, userID)
+			}
+		}
 	}
 	if plan, ok := updatesDeliveryPlanFrom(ctx); ok {
 		stage(plan)
@@ -189,13 +291,23 @@ func (r *Router) stageUpdatesBaselineAfterDelivery(
 }
 
 func (r *Router) registerUpdatesDeliveryPlan(ctx context.Context, plan *updatesDeliveryPlan) {
-	if plan == nil || !plan.hasWork() {
+	if plan == nil {
+		return
+	}
+	if !plan.hasWork() {
+		plan.releaseSessionActivation()
+		plan.finishBootstrapProbe(false)
 		return
 	}
 	snapshot := plan.snapshot()
-	postresponse.Register(ctx, func() {
+	if !postresponse.Register(ctx, func() {
 		r.runUpdatesDeliveryPlan(snapshot)
-	})
+	}) {
+		snapshot.releaseSessionActivation()
+		snapshot.finishBootstrapProbe(false)
+		return
+	}
+	plan.disownSessionActivation()
 }
 
 // runUpdatesDeliveryPlan is ordered deliberately:
@@ -207,6 +319,8 @@ func (r *Router) registerUpdatesDeliveryPlan(ctx context.Context, plan *updatesD
 // Each phase gets an independent timeout so one failed side effect cannot starve
 // the remaining delivery-safe transitions.
 func (r *Router) runUpdatesDeliveryPlan(plan updatesDeliveryPlan) {
+	defer plan.releaseSessionActivation()
+	defer plan.finishBootstrapProbe(false)
 	baseCtx := plan.baseCtx
 	if baseCtx == nil {
 		baseCtx = context.Background()
@@ -240,6 +354,8 @@ func (r *Router) runUpdatesDeliveryPlan(plan updatesDeliveryPlan) {
 		cancel()
 	}
 	if plan.publishBootstrap {
-		r.publishBootstrapAfterBaseline(baseCtx, plan.bootstrapUserID)
+		if r.publishBootstrapAfterBaseline(baseCtx, plan.bootstrapUserID) {
+			plan.finishBootstrapProbe(true)
+		}
 	}
 }

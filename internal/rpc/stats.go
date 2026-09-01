@@ -2,7 +2,11 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -51,7 +55,14 @@ func (r *Router) onStatsGetBroadcastStats(ctx context.Context, req *tg.StatsGetB
 	if !view.Channel.Broadcast {
 		return nil, tgerr400("BROADCAST_REQUIRED")
 	}
-	return r.emptyBroadcastStats(), nil
+	stats, err := r.deps.Channels.GetStats(ctx, view.Self.UserID, domain.ChannelStatsRequest{
+		ChannelID: view.Channel.ID,
+		Period:    r.statsPeriod(),
+	})
+	if err != nil {
+		return nil, statsServiceErr(err)
+	}
+	return r.tgBroadcastStats(stats), nil
 }
 
 func (r *Router) onStatsGetMegagroupStats(ctx context.Context, req *tg.StatsGetMegagroupStatsRequest) (*tg.StatsMegagroupStats, error) {
@@ -62,19 +73,37 @@ func (r *Router) onStatsGetMegagroupStats(ctx context.Context, req *tg.StatsGetM
 	if !view.Channel.Megagroup {
 		return nil, tgerr400("MEGAGROUP_REQUIRED")
 	}
-	return r.emptyMegagroupStats(), nil
+	stats, err := r.deps.Channels.GetStats(ctx, view.Self.UserID, domain.ChannelStatsRequest{
+		ChannelID: view.Channel.ID,
+		Period:    r.statsPeriod(),
+	})
+	if err != nil {
+		return nil, statsServiceErr(err)
+	}
+	return r.tgMegagroupStats(ctx, view.Self.UserID, stats), nil
 }
 
 func (r *Router) onStatsGetMessageStats(ctx context.Context, req *tg.StatsGetMessageStatsRequest) (*tg.StatsMessageStats, error) {
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
-	if _, err := r.statsChannelView(ctx, req.Channel); err != nil {
+	view, err := r.statsChannelView(ctx, req.Channel)
+	if err != nil {
 		return nil, err
 	}
+	stats, err := r.deps.Channels.GetMessageStats(ctx, view.Self.UserID, domain.ChannelMessageStatsRequest{
+		ChannelID: view.Channel.ID,
+		MessageID: req.MsgID,
+		Period:    r.statsPeriod(),
+	})
+	if err != nil {
+		return nil, statsServiceErr(err)
+	}
 	return &tg.StatsMessageStats{
-		ViewsGraph:              r.emptyStatsGraph("Views"),
-		ReactionsByEmotionGraph: r.emptyStatsGraph("Reactions"),
+		ViewsGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "views", Label: "Views", Color: statsGraphColors[0], Value: func(day domain.ChannelStatsDay) int { return day.Views },
+		}}),
+		ReactionsByEmotionGraph: r.statsReactionGraph(stats.Days),
 	}, nil
 }
 
@@ -82,13 +111,36 @@ func (r *Router) onStatsGetMessagePublicForwards(ctx context.Context, req *tg.St
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
-	if req.Limit < 0 || req.Limit > maxStatsPublicForwardsLimit || len(req.Offset) > maxStatsOffsetLength {
+	if req.Limit < 0 || req.Limit > maxStatsPublicForwardsLimit {
 		return nil, limitInvalidErr()
 	}
-	if _, err := r.statsChannelView(ctx, req.Channel); err != nil {
+	if len(req.Offset) > maxStatsOffsetLength {
+		return nil, tgerr400("OFFSET_INVALID")
+	}
+	view, err := r.statsChannelView(ctx, req.Channel)
+	if err != nil {
 		return nil, err
 	}
-	return emptyStatsPublicForwards(), nil
+	limit := req.Limit
+	if limit <= 0 {
+		limit = maxStatsPublicForwardsLimit
+	}
+	list, err := r.deps.Channels.ListMessagePublicForwards(ctx, view.Self.UserID, domain.ChannelMessagePublicForwardListRequest{
+		ChannelID: view.Channel.ID,
+		MessageID: req.MsgID,
+		Offset:    req.Offset,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, statsServiceErr(err)
+	}
+	views := make([]domain.StoryView, 0, len(list.Messages))
+	for _, message := range list.Messages {
+		views = append(views, domain.StoryView{Date: message.Date, PublicForward: &domain.StoryPublicForward{Message: message}})
+	}
+	return r.tgStatsPublicForwards(ctx, view.Self.UserID, domain.StoryPublicForwardList{
+		Count: list.Count, Forwards: views, NextOffset: list.NextOffset,
+	}), nil
 }
 
 func (r *Router) onStatsLoadAsyncGraph(_ context.Context, req *tg.StatsLoadAsyncGraphRequest) (tg.StatsGraphClass, error) {
@@ -115,9 +167,27 @@ func (r *Router) onStatsGetStoryStats(ctx context.Context, req *tg.StatsGetStory
 			return nil, storyErr(err)
 		}
 	}
+	date := int(r.clock.Now().Unix()) - 1
+	views := 0
+	reactions := []domain.ChannelMessageReactionCount(nil)
+	if r.deps.Stories != nil {
+		list, loadErr := r.deps.Stories.GetStoriesByID(ctx, userID, peer, []int{req.ID}, int(r.clock.Now().Unix()))
+		if loadErr != nil {
+			return nil, storyErr(loadErr)
+		}
+		for _, story := range list.Stories {
+			if story.ID != req.ID || story.Owner != peer || story.Deleted {
+				continue
+			}
+			date = story.Date
+			views = story.Views.ViewsCount
+			reactions = story.Views.Reactions
+			break
+		}
+	}
 	return &tg.StatsStoryStats{
-		ViewsGraph:              r.emptyStatsGraph("Views"),
-		ReactionsByEmotionGraph: r.emptyStatsGraph("Reactions"),
+		ViewsGraph:              r.statsSnapshotGraph("views", "Views", date, views),
+		ReactionsByEmotionGraph: r.statsReactionSnapshotGraph(date, reactions),
 	}, nil
 }
 
@@ -183,10 +253,45 @@ func (r *Router) onStatsGetPollStats(ctx context.Context, req *tg.StatsGetPollSt
 	if req.MsgID <= 0 || req.MsgID > domain.MaxMessageBoxID {
 		return nil, messageIDInvalidErr()
 	}
-	if err := r.validateStatsPeer(ctx, req.Peer); err != nil {
+	userID, _, err := r.currentUserID(ctx)
+	if err != nil {
+		return nil, internalErr()
+	}
+	peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
+	if err != nil {
 		return nil, err
 	}
-	return &tg.StatsPollStats{VotesGraph: r.emptyStatsGraph("Votes")}, nil
+	date, votes := int(r.clock.Now().Unix())-1, 0
+	if peer.Type == domain.PeerTypeChannel && r.deps.Channels != nil {
+		history, loadErr := r.deps.Channels.GetMessages(ctx, userID, peer.ID, []int{req.MsgID})
+		if loadErr != nil {
+			return nil, channelInvalidErr(loadErr)
+		}
+		for _, message := range history.Messages {
+			if message.ID == req.MsgID && message.Media != nil && message.Media.Poll != nil {
+				date = message.Date
+				if message.Media.Poll.Results != nil {
+					votes = message.Media.Poll.Results.TotalVoters
+				}
+				break
+			}
+		}
+	} else if peer.Type == domain.PeerTypeUser && r.deps.Messages != nil {
+		messages, loadErr := r.deps.Messages.GetMessages(ctx, userID, []int{req.MsgID})
+		if loadErr != nil {
+			return nil, internalErr()
+		}
+		for _, message := range messages.Messages {
+			if message.ID == req.MsgID && message.Peer == peer && message.Media != nil && message.Media.Poll != nil {
+				date = message.Date
+				if message.Media.Poll.Results != nil {
+					votes = message.Media.Poll.Results.TotalVoters
+				}
+				break
+			}
+		}
+	}
+	return &tg.StatsPollStats{VotesGraph: r.statsSnapshotGraph("votes", "Votes", date, votes)}, nil
 }
 
 func (r *Router) statsChannelView(ctx context.Context, input tg.InputChannelClass) (domain.ChannelView, error) {
@@ -200,77 +305,242 @@ func (r *Router) statsChannelView(ctx context.Context, input tg.InputChannelClas
 	return view, nil
 }
 
-func (r *Router) validateStatsPeer(ctx context.Context, peer tg.InputPeerClass) error {
-	userID, _, err := r.currentUserID(ctx)
-	if err != nil {
-		return internalErr()
-	}
-	_, err = r.checkedDomainPeerFromInputPeer(ctx, userID, peer)
-	return err
+var statsGraphColors = [...]string{
+	"#4A90E2", "#50E3C2", "#F5A623", "#D0021B", "#9013FE", "#7ED321", "#B8E986", "#BD10E0",
 }
 
-func (r *Router) emptyBroadcastStats() *tg.StatsBroadcastStats {
+type statsGraphSeries struct {
+	Key   string
+	Label string
+	Color string
+	Value func(domain.ChannelStatsDay) int
+}
+
+type statsGraphJSON struct {
+	Columns [][]any           `json:"columns"`
+	Types   map[string]string `json:"types"`
+	Names   map[string]string `json:"names"`
+	Colors  map[string]string `json:"colors"`
+}
+
+func (r *Router) statsPeriod() domain.StatsPeriod {
+	maxDate := int(r.clock.Now().Unix())
+	if maxDate <= 7*86400 {
+		maxDate = 7*86400 + 1
+	}
+	return domain.StatsPeriod{MinDate: maxDate - 7*86400, MaxDate: maxDate}
+}
+
+func tgStatsPeriod(period domain.StatsPeriod) tg.StatsDateRangeDays {
+	return tg.StatsDateRangeDays{MinDate: period.MinDate, MaxDate: period.MaxDate}
+}
+
+func tgStatsValue(value domain.StatsValueAndPrev) tg.StatsAbsValueAndPrev {
+	return tg.StatsAbsValueAndPrev{Current: value.Current, Previous: value.Previous}
+}
+
+func (r *Router) tgBroadcastStats(stats domain.ChannelStats) *tg.StatsBroadcastStats {
+	recent := make([]tg.PostInteractionCountersClass, 0, len(stats.RecentPosts))
+	for _, item := range stats.RecentPosts {
+		recent = append(recent, &tg.PostInteractionCountersMessage{
+			MsgID: item.MessageID, Views: item.Views, Forwards: item.Forwards, Reactions: item.Reactions,
+		})
+	}
 	return &tg.StatsBroadcastStats{
-		Period:                       r.statsDateRange(),
-		Followers:                    tg.StatsAbsValueAndPrev{},
-		ViewsPerPost:                 tg.StatsAbsValueAndPrev{},
-		SharesPerPost:                tg.StatsAbsValueAndPrev{},
-		ReactionsPerPost:             tg.StatsAbsValueAndPrev{},
-		ViewsPerStory:                tg.StatsAbsValueAndPrev{},
-		SharesPerStory:               tg.StatsAbsValueAndPrev{},
-		ReactionsPerStory:            tg.StatsAbsValueAndPrev{},
-		EnabledNotifications:         tg.StatsPercentValue{},
-		GrowthGraph:                  r.emptyStatsGraph("Growth"),
-		FollowersGraph:               r.emptyStatsGraph("Followers"),
-		MuteGraph:                    r.emptyStatsGraph("Muted"),
-		TopHoursGraph:                r.emptyStatsGraph("Hours"),
-		InteractionsGraph:            r.emptyStatsGraph("Interactions"),
-		IvInteractionsGraph:          r.emptyStatsGraph("Instant Views"),
-		ViewsBySourceGraph:           r.emptyStatsGraph("Views"),
-		NewFollowersBySourceGraph:    r.emptyStatsGraph("Followers"),
-		LanguagesGraph:               r.emptyStatsGraph("Languages"),
-		ReactionsByEmotionGraph:      r.emptyStatsGraph("Reactions"),
-		StoryInteractionsGraph:       r.emptyStatsGraph("Stories"),
-		StoryReactionsByEmotionGraph: r.emptyStatsGraph("Story Reactions"),
+		Period:               tgStatsPeriod(stats.Period),
+		Followers:            tgStatsValue(stats.Members),
+		ViewsPerPost:         tgStatsValue(stats.ViewsPerPost),
+		SharesPerPost:        tgStatsValue(stats.SharesPerPost),
+		ReactionsPerPost:     tgStatsValue(stats.ReactionsPerPost),
+		ViewsPerStory:        tg.StatsAbsValueAndPrev{},
+		SharesPerStory:       tg.StatsAbsValueAndPrev{},
+		ReactionsPerStory:    tg.StatsAbsValueAndPrev{},
+		EnabledNotifications: tg.StatsPercentValue{},
+		GrowthGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "members", Label: "Followers", Color: statsGraphColors[0], Value: func(day domain.ChannelStatsDay) int { return day.Members },
+		}}),
+		FollowersGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "new_members", Label: "New followers", Color: statsGraphColors[1], Value: func(day domain.ChannelStatsDay) int { return day.NewMembers },
+		}}),
+		MuteGraph:     statsGraphUnavailable(),
+		TopHoursGraph: statsGraphUnavailable(),
+		InteractionsGraph: r.statsGraph(stats.Days, []statsGraphSeries{
+			{Key: "views", Label: "Views", Color: statsGraphColors[0], Value: func(day domain.ChannelStatsDay) int { return day.Views }},
+			{Key: "shares", Label: "Shares", Color: statsGraphColors[1], Value: func(day domain.ChannelStatsDay) int { return day.Shares }},
+		}),
+		IvInteractionsGraph:          statsGraphUnavailable(),
+		ViewsBySourceGraph:           statsGraphUnavailable(),
+		NewFollowersBySourceGraph:    statsGraphUnavailable(),
+		LanguagesGraph:               statsGraphUnavailable(),
+		ReactionsByEmotionGraph:      r.statsReactionGraph(stats.Days),
+		StoryInteractionsGraph:       statsGraphUnavailable(),
+		StoryReactionsByEmotionGraph: statsGraphUnavailable(),
+		RecentPostsInteractions:      recent,
 	}
 }
 
-func (r *Router) emptyMegagroupStats() *tg.StatsMegagroupStats {
-	return &tg.StatsMegagroupStats{
-		Period:                  r.statsDateRange(),
-		Members:                 tg.StatsAbsValueAndPrev{},
-		Messages:                tg.StatsAbsValueAndPrev{},
-		Viewers:                 tg.StatsAbsValueAndPrev{},
-		Posters:                 tg.StatsAbsValueAndPrev{},
-		GrowthGraph:             r.emptyStatsGraph("Growth"),
-		MembersGraph:            r.emptyStatsGraph("Members"),
-		NewMembersBySourceGraph: r.emptyStatsGraph("Members"),
-		LanguagesGraph:          r.emptyStatsGraph("Languages"),
-		MessagesGraph:           r.emptyStatsGraph("Messages"),
-		ActionsGraph:            r.emptyStatsGraph("Actions"),
-		TopHoursGraph:           r.emptyStatsGraph("Hours"),
-		WeekdaysGraph:           r.emptyStatsGraph("Weekdays"),
-		TopPosters:              []tg.StatsGroupTopPoster{},
-		TopAdmins:               []tg.StatsGroupTopAdmin{},
-		TopInviters:             []tg.StatsGroupTopInviter{},
+func (r *Router) tgMegagroupStats(ctx context.Context, viewerUserID int64, stats domain.ChannelStats) *tg.StatsMegagroupStats {
+	posterIDs := make([]int64, 0, len(stats.TopPosters))
+	topPosters := make([]tg.StatsGroupTopPoster, 0, len(stats.TopPosters))
+	for _, item := range stats.TopPosters {
+		posterIDs = append(posterIDs, item.UserID)
+		topPosters = append(topPosters, tg.StatsGroupTopPoster{UserID: item.UserID, Messages: item.Messages, AvgChars: item.AvgChars})
 	}
+	users := tgUsersForViewer(viewerUserID, r.domainUsersForIDs(ctx, viewerUserID, posterIDs))
+	out := &tg.StatsMegagroupStats{
+		Period:   tgStatsPeriod(stats.Period),
+		Members:  tgStatsValue(stats.Members),
+		Messages: tgStatsValue(stats.Messages),
+		Viewers:  tgStatsValue(stats.Viewers),
+		Posters:  tgStatsValue(stats.Posters),
+		GrowthGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "members", Label: "Members", Color: statsGraphColors[0], Value: func(day domain.ChannelStatsDay) int { return day.Members },
+		}}),
+		MembersGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "new_members", Label: "New members", Color: statsGraphColors[1], Value: func(day domain.ChannelStatsDay) int { return day.NewMembers },
+		}}),
+		NewMembersBySourceGraph: statsGraphUnavailable(),
+		LanguagesGraph:          statsGraphUnavailable(),
+		MessagesGraph: r.statsGraph(stats.Days, []statsGraphSeries{{
+			Key: "messages", Label: "Messages", Color: statsGraphColors[0], Value: func(day domain.ChannelStatsDay) int { return day.Messages },
+		}}),
+		ActionsGraph:  statsGraphUnavailable(),
+		TopHoursGraph: statsGraphUnavailable(),
+		WeekdaysGraph: statsGraphUnavailable(),
+		TopPosters:    topPosters,
+		TopAdmins:     []tg.StatsGroupTopAdmin{},
+		TopInviters:   []tg.StatsGroupTopInviter{},
+		Users:         users,
+	}
+	r.applyPeerReadModels(ctx, viewerUserID, out.Users, nil)
+	return out
 }
 
-func (r *Router) statsDateRange() tg.StatsDateRangeDays {
+func (r *Router) statsGraph(days []domain.ChannelStatsDay, series []statsGraphSeries) tg.StatsGraphClass {
+	graph := statsGraphJSON{
+		Columns: make([][]any, 0, len(series)+1),
+		Types:   map[string]string{"x": "x"},
+		Names:   make(map[string]string, len(series)),
+		Colors:  make(map[string]string, len(series)),
+	}
+	x := make([]any, 1, len(days)+1)
+	x[0] = "x"
+	for _, day := range days {
+		x = append(x, int64(day.Date)*1000)
+	}
+	graph.Columns = append(graph.Columns, x)
+	for i, item := range series {
+		key := "y" + strconv.Itoa(i)
+		column := make([]any, 1, len(days)+1)
+		column[0] = key
+		for _, day := range days {
+			column = append(column, item.Value(day))
+		}
+		graph.Columns = append(graph.Columns, column)
+		graph.Types[key] = "line"
+		graph.Names[key] = item.Label
+		color := item.Color
+		if color == "" {
+			color = statsGraphColors[i%len(statsGraphColors)]
+		}
+		graph.Colors[key] = color
+	}
+	data, err := json.Marshal(graph)
+	if err != nil {
+		return &tg.StatsGraphError{Error: "GRAPH_SERIALIZATION_FAILED"}
+	}
+	return &tg.StatsGraph{JSON: tg.DataJSON{Data: string(data)}}
+}
+
+func (r *Router) statsReactionGraph(days []domain.ChannelStatsDay) tg.StatsGraphClass {
+	byKey := make(map[string]domain.MessageReaction)
+	for _, day := range days {
+		for _, item := range day.ByReaction {
+			byKey[item.Reaction.Key()] = item.Reaction
+		}
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return r.statsGraph(days, []statsGraphSeries{{
+			Key: "reactions", Label: "Reactions", Color: statsGraphColors[2], Value: func(day domain.ChannelStatsDay) int { return day.Reactions },
+		}})
+	}
+	series := make([]statsGraphSeries, 0, len(keys))
+	for i, reactionKey := range keys {
+		key := reactionKey
+		reaction := byKey[key]
+		series = append(series, statsGraphSeries{
+			Key: key, Label: statsReactionLabel(reaction), Color: statsGraphColors[i%len(statsGraphColors)],
+			Value: func(day domain.ChannelStatsDay) int {
+				for _, item := range day.ByReaction {
+					if item.Reaction.Key() == key {
+						return item.Count
+					}
+				}
+				return 0
+			},
+		})
+	}
+	return r.statsGraph(days, series)
+}
+
+func statsReactionLabel(reaction domain.MessageReaction) string {
+	if reaction.Type == domain.MessageReactionCustomEmoji {
+		return fmt.Sprintf("Custom emoji %d", reaction.DocumentID)
+	}
+	if reaction.Emoticon != "" {
+		return reaction.Emoticon
+	}
+	return "Reaction"
+}
+
+func (r *Router) statsSnapshotGraph(key, label string, date, value int) tg.StatsGraphClass {
 	now := int(r.clock.Now().Unix())
-	return tg.StatsDateRangeDays{MinDate: now - 86400, MaxDate: now}
+	if date <= 0 || date >= now {
+		date = now - 1
+	}
+	days := []domain.ChannelStatsDay{{Date: date}, {Date: now, Views: value, Reactions: value}}
+	return r.statsGraph(days, []statsGraphSeries{{
+		Key: key, Label: label, Color: statsGraphColors[0],
+		Value: func(day domain.ChannelStatsDay) int {
+			if key == "views" {
+				return day.Views
+			}
+			return day.Reactions
+		},
+	}})
 }
 
-func (r *Router) emptyStatsGraph(label string) *tg.StatsGraph {
-	nowMillis := r.clock.Now().UnixMilli()
-	prevMillis := nowMillis - 86400000
-	data := fmt.Sprintf(
-		`{"columns":[["x",%d,%d],["y0",0,0]],"types":{"x":"x","y0":"line"},"names":{"y0":%q},"colors":{"y0":"blue#4a90e2"}}`,
-		prevMillis,
-		nowMillis,
-		label,
-	)
-	return &tg.StatsGraph{JSON: tg.DataJSON{Data: data}}
+func (r *Router) statsReactionSnapshotGraph(date int, counts []domain.ChannelMessageReactionCount) tg.StatsGraphClass {
+	now := int(r.clock.Now().Unix())
+	if date <= 0 || date >= now {
+		date = now - 1
+	}
+	end := domain.ChannelStatsDay{Date: now}
+	for _, item := range counts {
+		end.Reactions += item.Count
+		end.ByReaction = append(end.ByReaction, domain.StatsReactionCount{Reaction: item.Reaction, Count: item.Count})
+	}
+	return r.statsReactionGraph([]domain.ChannelStatsDay{{Date: date}, end})
+}
+
+func statsGraphUnavailable() tg.StatsGraphClass {
+	return &tg.StatsGraphError{Error: "GRAPH_NOT_AVAILABLE"}
+}
+
+func statsServiceErr(err error) error {
+	switch {
+	case errors.Is(err, domain.ErrMessageIDInvalid):
+		return messageIDInvalidErr()
+	case errors.Is(err, domain.ErrStatsOffsetInvalid):
+		return tgerr400("OFFSET_INVALID")
+	default:
+		return channelInvalidErr(err)
+	}
 }
 
 func emptyStatsPublicForwards() *tg.StatsPublicForwards {

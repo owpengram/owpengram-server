@@ -114,7 +114,8 @@ const (
 	verifyChoiceBlockedPrefix  = "no:"
 )
 
-const verifyBotStartText = `I collect applications for official ` + branding.ProductName + ` verification: the badge shown next to the name of a channel, supergroup or bot whose identity has been confirmed.
+func verifyBotStartText() string {
+	return `I collect applications for official ` + branding.ProductName + ` verification: the badge shown next to the name of a channel, supergroup or bot whose identity has been confirmed.
 
 Before you apply, check that the subject of the application:
 - is a channel, supergroup or bot with a public @username;
@@ -125,8 +126,10 @@ Before you apply, check that the subject of the application:
 This badge is never sold and never granted automatically. A person reads every application, and I message you here with the decision.
 
 Tap the button below, or send /new, to start. Send /help for the full list of commands.`
+}
 
-const verifyBotHelpText = `I collect official ` + branding.ProductName + ` verification applications.
+func verifyBotHelpText() string {
+	return `I collect official ` + branding.ProductName + ` verification applications.
 
 /new - file a verification application
 /status - list your applications and their status
@@ -134,6 +137,7 @@ const verifyBotHelpText = `I collect official ` + branding.ProductName + ` verif
 /help - show this message
 
 One application asks for: the subject, a category, a description, the official website, optional social links, links to independent press coverage, and an optional comment for the reviewers. You can send /cancel at any point, and /status any time after filing.`
+}
 
 const verifyBotIdleText = `I only collect official verification applications. Send /new to file one, /status to check the ones you filed, or /help to see what I understand.`
 
@@ -310,7 +314,7 @@ func (s *Service) handleVerify(ctx context.Context, userID int64, body string) b
 
 func (s *Service) handleVerifyCommand(ctx context.Context, userID int64, cmd string, state domain.BotChatState, found bool) botReply {
 	if cmd == "help" {
-		return botReply{Text: verifyBotHelpText}
+		return botReply{Text: verifyBotHelpText()}
 	}
 	if s.verification == nil {
 		return botReply{Text: verifyUnavailableText}
@@ -328,7 +332,7 @@ func (s *Service) handleVerifyCommand(ctx context.Context, userID int64, cmd str
 	case "cancel":
 		return s.cancelVerifyApplication(ctx, userID, state, found)
 	default:
-		return botReply{Text: verifyBotHelpText}
+		return botReply{Text: verifyBotHelpText()}
 	}
 }
 
@@ -458,7 +462,7 @@ func (s *Service) verifyIntro(ctx context.Context, userID int64, state domain.Bo
 	if !s.saveVerifyState(ctx, state) {
 		return internalReply()
 	}
-	return botReply{Text: verifyBotStartText, ReplyMarkup: markup}
+	return botReply{Text: verifyBotStartText(), ReplyMarkup: markup}
 }
 
 // startVerifyApplication is /new and the Apply button. An applicant has at most

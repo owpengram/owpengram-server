@@ -45,6 +45,32 @@ func newTestHandlerWithPublicPeers(
 	return h
 }
 
+func TestTelegramLoginWidgetRoutesReachProvider(t *testing.T) {
+	provider := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h, err := NewHandler(Config{
+		StickerSets: fakeResolver{}, PublicBaseURL: "https://links.example.test", TelegramLogin: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/telegram-widget.js?23"},
+		{method: http.MethodGet, path: "/js/telegram-widget.js?23"},
+		{method: http.MethodPost, path: "/telegram-widget/resolve"},
+	} {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, nil))
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf("%s %s status=%d", tc.method, tc.path, recorder.Code)
+		}
+	}
+}
+
 type fakeModerationAppeals struct {
 	link        domain.ModerationAppealLink
 	found       bool
@@ -304,7 +330,7 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 		"http://127.0.0.1:2401/TetrisBot",
 		"telesrv://127.0.0.1:2401/TetrisBot",
 		"Start Bot",
-		"Open telesrv to start a chat with this bot.",
+		"Open Telesrv to start a chat with this bot.",
 		`property="og:title" content="Tetris Bot"`,
 		`property="al:android:url" content="telesrv://127.0.0.1:2401/TetrisBot"`,
 	} {

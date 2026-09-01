@@ -164,6 +164,288 @@ WHERE c.contact_user_id = $1
 	return out, nil
 }
 
+// GetReverseContactsForViewerUserIDs reads an exact set of owner->viewer
+// relationship pairs for cross-request privacy batching. Privacy evaluation
+// only consumes relationship facts (existence/close_friend), so this query must
+// not join or copy viewer-independent users-table payloads into every pair.
+func (s *ContactStore) GetReverseContactsForViewerUserIDs(
+	ctx context.Context,
+	viewerUserIDsByOwner map[int64][]int64,
+) (map[int64]map[int64]domain.Contact, error) {
+	out := make(map[int64]map[int64]domain.Contact, len(viewerUserIDsByOwner))
+	ownerIDs, viewerIDs := flattenContactProjectionPairs(viewerUserIDsByOwner)
+	if len(ownerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+/* reverse_contact_pair_batch */
+WITH requested(owner_user_id, viewer_user_id) AS (
+  SELECT * FROM unnest($1::bigint[], $2::bigint[])
+)
+SELECT
+  c.user_id AS owner_user_id,
+  c.contact_user_id AS viewer_user_id,
+  c.mutual,
+  c.close_friend,
+  c.contact_phone,
+  c.contact_first_name,
+  c.contact_last_name,
+  c.note,
+  COALESCE(c.note_entities::text, '[]')::text AS note_entities_json
+FROM requested r
+JOIN contacts c
+  ON c.user_id = r.owner_user_id
+ AND c.contact_user_id = r.viewer_user_id
+`, ownerIDs, viewerIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get sparse reverse contacts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		ownerID, contact, scanErr := scanSparseContactProjectionRows(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		if out[ownerID] == nil {
+			out[ownerID] = make(map[int64]domain.Contact)
+		}
+		out[ownerID][contact.User.ID] = contact
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *ContactStore) ContactProjectionForViewers(ctx context.Context, viewerUserIDs, contactUserIDs []int64) (domain.ContactProjectionBatch, error) {
+	out := domain.ContactProjectionBatch{
+		Contacts:       make(map[int64]map[int64]domain.Contact, len(viewerUserIDs)),
+		PersonalPhotos: make(map[int64]map[int64]domain.ProfilePhotoRef, len(viewerUserIDs)),
+	}
+	if len(viewerUserIDs) == 0 || len(contactUserIDs) == 0 {
+		return out, nil
+	}
+	viewers := dedupPositiveInt64(viewerUserIDs)
+	targets := dedupPositiveInt64(contactUserIDs)
+	if len(viewers) == 0 || len(targets) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT
+  c.user_id AS viewer_user_id,
+  c.contact_user_id,
+  c.mutual,
+  c.close_friend,
+  c.contact_phone,
+  c.contact_first_name,
+  c.contact_last_name,
+  c.note,
+  COALESCE(c.note_entities::text, '[]')::text AS note_entities_json,
+  u.id,
+  u.access_hash,
+  COALESCE(NULLIF(c.contact_phone, ''), u.phone)::text AS phone,
+  COALESCE(NULLIF(c.contact_first_name, ''), u.first_name)::text AS first_name,
+  COALESCE(c.contact_last_name, u.last_name)::text AS last_name,
+  u.username,
+  u.country_code,
+  u.verified,
+  u.support,
+  COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint AS premium_until,
+  u.emoji_status_document_id,
+  u.emoji_status_until,
+  u.emoji_status_collectible_id,
+  u.emoji_status_collectible,
+  u.last_seen_at
+FROM contacts c
+JOIN users u ON u.id = c.contact_user_id
+WHERE c.user_id = ANY($1::bigint[])
+  AND c.contact_user_id = ANY($2::bigint[])
+`, viewers, targets)
+	if err != nil {
+		return out, fmt.Errorf("get contact projection for viewers: %w", err)
+	}
+	for rows.Next() {
+		viewerID, contact, err := scanContactProjectionRows(rows)
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		if out.Contacts[viewerID] == nil {
+			out.Contacts[viewerID] = make(map[int64]domain.Contact, len(targets))
+		}
+		out.Contacts[viewerID][contact.User.ID] = contact
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	rows, err = s.db.Query(ctx, `
+SELECT
+  c.user_id AS viewer_user_id,
+  c.contact_user_id,
+  c.personal_photo_id,
+  ph.dc_id,
+  ph.sizes::text AS sizes_json
+FROM contacts c
+JOIN photos ph ON ph.id = c.personal_photo_id
+WHERE c.user_id = ANY($1::bigint[])
+  AND c.contact_user_id = ANY($2::bigint[])
+  AND c.personal_photo_id <> 0
+`, viewers, targets)
+	if err != nil {
+		return out, fmt.Errorf("get contact projection personal photos: %w", err)
+	}
+	for rows.Next() {
+		var viewerID, contactUserID, photoID int64
+		var dcID int32
+		var sizesJSON string
+		if err := rows.Scan(&viewerID, &contactUserID, &photoID, &dcID, &sizesJSON); err != nil {
+			rows.Close()
+			return out, err
+		}
+		sizes, err := decodePhotoSizes(sizesJSON)
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		if out.PersonalPhotos[viewerID] == nil {
+			out.PersonalPhotos[viewerID] = make(map[int64]domain.ProfilePhotoRef, len(targets))
+		}
+		out.PersonalPhotos[viewerID][contactUserID] = domain.ProfilePhotoRef{
+			PhotoID:  photoID,
+			DCID:     int(dcID),
+			Stripped: domain.StrippedFromSizes(sizes),
+			Personal: true,
+			HasVideo: domain.PhotoHasVideo(sizes),
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+	return out, nil
+}
+
+func (s *ContactStore) ContactProjectionForViewerUserIDs(ctx context.Context, contactUserIDsByViewer map[int64][]int64) (domain.ContactProjectionBatch, error) {
+	out := domain.ContactProjectionBatch{
+		Contacts:       make(map[int64]map[int64]domain.Contact, len(contactUserIDsByViewer)),
+		PersonalPhotos: make(map[int64]map[int64]domain.ProfilePhotoRef, len(contactUserIDsByViewer)),
+	}
+	viewerIDs, contactUserIDs := flattenContactProjectionPairs(contactUserIDsByViewer)
+	if len(viewerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `
+WITH requested(viewer_user_id, contact_user_id) AS (
+  SELECT * FROM unnest($1::bigint[], $2::bigint[])
+)
+SELECT
+  c.user_id AS viewer_user_id,
+  c.contact_user_id,
+  c.mutual,
+  c.close_friend,
+  c.contact_phone,
+  c.contact_first_name,
+  c.contact_last_name,
+  c.note,
+  COALESCE(c.note_entities::text, '[]')::text AS note_entities_json
+FROM requested r
+JOIN contacts c ON c.user_id = r.viewer_user_id AND c.contact_user_id = r.contact_user_id
+`, viewerIDs, contactUserIDs)
+	if err != nil {
+		return out, fmt.Errorf("get sparse contact projection: %w", err)
+	}
+	for rows.Next() {
+		viewerID, contact, err := scanSparseContactProjectionRows(rows)
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		if out.Contacts[viewerID] == nil {
+			out.Contacts[viewerID] = make(map[int64]domain.Contact)
+		}
+		out.Contacts[viewerID][contact.User.ID] = contact
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+
+	rows, err = s.db.Query(ctx, `
+WITH requested(viewer_user_id, contact_user_id) AS (
+  SELECT * FROM unnest($1::bigint[], $2::bigint[])
+)
+SELECT
+  c.user_id AS viewer_user_id,
+  c.contact_user_id,
+  c.personal_photo_id,
+  ph.dc_id,
+  ph.sizes::text AS sizes_json
+FROM requested r
+JOIN contacts c ON c.user_id = r.viewer_user_id AND c.contact_user_id = r.contact_user_id
+JOIN photos ph ON ph.id = c.personal_photo_id
+WHERE c.personal_photo_id <> 0
+`, viewerIDs, contactUserIDs)
+	if err != nil {
+		return out, fmt.Errorf("get sparse contact projection personal photos: %w", err)
+	}
+	for rows.Next() {
+		var viewerID, contactUserID, photoID int64
+		var dcID int32
+		var sizesJSON string
+		if err := rows.Scan(&viewerID, &contactUserID, &photoID, &dcID, &sizesJSON); err != nil {
+			rows.Close()
+			return out, err
+		}
+		sizes, err := decodePhotoSizes(sizesJSON)
+		if err != nil {
+			rows.Close()
+			return out, err
+		}
+		if out.PersonalPhotos[viewerID] == nil {
+			out.PersonalPhotos[viewerID] = make(map[int64]domain.ProfilePhotoRef)
+		}
+		out.PersonalPhotos[viewerID][contactUserID] = domain.ProfilePhotoRef{
+			PhotoID: photoID, DCID: int(dcID), Stripped: domain.StrippedFromSizes(sizes),
+			Personal: true, HasVideo: domain.PhotoHasVideo(sizes),
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return out, err
+	}
+	rows.Close()
+	return out, nil
+}
+
+func flattenContactProjectionPairs(contactUserIDsByViewer map[int64][]int64) ([]int64, []int64) {
+	viewers := make([]int64, 0)
+	targets := make([]int64, 0)
+	seen := make(map[[2]int64]struct{})
+	for viewerID, contactUserIDs := range contactUserIDsByViewer {
+		if viewerID == 0 {
+			continue
+		}
+		for _, targetID := range contactUserIDs {
+			if targetID == 0 {
+				continue
+			}
+			pair := [2]int64{viewerID, targetID}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			seen[pair] = struct{}{}
+			viewers = append(viewers, viewerID)
+			targets = append(targets, targetID)
+		}
+	}
+	return viewers, targets
+}
+
 func (s *ContactStore) Upsert(ctx context.Context, userID int64, input domain.ContactInput) (domain.Contact, error) {
 	entities, err := encodeMessageEntities(input.NoteEntities)
 	if err != nil {
@@ -756,6 +1038,111 @@ func scanReverseContactRows(row contactScanner) (int64, domain.Contact, error) {
 	return ownerUserID, contact, nil
 }
 
+func scanSparseContactProjectionRows(row contactScanner) (int64, domain.Contact, error) {
+	var (
+		viewerUserID     int64
+		contactUserID    int64
+		mutual           bool
+		closeFriend      bool
+		contactPhone     string
+		contactFirstName string
+		contactLastName  string
+		note             string
+		noteEntitiesJSON string
+	)
+	if err := row.Scan(
+		&viewerUserID,
+		&contactUserID,
+		&mutual,
+		&closeFriend,
+		&contactPhone,
+		&contactFirstName,
+		&contactLastName,
+		&note,
+		&noteEntitiesJSON,
+	); err != nil {
+		return 0, domain.Contact{}, err
+	}
+	entities, err := decodeMessageEntities(noteEntitiesJSON)
+	if err != nil {
+		return 0, domain.Contact{}, fmt.Errorf("decode sparse contact note entities: %w", err)
+	}
+	return viewerUserID, domain.Contact{
+		User:         domain.User{ID: contactUserID},
+		FirstName:    contactFirstName,
+		LastName:     contactLastName,
+		Phone:        contactPhone,
+		Note:         note,
+		NoteEntities: entities,
+		Mutual:       mutual,
+		CloseFriend:  closeFriend,
+	}, nil
+}
+
+func scanContactProjectionRows(row contactScanner) (int64, domain.Contact, error) {
+	var (
+		viewerUserID         int64
+		contactUserID        int64
+		mutual               bool
+		closeFriend          bool
+		contactPhone         string
+		contactFirstName     string
+		contactLastName      string
+		note                 string
+		noteEntitiesJSON     string
+		id                   int64
+		accessHash           int64
+		phone                string
+		firstName            string
+		lastName             string
+		username             string
+		countryCode          string
+		verified             bool
+		support              bool
+		premiumUntil         int64
+		emojiStatusDocID     int64
+		emojiStatusUntil     int64
+		emojiCollectibleID   *int64
+		emojiCollectibleJSON []byte
+		lastSeenAt           int32
+	)
+	if err := row.Scan(
+		&viewerUserID,
+		&contactUserID,
+		&mutual,
+		&closeFriend,
+		&contactPhone,
+		&contactFirstName,
+		&contactLastName,
+		&note,
+		&noteEntitiesJSON,
+		&id,
+		&accessHash,
+		&phone,
+		&firstName,
+		&lastName,
+		&username,
+		&countryCode,
+		&verified,
+		&support,
+		&premiumUntil,
+		&emojiStatusDocID,
+		&emojiStatusUntil,
+		&emojiCollectibleID,
+		&emojiCollectibleJSON,
+		&lastSeenAt,
+	); err != nil {
+		return 0, domain.Contact{}, err
+	}
+	_ = contactUserID
+	entities, err := decodeMessageEntities(noteEntitiesJSON)
+	if err != nil {
+		return 0, domain.Contact{}, err
+	}
+	contact := contactFromFields(id, accessHash, phone, firstName, lastName, username, countryCode, verified, support, false, 0, int(premiumUntil), emojiStatusDocID, int(emojiStatusUntil), emojiCollectibleID, emojiCollectibleJSON, int(lastSeenAt), contactFirstName, contactLastName, contactPhone, note, entities, mutual, closeFriend)
+	return viewerUserID, contact, nil
+}
+
 func (s *ContactStore) Block(ctx context.Context, userID, blockedUserID int64, date int) (bool, error) {
 	if userID == 0 || blockedUserID == 0 || userID == blockedUserID {
 		return false, nil
@@ -866,6 +1253,22 @@ LIMIT $3`, userID, offset, limit)
 		out.Blocked = append(out.Blocked, item)
 	}
 	return out, rows.Err()
+}
+
+func dedupPositiveInt64(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func contactListHash(contacts []domain.Contact) int64 {

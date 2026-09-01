@@ -80,6 +80,10 @@ type moderationUserAudienceService interface {
 	ModerationFlagAudience(ctx context.Context, userID int64, limit int) ([]int64, error)
 }
 
+type dialogPeerMetadataInvalidator interface {
+	InvalidateDialog(userID int64, peer domain.Peer)
+}
+
 // NotifyUserModerationFlagsChanged sends the standard, non-PTS updateUser
 // shape to online accounts that already know the peer. Offline accounts
 // converge when their next authoritative peer/dialog read carries the updated
@@ -109,6 +113,8 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 	botVerificationIcon := r.peerBotVerificationIcon(pushCtx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID})
 	usernames := r.usernameRegistryMap(pushCtx, []domain.Peer{{Type: domain.PeerTypeUser, ID: u.ID}})
 	seen := make(map[int64]struct{}, len(audience))
+	dialogs, _ := r.deps.Dialogs.(dialogPeerMetadataInvalidator)
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}
 	for _, viewerUserID := range audience {
 		if viewerUserID == 0 {
 			continue
@@ -117,6 +123,13 @@ func (r *Router) NotifyUserModerationFlagsChanged(ctx context.Context, u domain.
 			continue
 		}
 		seen[viewerUserID] = struct{}{}
+		if dialogs != nil {
+			// The getDialogs list hash intentionally describes dialog ordering, not
+			// embedded User flags. Clearing the viewer's cached hash forces exactly
+			// one full response with the refreshed peer and prevents a stale badge
+			// from reappearing when the dialog list next refreshes.
+			dialogs.InvalidateDialog(viewerUserID, peer)
+		}
 		if online, ok := r.deps.Sessions.(OnlineUserProvider); ok && !online.IsUserOnline(viewerUserID) {
 			continue
 		}

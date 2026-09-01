@@ -51,14 +51,21 @@ func (c MediaCategoryCounts) CountAny(categories []MediaCategory) int {
 // Categories 是该标签页映射到的基础类别并集（PhotoVideo→[Photo,Video]、RoundVoice→[Voice,RoundVideo]）。
 // 分页对齐历史语义：OffsetID 为游标（返回 id 严格小于它）、AddOffset 为额外偏移、MaxID/MinID 为闭区间。
 type MediaSearchRequest struct {
-	Categories    []MediaCategory
-	OffsetID      int
-	AddOffset     int
-	Limit         int
-	MaxID         int
-	MinID         int
-	KnownCount    int
-	HasKnownCount bool
+	Categories     []MediaCategory
+	Query          string
+	SenderUserID   int64
+	MinDate        int
+	MaxDate        int
+	TopMsgID       int
+	SavedPeer      Peer
+	SavedReactions []MessageReaction
+	OffsetID       int
+	AddOffset      int
+	Limit          int
+	MaxID          int
+	MinID          int
+	KnownCount     int
+	HasKnownCount  bool
 }
 
 // ClassifyMediaCategories 返回一条消息所属的全部共享媒体类别（可为空：无媒体且无链接，

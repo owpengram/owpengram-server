@@ -607,6 +607,43 @@ func TestMessagesGetHistoryReturnsStoredMessages(t *testing.T) {
 	}
 }
 
+func TestMessagesSearchMediaPreservesCombinedFilters(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	alice, err := users.Create(ctx, domain.User{AccessHash: 511, Phone: "15550000511", FirstName: "Alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := users.Create(ctx, domain.User{AccessHash: 512, Phone: "15550000512", FirstName: "Bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := &captureMessages{}
+	r := New(Config{}, Deps{Messages: messages, Users: appusers.NewService(users)}, zaptest.NewLogger(t), clock.System)
+	req := &tg.MessagesSearchRequest{
+		Peer: &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash},
+		Q:    "invoice", FromID: &tg.InputPeerUser{UserID: alice.ID, AccessHash: alice.AccessHash},
+		Filter: &tg.InputMessagesFilterPhotos{}, MinDate: 100, MaxDate: 200,
+		OffsetID: 90, AddOffset: 3, Limit: 20, MaxID: 80, MinID: 10,
+	}
+	req.SetTopMsgID(7)
+	var in bin.Buffer
+	if err := req.Encode(&in); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	if _, err := r.Dispatch(WithUserID(ctx, bob.ID), [8]byte{}, 0, &in); err != nil {
+		t.Fatalf("messages.search media: %v", err)
+	}
+	got := messages.mediaReq
+	if got.Query != "invoice" || got.SenderUserID != alice.ID || got.MinDate != 100 || got.MaxDate != 200 ||
+		got.TopMsgID != 7 || got.OffsetID != 90 || got.AddOffset != 3 || got.Limit != 20 || got.MaxID != 80 || got.MinID != 10 {
+		t.Fatalf("media request = %+v", got)
+	}
+	if len(got.Categories) != 1 || got.Categories[0] != domain.MediaCategoryPhoto {
+		t.Fatalf("media categories = %v", got.Categories)
+	}
+}
+
 func TestMessagesSetTypingPushesUserTypingUpdate(t *testing.T) {
 	sessions := &captureScopedSessions{captureSessions: &captureSessions{}}
 	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)

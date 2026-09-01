@@ -166,7 +166,7 @@ export function ownerLabel(row: CollectibleUsernameRow, vaultLabel: string): str
 export function priceLabel(row: CollectibleUsernameRow): string {
   const base = formatCurrency(row.Amount, row.Currency);
   if (row.CryptoCurrency && row.CryptoAmount && row.CryptoAmount !== "0") {
-    return `${base} (${formatCurrency(row.CryptoAmount, row.CryptoCurrency)})`;
+    return `${formatCurrency(row.CryptoAmount, row.CryptoCurrency)} (${base})`;
   }
   return base;
 }

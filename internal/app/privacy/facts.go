@@ -2,11 +2,13 @@ package privacy
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/readmodelcache"
+	"telesrv/internal/store"
 )
 
 const (
@@ -15,6 +17,10 @@ const (
 
 	privacyViewerFactsMaxEntries = 8192
 	privacyMembershipMaxEntries  = 65536
+	// A single legal cold batch must not replace the complete long-lived pair
+	// cache. Large projections still use one exact store batch, but bypass LRU
+	// admission and return the loaded facts directly.
+	privacyMembershipBatchAdmissionMaxPairs = privacyMembershipMaxEntries / 4
 )
 
 // baseUserProvider returns viewer-independent user facts through the users read
@@ -24,10 +30,11 @@ type baseUserProvider interface {
 	PrivacyBaseUsers(ctx context.Context, userIDs []int64) ([]domain.User, error)
 }
 
-// channelMembershipProvider is the cold loader behind the bounded membership
-// read model. Privacy evaluation never calls it for a warm (chat,user) pair.
+// channelMembershipProvider is the exact-pair cold loader behind the bounded
+// membership read model. Cache-admitted batches load only misses; oversized
+// non-admitted batches reload once without polluting the long-lived LRU.
 type channelMembershipProvider interface {
-	FilterActiveChannelMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
+	FilterActiveChannelMemberPairs(ctx context.Context, userIDsByChannel map[int64][]int64) (map[int64][]int64, error)
 }
 
 type viewerFacts struct {
@@ -153,40 +160,30 @@ func (s *Service) loadMembershipFacts(ctx context.Context, chatIDs, viewerUserID
 	if len(chats) == 0 || len(viewers) == 0 {
 		return map[membershipKey]bool{}, nil
 	}
+	if !activeChannelMembershipPairsAllowed(0, len(chats), len(viewers)) {
+		return nil, activeChannelMembershipPairLimitError()
+	}
 	keys := make([]membershipKey, 0, len(chats)*len(viewers))
 	for _, chatID := range chats {
 		for _, viewerID := range viewers {
 			keys = append(keys, membershipKey{ChatID: chatID, UserID: viewerID})
 		}
 	}
-	loadMissing := func(ctx context.Context, missing []membershipKey) (map[membershipKey]bool, error) {
-		out := make(map[membershipKey]bool, len(missing))
-		byChat := make(map[int64][]int64)
-		for _, key := range missing {
-			out[key] = false // negative cache: not an active member.
-			byChat[key.ChatID] = append(byChat[key.ChatID], key.UserID)
-		}
-		if s == nil || s.memberships == nil {
-			return out, nil
-		}
-		for chatID, userIDs := range byChat {
-			active, err := s.memberships.FilterActiveChannelMemberIDs(ctx, chatID, userIDs)
-			if err != nil {
-				return nil, err
-			}
-			for _, userID := range active {
-				out[membershipKey{ChatID: chatID, UserID: userID}] = true
-			}
-		}
-		return out, nil
+	return s.loadMembershipFactsForKeys(ctx, keys)
+}
+
+func activeChannelMembershipPairsAllowed(current, channelCount, userCount int) bool {
+	if current < 0 || channelCount < 0 || userCount < 0 || current > store.MaxActiveChannelMemberPairs {
+		return false
 	}
-	if s == nil || s.membershipFacts == nil {
-		return loadMissing(ctx, keys)
+	if channelCount == 0 || userCount == 0 {
+		return true
 	}
-	return s.membershipFacts.GetOrLoadBatch(ctx, keys,
-		func(membershipKey) (int64, bool) { return 0, true },
-		loadMissing,
-	)
+	return channelCount <= (store.MaxActiveChannelMemberPairs-current)/userCount
+}
+
+func activeChannelMembershipPairLimitError() error {
+	return fmt.Errorf("%w: maximum %d", store.ErrActiveChannelMemberPairsLimit, store.MaxActiveChannelMemberPairs)
 }
 
 func applyViewerFacts(ctx *domain.PrivacyContext, facts viewerFacts, now int64) {

@@ -133,6 +133,55 @@ func TestCachedPhotoProviderCachesHitsAndMisses(t *testing.T) {
 	}
 }
 
+func TestCachedPhotoProviderDefaultTTLRetainsLoginRampWorkingSet(t *testing.T) {
+	inner := &countingPhotoProvider{refs: map[int64]domain.ProfilePhotoRef{}}
+	now := time.Unix(1000, 0)
+	c := newCachedPhotoProvider(inner, 0, DefaultPhotoCacheMaxEntries, func() time.Time { return now })
+	ctx := context.Background()
+
+	if _, err := c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1}, domain.ProfilePhotoKindProfile); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1}, domain.ProfilePhotoKindProfile); err != nil {
+		t.Fatalf("within login ramp: %v", err)
+	}
+	if inner.kindCalls != 1 {
+		t.Fatalf("default TTL expired inside 60s login ramp: calls=%d, want 1", inner.kindCalls)
+	}
+
+	now = now.Add(DefaultPhotoCacheTTL)
+	if _, err := c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{1}, domain.ProfilePhotoKindProfile); err != nil {
+		t.Fatalf("after safety TTL: %v", err)
+	}
+	if inner.kindCalls != 2 {
+		t.Fatalf("safety TTL did not reload: calls=%d, want 2", inner.kindCalls)
+	}
+}
+
+func TestCachedPhotoProviderConfiguredCapacityEvictsOneLRUKey(t *testing.T) {
+	inner := &countingPhotoProvider{refs: map[int64]domain.ProfilePhotoRef{}}
+	now := time.Unix(1000, 0)
+	c := newCachedPhotoProvider(inner, time.Hour, 2, func() time.Time { return now })
+	ctx := context.Background()
+	read := func(ownerID int64) {
+		t.Helper()
+		if _, err := c.CurrentProfilePhotosKind(ctx, domain.PeerTypeUser, []int64{ownerID}, domain.ProfilePhotoKindProfile); err != nil {
+			t.Fatalf("owner %d: %v", ownerID, err)
+		}
+	}
+
+	for _, ownerID := range []int64{1, 2, 1, 3, 1, 2} {
+		read(ownerID)
+	}
+	if inner.kindCalls != 4 {
+		t.Fatalf("kind calls = %d, want 4 with owner 1 touched and only owner 2 evicted", inner.kindCalls)
+	}
+	if c.cache.Len() != 2 {
+		t.Fatalf("cache entries = %d, want configured capacity 2", c.cache.Len())
+	}
+}
+
 func TestCachedPhotoProviderInvalidatesOwnerAndFlushes(t *testing.T) {
 	inner := &countingPhotoProvider{refs: map[int64]domain.ProfilePhotoRef{1: {PhotoID: 111}}}
 	now := time.Unix(1000, 0)

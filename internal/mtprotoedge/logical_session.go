@@ -49,6 +49,16 @@ func (m *SessionManager) adoptLogicalSession(c *Conn) {
 	}
 	key := connSessionKey(c)
 	m.mu.Lock()
+	// Production Conns are attached before their actor starts. A late RPC
+	// completion can race after Unregister has marked that same logical session
+	// offline; adopting the existing outbound owner must not make the physical
+	// connection live again or extend the six-minute offline horizon. Retired
+	// construction/embedded Conns must likewise not recreate a session already
+	// removed by destroy/revoke.
+	if c.isRetired() {
+		m.mu.Unlock()
+		return
+	}
 	logical := m.logicalSessions[key]
 	if logical == nil {
 		logical = &logicalSession{key: key, outbound: c.outboundState}
@@ -59,7 +69,6 @@ func (m *SessionManager) adoptLogicalSession(c *Conn) {
 		logical.businessAuthKeyID = businessAuthKeyID
 		logical.businessAuthResolved = true
 	}
-	logical.offlineAt = time.Time{}
 	// The actor's state pointer is immutable after startOutbound. Production
 	// attaches before start; this adoption bridge only marks that already-owned
 	// state persistent and must never write the Conn field concurrently.

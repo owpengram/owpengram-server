@@ -594,7 +594,7 @@ func (r *Router) onBotsRequestWebViewButton(ctx context.Context, req *tg.BotsReq
 	if err != nil {
 		return nil, internalErr()
 	}
-	if req.UserID == nil || req.Button == nil {
+	if req.UserID == nil || req.Button.Type == nil {
 		return nil, buttonDataInvalidErr()
 	}
 	if r.deps.Bots == nil {
@@ -622,7 +622,7 @@ func (r *Router) onBotsRequestWebViewButton(ctx context.Context, req *tg.BotsReq
 	return &tg.BotsRequestedButton{WebappReqID: saved.WebAppReqID}, nil
 }
 
-func (r *Router) onBotsGetRequestedWebViewButton(ctx context.Context, req *tg.BotsGetRequestedWebViewButtonRequest) (tg.KeyboardButtonClass, error) {
+func (r *Router) onBotsGetRequestedWebViewButton(ctx context.Context, req *tg.BotsGetRequestedWebViewButtonRequest) (*tg.KeyboardButton, error) {
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
@@ -761,21 +761,20 @@ func (r *Router) tgBotPreviewMedia(ctx context.Context, item domain.BotAppPrevie
 	return out
 }
 
-func domainRequestedButtonFromTG(botUserID int64, _ tg.InputUserClass, button tg.KeyboardButtonClass) (domain.BotRequestedWebViewButton, error) {
+func domainRequestedButtonFromTG(botUserID int64, _ tg.InputUserClass, button tg.KeyboardButton) (domain.BotRequestedWebViewButton, error) {
 	var out domain.BotRequestedWebViewButton
 	out.BotUserID = botUserID
-	switch b := button.(type) {
-	case *tg.InputKeyboardButtonRequestPeer:
+	out.Text = strings.TrimSpace(button.Text)
+	switch b := button.Type.(type) {
+	case *tg.InputButtonTypeRequestPeer:
 		out.ButtonID = b.ButtonID
-		out.Text = strings.TrimSpace(b.Text)
 		out.PeerType, out.PeerFilter = domainRequestPeerFilter(b.PeerType)
 		out.MaxQuantity = b.MaxQuantity
 		out.NameRequested = b.NameRequested
 		out.UsernameRequested = b.UsernameRequested
 		out.PhotoRequested = b.PhotoRequested
-	case *tg.KeyboardButtonRequestPeer:
+	case *tg.ButtonTypeRequestPeer:
 		out.ButtonID = b.ButtonID
-		out.Text = strings.TrimSpace(b.Text)
 		out.PeerType, out.PeerFilter = domainRequestPeerFilter(b.PeerType)
 		out.MaxQuantity = b.MaxQuantity
 	default:
@@ -800,13 +799,10 @@ func requestPeerTypeName(peerType tg.RequestPeerTypeClass) string {
 	}
 }
 
-func tgKeyboardButtonRequestPeer(button domain.BotRequestedWebViewButton) tg.KeyboardButtonClass {
-	return &tg.KeyboardButtonRequestPeer{
-		Text:        button.Text,
-		ButtonID:    button.ButtonID,
-		PeerType:    tgRequestPeerTypeWithFilter(button.PeerType, button.PeerFilter),
-		MaxQuantity: button.MaxQuantity,
-	}
+func tgKeyboardButtonRequestPeer(button domain.BotRequestedWebViewButton) *tg.KeyboardButton {
+	return &tg.KeyboardButton{Text: button.Text, Type: &tg.ButtonTypeRequestPeer{
+		ButtonID: button.ButtonID, PeerType: tgRequestPeerTypeWithFilter(button.PeerType, button.PeerFilter), MaxQuantity: button.MaxQuantity,
+	}}
 }
 
 func tgRequestPeerType(kind string) tg.RequestPeerTypeClass {

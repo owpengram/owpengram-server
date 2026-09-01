@@ -1042,6 +1042,7 @@ func (r *Router) onAccountSetGlobalPrivacySettings(ctx context.Context, settings
 			return nil, internalErr()
 		}
 		r.accountSettings.Store(userID, saved)
+		r.invalidateRPCProjectionForUser(userID)
 		return tgGlobalPrivacySettings(saved.GlobalPrivacy), nil
 	}
 	return &settings, nil
@@ -1467,6 +1468,15 @@ func tgGlobalPrivacySettings(gp domain.GlobalPrivacy) *tg.GlobalPrivacySettings 
 	if gp.NoncontactPeersPaidStars > 0 {
 		out.SetNoncontactPeersPaidStars(gp.NoncontactPeersPaidStars)
 	}
+	if !gp.DisallowedGifts.Zero() {
+		out.SetDisallowedGifts(tg.DisallowedGiftsSettings{
+			DisallowUnlimitedStargifts:    gp.DisallowedGifts.UnlimitedStargifts,
+			DisallowLimitedStargifts:      gp.DisallowedGifts.LimitedStargifts,
+			DisallowUniqueStargifts:       gp.DisallowedGifts.UniqueStargifts,
+			DisallowPremiumGifts:          gp.DisallowedGifts.PremiumGifts,
+			DisallowStargiftsFromChannels: gp.DisallowedGifts.StargiftsFromChannel,
+		})
+	}
 	return out
 }
 
@@ -1481,6 +1491,15 @@ func domainGlobalPrivacy(settings tg.GlobalPrivacySettings) domain.GlobalPrivacy
 	}
 	if v, ok := settings.GetNoncontactPeersPaidStars(); ok && v > 0 {
 		gp.NoncontactPeersPaidStars = v
+	}
+	if gifts, ok := settings.GetDisallowedGifts(); ok {
+		gp.DisallowedGifts = domain.DisallowedGifts{
+			UnlimitedStargifts:   gifts.DisallowUnlimitedStargifts,
+			LimitedStargifts:     gifts.DisallowLimitedStargifts,
+			UniqueStargifts:      gifts.DisallowUniqueStargifts,
+			PremiumGifts:         gifts.DisallowPremiumGifts,
+			StargiftsFromChannel: gifts.DisallowStargiftsFromChannels,
+		}
 	}
 	return gp
 }

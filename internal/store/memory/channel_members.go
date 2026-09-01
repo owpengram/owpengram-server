@@ -3,10 +3,13 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 func (s *ChannelStore) GetParticipants(_ context.Context, viewerUserID, channelID int64, filter domain.ChannelParticipantsFilter, offset, limit int) (domain.ChannelParticipantList, error) {
@@ -889,6 +892,45 @@ func (s *ChannelStore) FilterActiveChannelMemberIDs(_ context.Context, channelID
 		out = append(out, userID)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+func (s *ChannelStore) FilterActiveChannelMemberPairs(_ context.Context, userIDsByChannel map[int64][]int64) (map[int64][]int64, error) {
+	requested := make(map[int64][]int64)
+	seen := make(map[[2]int64]struct{})
+	for channelID, userIDs := range userIDsByChannel {
+		if channelID == 0 {
+			continue
+		}
+		for _, userID := range userIDs {
+			if userID == 0 {
+				continue
+			}
+			pair := [2]int64{channelID, userID}
+			if _, ok := seen[pair]; ok {
+				continue
+			}
+			if len(seen) >= store.MaxActiveChannelMemberPairs {
+				return nil, fmt.Errorf("%w: maximum %d", store.ErrActiveChannelMemberPairsLimit, store.MaxActiveChannelMemberPairs)
+			}
+			seen[pair] = struct{}{}
+			requested[channelID] = append(requested[channelID], userID)
+		}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[int64][]int64, len(requested))
+	for channelID, userIDs := range requested {
+		members := s.members[channelID]
+		for _, userID := range userIDs {
+			member, ok := members[userID]
+			if ok && member.Status == domain.ChannelMemberActive {
+				out[channelID] = append(out[channelID], userID)
+			}
+		}
+		sort.Slice(out[channelID], func(i, j int) bool { return out[channelID][i] < out[channelID][j] })
+	}
 	return out, nil
 }
 

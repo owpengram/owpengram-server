@@ -102,6 +102,57 @@ func TestChannelsGetParticipantsUsesSingleBatchUserLookup(t *testing.T) {
 	}
 }
 
+func TestChannelsGetParticipantsRetainsDeletedAccountTombstone(t *testing.T) {
+	ctx := context.Background()
+	owner := domain.User{ID: 1, AccessHash: 101, Phone: "15550002131", FirstName: "Owner"}
+	member := domain.User{ID: 2, AccessHash: 102, Phone: "15550002132", FirstName: "Member"}
+	users := mapUsersService{users: map[int64]domain.User{
+		owner.ID:  owner,
+		member.ID: member,
+	}}
+	channelStore := memory.NewChannelStore()
+	r := New(Config{}, Deps{
+		Users:    users,
+		Channels: appchannels.NewService(channelStore),
+	}, zaptest.NewLogger(t), clock.System)
+
+	created, err := r.onMessagesCreateChat(WithUserID(ctx, owner.ID), &tg.MessagesCreateChatRequest{
+		Users: []tg.InputUserClass{
+			&tg.InputUser{UserID: member.ID, AccessHash: member.AccessHash},
+		},
+		Title: "Deleted Account Membership Group",
+	})
+	if err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+	channel := created.Updates.(*tg.Updates).Chats[0].(*tg.Channel)
+	users.users[member.ID] = domain.User{ID: member.ID, Deleted: true, DeletedAt: 1_800_000_000}
+
+	got, err := r.onChannelsGetParticipants(WithUserID(ctx, owner.ID), &tg.ChannelsGetParticipantsRequest{
+		Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Filter:  &tg.ChannelParticipantsRecent{},
+		Limit:   20,
+	})
+	if err != nil {
+		t.Fatalf("get participants: %v", err)
+	}
+	list := got.(*tg.ChannelsChannelParticipants)
+	if len(list.Participants) != 2 {
+		t.Fatalf("participants = %+v, want owner and retained deleted member", list.Participants)
+	}
+	for _, item := range list.Users {
+		u, ok := item.(*tg.User)
+		if !ok || u.ID != member.ID {
+			continue
+		}
+		if !u.Deleted || u.AccessHash != 0 || u.Phone != "" || u.FirstName != "" || u.LastName != "" || u.Username != "" || u.Photo != nil || u.Status != nil {
+			t.Fatalf("deleted member projection leaked profile state: %+v", u)
+		}
+		return
+	}
+	t.Fatalf("users = %+v, want retained deleted member tombstone", list.Users)
+}
+
 func TestChannelsGetParticipantsValidatesHashAfterParticipantAccessCheck(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()

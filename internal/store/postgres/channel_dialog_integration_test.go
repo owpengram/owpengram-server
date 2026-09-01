@@ -96,7 +96,8 @@ func TestChannelStoreListDialogsWarmsDialogCache(t *testing.T) {
 	})
 
 	cache := NewChannelDialogCache(16)
-	channels := NewChannelStore(pool, WithChannelDialogCache(cache))
+	memberCache := NewChannelMemberCache(16)
+	channels := NewChannelStore(pool, WithChannelDialogCache(cache), WithChannelMemberCache(memberCache))
 	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
 		CreatorUserID: owner.ID,
 		Title:         "Dialog Warm " + suffix,
@@ -124,6 +125,80 @@ func TestChannelStoreListDialogsWarmsDialogCache(t *testing.T) {
 		cached.TopMessageDate != list.Dialogs[0].TopMessageDate ||
 		cached.ReadInboxMaxID != list.Dialogs[0].ReadInboxMaxID {
 		t.Fatalf("cached dialog = %+v, listed dialog = %+v", cached, list.Dialogs[0])
+	}
+}
+
+func TestChannelStoreMaterializedSnapshotWarmsExactDialogCache(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+
+	users := NewUserStore(pool)
+	owner, err := users.Create(ctx, domain.User{
+		AccessHash: 37,
+		Phone:      "+1777" + suffix + "14",
+		FirstName:  "SnapshotWarmOwner",
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	var channelID int64
+	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
+		}
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
+	})
+
+	cache := NewChannelDialogCache(16)
+	memberCache := NewChannelMemberCache(16)
+	channels := NewChannelStore(pool, WithChannelDialogCache(cache), WithChannelMemberCache(memberCache))
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Snapshot Warm " + suffix,
+		Megagroup:     true,
+		Date:          1700000326,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID = created.Channel.ID
+	if _, err := pool.Exec(ctx, `
+UPDATE channel_dialogs
+SET default_send_as_peer_type = 'channel', default_send_as_peer_id = $2
+WHERE user_id = $1 AND channel_id = $2`, owner.ID, channelID); err != nil {
+		t.Fatalf("seed default send as: %v", err)
+	}
+
+	ownerSnapshot, err := channels.ListAllBuiltinChannelDialogSnapshot(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("list materialized owner snapshot: %v", err)
+	}
+	if len(ownerSnapshot.Dialogs) != 1 || ownerSnapshot.Dialogs[0].DefaultSendAs == nil ||
+		ownerSnapshot.Dialogs[0].DefaultSendAs.Type != domain.PeerTypeChannel ||
+		ownerSnapshot.Dialogs[0].DefaultSendAs.ID != channelID ||
+		ownerSnapshot.Dialogs[0].ChannelMember == nil ||
+		ownerSnapshot.Dialogs[0].ChannelMember.UserID != owner.ID ||
+		ownerSnapshot.Dialogs[0].ChannelMember.ChannelID != channelID ||
+		ownerSnapshot.Dialogs[0].ChannelMember.Status != domain.ChannelMemberActive {
+		t.Fatalf("owner snapshot default send as = %+v", ownerSnapshot.Dialogs)
+	}
+	if _, ok := cache.get(owner.ID, channelID); ok {
+		t.Fatal("owner snapshot scan alone must not warm cache before shared hydration")
+	}
+	if _, err := channels.HydrateChannelDialogSnapshot(ctx, owner.ID, ownerSnapshot.Dialogs); err != nil {
+		t.Fatalf("hydrate materialized owner snapshot: %v", err)
+	}
+	cached, ok := cache.get(owner.ID, channelID)
+	if !ok || cached.TopMessageID != ownerSnapshot.Dialogs[0].TopMessage ||
+		cached.DefaultSendAs == nil || cached.DefaultSendAs.Type != domain.PeerTypeChannel ||
+		cached.DefaultSendAs.ID != channelID {
+		t.Fatalf("exact warmed dialog = %+v ok=%v", cached, ok)
+	}
+	warmedMember, ok := memberCache.get(channelID, owner.ID)
+	if !ok || warmedMember.ChannelID != channelID || warmedMember.UserID != owner.ID ||
+		warmedMember.Status != domain.ChannelMemberActive || warmedMember.Role != domain.ChannelRoleCreator {
+		t.Fatalf("exact warmed member = %+v ok=%v", warmedMember, ok)
 	}
 }
 
@@ -315,6 +390,18 @@ FROM unnest($1::bigint[]) AS t(id)`, ids, owner.ID); err != nil {
 	}
 
 	channels := NewChannelStore(pool)
+	headers, err := channels.ListChannelDialogSnapshotHeaders(ctx, owner.ID, domain.DialogFilter{})
+	if err != nil {
+		t.Fatalf("list channel dialog snapshot headers: %v", err)
+	}
+	if len(headers.Dialogs) != count || headers.Count != count || len(headers.Messages) != 0 || len(headers.Channels) != 0 {
+		t.Fatalf("snapshot headers dialogs=%d count=%d messages=%d channels=%d, want %d lightweight headers",
+			len(headers.Dialogs), headers.Count, len(headers.Messages), len(headers.Channels), count)
+	}
+	if headers.Dialogs[0].Peer.ID != ids[len(ids)-1] || headers.Dialogs[len(headers.Dialogs)-1].Peer.ID != ids[0] {
+		t.Fatalf("snapshot header bounds = %d..%d, want %d..%d",
+			headers.Dialogs[0].Peer.ID, headers.Dialogs[len(headers.Dialogs)-1].Peer.ID, ids[len(ids)-1], ids[0])
+	}
 	var cursor domain.Dialog
 	var sixth domain.ChannelDialogList
 	for page := 0; page < 6; page++ {
@@ -331,6 +418,9 @@ FROM unnest($1::bigint[]) AS t(id)`, ids, owner.ID); err != nil {
 		}
 		if len(got.Dialogs) == 0 {
 			t.Fatalf("page %d unexpectedly empty after cursor %+v", page+1, cursor)
+		}
+		if page < 5 && got.Count <= len(got.Dialogs) {
+			t.Fatalf("page %d count = %d dialogs = %d, want bounded has-more signal", page+1, got.Count, len(got.Dialogs))
 		}
 		cursor = got.Dialogs[len(got.Dialogs)-1]
 		if page == 5 {
@@ -422,5 +512,32 @@ VALUES ($1, $2, $3, 1, 1700000500)`, owner.ID, archivedID, domain.DialogArchiveF
 	}
 	if len(archive.Dialogs) != 1 || archive.Dialogs[0].Peer.ID != archivedID {
 		t.Fatalf("archive dialogs = %+v, want archived channel beyond first query window", archive.Dialogs)
+	}
+	archiveHeaders, err := NewChannelStore(pool).ListChannelDialogSnapshotHeaders(ctx, owner.ID, domain.DialogFilter{
+		HasFolderID: true,
+		FolderID:    domain.DialogArchiveFolderID,
+	})
+	if err != nil {
+		t.Fatalf("list archive channel snapshot headers: %v", err)
+	}
+	if len(archiveHeaders.Dialogs) != 1 || archiveHeaders.Dialogs[0].Peer.ID != archivedID {
+		t.Fatalf("archive snapshot headers = %+v, want archived channel", archiveHeaders.Dialogs)
+	}
+	allHeaders, err := NewChannelStore(pool).ListAllBuiltinChannelDialogSnapshot(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("list all built-in channel snapshot headers: %v", err)
+	}
+	if len(allHeaders.Dialogs) != count {
+		t.Fatalf("all built-in snapshot headers = %d, want %d", len(allHeaders.Dialogs), count)
+	}
+	foundArchived := false
+	for _, dialog := range allHeaders.Dialogs {
+		if dialog.Peer.ID == archivedID {
+			foundArchived = dialog.FolderID == domain.DialogArchiveFolderID
+			break
+		}
+	}
+	if !foundArchived {
+		t.Fatalf("all built-in snapshot did not retain archived channel %d", archivedID)
 	}
 }

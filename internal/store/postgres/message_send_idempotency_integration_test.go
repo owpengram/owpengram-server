@@ -304,12 +304,18 @@ func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t 
 	boxIDs := &perUserCounterAllocator{}
 	db := &beginHookDB{Pool: pool}
 	db.before = func(ctx context.Context) error {
-		_, err := NewMessageStore(pool, WithMessageAllocators(boxIDs)).SendPrivateText(ctx, req)
+		remote := NewMessageStore(pool, WithMessageAllocators(boxIDs))
+		// A separate actor represents another server process. Cross-process
+		// uniqueness must still resolve through the transaction connection.
+		remote.privateSendLanes = newUserLaneActor()
+		_, err := remote.SendPrivateText(ctx, req)
 		return err
 	}
 	deadlineCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	got, err := NewMessageStore(db, WithMessageAllocators(boxIDs)).SendPrivateText(deadlineCtx, req)
+	local := NewMessageStore(db, WithMessageAllocators(boxIDs))
+	local.privateSendLanes = newUserLaneActor()
+	got, err := local.SendPrivateText(deadlineCtx, req)
 	if err != nil {
 		t.Fatalf("conflict fallback with MaxConns=1: %v", err)
 	}

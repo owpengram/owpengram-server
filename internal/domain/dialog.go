@@ -92,6 +92,21 @@ type Dialog struct {
 	UnreadMark             bool
 	ViewForumAsMessages    bool
 	PeerSettingsBarHidden  bool
+	// TopMessageMentioned/MediaUnread/UnreadProjected are internal owner-view
+	// facts for materialized channel dialog snapshots. They are not TL dialog
+	// fields; response assembly applies them to the shared top-message payload.
+	TopMessageMentioned       bool
+	TopMessageMediaUnread     bool
+	TopMessageUnreadProjected bool
+	// DefaultSendAs is internal owner-view channel dialog metadata. It is kept
+	// in the materialized owner snapshot so warming the exact viewer/channel
+	// projection cannot erase channels.setDefaultSendAs state.
+	DefaultSendAs *Peer
+	// ChannelMember is the internal exact access/read projection captured with
+	// a materialized channel dialog. It is never a TL dialog field. Keeping it
+	// under the same dialog_owner generation lets startup warm permission reads
+	// before channel difference without a per-channel PostgreSQL lookup.
+	ChannelMember *ChannelMember
 	// Pts 是 channel peer 当前 channel pts；客户端用 dialog.pts 初始化本地
 	// channel 序列并决定 getChannelDifference 起点，channel dialog 必填。
 	Pts   int
@@ -168,6 +183,10 @@ type DialogArchiveSummary struct {
 	// TopPeer/TopMessage 是归档内最新会话及其 top 消息（dialogFolder.peer/top_message）。
 	TopPeer    Peer
 	TopMessage int
+	// TopDialog retains the owner projection needed to hydrate a channel archive
+	// top payload without re-reading channel_members/channel_dialogs. It is an
+	// internal read-model field and is never converted into a second TL dialog.
+	TopDialog *Dialog
 	// UnreadPeersCount 是归档内有未读（或手动标记未读）的会话数；
 	// UnreadMessagesCount 是归档未读消息总数。当前未接 per-peer mute
 	// 状态，全部计入 unmuted 桶。

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"sort"
@@ -359,7 +358,7 @@ func (s *ChannelStore) ReadChannelHistory(ctx context.Context, req domain.ReadCh
 	return domain.ReadChannelHistoryResult{}, lastErr
 }
 
-func advanceChannelReadOutboxTx(ctx context.Context, tx pgx.Tx, channel domain.Channel, top domain.ChannelMessage, readerUserID int64, previous, maxID int) ([]domain.ChannelReadOutboxUpdate, error) {
+func advanceChannelReadOutboxTx(ctx context.Context, tx pgx.Tx, channelID, readerUserID int64, previous, maxID int) ([]domain.ChannelReadOutboxUpdate, error) {
 	if maxID <= previous {
 		return nil, nil
 	}
@@ -368,7 +367,7 @@ func advanceChannelReadOutboxTx(ctx context.Context, tx pgx.Tx, channel domain.C
 		lowerID = maxID - domain.MaxChannelReadOutboxScanMessages
 	}
 	rows, err := tx.Query(ctx, `
-WITH latest_sender_messages AS (
+WITH latest_sender_messages AS MATERIALIZED (
     SELECT sender_user_id, MAX(id) AS max_id
     FROM channel_messages
     WHERE channel_id = $1
@@ -379,51 +378,34 @@ WITH latest_sender_messages AS (
     GROUP BY sender_user_id
     ORDER BY max_id DESC
     LIMIT $5
+), updated AS (
+    UPDATE channel_members AS member
+    SET read_outbox_max_id = GREATEST(member.read_outbox_max_id, latest.max_id),
+        updated_at = now()
+    FROM latest_sender_messages AS latest
+    WHERE member.channel_id = $1
+      AND member.user_id = latest.sender_user_id
+      AND member.status = 'active'
+      AND member.read_outbox_max_id < latest.max_id
+    RETURNING member.user_id, member.read_outbox_max_id
 )
-SELECT sender_user_id, max_id
-FROM latest_sender_messages
-ORDER BY sender_user_id ASC`, channel.ID, lowerID, maxID, readerUserID, domain.MaxChannelReadOutboxFanout)
+SELECT user_id, read_outbox_max_id
+FROM updated
+ORDER BY user_id ASC`, channelID, lowerID, maxID, readerUserID, domain.MaxChannelReadOutboxFanout)
 	if err != nil {
-		return nil, fmt.Errorf("list channel read outbox senders: %w", err)
+		return nil, fmt.Errorf("advance channel sender read outbox: %w", err)
 	}
 	defer rows.Close()
-	type candidate struct {
-		userID int64
-		maxID  int
-	}
-	candidates := make([]candidate, 0, domain.MaxChannelReadOutboxFanout)
+	out := make([]domain.ChannelReadOutboxUpdate, 0, domain.MaxChannelReadOutboxFanout)
 	for rows.Next() {
-		var item candidate
-		if err := rows.Scan(&item.userID, &item.maxID); err != nil {
+		var item domain.ChannelReadOutboxUpdate
+		if err := rows.Scan(&item.UserID, &item.MaxID); err != nil {
 			return nil, err
 		}
-		candidates = append(candidates, item)
+		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	out := make([]domain.ChannelReadOutboxUpdate, 0, len(candidates))
-	for _, item := range candidates {
-		var readOutboxMaxID, readInboxMaxID int
-		err := tx.QueryRow(ctx, `
-UPDATE channel_members
-SET read_outbox_max_id = GREATEST(read_outbox_max_id, $3),
-    updated_at = now()
-WHERE channel_id = $1
-  AND user_id = $2
-  AND status = 'active'
-  AND read_outbox_max_id < $3
-RETURNING read_outbox_max_id, read_inbox_max_id`, channel.ID, item.userID, item.maxID).Scan(&readOutboxMaxID, &readInboxMaxID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("update channel sender read outbox: %w", err)
-		}
-		if err := upsertChannelDialogTx(ctx, tx, item.userID, channel, top, readInboxMaxID, readOutboxMaxID); err != nil {
-			return nil, err
-		}
-		out = append(out, domain.ChannelReadOutboxUpdate{UserID: item.userID, MaxID: readOutboxMaxID})
 	}
 	return out, nil
 }

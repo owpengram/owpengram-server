@@ -104,6 +104,68 @@ func TestSendChannelMessageUsesSameFutureWebPageDeadline(t *testing.T) {
 	}
 }
 
+func TestSendChannelMessageAllowsAtPathSegmentURL(t *testing.T) {
+	ctx := context.Background()
+	r, owner, channel := newRichChannelTestRouter(t)
+
+	const message = "https://github.com/@11"
+	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Message:  message,
+		RandomID: 5107,
+	})
+	if err != nil {
+		t.Fatalf("send channel message with @ path segment URL: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+	if msg.Message != message {
+		t.Fatalf("message = %q, want %q", msg.Message, message)
+	}
+	var urls, mentions int
+	for _, entity := range msg.Entities {
+		switch entity.(type) {
+		case *tg.MessageEntityURL:
+			urls++
+		case *tg.MessageEntityMention:
+			mentions++
+		}
+	}
+	if urls != 1 || mentions != 0 {
+		t.Fatalf("entities url=%d mention=%d, want url=1 mention=0: %#v", urls, mentions, msg.Entities)
+	}
+}
+
+func TestSendChannelMessageAllowsBareDomainAtPathSegmentURL(t *testing.T) {
+	ctx := context.Background()
+	r, owner, channel := newRichChannelTestRouter(t)
+
+	const message = "github.com/@alice"
+	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash},
+		Message:  message,
+		RandomID: 5108,
+	})
+	if err != nil {
+		t.Fatalf("send channel message with bare @ path segment URL: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+	if msg.Message != message {
+		t.Fatalf("message = %q, want %q", msg.Message, message)
+	}
+	var urls, mentions int
+	for _, entity := range msg.Entities {
+		switch entity.(type) {
+		case *tg.MessageEntityURL:
+			urls++
+		case *tg.MessageEntityMention:
+			mentions++
+		}
+	}
+	if urls != 1 || mentions != 0 {
+		t.Fatalf("entities url=%d mention=%d, want url=1 mention=0: %#v", urls, mentions, msg.Entities)
+	}
+}
+
 // TestSendMessageAttachesCachedDoneCard 验证：URL 已缓存解析时，发送 echo 直接带 done 卡片
 // （非 pending）——官方行为，TDesktop 据此立即渲染、不依赖异步换卡。
 func TestSendMessageAttachesCachedDoneCard(t *testing.T) {

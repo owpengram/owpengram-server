@@ -25,7 +25,7 @@ function normalize(options){
   if(input===undefined||input===null||input===''){scopes.push('profile');input=options.request_access||[];}
   if(typeof input==='string'){input=input.trim()?input.trim().split(/\s+/):[];}
   if(!Array.isArray(input)){throw new Error('Telegram.Login scope must be an array or string');}
-  var allowed={profile:'profile',phone:'phone',write:'telegram:bot_access','telegram:bot_access':'telegram:bot_access'};
+  var allowed={openid:'openid',profile:'profile',phone:'phone',write:'telegram:bot_access','telegram:bot_access':'telegram:bot_access'};
   input.forEach(function(value){var mapped=allowed[value];if(!mapped){throw new Error('Telegram.Login scope is invalid');}if(scopes.indexOf(mapped)<0){scopes.push(mapped);}});
   return {client_id:String(options.client_id),scope:scopes.join(' '),nonce:String(options.nonce||'').slice(0,1024),lang:String(options.lang||'').slice(0,16)};
 }
@@ -76,8 +76,85 @@ function autoInit(){var client=current.getAttribute('data-client-id');if(!client
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',autoInit);}else{autoInit();}
 })(window);`
 
+// telegramWidgetJavaScript is deliberately only a presentation and
+// compatibility layer. It loads this issuer's Telegram Login SDK, optionally
+// resolves a local bot username, and delegates the authorization flow to
+// Telegram.Login.auth without contacting Telegram's public widget backend.
+const telegramWidgetJavaScript = `(function(global){
+'use strict';
+var current=document.currentScript;
+if(!current){throw new Error('telesrv Telegram widget shim must be loaded by a script element');}
+var provider=new URL(current.src,document.baseURI).origin;
+var clientAttr=String(current.getAttribute('data-client-id')||'').trim();
+var username=String(current.getAttribute('data-telegram-login')||'').trim().replace(/^@/,'');
+var size=String(current.getAttribute('data-size')||'large').trim().toLowerCase();
+var radius=String(current.getAttribute('data-radius')||'8').trim();
+var requestAccess=String(current.getAttribute('data-request-access')||'').trim().toLowerCase();
+var lang=String(current.getAttribute('data-lang')||'').trim().slice(0,16);
+var onauth=resolveCallback(current.getAttribute('data-onauth'));
+var label=username?'Log in with @'+username:'Log in with Telegram';
+var wrapper=document.createElement('span'),button=document.createElement('button');
+wrapper.className='telesrv-telegram-widget';
+button.type='button';button.className='telesrv-telegram-login-button';button.disabled=true;button.textContent=label;
+button.style.cssText='border:0;background:#2aabee;color:#fff;cursor:pointer;font-family:Arial,sans-serif;font-weight:600;line-height:1.2;box-shadow:0 1px 2px rgba(0,0,0,.18)';
+var sizes={small:['12px','6px 10px'],medium:['14px','8px 14px'],large:['16px','10px 18px']},selected=sizes[size]||sizes.large;
+button.style.fontSize=selected[0];button.style.padding=selected[1];
+button.style.borderRadius=/^[0-9]{1,3}$/.test(radius)?Math.min(Number(radius),64)+'px':'8px';
+if(lang){button.lang=lang;}
+wrapper.appendChild(button);
+function mount(){if(current.parentNode&&current.parentNode!==document.head){current.parentNode.insertBefore(wrapper,current.nextSibling);}else if(document.body){document.body.appendChild(wrapper);}}
+if(document.body){mount();}else{document.addEventListener('DOMContentLoaded',mount,{once:true});}
+function resolveCallback(source){
+  var match=/^([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?:\(\s*(?:[A-Za-z_$][\w$]*)?\s*\))?\s*;?$/.exec(String(source||'').trim());
+  if(!match){return null;}
+  return function(value){var target=global,parts=match[1].split('.');for(var i=0;i<parts.length-1;i++){target=target&&target[parts[i]];}var fn=target&&target[parts[parts.length-1]];if(typeof fn==='function'){try{fn.call(target,value);}catch(error){setTimeout(function(){throw error;},0);}}};
+}
+function finish(result){
+  if(result&&result.error){button.disabled=false;button.textContent=label;button.title=String(result.error);}else{button.textContent='Logged in';button.title='';}
+  if(onauth){onauth(result);}
+}
+function fail(error){var message=error&&error.message?error.message:String(error||'login_failed');finish({error:message});}
+function loadLoginSDK(){
+  var state=global.__telesrvTelegramLoginSDKState;
+  if(state&&state.provider===provider){return state.promise;}
+  var promise=new Promise(function(resolve,reject){
+    var script=document.createElement('script');script.async=true;script.src=provider+'/js/telegram-login.js';
+    script.onload=function(){var api=global.Telegram&&global.Telegram.Login;if(!api||typeof api.auth!=='function'){reject(new Error('telesrv Telegram Login SDK is unavailable'));return;}resolve(api);};
+    script.onerror=function(){reject(new Error('failed to load telesrv Telegram Login SDK'));};
+    (document.head||document.documentElement).appendChild(script);
+  });
+  global.__telesrvTelegramLoginSDKState={provider:provider,promise:promise};
+  return promise;
+}
+function resolveClientID(){
+  if(clientAttr){return /^[0-9]{1,64}$/.test(clientAttr)?Promise.resolve(clientAttr):Promise.reject(new Error('invalid data-client-id'));}
+  if(!/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(username)){return Promise.reject(new Error('data-telegram-login or data-client-id is required'));}
+  var body=new URLSearchParams({username:username});
+  return fetch(provider+'/telegram-widget/resolve',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:body,credentials:'omit',cache:'no-store'}).then(function(response){
+    return response.json().catch(function(){return {};}).then(function(data){if(!response.ok){throw new Error(data.error_description||data.error||'widget client is unavailable');}if(!data.client_id||!/^[0-9]{1,64}$/.test(String(data.client_id))){throw new Error('invalid widget client response');}return String(data.client_id);});
+  });
+}
+var api=null,clientID='';
+Promise.all([loadLoginSDK(),resolveClientID()]).then(function(values){api=values[0];clientID=values[1];button.disabled=false;button.title='';}).catch(fail);
+button.addEventListener('click',function(){
+  if(!api||!clientID){return;}
+  button.disabled=true;button.textContent='Opening...';button.title='';
+  var scope=requestAccess==='write'?'openid profile telegram:bot_access':'openid profile';
+  var options={client_id:clientID,scope:scope};if(lang){options.lang=lang;}
+  try{api.auth(options,finish);}catch(error){fail(error);}
+});
+})(window);`
+
 func (h *Handler) loginJavaScript(w http.ResponseWriter, r *http.Request) {
-	sum := sha256.Sum256([]byte(telegramLoginJavaScript))
+	serveJavaScript(w, r, telegramLoginJavaScript)
+}
+
+func (h *Handler) widgetJavaScript(w http.ResponseWriter, r *http.Request) {
+	serveJavaScript(w, r, telegramWidgetJavaScript)
+}
+
+func serveJavaScript(w http.ResponseWriter, r *http.Request, source string) {
+	sum := sha256.Sum256([]byte(source))
 	etag := `"` + base64.RawURLEncoding.EncodeToString(sum[:]) + `"`
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600, must-revalidate")
@@ -87,5 +164,5 @@ func (h *Handler) loginJavaScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(telegramLoginJavaScript))
+	_, _ = w.Write([]byte(source))
 }

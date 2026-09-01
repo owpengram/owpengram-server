@@ -13,11 +13,28 @@ import (
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
+
+func newTestOutboxDispatcher(events store.UpdateEventStore, outbox store.DispatchOutboxStore, sessions SessionBinder, log *zap.Logger, opts ...OutboxOption) *OutboxDispatcher {
+	testBuilder := WithOutboxUpdateBuilder(func(_ context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
+		out := make([]*tg.Updates, len(requests))
+		for i, req := range requests {
+			viewerUserID := req.TargetUserID
+			if viewerUserID == 0 {
+				viewerUserID = req.Event.UserID
+			}
+			out[i] = tgUpdateForOutboxEventForViewer(req.Event, viewerUserID)
+		}
+		return out, nil
+	})
+	opts = append([]OutboxOption{testBuilder}, opts...)
+	return NewOutboxDispatcher(events, outbox, sessions, log, opts...)
+}
 
 func TestOutboxDispatcherPushesNewMessageAndMarksDelivered(t *testing.T) {
 	msg := domain.Message{
@@ -51,7 +68,7 @@ func TestOutboxDispatcherPushesNewMessageAndMarksDelivered(t *testing.T) {
 	}}}
 	sessions := &captureSessions{}
 	metrics := &captureOutboxMetrics{}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
+	dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
 	dispatcher.DispatchOnce(context.Background())
 
 	if !outbox.delivered || outbox.deliveredUserID != msg.OwnerUserID || outbox.deliveredID != 55 {
@@ -76,6 +93,37 @@ func TestOutboxDispatcherPushesNewMessageAndMarksDelivered(t *testing.T) {
 	}
 }
 
+func TestOutboxEventDeletedNewMessageUsesDeletePtsUpdate(t *testing.T) {
+	msg := domain.Message{
+		ID:          547,
+		OwnerUserID: 1000000001,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: 1000000001},
+		Date:        1700000301,
+		Body:        "deleted before dispatch",
+		Pts:         2035,
+		Deleted:     true,
+	}
+	updates := tgUpdateForOutboxEvent(domain.UpdateEvent{
+		UserID:   msg.OwnerUserID,
+		Type:     domain.UpdateEventNewMessage,
+		Pts:      msg.Pts,
+		PtsCount: 1,
+		Date:     msg.Date,
+		Message:  msg,
+	})
+	if updates == nil || len(updates.Updates) != 1 {
+		t.Fatalf("updates = %+v, want one delete pts update", updates)
+	}
+	del, ok := updates.Updates[0].(*tg.UpdateDeleteMessages)
+	if !ok {
+		t.Fatalf("update = %T, want UpdateDeleteMessages instead of UpdateNewMessage", updates.Updates[0])
+	}
+	if del.Pts != msg.Pts || del.PtsCount != 1 || len(del.Messages) != 1 || del.Messages[0] != msg.ID {
+		t.Fatalf("delete update = %+v, want message %d at pts=%d", del, msg.ID, msg.Pts)
+	}
+}
+
 func TestOutboxDispatcherUsesScopedAuthKeyExclusion(t *testing.T) {
 	var excludeAuthKeyID [8]byte
 	excludeAuthKeyID[0] = 7
@@ -97,7 +145,7 @@ func TestOutboxDispatcherUsesScopedAuthKeyExclusion(t *testing.T) {
 		Peer:     peer,
 	}}}
 	sessions := &captureScopedSessions{captureSessions: &captureSessions{}}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t))
+	dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t))
 	dispatcher.DispatchOnce(context.Background())
 
 	if sessions.scopedAuthKey() != excludeAuthKeyID || sessions.sessionID != 99 || sessions.userID != 1000000002 {
@@ -130,7 +178,7 @@ func TestOutboxDispatcherRejectsPartialSessionExclusion(t *testing.T) {
 			events := &captureUpdateEventStore{}
 			sessions := &captureSessions{}
 			metrics := &captureOutboxMetrics{}
-			dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
+			dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
 			dispatcher.DispatchOnce(context.Background())
 
 			if !outbox.failed || outbox.delivered {
@@ -163,7 +211,7 @@ func TestOutboxDispatcherBatchRejectsPartialExclusionBeforeNoop(t *testing.T) {
 		EventType:        domain.UpdateEventNoop,
 		ExcludeAuthKeyID: [8]byte{1},
 	}}}}
-	dispatcher := NewOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t))
+	dispatcher := newTestOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t))
 	dispatcher.DispatchOnce(context.Background())
 
 	if !outbox.failed || outbox.delivered || len(outbox.deliveredBatch) != 0 {
@@ -208,7 +256,7 @@ func TestOutboxDispatcherBatchPath(t *testing.T) {
 	}}}}
 	sessions := &captureSessions{}
 	metrics := &captureOutboxMetrics{}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
+	dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
 	dispatcher.DispatchOnce(context.Background())
 
 	if len(events.batchCursors) != 1 || events.batchCursors[0] != (store.EventCursor{UserID: msg.OwnerUserID, Pts: msg.Pts}) {
@@ -266,7 +314,10 @@ func TestRouterBuildOutboxUpdatesProjectsSenderPerViewerAndCaches(t *testing.T) 
 		})
 	}
 
-	updates := router.BuildOutboxUpdates(context.Background(), requests)
+	updates, err := router.BuildOutboxUpdates(context.Background(), requests)
+	if err != nil {
+		t.Fatalf("BuildOutboxUpdates: %v", err)
+	}
 	if len(updates) != len(requests) {
 		t.Fatalf("updates count = %d, want %d", len(updates), len(requests))
 	}
@@ -286,11 +337,74 @@ func TestRouterBuildOutboxUpdatesProjectsSenderPerViewerAndCaches(t *testing.T) 
 			t.Fatalf("updates[%d] user photo = %#v, want photo_id=%d dc=%d", i, user.Photo, projected.PhotoID, projected.PhotoDCID)
 		}
 	}
-	if len(users.calls) != 1 {
-		t.Fatalf("ByIDs calls = %+v, want one batch call for repeated sender", users.calls)
+	if users.sparseCalls != 1 || len(users.calls) != 0 {
+		t.Fatalf("user projection calls = sparse %d scalar %+v, want one sparse call", users.sparseCalls, users.calls)
 	}
-	if users.calls[0].viewerUserID != viewerUserID || !reflect.DeepEqual(users.calls[0].ids, []int64{senderUserID}) {
-		t.Fatalf("ByIDs call = %+v, want viewer=%d ids=[%d]", users.calls[0], viewerUserID, senderUserID)
+	if !reflect.DeepEqual(users.sparseRequest[viewerUserID], []int64{senderUserID}) {
+		t.Fatalf("sparse request = %+v, want viewer=%d ids=[%d]", users.sparseRequest, viewerUserID, senderUserID)
+	}
+}
+
+func TestRouterBuildOutboxUpdatesReplacesRawOnlyUserEnvelopeWithoutScalarFallback(t *testing.T) {
+	const (
+		senderUserID  = int64(1000000101)
+		rawOnlyUserID = int64(1000000102)
+		viewerUserID  = int64(1000000103)
+	)
+	users := &countingOutboxUsersService{users: map[int64]domain.User{
+		senderUserID:  {ID: senderUserID, FirstName: "Projected sender"},
+		rawOnlyUserID: {ID: rawOnlyUserID, FirstName: "Projected raw-only"},
+	}}
+	router := New(Config{}, Deps{Users: users}, zaptest.NewLogger(t), clock.System)
+	message := domain.Message{
+		ID:          31,
+		OwnerUserID: viewerUserID,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: senderUserID},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: senderUserID},
+		Date:        1700000500,
+		Pts:         31,
+	}
+
+	updates, err := router.BuildOutboxUpdates(context.Background(), []OutboxUpdateRequest{{
+		TargetUserID: viewerUserID,
+		Event: domain.UpdateEvent{
+			UserID: viewerUserID, Type: domain.UpdateEventNewMessage,
+			Pts: message.Pts, PtsCount: 1, Date: message.Date, Message: message,
+			Users: []domain.User{
+				{ID: senderUserID, AccessHash: 9001, Phone: "raw-sender-phone", FirstName: "Raw sender"},
+				{ID: rawOnlyUserID, AccessHash: 9002, Phone: "raw-only-phone", FirstName: "Raw only"},
+			},
+		},
+	}})
+	if err != nil || len(updates) != 1 || updates[0] == nil {
+		t.Fatalf("BuildOutboxUpdates = %+v, %v; want one update", updates, err)
+	}
+	projected := make(map[int64]*tg.User, len(updates[0].Users))
+	for _, item := range updates[0].Users {
+		if user, ok := item.(*tg.User); ok {
+			projected[user.ID] = user
+		}
+	}
+	if len(projected) != 2 {
+		t.Fatalf("projected users = %+v, want sender and raw-only user", updates[0].Users)
+	}
+	for id, wantName := range map[int64]string{
+		senderUserID:  "Projected sender",
+		rawOnlyUserID: "Projected raw-only",
+	} {
+		user := projected[id]
+		if user == nil || user.FirstName != wantName {
+			t.Fatalf("projected user %d = %#v, want name %q", id, user, wantName)
+		}
+		if user.Phone != "" || user.AccessHash != 0 {
+			t.Fatalf("raw account fields leaked for user %d: phone=%q access_hash=%d", id, user.Phone, user.AccessHash)
+		}
+	}
+	if users.sparseCalls != 1 || len(users.calls) != 0 {
+		t.Fatalf("user projection calls = sparse %d scalar %+v, want one sparse call and zero scalar fallbacks", users.sparseCalls, users.calls)
+	}
+	if !reflect.DeepEqual(users.sparseRequest[viewerUserID], []int64{senderUserID, rawOnlyUserID}) {
+		t.Fatalf("sparse request = %+v, want viewer=%d ids=[%d %d]", users.sparseRequest, viewerUserID, senderUserID, rawOnlyUserID)
 	}
 }
 
@@ -340,7 +454,10 @@ func TestRouterBuildOutboxUpdatesProjectsUsernamesOncePerClaim(t *testing.T) {
 		})
 	}
 
-	updates := router.BuildOutboxUpdates(context.Background(), requests)
+	updates, err := router.BuildOutboxUpdates(context.Background(), requests)
+	if err != nil {
+		t.Fatalf("BuildOutboxUpdates: %v", err)
+	}
 	if len(updates) != len(requests) {
 		t.Fatalf("updates count = %d, want %d", len(updates), len(requests))
 	}
@@ -408,7 +525,10 @@ func TestRouterBuildOutboxUpdatesSeparatesViewerCache(t *testing.T) {
 		},
 	}
 
-	updates := router.BuildOutboxUpdates(context.Background(), requests)
+	updates, err := router.BuildOutboxUpdates(context.Background(), requests)
+	if err != nil {
+		t.Fatalf("BuildOutboxUpdates: %v", err)
+	}
 	if len(updates) != 2 || updates[0] == nil || updates[1] == nil {
 		t.Fatalf("updates = %+v, want two updates", updates)
 	}
@@ -423,12 +543,11 @@ func TestRouterBuildOutboxUpdatesSeparatesViewerCache(t *testing.T) {
 	if firstUser.FirstName != "viewer2" || secondUser.FirstName != "viewer3" {
 		t.Fatalf("projected users = %q/%q, want viewer-specific names", firstUser.FirstName, secondUser.FirstName)
 	}
-	wantCalls := []outboxUsersCall{
-		{viewerUserID: 1000000002, ids: []int64{senderUserID}},
-		{viewerUserID: 1000000003, ids: []int64{senderUserID}},
+	if users.sparseCalls != 1 || len(users.calls) != 0 {
+		t.Fatalf("user projection calls = sparse %d scalar %+v, want one sparse call", users.sparseCalls, users.calls)
 	}
-	if !sameOutboxUsersCalls(users.calls, wantCalls) {
-		t.Fatalf("ByIDs calls = %+v, want %+v", users.calls, wantCalls)
+	if !reflect.DeepEqual(users.sparseRequest[1000000002], []int64{senderUserID}) || !reflect.DeepEqual(users.sparseRequest[1000000003], []int64{senderUserID}) {
+		t.Fatalf("sparse request = %+v, want one sender edge per viewer", users.sparseRequest)
 	}
 }
 
@@ -521,7 +640,7 @@ func TestOutboxDispatcherBatchPathUsesUpdateBuilder(t *testing.T) {
 	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
 	sessions := &orderedOutboxCaptureSessions{}
 	var gotRequests []OutboxUpdateRequest
-	builder := func(_ context.Context, requests []OutboxUpdateRequest) []*tg.Updates {
+	builder := func(_ context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
 		gotRequests = append([]OutboxUpdateRequest(nil), requests...)
 		out := make([]*tg.Updates, len(requests))
 		for i, req := range requests {
@@ -536,9 +655,9 @@ func TestOutboxDispatcherBatchPathUsesUpdateBuilder(t *testing.T) {
 				Date: req.Event.Date,
 			}
 		}
-		return out
+		return out, nil
 	}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxUpdateBuilder(builder))
+	dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxUpdateBuilder(builder))
 
 	dispatcher.DispatchOnce(context.Background())
 
@@ -554,6 +673,124 @@ func TestOutboxDispatcherBatchPathUsesUpdateBuilder(t *testing.T) {
 	if len(outbox.deliveredBatch) != 2 {
 		t.Fatalf("delivered batch = %+v, want two delivered items", outbox.deliveredBatch)
 	}
+}
+
+func TestOutboxDispatcherBatchBuildFailureIsolatesSingletonsWithoutReloadingEvents(t *testing.T) {
+	const (
+		firstUser = int64(1000000002)
+		otherUser = int64(1000000003)
+	)
+	items := []store.DispatchOutboxItem{
+		{ID: 11, TargetUserID: firstUser, Pts: 11, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 5, TargetUserID: otherUser, Pts: 5, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 10, TargetUserID: firstUser, Pts: 10, EventType: domain.UpdateEventReadHistoryInbox},
+	}
+	events := make([]domain.UpdateEvent, 0, len(items))
+	for _, item := range items {
+		events = append(events, outboxReadEvent(item.TargetUserID, item.Pts))
+	}
+	eventStore := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
+	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
+	sessions := &orderedOutboxCaptureSessions{}
+	var buildCalls [][]outboxPushAttempt
+	builder := func(_ context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
+		call := make([]outboxPushAttempt, len(requests))
+		for i, request := range requests {
+			call[i] = outboxPushAttempt{userID: request.TargetUserID, pts: request.Event.Pts}
+		}
+		buildCalls = append(buildCalls, call)
+		if len(requests) > 1 {
+			return nil, errors.New("injected aggregate build failure")
+		}
+		return []*tg.Updates{tgUpdateForOutboxEventForViewer(requests[0].Event, requests[0].TargetUserID)}, nil
+	}
+	dispatcher := newTestOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t), WithOutboxUpdateBuilder(builder))
+
+	dispatcher.DispatchOnce(context.Background())
+
+	wantCalls := [][]outboxPushAttempt{
+		{{userID: firstUser, pts: 10}, {userID: firstUser, pts: 11}, {userID: otherUser, pts: 5}},
+		{{userID: firstUser, pts: 10}},
+		{{userID: firstUser, pts: 11}},
+		{{userID: otherUser, pts: 5}},
+	}
+	if !reflect.DeepEqual(buildCalls, wantCalls) {
+		t.Fatalf("builder calls = %+v, want aggregate then isolated singletons %+v", buildCalls, wantCalls)
+	}
+	if eventStore.listAfterCalls != 0 {
+		t.Fatalf("ListAfter calls = %d, want 0 because isolation must reuse batch-loaded events", eventStore.listAfterCalls)
+	}
+	if len(outbox.failedItems) != 0 {
+		t.Fatalf("failed items = %+v, want none after successful singleton isolation", outbox.failedItems)
+	}
+	if got := outboxDeliveredIDs(outbox.deliveredItems); !reflect.DeepEqual(got, []int64{10, 11, 5}) {
+		t.Fatalf("individually delivered ids = %v, want [10 11 5]", got)
+	}
+	if len(outbox.deliveredBatch) != 0 {
+		t.Fatalf("batch delivered items = %+v, want singleton markers on aggregate-build fallback", outbox.deliveredBatch)
+	}
+	if got := sessions.pushedPts(); !reflect.DeepEqual(got, []int{10, 11, 5}) {
+		t.Fatalf("pushed pts = %v, want every isolated item delivered", got)
+	}
+}
+
+func TestOutboxDispatcherBatchBuildFailureMarksOnlyBadSingletonAndBlocksItsLane(t *testing.T) {
+	const (
+		blockedUser = int64(1000000002)
+		otherUser   = int64(1000000003)
+	)
+	items := []store.DispatchOutboxItem{
+		{ID: 12, TargetUserID: blockedUser, Pts: 12, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 5, TargetUserID: otherUser, Pts: 5, EventType: domain.UpdateEventReadHistoryInbox},
+		{ID: 11, TargetUserID: blockedUser, Pts: 11, EventType: domain.UpdateEventReadHistoryInbox},
+	}
+	events := make([]domain.UpdateEvent, 0, len(items))
+	for _, item := range items {
+		events = append(events, outboxReadEvent(item.TargetUserID, item.Pts))
+	}
+	eventStore := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
+	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
+	sessions := &orderedOutboxCaptureSessions{}
+	var singletonCalls []outboxPushAttempt
+	builder := func(_ context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
+		if len(requests) > 1 {
+			return nil, errors.New("injected aggregate build failure")
+		}
+		request := requests[0]
+		singletonCalls = append(singletonCalls, outboxPushAttempt{userID: request.TargetUserID, pts: request.Event.Pts})
+		if request.TargetUserID == blockedUser && request.Event.Pts == 11 {
+			return nil, errors.New("injected bad singleton")
+		}
+		return []*tg.Updates{tgUpdateForOutboxEventForViewer(request.Event, request.TargetUserID)}, nil
+	}
+	dispatcher := newTestOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t), WithOutboxUpdateBuilder(builder))
+
+	dispatcher.DispatchOnce(context.Background())
+
+	wantSingletonCalls := []outboxPushAttempt{{userID: blockedUser, pts: 11}, {userID: otherUser, pts: 5}}
+	if !reflect.DeepEqual(singletonCalls, wantSingletonCalls) {
+		t.Fatalf("singleton builder calls = %+v, want %+v (pts=12 must not overtake failed lane head)", singletonCalls, wantSingletonCalls)
+	}
+	if eventStore.listAfterCalls != 0 {
+		t.Fatalf("ListAfter calls = %d, want 0 because isolation must reuse batch-loaded events", eventStore.listAfterCalls)
+	}
+	if got := outboxDeliveredIDs(outbox.failedItems); !reflect.DeepEqual(got, []int64{11}) {
+		t.Fatalf("failed ids = %v, want only bad singleton id=11", got)
+	}
+	if got := outboxDeliveredIDs(outbox.deliveredItems); !reflect.DeepEqual(got, []int64{5}) {
+		t.Fatalf("delivered ids = %v, want unrelated user id=5", got)
+	}
+	if got := sessions.pushedPts(); !reflect.DeepEqual(got, []int{5}) {
+		t.Fatalf("pushed pts = %v, want only unrelated user's pts=5", got)
+	}
+}
+
+func outboxDeliveredIDs(items []store.DispatchOutboxItem) []int64 {
+	out := make([]int64, len(items))
+	for i, item := range items {
+		out[i] = item.ID
+	}
+	return out
 }
 
 func TestOutboxDispatcherOrdersClaimedItemsByUserPts(t *testing.T) {
@@ -587,7 +824,7 @@ func TestOutboxDispatcherOrdersClaimedItemsByUserPts(t *testing.T) {
 	eventStore := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
 	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
 	sessions := &orderedOutboxCaptureSessions{}
-	dispatcher := NewOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
+	dispatcher := newTestOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
 
 	dispatcher.DispatchOnce(context.Background())
 
@@ -648,7 +885,7 @@ func TestOutboxDispatcherBatchFailureBlocksHigherUserPts(t *testing.T) {
 	eventStore := &batchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
 	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
 	sessions := &selectiveFailOutboxSessions{failUserID: blockedUser, failPts: 11}
-	dispatcher := NewOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
+	dispatcher := newTestOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
 
 	dispatcher.DispatchOnce(context.Background())
 
@@ -678,7 +915,7 @@ func TestOutboxDispatcherBatchLoadFallbackStillBlocksHigherUserPts(t *testing.T)
 	eventStore := &failingBatchEventStore{captureUpdateEventStore: &captureUpdateEventStore{events: events}}
 	outbox := &batchDispatchOutbox{captureDispatchOutbox: &captureDispatchOutbox{items: items}}
 	sessions := &selectiveFailOutboxSessions{failUserID: blockedUser, failPts: 21}
-	dispatcher := NewOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
+	dispatcher := newTestOutboxDispatcher(eventStore, outbox, sessions, zaptest.NewLogger(t))
 
 	dispatcher.DispatchOnce(context.Background())
 
@@ -729,12 +966,28 @@ func sameOutboxUsersCalls(got, want []outboxUsersCall) bool {
 }
 
 type countingOutboxUsersService struct {
-	users map[int64]domain.User
-	calls []outboxUsersCall
+	users         map[int64]domain.User
+	calls         []outboxUsersCall
+	sparseCalls   int
+	sparseRequest map[int64][]int64
 }
 
 type viewerSpecificOutboxUsersService struct {
-	calls []outboxUsersCall
+	calls         []outboxUsersCall
+	sparseCalls   int
+	sparseRequest map[int64][]int64
+}
+
+func (s *viewerSpecificOutboxUsersService) ByIDsForViewerUserIDs(_ context.Context, requested map[int64][]int64) (map[int64][]domain.User, error) {
+	s.sparseCalls++
+	s.sparseRequest = cloneOutboxSparseRequest(requested)
+	out := make(map[int64][]domain.User, len(requested))
+	for viewerID, ids := range requested {
+		for _, id := range ids {
+			out[viewerID] = append(out[viewerID], domain.User{ID: id, FirstName: viewerSpecificName(viewerID)})
+		}
+	}
+	return out, nil
 }
 
 func (s *viewerSpecificOutboxUsersService) Self(_ context.Context, userID int64) (domain.User, error) {
@@ -788,6 +1041,28 @@ func (s *countingOutboxUsersService) ByIDs(_ context.Context, viewerUserID int64
 	return out, nil
 }
 
+func (s *countingOutboxUsersService) ByIDsForViewerUserIDs(_ context.Context, requested map[int64][]int64) (map[int64][]domain.User, error) {
+	s.sparseCalls++
+	s.sparseRequest = cloneOutboxSparseRequest(requested)
+	out := make(map[int64][]domain.User, len(requested))
+	for viewerID, ids := range requested {
+		for _, id := range ids {
+			if user, ok := s.users[id]; ok {
+				out[viewerID] = append(out[viewerID], user)
+			}
+		}
+	}
+	return out, nil
+}
+
+func cloneOutboxSparseRequest(in map[int64][]int64) map[int64][]int64 {
+	out := make(map[int64][]int64, len(in))
+	for viewerID, ids := range in {
+		out[viewerID] = append([]int64(nil), ids...)
+	}
+	return out
+}
+
 func TestOutboxDispatcherUsesBestEffortPush(t *testing.T) {
 	msg := domain.Message{
 		ID:          10,
@@ -825,7 +1100,7 @@ func TestOutboxDispatcherUsesBestEffortPush(t *testing.T) {
 				ExcludeSessionID: tt.sessionID,
 			}}}
 			sessions := &captureBestEffortSessions{captureSessions: &captureSessions{}}
-			dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond))
+			dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond))
 			dispatcher.DispatchOnce(context.Background())
 
 			if !sessions.bestEffort || sessions.timeout != 50*time.Millisecond {
@@ -968,7 +1243,8 @@ func (s *batchDispatchOutbox) MarkDeliveredBatch(_ context.Context, items []stor
 }
 
 type captureUpdateEventStore struct {
-	events []domain.UpdateEvent
+	events         []domain.UpdateEvent
+	listAfterCalls int
 }
 
 func (s *captureUpdateEventStore) Append(context.Context, int64, domain.UpdateEvent) error {
@@ -992,6 +1268,7 @@ func (s *captureUpdateEventStore) AppendAllocated(_ context.Context, userID int6
 }
 
 func (s *captureUpdateEventStore) ListAfter(_ context.Context, _ int64, pts, limit int) ([]domain.UpdateEvent, error) {
+	s.listAfterCalls++
 	out := make([]domain.UpdateEvent, 0, len(s.events))
 	for _, event := range s.events {
 		if event.Pts > pts {
@@ -1034,8 +1311,10 @@ type captureDispatchOutbox struct {
 	delivered       bool
 	deliveredUserID int64
 	deliveredID     int64
+	deliveredItems  []store.DispatchOutboxItem
 	failed          bool
 	failedError     string
+	failedItems     []store.DispatchOutboxItem
 }
 
 type captureScopedSessions struct {
@@ -1125,12 +1404,14 @@ func (s *captureDispatchOutbox) MarkDelivered(_ context.Context, item store.Disp
 	s.delivered = true
 	s.deliveredUserID = item.TargetUserID
 	s.deliveredID = item.ID
+	s.deliveredItems = append(s.deliveredItems, item)
 	return nil
 }
 
-func (s *captureDispatchOutbox) MarkFailed(_ context.Context, _ store.DispatchOutboxItem, lastError string) error {
+func (s *captureDispatchOutbox) MarkFailed(_ context.Context, item store.DispatchOutboxItem, lastError string) error {
 	s.failed = true
 	s.failedError = lastError
+	s.failedItems = append(s.failedItems, item)
 	return nil
 }
 
@@ -1152,7 +1433,7 @@ func TestOutboxDispatcherUsesNoopAsDelivered(t *testing.T) {
 		Date:   1700000301,
 	}}}
 	metrics := &captureOutboxMetrics{}
-	dispatcher := NewOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
+	dispatcher := newTestOutboxDispatcher(events, outbox, &captureSessions{}, zaptest.NewLogger(t), WithOutboxMetrics(metrics))
 	dispatcher.DispatchOnce(context.Background())
 
 	if !outbox.delivered || outbox.failed {
@@ -1184,6 +1465,16 @@ func (m *captureOutboxMetrics) OutboxDelivered(time.Duration) {
 func (m *captureOutboxMetrics) OutboxFailed(error) {
 	m.failed++
 }
+
+func (m *captureOutboxMetrics) PresenceLastSeenBatch(int, time.Duration, error) {}
+
+func (m *captureOutboxMetrics) PresenceLastSeenSubmitted() {}
+
+func (m *captureOutboxMetrics) PresenceLastSeenPending(int) {}
+
+func (m *captureOutboxMetrics) PresenceLastSeenOverflow() {}
+
+func (m *captureOutboxMetrics) PresenceLastSeenDrainDropped(int) {}
 
 // interruptedBestEffortSessions 模拟 dispatcher context 到期：该中断可安全靠 lease 重试。
 type interruptedBestEffortSessions struct {
@@ -1226,7 +1517,7 @@ func TestOutboxDispatcherDefersOnPushInterruption(t *testing.T) {
 	}}}
 	sessions := &interruptedBestEffortSessions{captureSessions: &captureSessions{}}
 	metrics := &captureOutboxMetrics{}
-	dispatcher := NewOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond), WithOutboxMetrics(metrics))
+	dispatcher := newTestOutboxDispatcher(events, outbox, sessions, zaptest.NewLogger(t), WithOutboxPushTimeout(50*time.Millisecond), WithOutboxMetrics(metrics))
 	dispatcher.DispatchOnce(context.Background())
 
 	if sessions.attempts != 1 {

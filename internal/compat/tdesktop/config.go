@@ -13,7 +13,7 @@ import (
 //
 // 字段值取 Telegram 常见默认；TDesktop 联调阶段按客户端实际需要微调
 // （记录于 docs/compatibility-matrix.md）。
-func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL string) *tg.Config {
+func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL, updateBaseURL string) *tg.Config {
 	// TELESRV_ADVERTISE_IP is validated during config loading. Parse again here
 	// only to derive the wire ipv6 flag and to render IPv4-mapped addresses in
 	// their canonical form. Keeping the advertised route in help.getConfig is a
@@ -65,13 +65,10 @@ func BuildConfig(dc int, ip string, port int, now time.Time, publicBaseURL strin
 		MessageLengthMax:     4096,
 		WebfileDCID:          dc,
 	}
-	config.SetReactionsDefault(&tg.ReactionEmoji{Emoticon: DefaultReactionEmoticon})
-	// The GIF picker's trending/search panel reads this from help.getConfig's
-	// typed Config (gifs_list_widget.cpp: session().serverConfig().gifSearchUsername)
-	// -- NOT from help.getAppConfig's loose JSON blob, which is a separate RPC/
-	// response entirely. Must match the built-in @gif system bot's username
-	// (domain.GifBotUser().Username), whose inline results are served
-	// synchronously in-process (see rpc.ServiceBotInlineResults).
 	config.SetGifSearchUsername("gif")
+	config.SetReactionsDefault(&tg.ReactionEmoji{Emoticon: DefaultReactionEmoticon})
+	if updateBaseURL != "" {
+		config.SetAutoupdateURLPrefix(links.NormalizeBaseURL(updateBaseURL))
+	}
 	return config
 }

@@ -39,6 +39,9 @@ func (r *Router) NotifyAccountFreezeChanged(_ context.Context, freeze domain.Acc
 	if r == nil || freeze.UserID == 0 {
 		return nil
 	}
+	if r.deps.UserProjectionFacts != nil {
+		r.deps.UserProjectionFacts.InvalidateAccountFreezeFact(freeze.UserID)
+	}
 	r.invalidateRPCProjectionForUser(freeze.UserID)
 	if r.accountFreezeWake != nil {
 		select {

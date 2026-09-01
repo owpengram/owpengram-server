@@ -9,6 +9,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	botsapp "telesrv/internal/app/bots"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -203,6 +204,139 @@ func TestDeletePhotosPushesSelfUpdate(t *testing.T) {
 	}
 	if _, ok := snap.message.(*tg.Updates); !ok {
 		t.Fatalf("echoed message = %T, want *tg.Updates", snap.message)
+	}
+}
+
+func TestUploadProfilePhotoBotTargetUpdatesOwnedBot(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	botStore := memory.NewBotStore(userStore)
+	dialogStore := memory.NewDialogStore()
+	bots := botsapp.NewService(userStore, botStore, memory.NewMessageStore(dialogStore))
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "15550001006", FirstName: "Owner"})
+	bot, _, err := bots.CreateBot(ctx, owner.ID, "Photo Bot", "photo_shape_bot")
+	if err != nil {
+		t.Fatalf("create bot: %v", err)
+	}
+	sessions := &captureSessions{}
+	files := &fakeFiles{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Users:    appusers.NewService(userStore, appusers.WithPhotoProvider(files)),
+		Bots:     bots,
+		Files:    files,
+		Sessions: sessions,
+	}, zaptest.NewLogger(t), clock.System)
+	r.selfPhotoEchoPushDelay = 0
+
+	const currentSessionID = int64(454545)
+	reqCtx := WithSessionID(WithUserID(ctx, owner.ID), currentSessionID)
+	req := &tg.PhotosUploadProfilePhotoRequest{}
+	req.SetBot(&tg.InputUser{UserID: bot.ID, AccessHash: bot.AccessHash})
+	req.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "bot.jpg"})
+	got, err := r.onPhotosUploadProfilePhoto(reqCtx, req)
+	if err != nil {
+		t.Fatalf("upload bot profile photo: %v", err)
+	}
+
+	if cur, ok, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, bot.ID, domain.ProfilePhotoKindProfile); err != nil || !ok || cur.ID != 778 {
+		t.Fatalf("bot current profile photo = %+v ok=%v err=%v, want 778", cur, ok, err)
+	}
+	if _, ok, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, owner.ID, domain.ProfilePhotoKindProfile); err != nil || ok {
+		t.Fatalf("owner current profile photo after bot upload: ok=%v err=%v, want unchanged", ok, err)
+	}
+
+	returnedBot := firstPhotosUser(t, got)
+	if returnedBot.ID != bot.ID || returnedBot.Self {
+		t.Fatalf("returned user = id:%d self:%v, want bot id %d and self=false", returnedBot.ID, returnedBot.Self, bot.ID)
+	}
+	if !returnedBot.Bot || !returnedBot.GetBotCanEdit() {
+		t.Fatalf("returned bot flags = bot:%v can_edit:%v, want both true", returnedBot.Bot, returnedBot.GetBotCanEdit())
+	}
+	returnedPhoto, ok := returnedBot.Photo.(*tg.UserProfilePhoto)
+	if !ok || returnedPhoto.PhotoID != 778 || returnedPhoto.DCID != 2 {
+		t.Fatalf("returned bot photo = %+v, want photo_id=778 dc_id=2", returnedBot.Photo)
+	}
+
+	if pushed := sessions.pushedUserIDs(); len(pushed) != 1 || pushed[0] != owner.ID {
+		t.Fatalf("pushed user ids = %v, want owner %d", pushed, owner.ID)
+	}
+	snap := sessions.snapshot()
+	if snap.sessionID != currentSessionID {
+		t.Fatalf("echo session = %d, want %d", snap.sessionID, currentSessionID)
+	}
+	echoed, ok := snap.message.(*tg.Updates)
+	if !ok {
+		t.Fatalf("echoed message = %T, want *tg.Updates", snap.message)
+	}
+	hasBotUpdate := false
+	for _, u := range echoed.Updates {
+		if uu, ok := u.(*tg.UpdateUser); ok && uu.UserID == bot.ID {
+			hasBotUpdate = true
+		}
+	}
+	if !hasBotUpdate || len(echoed.Users) == 0 {
+		t.Fatalf("echoed updates = %+v, want UpdateUser + bot user", echoed)
+	}
+	echoedBot, ok := echoed.Users[0].(*tg.User)
+	if !ok {
+		t.Fatalf("echoed user = %T, want *tg.User", echoed.Users[0])
+	}
+	echoedPhoto, ok := echoedBot.Photo.(*tg.UserProfilePhoto)
+	if echoedBot.ID != bot.ID || echoedBot.Self || !ok || echoedPhoto.PhotoID != 778 {
+		t.Fatalf("echoed bot = %+v photo=%+v, want updated non-self bot", echoedBot, echoedBot.Photo)
+	}
+
+	sessions.clearMessages()
+	clearReq := &tg.PhotosUpdateProfilePhotoRequest{ID: &tg.InputPhotoEmpty{}}
+	clearReq.SetBot(&tg.InputUser{UserID: bot.ID, AccessHash: bot.AccessHash})
+	cleared, err := r.onPhotosUpdateProfilePhoto(reqCtx, clearReq)
+	if err != nil {
+		t.Fatalf("clear bot profile photo: %v", err)
+	}
+	if _, ok, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, bot.ID, domain.ProfilePhotoKindProfile); err != nil || ok {
+		t.Fatalf("bot current profile photo after clear: ok=%v err=%v, want removed", ok, err)
+	}
+	clearedBot := firstPhotosUser(t, cleared)
+	if clearedBot.ID != bot.ID || clearedBot.Self || clearedBot.Photo != nil {
+		t.Fatalf("cleared returned bot = id:%d self:%v photo:%+v, want non-self bot without photo", clearedBot.ID, clearedBot.Self, clearedBot.Photo)
+	}
+	echoed, ok = sessions.snapshot().message.(*tg.Updates)
+	if !ok || len(echoed.Users) == 0 {
+		t.Fatalf("clear echoed message = %T %+v, want *tg.Updates with users", sessions.snapshot().message, sessions.snapshot().message)
+	}
+	echoedBot, ok = echoed.Users[0].(*tg.User)
+	if !ok || echoedBot.ID != bot.ID || echoedBot.Photo != nil {
+		t.Fatalf("clear echoed bot = %T %+v, want bot without photo", echoed.Users[0], echoed.Users[0])
+	}
+}
+
+func TestUploadProfilePhotoBotTargetRejectsForeignBot(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	botStore := memory.NewBotStore(userStore)
+	dialogStore := memory.NewDialogStore()
+	bots := botsapp.NewService(userStore, botStore, memory.NewMessageStore(dialogStore))
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "15550001007", FirstName: "Owner"})
+	stranger, _ := userStore.Create(ctx, domain.User{AccessHash: 12, Phone: "15550001008", FirstName: "Stranger"})
+	foreignBot, _, err := bots.CreateBot(ctx, stranger.ID, "Foreign Bot", "foreign_photo_shape_bot")
+	if err != nil {
+		t.Fatalf("create foreign bot: %v", err)
+	}
+	files := &fakeFiles{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Users: appusers.NewService(userStore, appusers.WithPhotoProvider(files)),
+		Bots:  bots,
+		Files: files,
+	}, zaptest.NewLogger(t), clock.System)
+
+	req := &tg.PhotosUploadProfilePhotoRequest{}
+	req.SetBot(&tg.InputUser{UserID: foreignBot.ID, AccessHash: foreignBot.AccessHash})
+	req.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "bot.jpg"})
+	if _, err := r.onPhotosUploadProfilePhoto(WithUserID(ctx, owner.ID), req); err == nil || !strings.Contains(err.Error(), "BOT_INVALID") {
+		t.Fatalf("foreign bot upload error = %v, want BOT_INVALID", err)
+	}
+	if _, ok, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, foreignBot.ID, domain.ProfilePhotoKindProfile); err != nil || ok {
+		t.Fatalf("foreign bot current profile photo after rejected upload: ok=%v err=%v, want unchanged", ok, err)
 	}
 }
 

@@ -201,6 +201,13 @@ LIMIT $5`, userID, floor, safePts, cutoff, limit)
 	for i, event := range events {
 		pts[i] = int32(event.pts)
 	}
+	// Retention can remove the final online-delivery task for this user. Take the
+	// exclusive lane fence before locking the durable head so the subsequent
+	// READ COMMITTED statements observe every producer that completed first and
+	// later producers cannot miss the empty-lane transition.
+	if err := lockDispatchOutboxLanesExclusive(ctx, tx, []int64{userID}); err != nil {
+		return 0, fmt.Errorf("lock retained user update dispatch lane: %w", err)
+	}
 	// Every outbox mutation follows user_heads→outbox. Retention may remove a pending or leased
 	// task after the client has already confirmed its durable event; lock the lane head first so
 	// it cannot deadlock a lease-expiry claim/completion. No head means these events have no online

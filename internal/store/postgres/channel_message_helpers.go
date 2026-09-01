@@ -163,32 +163,6 @@ func channelMessageReplyFromColumns(reply *domain.MessageReply, msgID int, peerT
 	return out
 }
 
-func collectChannelMessageRefs(msg domain.ChannelMessage, currentChannelID int64, userRefs, channelRefs map[int64]struct{}) {
-	if msg.SenderUserID != 0 {
-		userRefs[msg.SenderUserID] = struct{}{}
-	}
-	addPeerRef(msg.From, currentChannelID, userRefs, channelRefs)
-	if msg.SendAs != nil {
-		addPeerRef(*msg.SendAs, currentChannelID, userRefs, channelRefs)
-	}
-	if msg.Forward != nil {
-		addPeerRef(msg.Forward.From, currentChannelID, userRefs, channelRefs)
-	}
-	if msg.ViaBotID != 0 {
-		userRefs[msg.ViaBotID] = struct{}{}
-	}
-	if msg.ReplyTo != nil {
-		addPeerRef(msg.ReplyTo.Peer, currentChannelID, userRefs, channelRefs)
-	}
-	if msg.Action != nil {
-		for _, id := range msg.Action.UserIDs {
-			if id != 0 {
-				userRefs[id] = struct{}{}
-			}
-		}
-	}
-}
-
 type pgChannelMessageIDAllocator struct {
 	db sqlcgen.DBTX
 }

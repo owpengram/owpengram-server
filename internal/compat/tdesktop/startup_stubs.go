@@ -5,6 +5,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"telesrv/internal/branding"
 	"telesrv/internal/seed/appearance"
 	"telesrv/internal/seed/catalog"
 )
@@ -348,7 +349,7 @@ func StickerSet(req *tg.MessagesGetStickerSetRequest) tg.MessagesStickerSetClass
 	if req != nil && req.Hash == emptyStickerSetHash {
 		return &tg.MessagesStickerSetNotModified{}
 	}
-	title, shortName := "OwpenGram Empty Sticker Set", "owpengram_empty"
+	title, shortName := branding.ProductName+" Empty Sticker Set", "owpengram_empty"
 	if req != nil {
 		switch set := req.Stickerset.(type) {
 		case *tg.InputStickerSetAnimatedEmoji:

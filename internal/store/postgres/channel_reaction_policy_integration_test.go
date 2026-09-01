@@ -3,10 +3,65 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 )
+
+func TestChannelTopReactionPresenceNegativeCacheInvalidatesOnReaction(t *testing.T) {
+	env := newReactionPolicyTestEnv(t, false)
+	ctx := context.Background()
+	topCache := NewChannelTopMessageCache(32)
+	env.channels.topMsgCache = topCache
+	key := channelMessageLookupKey{channelID: env.channelID, id: env.messageID}
+
+	// Observe listener readiness through a sentinel flush before warming the
+	// negative reaction-presence entry.
+	topCache.reactionPresence.Store(key, channelTopReactionPresence{Normal: true})
+	lctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	listener := NewReadModelChangeListener(os.Getenv("TELESRV_TEST_POSTGRES_DSN"), ReadModelCacheSet{
+		ChannelTopMessages: topCache,
+	}, nil)
+	go listener.Run(lctx)
+	if !waitUntil(2*time.Second, func() bool {
+		_, ok := topCache.reactionPresence.Peek(key)
+		return !ok
+	}) {
+		t.Fatal("read-model listener did not flush reaction sentinel")
+	}
+
+	before, err := env.channels.GetChannelDialogs(ctx, env.ownerID, []int64{env.channelID})
+	if err != nil {
+		t.Fatalf("warm no-reaction dialog: %v", err)
+	}
+	if len(before.Messages) != 1 || before.Messages[0].Reactions != nil {
+		t.Fatalf("before reaction messages = %+v", before.Messages)
+	}
+	if presence, ok := topCache.reactionPresence.Peek(key); !ok || presence.any() {
+		t.Fatalf("negative presence not cached: ok=%v value=%+v", ok, presence)
+	}
+
+	if _, err := env.react(t, env.memberID, "U0001f44d"); err != nil {
+		t.Fatalf("add reaction: %v", err)
+	}
+	if !waitUntil(3*time.Second, func() bool {
+		_, ok := topCache.reactionPresence.Peek(key)
+		return !ok
+	}) {
+		t.Fatal("reaction write did not invalidate negative presence")
+	}
+
+	after, err := env.channels.GetChannelDialogs(ctx, env.ownerID, []int64{env.channelID})
+	if err != nil {
+		t.Fatalf("dialog after reaction: %v", err)
+	}
+	if len(after.Messages) != 1 || after.Messages[0].Reactions == nil || len(after.Messages[0].Reactions.Results) != 1 || after.Messages[0].Reactions.Results[0].Count != 1 {
+		t.Fatalf("after reaction messages = %+v", after.Messages)
+	}
+}
 
 type reactionPolicyTestEnv struct {
 	channels  *ChannelStore

@@ -77,7 +77,11 @@ func (r *Router) prepareRPCDispatchContext(
 	}
 	if r.log != nil {
 		if tInfo := r.clock.Now(); tInfo.Sub(preStart) > 50*time.Millisecond {
-			r.log.Info("slow pre-handler",
+			// Successful slow paths are already represented by per-method latency
+			// and request-scoped database-work metrics. Keep their request detail
+			// only under explicit Debug logging; INFO must not become synchronous
+			// per-RPC I/O during a concentrated login burst.
+			r.log.Debug("slow pre-handler",
 				zap.String("method", method),
 				zap.Duration("pre_total", tInfo.Sub(preStart)),
 				zap.Duration("auth_resolve", tAuth.Sub(preStart)),

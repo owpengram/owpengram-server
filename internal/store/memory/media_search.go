@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"telesrv/internal/domain"
 )
@@ -23,6 +24,38 @@ func mediaCategorySet(cats []domain.MediaCategory) map[domain.MediaCategory]bool
 func mediaCategoryMatches(media *domain.MessageMedia, entities []domain.MessageEntity, set map[domain.MediaCategory]bool) bool {
 	for _, c := range domain.ClassifyMediaCategories(media, entities) {
 		if set[c] {
+			return true
+		}
+	}
+	return false
+}
+
+func mediaSearchCommonMatches(id, date int, body string, reply *domain.MessageReply, req domain.MediaSearchRequest) bool {
+	if req.Query != "" && !strings.Contains(strings.ToLower(body), strings.ToLower(req.Query)) {
+		return false
+	}
+	if req.MinDate > 0 && date <= req.MinDate {
+		return false
+	}
+	if req.MaxDate > 0 && date >= req.MaxDate {
+		return false
+	}
+	if req.TopMsgID != 0 && id != req.TopMsgID && (reply == nil || reply.TopMessageID != req.TopMsgID) {
+		return false
+	}
+	return true
+}
+
+func savedMessageHasAnyTag(tags []domain.MessageReaction, wanted []domain.MessageReaction) bool {
+	if len(wanted) == 0 {
+		return true
+	}
+	have := make(map[string]struct{}, len(tags))
+	for _, reaction := range tags {
+		have[reaction.Key()] = struct{}{}
+	}
+	for _, reaction := range wanted {
+		if _, ok := have[reaction.Key()]; ok {
 			return true
 		}
 	}
@@ -80,7 +113,19 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 	s.mu.RLock()
 	matched := make([]int, 0, len(s.m[ownerUserID]))
 	for _, msg := range s.m[ownerUserID] {
-		if msg.Peer.Type != domain.PeerTypeUser || msg.Peer.ID != peerID {
+		if msg.Deleted || msg.Peer.Type != domain.PeerTypeUser || msg.Peer.ID != peerID {
+			continue
+		}
+		if req.SenderUserID != 0 && (msg.From.Type != domain.PeerTypeUser || msg.From.ID != req.SenderUserID) {
+			continue
+		}
+		if !mediaSearchCommonMatches(msg.ID, msg.Date, msg.Body, msg.ReplyTo, req) {
+			continue
+		}
+		if req.SavedPeer.ID != 0 && msg.SavedPeer != req.SavedPeer {
+			continue
+		}
+		if !savedMessageHasAnyTag(s.savedMessageTags[ownerUserID][msg.ID], req.SavedReactions) {
 			continue
 		}
 		if mediaCategoryMatches(msg.Media, msg.Entities, set) {
@@ -110,7 +155,7 @@ func (s *MessageStore) CountPrivateMediaCategories(_ context.Context, ownerUserI
 	defer s.mu.RUnlock()
 	out := domain.MediaCategoryCounts{}
 	for _, msg := range s.m[ownerUserID] {
-		if msg.Peer.Type != domain.PeerTypeUser || msg.Peer.ID != peerID {
+		if msg.Deleted || msg.Peer.Type != domain.PeerTypeUser || msg.Peer.ID != peerID {
 			continue
 		}
 		for _, category := range domain.ClassifyMediaCategories(msg.Media, msg.Entities) {
@@ -129,7 +174,7 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 		return domain.ChannelHistory{}, nil
 	}
 	s.mu.RLock()
-	_, member, err := s.channelAndMemberLocked(viewerUserID, channelID)
+	channel, member, err := s.channelAndMemberLocked(viewerUserID, channelID)
 	if err != nil {
 		s.mu.RUnlock()
 		return domain.ChannelHistory{}, err
@@ -137,6 +182,20 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 	matched := make([]int, 0, len(s.messages[channelID]))
 	for _, msg := range s.messages[channelID] {
 		if msg.Deleted || msg.ID <= member.AvailableMinID {
+			continue
+		}
+		if channel.Monoforum {
+			if member.CanManageDirectMessages() && msg.SavedPeer.ID != 0 {
+				continue
+			}
+			if !member.CanManageDirectMessages() && msg.SavedPeer != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) {
+				continue
+			}
+		}
+		if req.SenderUserID != 0 && msg.SenderUserID != req.SenderUserID {
+			continue
+		}
+		if !mediaSearchCommonMatches(msg.ID, msg.Date, msg.Body, msg.ReplyTo, req) {
 			continue
 		}
 		if mediaCategoryMatches(msg.Media, msg.Entities, set) {
@@ -165,7 +224,7 @@ func (s *ChannelStore) CountChannelMediaCategories(_ context.Context, viewerUser
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_, member, err := s.channelAndMemberLocked(viewerUserID, channelID)
+	channel, member, err := s.channelAndMemberLocked(viewerUserID, channelID)
 	if err != nil {
 		return domain.MediaCategoryCounts{}, err
 	}
@@ -173,6 +232,14 @@ func (s *ChannelStore) CountChannelMediaCategories(_ context.Context, viewerUser
 	for _, msg := range s.messages[channelID] {
 		if msg.Deleted || msg.ID <= member.AvailableMinID {
 			continue
+		}
+		if channel.Monoforum {
+			if member.CanManageDirectMessages() && msg.SavedPeer.ID != 0 {
+				continue
+			}
+			if !member.CanManageDirectMessages() && msg.SavedPeer != (domain.Peer{Type: domain.PeerTypeUser, ID: viewerUserID}) {
+				continue
+			}
 		}
 		for _, category := range domain.ClassifyMediaCategories(msg.Media, msg.Entities) {
 			if category != domain.MediaCategoryNone {

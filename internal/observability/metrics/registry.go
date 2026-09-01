@@ -265,6 +265,20 @@ func (r *Registry) RPCHandled(method string, d time.Duration, err error) {
 	r.observe("telesrv_mtproto_rpc_duration_seconds", d, labels...)
 }
 
+// RPCDatabase implements mtprotoedge.RPCDatabaseMetrics.
+func (r *Registry) RPCDatabase(method string, queries int64, d time.Duration, errors int64) {
+	labels := []Label{{Name: "method", Value: method}}
+	if queries > 0 {
+		r.add("telesrv_rpc_db_queries_total", uint64(queries), labels...)
+	}
+	if errors > 0 {
+		r.add("telesrv_rpc_db_errors_total", uint64(errors), labels...)
+	}
+	if d > 0 {
+		r.observe("telesrv_rpc_db_time_seconds", d, labels...)
+	}
+}
+
 // InboundRPCQueued implements mtprotoedge.Metrics.
 func (r *Registry) InboundRPCQueued(method string, length, capacity int) {
 	r.inc("telesrv_mtproto_inbound_rpc_queued_total", Label{Name: "method", Value: method})
@@ -382,6 +396,76 @@ func (r *Registry) OutboxDelivered(d time.Duration) {
 // OutboxFailed implements rpc.Metrics.
 func (r *Registry) OutboxFailed(err error) {
 	r.inc("telesrv_rpc_outbox_failed_total", Label{Name: "outcome", Value: errorOutcome(err)})
+}
+
+// BootstrapReadyBatch implements postgres.BootstrapReadyBatchMetrics without
+// importing store identities into the observability layer.
+func (r *Registry) BootstrapReadyBatch(inputs int, matched int, d time.Duration, err error) {
+	outcome := errorOutcome(err)
+	r.inc("telesrv_bootstrap_ready_batches_total", Label{Name: "outcome", Value: outcome})
+	r.observe("telesrv_bootstrap_ready_batch_duration_seconds", d, Label{Name: "outcome", Value: outcome})
+	inputs = max(inputs, 0)
+	matched = max(min(matched, inputs), 0)
+	if err != nil {
+		r.add("telesrv_bootstrap_ready_selectors_total", uint64(inputs), Label{Name: "outcome", Value: "error"})
+		return
+	}
+	r.add("telesrv_bootstrap_ready_selectors_total", uint64(matched), Label{Name: "outcome", Value: "matched"})
+	r.add("telesrv_bootstrap_ready_selectors_total", uint64(inputs-matched), Label{Name: "outcome", Value: "miss"})
+}
+
+// BootstrapReadyPending implements postgres.BootstrapReadyBatchMetrics.
+func (r *Registry) BootstrapReadyPending(delta int) {
+	r.addGauge("telesrv_bootstrap_ready_pending", int64(delta))
+}
+
+// ActiveChannelIDsCache implements channels.ActiveChannelIDsReadModelMetrics.
+func (r *Registry) ActiveChannelIDsCache(outcome string) {
+	r.inc("telesrv_active_channel_ids_cache_total", Label{Name: "outcome", Value: outcome})
+}
+
+// ActiveChannelIDsBatch implements postgres.ActiveChannelIDsBatchMetrics.
+func (r *Registry) ActiveChannelIDsBatch(selectors int, rows int, d time.Duration, err error) {
+	outcome := errorOutcome(err)
+	r.inc("telesrv_active_channel_ids_batches_total", Label{Name: "outcome", Value: outcome})
+	r.add("telesrv_active_channel_ids_selectors_total", uint64(max(selectors, 0)), Label{Name: "outcome", Value: outcome})
+	if err == nil {
+		r.add("telesrv_active_channel_ids_rows_total", uint64(max(rows, 0)))
+	}
+	r.observe("telesrv_active_channel_ids_batch_duration_seconds", d, Label{Name: "outcome", Value: outcome})
+}
+
+// ActiveChannelIDsPending implements postgres.ActiveChannelIDsBatchMetrics.
+func (r *Registry) ActiveChannelIDsPending(delta int) {
+	r.addGauge("telesrv_active_channel_ids_pending", int64(delta))
+}
+
+// PresenceLastSeenBatch implements rpc.Metrics.
+func (r *Registry) PresenceLastSeenBatch(count int, d time.Duration, err error) {
+	labels := []Label{{Name: "outcome", Value: errorOutcome(err)}}
+	r.inc("telesrv_presence_last_seen_batches_total", labels...)
+	r.add("telesrv_presence_last_seen_updates_total", uint64(max(count, 0)), labels...)
+	r.observe("telesrv_presence_last_seen_batch_duration_seconds", d, labels...)
+}
+
+// PresenceLastSeenSubmitted implements rpc.Metrics.
+func (r *Registry) PresenceLastSeenSubmitted() {
+	r.inc("telesrv_presence_last_seen_submitted_total")
+}
+
+// PresenceLastSeenPending implements rpc.Metrics.
+func (r *Registry) PresenceLastSeenPending(delta int) {
+	r.addGauge("telesrv_presence_last_seen_pending", int64(delta))
+}
+
+// PresenceLastSeenOverflow implements rpc.Metrics.
+func (r *Registry) PresenceLastSeenOverflow() {
+	r.inc("telesrv_presence_last_seen_overflow_total")
+}
+
+// PresenceLastSeenDrainDropped implements rpc.Metrics.
+func (r *Registry) PresenceLastSeenDrainDropped(count int) {
+	r.add("telesrv_presence_last_seen_drain_dropped_total", uint64(max(count, 0)))
 }
 
 // ServeHTTP writes Prometheus text format.

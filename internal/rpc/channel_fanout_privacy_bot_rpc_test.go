@@ -61,7 +61,10 @@ func TestChannelMessageFanoutSkipsPrivacyBotOnlinePush(t *testing.T) {
 	sessions := &captureSessions{
 		channelMembers: map[int64][]int64{created.Channel.ID: {1002, 1003}},
 	}
-	r := New(Config{}, Deps{Channels: channelService, Sessions: sessions}, zaptest.NewLogger(t), clock.System)
+	users := &prefetchRecordingUsersService{mapUsersService: mapUsersService{users: map[int64]domain.User{
+		1001: {ID: 1001, FirstName: "sender"},
+	}}}
+	r := New(Config{}, Deps{Channels: channelService, Sessions: sessions, Users: users}, zaptest.NewLogger(t), clock.System)
 
 	// 复核前置:修复前后 channelFanoutRecipients 都会把 1003 列进 recipients(在线活跃成员),
 	// 漏洞/修复的差异在 build 是否对它返回 nil。

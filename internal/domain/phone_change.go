@@ -1,8 +1,8 @@
 package domain
 
-// PhoneChangeRequest 是账号改号的持久化命令。PG 实现必须把 User、Event 与
-// dispatch outbox 放在同一事务；Exclude* 精确排除发起设备，因为当前设备从
-// account.changePhone 的 User 返回值更新本地状态。
+// PhoneChangeRequest 是账号改号的持久化命令。updateUserPhone 不携带 PTS，
+// 因此该命令只维护号码事实；Exclude* 保留在 DTO 中用于兼容调用边界，在线
+// 非 PTS 通知由 RPC 层按发起设备排除。
 type PhoneChangeRequest struct {
 	UserID           int64
 	Phone            string
@@ -18,6 +18,5 @@ type PhoneChangeRequest struct {
 
 type PhoneChangeResult struct {
 	User    User
-	Event   UpdateEvent
 	Changed bool
 }

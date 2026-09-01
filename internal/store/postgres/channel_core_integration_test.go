@@ -7,6 +7,74 @@ import (
 	"telesrv/internal/domain"
 )
 
+func TestChannelCreateInitialPtsBaselinePostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	users := NewUserStore(pool)
+	owner := createTestUser(t, ctx, users, "+1887"+suffix+"80", "PtsOwner", "")
+	var channelID int64
+	t.Cleanup(func() {
+		if channelID != 0 {
+			_, _ = pool.Exec(ctx, "DELETE FROM channels WHERE id = $1", channelID)
+		}
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
+	})
+
+	channels := NewChannelStore(pool)
+	created, err := channels.CreateChannel(ctx, domain.CreateChannelRequest{
+		CreatorUserID: owner.ID,
+		Title:         "Initial pts " + suffix,
+		Megagroup:     true,
+		Date:          1_700_001_180,
+	})
+	if err != nil {
+		t.Fatalf("create channel: %v", err)
+	}
+	channelID = created.Channel.ID
+	if created.Channel.Pts != domain.FirstChannelEventPts || created.Message.Pts != domain.FirstChannelEventPts ||
+		created.Event.Pts != domain.FirstChannelEventPts || created.Event.PtsCount != 1 {
+		t.Fatalf("create result = channel:%+v message:%+v event:%+v, want first event 2/1", created.Channel, created.Message, created.Event)
+	}
+
+	var channelPts, messagePts, eventPts, eventPtsCount, retainedFloor, latestPts int
+	if err := pool.QueryRow(ctx, `
+SELECT c.pts, m.pts, e.pts, e.pts_count, cp.retained_through_pts, cp.latest_pts
+FROM channels c
+JOIN channel_messages m ON m.channel_id = c.id AND m.id = c.top_message_id
+JOIN channel_update_events e ON e.channel_id = c.id AND e.message_id = m.id
+JOIN channel_update_checkpoints cp ON cp.channel_id = c.id
+WHERE c.id = $1`, channelID).Scan(
+		&channelPts, &messagePts, &eventPts, &eventPtsCount, &retainedFloor, &latestPts,
+	); err != nil {
+		t.Fatalf("read persisted initial pts: %v", err)
+	}
+	if channelPts != domain.FirstChannelEventPts || messagePts != domain.FirstChannelEventPts ||
+		eventPts != domain.FirstChannelEventPts || eventPtsCount != 1 ||
+		retainedFloor != domain.InitialChannelPts || latestPts != domain.FirstChannelEventPts {
+		t.Fatalf("persisted pts = channel:%d message:%d event:%d/%d checkpoint:%d/%d, want 2/2/2/1/1/2",
+			channelPts, messagePts, eventPts, eventPtsCount, retainedFloor, latestPts)
+	}
+	fromBaseline, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+		UserID: owner.ID, ChannelID: channelID, Pts: domain.InitialChannelPts, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("difference from baseline: %v", err)
+	}
+	if fromBaseline.TooLong || len(fromBaseline.Events) != 1 || fromBaseline.Events[0].Pts != domain.FirstChannelEventPts {
+		t.Fatalf("difference from baseline = %+v, want create event at pts=2", fromBaseline)
+	}
+	fromZero, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
+		UserID: owner.ID, ChannelID: channelID, Pts: 0, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("difference from zero: %v", err)
+	}
+	if !fromZero.TooLong || fromZero.Pts != domain.FirstChannelEventPts || len(fromZero.NewMessages) != 1 {
+		t.Fatalf("difference from zero = %+v, want complete snapshot at pts=2", fromZero)
+	}
+}
+
 func TestChannelStoreGetChannelsBatchesVisibleAndPublicPreview(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 const userOnlineTTL = 5 * time.Minute
@@ -257,7 +258,7 @@ func (r *Router) announceSessionOnline(ctx context.Context, userID int64) {
 	// last_seen。bot 登录（importBotAuthorization）经此路径，必须整体短路——否则
 	// 与 bot 有私聊的用户会收到协议中不存在的 bot 在线/离线广播，bot 也不登记
 	// presence 条目，sweeper 因此天然不会遇到 bot。
-	if r.userIsBot(ctx, userID) {
+	if bot, known := r.userBotStatus(ctx, userID); !known || bot {
 		return
 	}
 	status, notify := r.setPresenceFromContext(ctx, userID, false, presencePersistAsync)
@@ -270,31 +271,54 @@ func (r *Router) announceSessionOnline(ctx context.Context, userID int64) {
 	r.pushSessionOnlineAsync(ctx, userID, status)
 }
 
-// userIsBot 报告 userID 是否为 bot 账号（presence 广播豁免用）。仅在连接生命周期
-// 事件（登录/断线/登出）调用，频率低；命中 redis UserCache。
+// userIsBot reports whether userID is a bot for business call sites that keep
+// the historical bool contract. Presence uses userBotStatus directly so an
+// unavailable classification cannot be guessed as a human account.
 func (r *Router) userIsBot(ctx context.Context, userID int64) bool {
+	bot, known := r.userBotStatus(ctx, userID)
+	return known && bot
+}
+
+type botStatusResult struct {
+	bot   bool
+	known bool
+}
+
+func (r *Router) userBotStatus(ctx context.Context, userID int64) (bool, bool) {
 	if userID == 0 || r.deps.Users == nil {
-		return false
+		return false, false
 	}
 	// bot 标志不可变 → 永久 in-process 缓存，避免 announceSessionOnline 每 RPC 都发一次重投影
 	// Users.ByID。仅缓存已存在的用户结果。命中后纯内存。
 	if v, ok := r.botStatus.Load(userID); ok {
-		return v.(bool)
+		return v.(bool), true
 	}
 	// 冷启动洪峰下用 singleflight 合并并发首查：~50 个并发首帧只打 1 次 PG（其余共享），
 	// 避免 Users.ByID 重投影 herd（曾让首帧 user_resolve 飙到 ~1.1s）。
-	v, _, _ := r.authUserSF.Do("bot:"+strconv.FormatInt(userID, 10), func() (any, error) {
+	v, err, _ := r.authUserSF.Do("bot:"+strconv.FormatInt(userID, 10), func() (any, error) {
 		if cached, ok := r.botStatus.Load(userID); ok {
-			return cached.(bool), nil
+			return botStatusResult{bot: cached.(bool), known: true}, nil
+		}
+		if provider, ok := r.deps.Users.(BaseUserBotStatusProvider); ok {
+			bot, found, err := provider.BotStatus(ctx, userID)
+			if err != nil || !found {
+				return botStatusResult{}, err
+			}
+			r.botStatus.Store(userID, bot)
+			return botStatusResult{bot: bot, known: true}, nil
 		}
 		u, found, err := r.deps.Users.ByID(ctx, userID, userID)
 		if err != nil || !found {
-			return false, nil
+			return botStatusResult{}, err
 		}
 		r.botStatus.Store(userID, u.Bot)
-		return u.Bot, nil
+		return botStatusResult{bot: u.Bot, known: true}, nil
 	})
-	return v.(bool)
+	if err != nil {
+		return false, false
+	}
+	result := v.(botStatusResult)
+	return result.bot, result.known
 }
 
 func (r *Router) userPresenceStatus(userID int64) domain.UserStatus {
@@ -375,6 +399,25 @@ func (r *Router) persistLastSeenAsync(ctx context.Context, userID int64, lastSee
 	if !ok {
 		return
 	}
+	if r.lastSeenBatch != nil {
+		if err := r.lastSeenBatch.submit(store.UserLastSeenUpdate{UserID: userID, LastSeenAt: lastSeenAt}); err == nil {
+			return
+		} else {
+			// Capacity/stopping is never a silent drop. The direct authoritative
+			// write is an overload safety valve, not a configurable legacy mode.
+			r.log.Error("presence last-seen batch admission failed; using authoritative direct write",
+				zap.Int64("user_id", userID), zap.Error(err))
+		}
+	}
+	r.persistReservedLastSeenAsync(ctx, updater, userID, lastSeenAt)
+}
+
+func (r *Router) persistReservedLastSeenAsync(
+	ctx context.Context,
+	updater userLastSeenUpdater,
+	userID int64,
+	lastSeenAt int,
+) {
 	bgCtx, cancel := r.presenceBackgroundContext(ctx, 10*time.Second)
 	go func() {
 		defer cancel()
@@ -387,6 +430,15 @@ func (r *Router) persistLastSeenAsync(ctx context.Context, userID int64, lastSee
 			r.log.Warn("Update user last seen failed", zap.Int64("user_id", userID), zap.Int("last_seen_at", lastSeenAt), zap.Error(err))
 		}
 	}()
+}
+
+// RunPresenceLastSeenBatch owns the lifecycle batch worker. The worker stops
+// accepting on cancellation and performs a bounded drain before returning.
+func (r *Router) RunPresenceLastSeenBatch(ctx context.Context) {
+	if r == nil || r.lastSeenBatch == nil {
+		return
+	}
+	r.lastSeenBatch.Run(ctx)
 }
 
 func (r *Router) pushSessionOnlineAsync(ctx context.Context, userID int64, status domain.UserStatus) {
@@ -467,12 +519,13 @@ func (r *Router) announceUserOfflineIfStillGone(rawAuthKeyID [8]byte, sessionID,
 	defer cancel()
 	ctx = WithSessionID(WithRawAuthKeyID(ctx, rawAuthKeyID), sessionID)
 	// bot 不广播 offline、不写 last_seen（与 announceSessionOnline 对称）。
-	if r.userIsBot(ctx, userID) {
+	if bot, known := r.userBotStatus(ctx, userID); !known || bot {
 		return
 	}
 	status := domain.UserStatus{Kind: domain.UserStatusOffline, WasOnline: disconnectedAt}
-	// 断连降级是权威 last_seen，强制落库（不去抖）。
-	r.persistLastSeen(ctx, userID, disconnectedAt, false)
+	// 断连降级是权威 last_seen，不去抖；生命周期写经有界 batch
+	// 合并，WasOnline 仍取真实断连时刻而不是 flush 时刻。
+	r.persistLastSeenAsync(ctx, userID, disconnectedAt, false)
 	r.pushUserStatus(ctx, userID, status)
 }
 
@@ -555,6 +608,24 @@ func (r *Router) withDialogListPresence(ctx context.Context, viewerUserID int64,
 	for _, msg := range list.ChannelMessages {
 		collectChannelMessagePeerRefs(msg, msg.ChannelID, userIDs, channelIDs)
 	}
+	// Dialog/application projections already contain the ordinary peer envelope.
+	// Only resolve nested message references that are still absent (forward author,
+	// via bot, poll voter, linked giveaway channel, and similar fields).
+	for _, user := range list.Users {
+		delete(userIDs, user.ID)
+	}
+	for _, channel := range list.Channels {
+		delete(channelIDs, channel.ID)
+	}
+	for _, community := range list.Communities {
+		delete(channelIDs, community.Community.ID)
+		for _, user := range community.Users {
+			delete(userIDs, user.ID)
+		}
+		for _, channel := range community.Channels {
+			delete(channelIDs, channel.ID)
+		}
+	}
 	cache := newViewerPeerCache(r)
 	list.Users = r.withUsersPresence(mergeDomainUsers(list.Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(userIDs))...))
 	list.Channels = mergeDomainChannels(list.Channels, cache.channelsForIDs(ctx, viewerUserID, mapKeys(channelIDs))...)
@@ -583,8 +654,7 @@ func (r *Router) tgSelfUser(u domain.User) *tg.User {
 func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 	out := tgUsers(r.withUsersPresence(users))
 	r.withBotProfileFlagsForUsers(context.Background(), out)
-	r.applyUsernamesToPeerObjects(context.Background(), out, nil)
-	r.applyBotVerificationIconsToPeerObjects(context.Background(), out, nil)
+	r.applyPeerIdentitiesToPeerObjects(context.Background(), out, nil)
 	return out
 }
 
@@ -593,8 +663,7 @@ func (r *Router) tgUsers(users []domain.User) []tg.UserClass {
 func (r *Router) tgUsersForViewer(viewerUserID int64, users []domain.User) []tg.UserClass {
 	out := tgUsersForViewer(viewerUserID, r.withUsersPresence(users))
 	r.withBotProfileFlagsForUsers(context.Background(), out)
-	r.applyUsernamesToPeerObjects(context.Background(), out, nil)
-	r.applyBotVerificationIconsToPeerObjects(context.Background(), out, nil)
+	r.applyPeerIdentitiesToPeerObjects(context.Background(), out, nil)
 	return out
 }
 
@@ -895,14 +964,16 @@ func (r *Router) presenceFanoutCandidates(ctx context.Context, userID int64) []i
 		}
 	}
 	if r.deps.Dialogs != nil {
-		list, err := r.deps.Dialogs.GetDialogs(ctx, userID, domain.DialogFilter{Limit: presenceDialogFanoutCandidateLimit})
-		if err != nil {
+		provider, ok := r.deps.Dialogs.(interface {
+			PrivateDialogPeerIDs(context.Context, int64, int) ([]int64, error)
+		})
+		if !ok {
+			failed = true
+		} else if ids, err := provider.PrivateDialogPeerIDs(ctx, userID, presenceDialogFanoutCandidateLimit); err != nil {
 			failed = true
 		} else {
-			for _, dialog := range list.Dialogs {
-				if dialog.Peer.Type == domain.PeerTypeUser {
-					add(dialog.Peer.ID)
-				}
+			for _, id := range ids {
+				add(id)
 			}
 		}
 	}

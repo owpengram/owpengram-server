@@ -1014,6 +1014,19 @@ WHERE user_id = $1
 ORDER BY date DESC, peer_type ASC, peer_id DESC, top_message_id DESC
 LIMIT sqlc.arg(limit_count);
 
+-- name: ListDialogDraftsByPeers :many
+SELECT d.draft::text AS draft_json
+FROM dialog_drafts d
+WHERE d.user_id = sqlc.arg(user_id)
+  AND d.top_message_id = 0
+  AND EXISTS (
+    SELECT 1
+    FROM unnest(sqlc.arg(peer_types)::text[]) WITH ORDINALITY AS requested_type(peer_type, ord)
+    JOIN unnest(sqlc.arg(peer_ids)::bigint[]) WITH ORDINALITY AS requested_id(peer_id, ord) USING (ord)
+    WHERE requested_type.peer_type = d.peer_type
+      AND requested_id.peer_id = d.peer_id
+  );
+
 -- name: ClearDialogDrafts :many
 WITH doomed AS (
   SELECT d.user_id, d.peer_type, d.peer_id, d.top_message_id

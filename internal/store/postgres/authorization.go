@@ -40,16 +40,36 @@ func (s *AuthorizationStore) Bind(ctx context.Context, a domain.Authorization) e
 
 // bindAuthorization 把 auth_key→user 绑定和设备 update baseline 作为同一个状态边界提交。
 //
-// 锁顺序固定为：auth_keys 母行 → 目标 user_update_watermarks →
-// user_update_retention → 目标 update_states。前两个 user 锁与
-// pruneConfirmedUserPrefixTx 一致，使新授权的 observed baseline 和 retained floor 不会
-// 交叉提交成静默空洞。母行锁又能在首次 authorization 尚不存在时串行化同一
-// raw auth key 的并发登录/换号。
+// 锁顺序固定为：目标 user advisory/row → auth_keys 母行 →
+// user_update_watermarks → user_update_retention → 目标 update_states。其中 watermark
+// 与 retention 两个 row lock 的顺序和 pruneConfirmedUserPrefixTx 一致，使新授权的
+// observed baseline 和 retained floor 不会交叉提交成静默空洞。母行锁又能在首次
+// authorization 尚不存在时串行化同一
+// raw auth key 的并发登录/换号。user 锁与账号 tombstone 使用同一顺序；因此 Bind
+// 要么先提交并被随后删除事务撤销，要么等删除提交后看见 tombstone 并拒绝，不能在
+// 删除事务枚举 authorization 之后重新绑定账号。
 func bindAuthorization(ctx context.Context, db sqlcgen.DBTX, a domain.Authorization) error {
 	keyID := authKeyIDToInt64(a.AuthKeyID)
 	tx, ok := db.(pgx.Tx)
 	if !ok {
 		return fmt.Errorf("bind authorization requires a transaction")
+	}
+	if err := lockUsersForUpdate(ctx, tx, a.UserID); err != nil {
+		return fmt.Errorf("lock authorization user: %w", err)
+	}
+	var active bool
+	if err := db.QueryRow(ctx, `
+SELECT deleted_at IS NULL
+FROM users
+WHERE id = $1
+FOR UPDATE`, a.UserID).Scan(&active); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ErrUserNotFound
+		}
+		return fmt.Errorf("lock authorization user row: %w", err)
+	}
+	if !active {
+		return domain.ErrAccountDeleted
 	}
 	if err := lockPermanentAuthIdentities(ctx, tx, []int64{keyID}); err != nil {
 		return err
@@ -160,6 +180,7 @@ ON CONFLICT (auth_key_id) DO UPDATE SET
   app_version = EXCLUDED.app_version,
   ip = EXCLUDED.ip,
   password_pending = EXCLUDED.password_pending,
+	created_at = now(),
   active_at = now()`,
 		keyID, a.UserID, a.Hash, int32(authLayer), a.DeviceModel, a.Platform, a.SystemVersion, int32(a.APIID), a.AppVersion, a.IP, a.PasswordPending,
 	); err != nil {
@@ -204,11 +225,18 @@ WHERE auth_key_id = $1`,
 	return nil
 }
 
-// MarkPasswordPassed 在两步验证通过后清除 password_pending，使 auth_key 转为完全授权。
-func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte) error {
-	if _, err := s.db.Exec(ctx, `
-UPDATE authorizations SET password_pending = false, active_at = now() WHERE auth_key_id = $1`, authKeyIDToInt64(id)); err != nil {
+// MarkPasswordPassed atomically promotes only the pending identity whose
+// password was just verified. A concurrent cross-user Bind must not let A's
+// proof clear B's password_pending flag.
+func (s *AuthorizationStore) MarkPasswordPassed(ctx context.Context, id [8]byte, expectedUserID int64) error {
+	tag, err := s.db.Exec(ctx, `
+	UPDATE authorizations SET password_pending = false, created_at = now(), active_at = now()
+	WHERE auth_key_id = $1 AND user_id = $2 AND password_pending`, authKeyIDToInt64(id), expectedUserID)
+	if err != nil {
 		return fmt.Errorf("mark authorization password passed: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return store.ErrAuthorizationStateChanged
 	}
 	return nil
 }

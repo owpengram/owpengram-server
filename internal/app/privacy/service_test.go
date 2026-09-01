@@ -2,10 +2,12 @@ package privacy
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 	"telesrv/internal/store/memory"
 )
 
@@ -26,8 +28,47 @@ func (p *countingBaseUsers) PrivacyBaseUsers(_ context.Context, userIDs []int64)
 }
 
 type countingMemberships struct {
-	calls  int
-	active map[int64]map[int64]bool
+	calls         int
+	batchCalls    int
+	batchRequests []map[int64][]int64
+	active        map[int64]map[int64]bool
+}
+
+type countingSparseContacts struct {
+	store.ContactStore
+	sparseCalls int
+	getMany     int
+	requested   map[int64][]int64
+}
+
+func (c *countingSparseContacts) GetMany(ctx context.Context, ownerUserID int64, viewerUserIDs []int64) (map[int64]domain.Contact, error) {
+	c.getMany++
+	return c.ContactStore.GetMany(ctx, ownerUserID, viewerUserIDs)
+}
+
+func (c *countingSparseContacts) ContactProjectionForViewerUserIDs(ctx context.Context, requested map[int64][]int64) (domain.ContactProjectionBatch, error) {
+	c.sparseCalls++
+	c.requested = make(map[int64][]int64, len(requested))
+	for viewerID, targetIDs := range requested {
+		c.requested[viewerID] = append([]int64(nil), targetIDs...)
+	}
+	return c.ContactStore.(store.SparseContactProjectionStore).ContactProjectionForViewerUserIDs(ctx, requested)
+}
+
+func (p *countingMemberships) FilterActiveChannelMemberPairs(_ context.Context, requested map[int64][]int64) (map[int64][]int64, error) {
+	p.batchCalls++
+	cloned := make(map[int64][]int64, len(requested))
+	out := make(map[int64][]int64, len(requested))
+	for channelID, userIDs := range requested {
+		cloned[channelID] = append([]int64(nil), userIDs...)
+		for _, userID := range userIDs {
+			if p.active[channelID][userID] {
+				out[channelID] = append(out[channelID], userID)
+			}
+		}
+	}
+	p.batchRequests = append(p.batchRequests, cloned)
+	return out, nil
 }
 
 func (p *countingMemberships) FilterActiveChannelMemberIDs(_ context.Context, channelID int64, userIDs []int64) ([]int64, error) {
@@ -226,6 +267,47 @@ func TestCanSeeMatrixEquivalentToCanSee(t *testing.T) {
 	}
 }
 
+func TestCanSeeMatrixLoadsOwnerViewerContactsInOneSparseBatch(t *testing.T) {
+	ctx := context.Background()
+	inner := memory.NewContactStore()
+	contacts := &countingSparseContacts{ContactStore: inner}
+	svc := NewService(memory.NewPrivacyStore(), contacts)
+	owners := []int64{6101, 6102}
+	viewers := []int64{7101, 7102}
+	for _, owner := range owners {
+		if _, err := svc.SetRules(ctx, owner, domain.PrivacyKeyPhoneNumber, []domain.PrivacyRule{
+			{Kind: domain.PrivacyRuleAllowContacts},
+			{Kind: domain.PrivacyRuleDisallowAll},
+		}); err != nil {
+			t.Fatalf("set owner %d rules: %v", owner, err)
+		}
+	}
+	if _, err := inner.Upsert(ctx, owners[0], domain.ContactInput{ContactUserID: viewers[0]}); err != nil {
+		t.Fatalf("upsert contact: %v", err)
+	}
+
+	matrix, err := svc.CanSeeMatrix(ctx, owners, viewers, []domain.PrivacyKey{domain.PrivacyKeyPhoneNumber})
+	if err != nil {
+		t.Fatalf("CanSeeMatrix: %v", err)
+	}
+	if contacts.sparseCalls != 1 || contacts.getMany != 0 {
+		t.Fatalf("contact reads = sparse %d / GetMany %d, want 1 / 0", contacts.sparseCalls, contacts.getMany)
+	}
+	for _, owner := range owners {
+		if got := len(contacts.requested[owner]); got != len(viewers) {
+			t.Fatalf("requested owner %d viewers = %v, want %v", owner, contacts.requested[owner], viewers)
+		}
+	}
+	if !matrix[owners[0]][viewers[0]][domain.PrivacyKeyPhoneNumber] {
+		t.Fatal("owner contact relation was not applied")
+	}
+	if matrix[owners[0]][viewers[1]][domain.PrivacyKeyPhoneNumber] ||
+		matrix[owners[1]][viewers[0]][domain.PrivacyKeyPhoneNumber] ||
+		matrix[owners[1]][viewers[1]][domain.PrivacyKeyPhoneNumber] {
+		t.Fatalf("unexpected non-contact visibility: %+v", matrix)
+	}
+}
+
 func TestViewerFactsReadModelBatchesCachesAndInvalidates(t *testing.T) {
 	ctx := context.Background()
 	rules := memory.NewPrivacyStore()
@@ -313,15 +395,15 @@ func TestMembershipReadModelCachesNegativeFactsAndInvalidatesPair(t *testing.T) 
 		got[1001][2002][domain.PrivacyKeyChatInvite] {
 		t.Fatalf("unexpected membership visibility matrix: %+v", got)
 	}
-	if memberships.calls != 2 {
-		t.Fatalf("membership cold loads = %d, want one batch per referenced chat", memberships.calls)
+	if memberships.batchCalls != 1 || memberships.calls != 0 {
+		t.Fatalf("membership cold loads = batch %d scalar %d, want batch=1 scalar=0", memberships.batchCalls, memberships.calls)
 	}
 
 	if allowed, err := svc.CanSee(ctx, 1001, 2002, domain.PrivacyKeyChatInvite); err != nil || allowed {
 		t.Fatalf("warm negative membership = %v, err=%v; want false", allowed, err)
 	}
-	if memberships.calls != 2 {
-		t.Fatalf("negative cache missed: calls=%d", memberships.calls)
+	if memberships.batchCalls != 1 || memberships.calls != 0 {
+		t.Fatalf("negative cache missed: batch=%d scalar=%d", memberships.batchCalls, memberships.calls)
 	}
 
 	memberships.active[9002][2002] = true
@@ -329,7 +411,127 @@ func TestMembershipReadModelCachesNegativeFactsAndInvalidatesPair(t *testing.T) 
 	if allowed, err := svc.CanSee(ctx, 1001, 2002, domain.PrivacyKeyChatInvite); err != nil || !allowed {
 		t.Fatalf("invalidated membership = %v, err=%v; want true", allowed, err)
 	}
-	if memberships.calls != 3 {
-		t.Fatalf("pair invalidation reloads = %d, want 3", memberships.calls)
+	if memberships.batchCalls != 2 || memberships.calls != 0 {
+		t.Fatalf("pair invalidation reloads = batch %d scalar %d, want batch=2 scalar=0", memberships.batchCalls, memberships.calls)
+	}
+}
+
+func TestSparsePrivacyMembershipUsesOneExactPairBatch(t *testing.T) {
+	ctx := context.Background()
+	const (
+		ownerA  = int64(1001)
+		ownerB  = int64(1002)
+		viewerA = int64(2001)
+		viewerB = int64(2002)
+		chatA   = int64(9001)
+		chatB   = int64(9002)
+	)
+	rules := memory.NewPrivacyStore()
+	memberships := &countingMemberships{active: map[int64]map[int64]bool{
+		chatA: {viewerA: true, viewerB: true},
+		chatB: {viewerA: true, viewerB: true},
+	}}
+	svc := NewService(rules, memory.NewContactStore()).ConfigureReadModels(nil, memberships)
+	for ownerID, chatID := range map[int64]int64{ownerA: chatA, ownerB: chatB} {
+		if _, err := svc.SetRules(ctx, ownerID, domain.PrivacyKeyProfilePhoto, []domain.PrivacyRule{
+			{Kind: domain.PrivacyRuleAllowChatParticipants, ChatIDs: []int64{chatID}},
+			{Kind: domain.PrivacyRuleDisallowAll},
+		}); err != nil {
+			t.Fatalf("SetRules(%d): %v", ownerID, err)
+		}
+	}
+	got, err := svc.CanSeeForViewerUserIDs(ctx, map[int64][]int64{
+		viewerA: {ownerA},
+		viewerB: {ownerB},
+	}, []domain.PrivacyKey{domain.PrivacyKeyProfilePhoto}, map[int64]map[int64]domain.Contact{})
+	if err != nil {
+		t.Fatalf("CanSeeForViewerUserIDs: %v", err)
+	}
+	if !got[ownerA][viewerA][domain.PrivacyKeyProfilePhoto] || !got[ownerB][viewerB][domain.PrivacyKeyProfilePhoto] {
+		t.Fatalf("visibility = %+v, want both exact pairs visible", got)
+	}
+	if memberships.batchCalls != 1 || memberships.calls != 0 {
+		t.Fatalf("membership loads = batch %d scalar %d, want batch=1 scalar=0", memberships.batchCalls, memberships.calls)
+	}
+	requested := memberships.batchRequests[0]
+	if len(requested) != 2 || len(requested[chatA]) != 1 || requested[chatA][0] != viewerA || len(requested[chatB]) != 1 || requested[chatB][0] != viewerB {
+		t.Fatalf("membership request = %+v, want only (%d,%d) and (%d,%d)", requested, chatA, viewerA, chatB, viewerB)
+	}
+}
+
+func TestSparsePrivacyMembershipRejectsDerivedPairOverflowBeforeLoad(t *testing.T) {
+	ctx := context.Background()
+	rules := memory.NewPrivacyStore()
+	memberships := &countingMemberships{active: map[int64]map[int64]bool{}}
+	svc := NewService(rules, memory.NewContactStore()).ConfigureReadModels(nil, memberships)
+	owners := []int64{1001, 1002, 1003, 1004, 1005}
+	for ownerIndex, ownerID := range owners {
+		chatIDs := make([]int64, 5000)
+		for i := range chatIDs {
+			chatIDs[i] = int64(100000 + ownerIndex*10000 + i)
+		}
+		if _, err := svc.SetRules(ctx, ownerID, domain.PrivacyKeyProfilePhoto, []domain.PrivacyRule{
+			{Kind: domain.PrivacyRuleAllowChatParticipants, ChatIDs: chatIDs},
+			{Kind: domain.PrivacyRuleDisallowAll},
+		}); err != nil {
+			t.Fatalf("SetRules(%d): %v", ownerID, err)
+		}
+	}
+	_, err := svc.CanSeeForViewerUserIDs(ctx, map[int64][]int64{
+		2001: owners,
+		2002: owners,
+		2003: owners,
+	}, []domain.PrivacyKey{domain.PrivacyKeyProfilePhoto}, map[int64]map[int64]domain.Contact{})
+	if !errors.Is(err, store.ErrActiveChannelMemberPairsLimit) {
+		t.Fatalf("CanSeeForViewerUserIDs error = %v, want ErrActiveChannelMemberPairsLimit", err)
+	}
+	if memberships.batchCalls != 0 || memberships.calls != 0 {
+		t.Fatalf("membership loads = batch %d scalar %d, want fail before load", memberships.batchCalls, memberships.calls)
+	}
+}
+
+func TestDensePrivacyMembershipRejectsDerivedPairOverflowBeforeLoad(t *testing.T) {
+	memberships := &countingMemberships{active: map[int64]map[int64]bool{}}
+	svc := NewService(memory.NewPrivacyStore(), memory.NewContactStore()).ConfigureReadModels(nil, memberships)
+	chatIDs := make([]int64, 257)
+	viewerIDs := make([]int64, 256)
+	for i := range chatIDs {
+		chatIDs[i] = int64(i + 1)
+	}
+	for i := range viewerIDs {
+		viewerIDs[i] = int64(1000 + i)
+	}
+	_, err := svc.loadMembershipFacts(context.Background(), chatIDs, viewerIDs)
+	if !errors.Is(err, store.ErrActiveChannelMemberPairsLimit) {
+		t.Fatalf("loadMembershipFacts error = %v, want ErrActiveChannelMemberPairsLimit", err)
+	}
+	if memberships.batchCalls != 0 || memberships.calls != 0 {
+		t.Fatalf("membership loads = batch %d scalar %d, want fail before load", memberships.batchCalls, memberships.calls)
+	}
+}
+
+func TestLargeMembershipBatchBypassesLRUAdmissionWithoutEvictingHotPair(t *testing.T) {
+	ctx := context.Background()
+	memberships := &countingMemberships{active: map[int64]map[int64]bool{}}
+	svc := NewService(memory.NewPrivacyStore(), memory.NewContactStore()).ConfigureReadModels(nil, memberships)
+	hot := membershipKey{ChatID: 9001, UserID: 2001}
+	if _, err := svc.loadMembershipFactsForKeys(ctx, []membershipKey{hot}); err != nil {
+		t.Fatalf("warm hot membership pair: %v", err)
+	}
+	large := make([]membershipKey, store.MaxActiveChannelMemberPairs)
+	for i := range large {
+		large[i] = membershipKey{ChatID: 9002, UserID: int64(100000 + i)}
+	}
+	if _, err := svc.loadMembershipFactsForKeys(ctx, large); err != nil {
+		t.Fatalf("load large membership batch: %v", err)
+	}
+	if memberships.batchCalls != 2 || memberships.calls != 0 {
+		t.Fatalf("loads after large batch = batch %d scalar %d, want batch=2 scalar=0", memberships.batchCalls, memberships.calls)
+	}
+	if _, err := svc.loadMembershipFactsForKeys(ctx, []membershipKey{hot}); err != nil {
+		t.Fatalf("reload hot membership pair: %v", err)
+	}
+	if memberships.batchCalls != 2 || memberships.calls != 0 {
+		t.Fatalf("hot pair was evicted by non-admitted batch: batch=%d scalar=%d", memberships.batchCalls, memberships.calls)
 	}
 }

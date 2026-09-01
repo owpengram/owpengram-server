@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -12,8 +11,8 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// PhoneChangeStore 把 users.phone、账号 pts、durable event 与 dispatch outbox
-// 作为一个事务提交，避免任何一边单独可见。
+// PhoneChangeStore 在事务内更新 users.phone。updateUserPhone 没有
+// pts/pts_count，因此这里不得分配账号 PTS 或写 durable event/outbox。
 type PhoneChangeStore struct {
 	db sqlcgen.DBTX
 	q  *sqlcgen.Queries
@@ -22,8 +21,6 @@ type PhoneChangeStore struct {
 func NewPhoneChangeStore(db sqlcgen.DBTX) *PhoneChangeStore {
 	return &PhoneChangeStore{db: db, q: sqlcgen.New(db)}
 }
-
-func (*PhoneChangeStore) UsesReliableDispatch() bool { return true }
 
 func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChangeRequest) (domain.PhoneChangeResult, error) {
 	if s == nil || req.UserID == 0 || !domain.ValidPhone(req.Phone) {
@@ -79,33 +76,6 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 		}
 		return domain.PhoneChangeResult{}, fmt.Errorf("update user phone: %w", err)
 	}
-	date := req.Date
-	if date == 0 {
-		date = int(time.Now().Unix())
-	}
-	event := domain.UpdateEvent{
-		UserID:   req.UserID,
-		Type:     domain.UpdateEventUserPhone,
-		Date:     date,
-		Phone:    req.Phone,
-		PtsCount: 1,
-	}
-	event.Pts, err = reserveUserPts(ctx, tx, req.UserID, event.PtsCount)
-	if err != nil {
-		return domain.PhoneChangeResult{}, fmt.Errorf("reserve phone change pts: %w", err)
-	}
-	if err := appendUserUpdateEvent(ctx, tx, qtx, req.UserID, event); err != nil {
-		return domain.PhoneChangeResult{}, fmt.Errorf("append phone change event: %w", err)
-	}
-	if err := enqueueDispatch(ctx, qtx, sqlcgen.EnqueueDispatchParams{
-		TargetUserID:     req.UserID,
-		Pts:              int32(event.Pts),
-		EventType:        string(event.Type),
-		ExcludeAuthKeyID: authKeyIDToInt64(req.ExcludeAuthKeyID),
-		ExcludeSessionID: req.ExcludeSessionID,
-	}); err != nil {
-		return domain.PhoneChangeResult{}, fmt.Errorf("enqueue phone change dispatch: %w", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		if isUniqueConstraint(err, "users_phone_unique_idx") {
 			return domain.PhoneChangeResult{}, domain.ErrPhoneNumberOccupied
@@ -113,5 +83,5 @@ func (s *PhoneChangeStore) ChangePhone(ctx context.Context, req domain.PhoneChan
 		return domain.PhoneChangeResult{}, fmt.Errorf("commit phone change: %w", err)
 	}
 	committed = true
-	return domain.PhoneChangeResult{User: userFromModel(row), Event: event, Changed: true}, nil
+	return domain.PhoneChangeResult{User: userFromModel(row), Changed: true}, nil
 }

@@ -192,6 +192,94 @@ ON CONFLICT DO NOTHING
 	}
 }
 
+func TestDispatchOutboxAppendRacingLastHeadCompletionKeepsLaneDiscoverable(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	owner := createTestUser(t, ctx, NewUserStore(pool), "+1884"+suffix+"91", "OutboxFence", "")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
+	})
+
+	appendEvent := func(events *UpdateEventStore, date int) domain.UpdateEvent {
+		t.Helper()
+		event, err := events.AppendAllocatedWithDispatch(ctx, owner.ID, domain.UpdateEvent{
+			Type:     domain.UpdateEventDialogPinned,
+			PtsCount: 1,
+			Date:     date,
+			Peer:     domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID},
+			Bool:     true,
+		}, [8]byte{}, 0)
+		if err != nil {
+			t.Fatalf("append event: %v", err)
+		}
+		return event
+	}
+	first := appendEvent(NewUpdateEventStore(pool), 1700002900)
+	outbox := NewDispatchOutboxStore(pool, WithLeaseTimeout(time.Hour))
+	claimed := storepkg.DispatchOutboxItem{TargetUserID: owner.ID, Pts: first.Pts, Attempts: 1}
+	if err := pool.QueryRow(ctx, `
+UPDATE dispatch_outbox
+SET status='dispatching', attempts=1, updated_at=now()
+WHERE target_user_id=$1 AND pts=$2
+RETURNING id`, owner.ID, first.Pts).Scan(&claimed.ID); err != nil {
+		t.Fatalf("claim first head: %v", err)
+	}
+
+	producer, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin producer: %v", err)
+	}
+	defer func() { _ = producer.Rollback(ctx) }()
+	second := appendEvent(NewUpdateEventStore(producer), 1700002901)
+	var producerPID, sharedFences int
+	if err := producer.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&producerPID); err != nil {
+		t.Fatalf("load producer backend pid: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+SELECT count(*)
+FROM pg_locks
+WHERE locktype='advisory' AND pid=$1 AND mode='ShareLock' AND granted`, producerPID).Scan(&sharedFences); err != nil {
+		t.Fatalf("inspect producer lane fence: %v", err)
+	}
+	if sharedFences == 0 {
+		t.Fatal("producer did not retain a shared dispatch lane fence")
+	}
+
+	delivered := make(chan error, 1)
+	go func() { delivered <- outbox.MarkDelivered(ctx, claimed) }()
+	select {
+	case err := <-delivered:
+		t.Fatalf("completion crossed an uncommitted append fence: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := producer.Commit(ctx); err != nil {
+		t.Fatalf("commit producer: %v", err)
+	}
+	select {
+	case err := <-delivered:
+		if err != nil {
+			t.Fatalf("complete first head: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("completion did not resume after producer commit")
+	}
+
+	var outboxID, headID int64
+	var outboxPts, headPts int
+	if err := pool.QueryRow(ctx, `
+SELECT d.id, d.pts, h.head_id, h.head_pts
+FROM dispatch_outbox d
+JOIN dispatch_outbox_user_heads h
+  ON h.target_user_id=d.target_user_id
+WHERE d.target_user_id=$1`, owner.ID).Scan(&outboxID, &outboxPts, &headID, &headPts); err != nil {
+		t.Fatalf("load successor lane: %v", err)
+	}
+	if outboxID != headID || outboxPts != second.Pts || headPts != second.Pts {
+		t.Fatalf("successor outbox/head = %d/%d pts=%d/%d, want pts %d", outboxID, headID, outboxPts, headPts, second.Pts)
+	}
+}
+
 func TestDispatchOutboxShardClaimersAreMutuallyExclusive(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

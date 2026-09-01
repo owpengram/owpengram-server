@@ -9,3 +9,11 @@ type TempAuthKeyBinding struct {
 	ExpiresAt        int
 	EncryptedMessage []byte
 }
+
+// TempAuthKeyBindingResult is the exact auth-key default committed by the
+// temp-to-permanent binding transaction. LayerObservationID is the durable
+// ordering token; zero denotes the legacy unordered default.
+type TempAuthKeyBindingResult struct {
+	Layer              int
+	LayerObservationID int64
+}

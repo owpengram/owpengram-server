@@ -2,7 +2,9 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -127,4 +129,117 @@ func TestResolvePendingWebPageSwapsCard(t *testing.T) {
 	if got.EditDate != 0 {
 		t.Errorf("edit_date = %d, want 0 (no 'edited' marker)", got.EditDate)
 	}
+}
+
+func TestResolveExpiredPendingWebPageFailureSwapsEmpty(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	f := r.deps.Files.(*fakeFiles)
+	f.webPagePreviewOn = true
+	f.resolveWebPageFn = func(string) (domain.MessageWebPage, error) {
+		return domain.MessageWebPage{}, errors.New("dial timeout")
+	}
+
+	const url = "https://example.com/slow"
+	urlHash := domain.WebPageURLHash(url)
+	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Message:  "see " + url,
+		Entities: []tg.MessageEntityClass{&tg.MessageEntityURL{Offset: 4, Length: len(url)}},
+		RandomID: 6002,
+	})
+	if err != nil {
+		t.Fatalf("sendMessage: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+
+	err = r.resolvePendingWebPage(ctx, webPageResolveJob{
+		senderID:       owner.ID,
+		peer:           domain.Peer{Type: domain.PeerTypeUser, ID: friend.ID},
+		msgID:          msg.ID,
+		expectedID:     urlHash,
+		url:            url,
+		emptyOnFailure: true,
+	})
+	if err != nil {
+		t.Fatalf("resolvePendingWebPage(emptyOnFailure): %v", err)
+	}
+
+	got, found, err := r.lookupOwnerMessage(ctx, owner.ID, msg.ID)
+	if err != nil || !found {
+		t.Fatalf("lookupOwnerMessage: found=%v err=%v", found, err)
+	}
+	if got.Media == nil || got.Media.WebPage == nil || got.Media.WebPage.State != domain.MessageWebPageStateEmpty {
+		t.Fatalf("owner media = %+v, want empty webpage", got.Media)
+	}
+	if got.Media.WebPage.ID != urlHash {
+		t.Fatalf("empty webpage id = %d, want %d", got.Media.WebPage.ID, urlHash)
+	}
+}
+
+func TestGetMessagesExpiredPendingWebPageConvergesToEmpty(t *testing.T) {
+	ctx := context.Background()
+	r, owner, friend := newMediaTestRouter(t)
+	f := r.deps.Files.(*fakeFiles)
+	f.webPagePreviewOn = true
+	f.resolveWebPageFn = func(string) (domain.MessageWebPage, error) {
+		return domain.MessageWebPage{}, errors.New("temporary fetch failure")
+	}
+
+	const url = "https://example.com/retry"
+	urlHash := domain.WebPageURLHash(url)
+	body := "see " + url
+	entities := []tg.MessageEntityClass{&tg.MessageEntityURL{Offset: 4, Length: len(url)}}
+	updates, err := r.onMessagesSendMessage(WithUserID(ctx, owner.ID), &tg.MessagesSendMessageRequest{
+		Peer:     &tg.InputPeerUser{UserID: friend.ID, AccessHash: friend.AccessHash},
+		Message:  body,
+		Entities: entities,
+		RandomID: 6003,
+	})
+	if err != nil {
+		t.Fatalf("sendMessage: %v", err)
+	}
+	msg := newMessageFromUpdates(t, updates)
+
+	pastPending := &domain.MessageMedia{
+		Kind: domain.MessageMediaKindWebPage,
+		WebPage: &domain.MessageWebPage{
+			State: domain.MessageWebPageStatePending,
+			ID:    urlHash,
+			URL:   url,
+			Date:  int(r.clock.Now().Add(-time.Minute).Unix()),
+		},
+	}
+	if _, err := r.deps.Messages.EditMessage(ctx, owner.ID, domain.EditMessageRequest{
+		OwnerUserID: owner.ID,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: friend.ID},
+		ID:          msg.ID,
+		Message:     body,
+		Entities:    domainMessageEntities(entities),
+		Media:       pastPending,
+	}); err != nil {
+		t.Fatalf("force expired pending: %v", err)
+	}
+
+	if _, err := r.onMessagesGetMessages(WithUserID(ctx, owner.ID), []tg.InputMessageClass{&tg.InputMessageID{ID: msg.ID}}); err != nil {
+		t.Fatalf("getMessages: %v", err)
+	}
+	waitForOwnerMessageWebPageState(t, r, owner.ID, msg.ID, domain.MessageWebPageStateEmpty)
+}
+
+func waitForOwnerMessageWebPageState(t *testing.T, r *Router, ownerID int64, msgID int, want domain.MessageWebPageState) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, found, err := r.lookupOwnerMessage(context.Background(), ownerID, msgID)
+		if err == nil && found && got.Media != nil && got.Media.WebPage != nil && got.Media.WebPage.State == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, found, err := r.lookupOwnerMessage(context.Background(), ownerID, msgID)
+	if err != nil || !found || got.Media == nil || got.Media.WebPage == nil {
+		t.Fatalf("message webpage state not found: found=%v err=%v media=%+v", found, err, got.Media)
+	}
+	t.Fatalf("message webpage state = %q, want %q", got.Media.WebPage.State, want)
 }

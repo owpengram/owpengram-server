@@ -111,8 +111,9 @@ func durationMS(d time.Duration) float64 {
 }
 
 type metricSet struct {
-	mu  sync.RWMutex
-	ops map[string]*operationMetrics
+	mu     sync.RWMutex
+	ops    map[string]*operationMetrics
+	frozen bool
 }
 
 func newMetricSet(names ...string) *metricSet {
@@ -124,29 +125,56 @@ func newMetricSet(names ...string) *metricSet {
 }
 
 func (m *metricSet) observe(name string, start time.Time, err error) {
-	debugOperationError(name, err)
 	m.mu.RLock()
+	if m.frozen {
+		m.mu.RUnlock()
+		return
+	}
 	op := m.ops[name]
+	if op != nil {
+		debugOperationError(name, err)
+		op.observe(start, err)
+		m.mu.RUnlock()
+		return
+	}
 	m.mu.RUnlock()
-	if op == nil {
+	{
 		// Operation names are code-owned and finite, but retain a lock-protected
 		// fallback for optional scenarios added by the harness.
 		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.frozen {
+			return
+		}
 		op = m.ops[name]
 		if op == nil && len(m.ops) < 32 {
 			op = &operationMetrics{}
 			m.ops[name] = op
 		}
-		m.mu.Unlock()
-	}
-	if op != nil {
-		op.observe(start, err)
+		if op != nil {
+			debugOperationError(name, err)
+			op.observe(start, err)
+		}
 	}
 }
 
 func (m *metricSet) report() map[string]OperationReport {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.reportLocked()
+}
+
+// freeze returns the immutable pre-teardown operation cut. Holding the write
+// lock waits for any observer already publishing its complete metric tuple and
+// prevents later coordinated-cancel outcomes from entering the business report.
+func (m *metricSet) freeze() map[string]OperationReport {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.frozen = true
+	return m.reportLocked()
+}
+
+func (m *metricSet) reportLocked() map[string]OperationReport {
 	out := make(map[string]OperationReport, len(m.ops))
 	for name, op := range m.ops {
 		out[name] = op.report()
@@ -155,31 +183,46 @@ func (m *metricSet) report() map[string]OperationReport {
 }
 
 type RunReport struct {
-	Version                int                        `json:"version"`
-	StartedAt              time.Time                  `json:"started_at"`
-	LoadEndedAt            time.Time                  `json:"load_ended_at"`
-	FinishedAt             time.Time                  `json:"finished_at"`
-	RequestedDuration      string                     `json:"requested_duration"`
-	RecoveryDuration       string                     `json:"recovery_duration"`
-	ExpectedSessions       int                        `json:"expected_sessions"`
-	PeakReadySessions      int                        `json:"peak_ready_sessions"`
-	FinalReadySessions     int                        `json:"final_ready_sessions"`
-	SteadySamples          int                        `json:"steady_samples"`
-	SteadyReadyRatio       float64                    `json:"steady_ready_ratio"`
-	MinSteadyReadySessions int                        `json:"min_steady_ready_sessions"`
-	ConnectionAttempts     uint64                     `json:"connection_attempts"`
-	Reconnects             uint64                     `json:"reconnects"`
-	Disconnects            uint64                     `json:"disconnects"`
-	UpdatesReceived        uint64                     `json:"updates_received"`
-	DownloadedBytes        uint64                     `json:"downloaded_bytes"`
-	WorkerFatalErrors      uint64                     `json:"worker_fatal_errors"`
-	Operations             map[string]OperationReport `json:"operations"`
-	BaselineServerMetrics  map[string]float64         `json:"baseline_server_metrics,omitempty"`
-	FinalServerMetrics     map[string]float64         `json:"final_server_metrics,omitempty"`
-	ServerMetricsScrapes   uint64                     `json:"server_metrics_scrapes"`
-	ServerMetricsErrors    uint64                     `json:"server_metrics_errors"`
-	Pass                   bool                       `json:"pass"`
-	Failures               []string                   `json:"failures,omitempty"`
+	Version                  int                             `json:"version"`
+	StartOrder               string                          `json:"start_order,omitempty"`
+	StartOrderSeed           int64                           `json:"start_order_seed,omitempty"`
+	StartedAt                time.Time                       `json:"started_at"`
+	LoadEndedAt              time.Time                       `json:"load_ended_at"`
+	FinishedAt               time.Time                       `json:"finished_at"`
+	RequestedDuration        string                          `json:"requested_duration"`
+	RecoveryDuration         string                          `json:"recovery_duration"`
+	ExpectedSessions         int                             `json:"expected_sessions"`
+	PeakReadySessions        int                             `json:"peak_ready_sessions"`
+	FinalReadySessions       int                             `json:"final_ready_sessions"`
+	SteadySamples            int                             `json:"steady_samples"`
+	SteadyReadyRatio         float64                         `json:"steady_ready_ratio"`
+	MinSteadyReadySessions   int                             `json:"min_steady_ready_sessions"`
+	ConnectionAttempts       uint64                          `json:"connection_attempts"`
+	Reconnects               uint64                          `json:"reconnects"`
+	Disconnects              uint64                          `json:"disconnects"`
+	UpdatesReceived          uint64                          `json:"updates_received"`
+	DownloadedBytes          uint64                          `json:"downloaded_bytes"`
+	WorkerFatalErrors        uint64                          `json:"worker_fatal_errors"`
+	MessageRatePerSecond     float64                         `json:"message_rate_per_second"`
+	MessageScheduled         uint64                          `json:"message_scheduled"`
+	MessageEnqueued          uint64                          `json:"message_enqueued"`
+	MessageCompleted         uint64                          `json:"message_completed"`
+	MessageQueueFull         uint64                          `json:"message_queue_full"`
+	MessageNotReady          uint64                          `json:"message_not_ready"`
+	Delivery                 DeliveryReport                  `json:"delivery"`
+	Operations               map[string]OperationReport      `json:"operations"`
+	ResponseBytes            map[string]StartupResponseBytes `json:"response_bytes,omitempty"`
+	RPCDeliveryOutcomes      map[string]map[string]uint64    `json:"rpc_delivery_outcomes,omitempty"`
+	DatabaseWork             map[string]StartupDatabaseWork  `json:"database_work,omitempty"`
+	BaselineServerMetrics    map[string]float64              `json:"baseline_server_metrics,omitempty"`
+	WorkloadEndServerMetrics map[string]float64              `json:"workload_end_server_metrics,omitempty"`
+	FinalServerMetrics       map[string]float64              `json:"final_server_metrics,omitempty"`
+	ServerMetricsScrapes     uint64                          `json:"server_metrics_scrapes"`
+	ServerMetricsErrors      uint64                          `json:"server_metrics_errors"`
+	EventsWritten            uint64                          `json:"events_written"`
+	EventsDropped            uint64                          `json:"events_dropped"`
+	Pass                     bool                            `json:"pass"`
+	Failures                 []string                        `json:"failures,omitempty"`
 }
 
 func WriteReport(path string, report *RunReport) error {
@@ -191,11 +234,17 @@ func WriteReport(path string, report *RunReport) error {
 }
 
 type eventWriter struct {
-	mu      sync.Mutex
-	f       *os.File
-	written uint64
-	dropped uint64
+	mu                    sync.Mutex
+	f                     *os.File
+	written               uint64
+	dropped               uint64
+	connectionDeadWritten uint64
 }
+
+const (
+	maxEventLines               = 100000
+	maxConnectionDeadEventLines = 5000
+)
 
 func newEventWriter(path string) (*eventWriter, error) {
 	if path == "" {
@@ -220,7 +269,15 @@ func (w *eventWriter) write(value any) {
 		return
 	}
 	w.mu.Lock()
-	if w.written >= 10000 {
+	if event, ok := value.(map[string]any); ok && event["type"] == "connection_dead" {
+		if w.connectionDeadWritten >= maxConnectionDeadEventLines {
+			w.dropped++
+			w.mu.Unlock()
+			return
+		}
+		w.connectionDeadWritten++
+	}
+	if w.written >= maxEventLines {
 		w.dropped++
 		w.mu.Unlock()
 		return
@@ -228,6 +285,16 @@ func (w *eventWriter) write(value any) {
 	_, _ = w.f.Write(append(data, '\n'))
 	w.written++
 	w.mu.Unlock()
+}
+
+func (w *eventWriter) counts() (written, dropped uint64) {
+	if w == nil {
+		return 0, 0
+	}
+	w.mu.Lock()
+	written, dropped = w.written, w.dropped
+	w.mu.Unlock()
+	return written, dropped
 }
 
 func (w *eventWriter) close() error {

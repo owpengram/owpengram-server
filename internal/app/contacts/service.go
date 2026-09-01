@@ -133,10 +133,17 @@ func (s *Service) AddContact(ctx context.Context, userID int64, input domain.Con
 	if input.FirstName == "" && input.LastName == "" {
 		return domain.Contact{}, ErrContactNameEmpty
 	}
-	// Android 的 contacts.addContact 会提交带 "+" 前缀的号码（TDesktop 传纯数字或空），
-	// 归一成纯数字。空串表示客户端只按 user id 添加联系人，必须原样保留；
+	// Android 的 contacts.addContact 会提交带 "+" 前缀的号码（TDesktop 传纯数字或空）。
+	// 可解析的完整号码写成与账号相同的 E.164 identity；无法解析的本地名片号码只
+	// 保留展示 digits，绝不能拿它做账号选择。空串表示客户端只按 user id 添加联系人，必须原样保留；
 	// TL 明确允许省略号码，服务端不得从 target 全局资料反向补出隐私号码。
-	input.Phone = digitsOnly(input.Phone)
+	if input.Phone != "" {
+		if canonical := domain.NormalizePhone(input.Phone); canonical != "" {
+			input.Phone = canonical
+		} else {
+			input.Phone = digitsOnly(input.Phone)
+		}
+	}
 	if s.users != nil {
 		_, found, err := s.users.ByID(ctx, input.ContactUserID)
 		if err != nil {
@@ -222,7 +229,7 @@ func (s *Service) ImportContacts(ctx context.Context, userID int64, inputs []dom
 	phones := make([]string, 0, len(inputs))
 	seenPhones := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
-		phone := normalizePhone(input.Phone)
+		phone := domain.NormalizePhone(input.Phone)
 		if phone == "" {
 			continue
 		}
@@ -354,7 +361,7 @@ func (s *Service) Search(ctx context.Context, userID int64, query string, limit 
 	}
 	phoneQuery := ""
 	if isPhoneSearchQuery(query) {
-		phoneQuery = normalizePhone(query)
+		phoneQuery = normalizePhoneQuery(query)
 	}
 	res, err := s.users.Search(ctx, userID, query, phoneQuery, limit)
 	if err != nil {
@@ -686,7 +693,7 @@ func digitsOnly(phone string) string {
 	return b.String()
 }
 
-func normalizePhone(phone string) string {
+func normalizePhoneQuery(phone string) string {
 	if !utf8.ValidString(phone) {
 		return ""
 	}

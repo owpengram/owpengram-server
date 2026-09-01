@@ -201,7 +201,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/bots/create", s.authenticated(s.handleCreateBot))
 	mux.HandleFunc("POST /v1/broadcasts/create", s.authenticated(s.handleCreateBroadcast))
 	mux.HandleFunc("POST /v1/bots/delete", s.authenticated(s.handleDeleteBot))
-	mux.HandleFunc("POST /v1/bots/export-token", s.authenticated(s.handleExportBotToken))
+	mux.HandleFunc("POST /v1/bots/export-token", s.authorized(PermissionBotTokenRead, s.handleExportBotToken))
 	mux.HandleFunc("POST /v1/messages/delete", s.authenticated(s.handleDeleteMessages))
 	mux.HandleFunc("POST /v1/messages/delete-history", s.authenticated(s.handleDeleteHistory))
 	mux.HandleFunc("POST /v1/stickers/set-archived", s.authenticated(s.handleSetStickerSetArchived))
@@ -390,35 +390,13 @@ func (s *Server) handleSetLoginEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetAccountAvatar(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxAccountAvatarBytes+(1<<20))
-	if err := r.ParseMultipartForm(1 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
-		return
-	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
-	}
 	var req admin.SetAccountAvatarRequest
-	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data) {
 		return
 	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "avatar file is required")
+	if !decodeMultipartMetadata(w, r, &req) {
 		return
 	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarBytes+1))
-	if err != nil || len(data) == 0 || int64(len(data)) > admin.MaxAccountAvatarBytes {
-		writeError(w, http.StatusBadRequest, "avatar file is empty or too large")
-		return
-	}
-	req.FileName = header.Filename
-	req.Data = data
 	result, err := s.svc.SetAccountAvatar(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
@@ -446,37 +424,54 @@ func (s *Server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetChannelAvatar(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
+	var req admin.SetChannelAvatarRequest
+	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data) {
+		return
+	}
+	if !decodeMultipartMetadata(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetChannelAvatar(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// decodeAvatarUpload parses a multipart avatar-upload form shared by the
+// account and channel avatar endpoints, reading the uploaded file into data.
+func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, fileName *string, data *[]byte) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxAccountAvatarBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
-		return
+		return false
 	}
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	var req admin.SetChannelAvatarRequest
-	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
-		return
-	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "avatar file is required")
-		return
+		return false
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarBytes+1))
-	if err != nil || len(data) == 0 || int64(len(data)) > admin.MaxAccountAvatarBytes {
+	raw, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarBytes+1))
+	if err != nil || len(raw) == 0 || int64(len(raw)) > admin.MaxAccountAvatarBytes {
 		writeError(w, http.StatusBadRequest, "avatar file is empty or too large")
-		return
+		return false
 	}
-	req.FileName = header.Filename
-	req.Data = data
-	result, err := s.svc.SetChannelAvatar(r.Context(), req)
-	writeCommandResult(w, result, err)
+	*fileName = header.Filename
+	*data = raw
+	return true
+}
+
+// decodeMultipartMetadata decodes the JSON "metadata" form field of a
+// multipart upload into dst, rejecting unknown fields.
+func decodeMultipartMetadata(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleSetUserColor(w http.ResponseWriter, r *http.Request) {
@@ -634,7 +629,7 @@ func (s *Server) handleDeleteStickerSet(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleCreateStickerSet(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxStickerMaterialDocumentSize+(1<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxStickerMaterialDocumentSize+(2<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return
@@ -668,7 +663,7 @@ func (s *Server) handleCreateStickerSet(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleAddStickerToSet(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxStickerMaterialDocumentSize+(1<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxStickerMaterialDocumentSize+(2<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return

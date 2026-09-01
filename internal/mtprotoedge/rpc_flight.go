@@ -9,7 +9,11 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 )
 
-const rpcResultFlightDefaultMaxPending = 8192
+// A 10,000-session startup can transiently retain more than one scheduled RPC
+// per connection while downstream reads drain. Request materialization remains
+// bounded independently by RPCGlobalMaxBytes, so this count limit provides
+// queue/owner headroom without turning the scheduler into an unbounded queue.
+const rpcResultFlightDefaultMaxPending = 32768
 
 var (
 	// ErrRPCResultFlightCapacity is returned before installing a new owner when

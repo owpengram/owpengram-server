@@ -15,18 +15,6 @@ import (
 	"telesrv/internal/store"
 )
 
-type reliablePhoneChangeDispatcher interface {
-	UsesReliableDispatch() bool
-}
-
-func (s *Service) PhoneChangeUsesReliableDispatch() bool {
-	if s == nil {
-		return false
-	}
-	reporter, ok := s.phoneChanges.(reliablePhoneChangeDispatcher)
-	return ok && reporter.UsesReliableDispatch()
-}
-
 // SendChangePhoneCode 创建只允许当前 user + perm auth_key 消费的改号验证码。
 // CodeStore 会按 purpose+user+auth_key+phone 原子轮换：同一作用域的新请求
 // 立即使旧 hash 失效，避免 Android 返回重进页面时留下并行有效验证码。

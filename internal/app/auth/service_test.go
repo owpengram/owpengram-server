@@ -48,7 +48,7 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 		t.Fatalf("encrypt bind message: %v", err)
 	}
 
-	err = svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
+	_, err = svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
 		TempAuthKeyID:    tempKey.ID,
 		PermAuthKeyID:    permKey.IntID(),
 		Nonce:            nonce,
@@ -59,7 +59,7 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 		t.Fatalf("BindTempAuthKey valid message: %v", err)
 	}
 
-	err = svc.BindTempAuthKey(ctx, sessionID+1, domain.TempAuthKeyBinding{
+	_, err = svc.BindTempAuthKey(ctx, sessionID+1, domain.TempAuthKeyBinding{
 		TempAuthKeyID:    tempKey.ID,
 		PermAuthKeyID:    permKey.IntID(),
 		Nonce:            nonce,
@@ -89,7 +89,7 @@ func TestBindTempAuthKeyValidatesEncryptedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encrypt extended bind message: %v", err)
 	}
-	err = svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
+	_, err = svc.BindTempAuthKey(ctx, sessionID, domain.TempAuthKeyBinding{
 		TempAuthKeyID:    tempKey.ID,
 		PermAuthKeyID:    permKey.IntID(),
 		Nonce:            nonce,
@@ -120,17 +120,17 @@ func TestBindTempAuthKeyClassifiesExpiryWithoutDestroyingPermanentKey(t *testing
 		PermAuthKeyID: permKey.IntID(),
 		ExpiresAt:     int(time.Now().Add(time.Hour).Unix()),
 	}
-	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
+	if _, err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
 		t.Fatalf("expired protocol temp key err = %v, want ErrTempAuthKeyEmpty", err)
 	}
 
 	request.TempAuthKeyID = testAuthKey(0x33).ID
-	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
+	if _, err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrTempAuthKeyEmpty) {
 		t.Fatalf("missing protocol temp key err = %v, want ErrTempAuthKeyEmpty", err)
 	}
 
 	request.ExpiresAt = int(time.Now().Add(-time.Second).Unix())
-	if err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrExpiresAtInvalid) {
+	if _, err := svc.BindTempAuthKey(ctx, 1001, request); !errors.Is(err, ErrExpiresAtInvalid) {
 		t.Fatalf("expired request proof err = %v, want ErrExpiresAtInvalid", err)
 	}
 }
@@ -346,6 +346,59 @@ func TestAuthorizationBindRejectsTemporaryProtocolKey(t *testing.T) {
 	}
 }
 
+func TestDeletedUserCannotCrossAuthorizationBoundaries(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	deleted, err := users.Create(ctx, domain.User{
+		Deleted:        true,
+		DeletedAt:      time.Now().Unix(),
+		DeletionSource: domain.AccountDeletionManual,
+	})
+	if err != nil {
+		t.Fatalf("create deleted user: %v", err)
+	}
+	svc := NewService(users, authz, memory.NewCodeStore(), nil, nil, "12345")
+
+	passkeyAuthKeyID := [8]byte{0x91}
+	if _, err := svc.BindVerifiedLogin(ctx, domain.Authorization{AuthKeyID: passkeyAuthKeyID}, deleted.ID); !errors.Is(err, ErrSystemUserLoginForbidden) {
+		t.Fatalf("BindVerifiedLogin deleted user err = %v, want ErrSystemUserLoginForbidden", err)
+	}
+	if _, found, err := authz.ByAuthKey(ctx, passkeyAuthKeyID); err != nil || found {
+		t.Fatalf("deleted passkey authorization found=%v err=%v, want absent", found, err)
+	}
+
+	qrAuthKeyID := [8]byte{0x92}
+	if _, err := svc.AcceptLoginToken(ctx, domain.Authorization{AuthKeyID: qrAuthKeyID}, deleted.ID); !errors.Is(err, ErrSystemUserLoginForbidden) {
+		t.Fatalf("AcceptLoginToken deleted user err = %v, want ErrSystemUserLoginForbidden", err)
+	}
+	if _, found, err := authz.ByAuthKey(ctx, qrAuthKeyID); err != nil || found {
+		t.Fatalf("deleted QR authorization found=%v err=%v, want absent", found, err)
+	}
+
+	staleAuthKeyID := [8]byte{0x93}
+	if err := authz.Bind(ctx, domain.Authorization{AuthKeyID: staleAuthKeyID, UserID: deleted.ID}); err != nil {
+		t.Fatalf("seed stale authorization: %v", err)
+	}
+	if userID, found, err := svc.UserID(ctx, staleAuthKeyID); err != nil || found || userID != 0 {
+		t.Fatalf("UserID stale tombstone = %d found=%v err=%v, want unauthorized", userID, found, err)
+	}
+	if _, found, err := authz.ByAuthKey(ctx, staleAuthKeyID); err != nil || found {
+		t.Fatalf("stale tombstone authorization found=%v err=%v, want retired", found, err)
+	}
+
+	pendingAuthKeyID := [8]byte{0x94}
+	if err := authz.Bind(ctx, domain.Authorization{AuthKeyID: pendingAuthKeyID, UserID: deleted.ID, PasswordPending: true}); err != nil {
+		t.Fatalf("seed stale pending authorization: %v", err)
+	}
+	if err := svc.CompletePasswordSignIn(ctx, pendingAuthKeyID, deleted.ID); !errors.Is(err, ErrSystemUserLoginForbidden) {
+		t.Fatalf("CompletePasswordSignIn deleted user err = %v, want ErrSystemUserLoginForbidden", err)
+	}
+	if _, found, err := authz.ByAuthKey(ctx, pendingAuthKeyID); err != nil || found {
+		t.Fatalf("stale pending tombstone authorization found=%v err=%v, want retired", found, err)
+	}
+}
+
 func TestPhoneCodeAcceptsTDesktopDigitsOnlySignIn(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()
@@ -374,6 +427,100 @@ func TestPhoneCodeAcceptsTDesktopDigitsOnlySignIn(t *testing.T) {
 	}
 	if u.ID != domain.UserIDSequenceBase {
 		t.Fatalf("created user id = %d, want base %d", u.ID, domain.UserIDSequenceBase)
+	}
+}
+
+func TestVirtual888PhoneRegistersAndSignsIn(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	delivery := &captureLoginCodeDelivery{}
+	svc := NewService(
+		users,
+		authz,
+		memory.NewCodeStore(),
+		nil,
+		nil,
+		"12345",
+		WithLoginCodeDelivery(delivery),
+	)
+	const (
+		formatted = "+888 12-34"
+		canonical = "8881234"
+	)
+
+	firstHash, err := svc.SendCode(ctx, formatted)
+	if err != nil {
+		t.Fatalf("SendCode virtual phone: %v", err)
+	}
+	verifyCodeForSignUp(t, svc, canonical, firstHash, "12345")
+	created, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: [8]byte{0x54}}, formatted, firstHash, "Virtual", "User")
+	if err != nil {
+		t.Fatalf("SignUp virtual phone: %v", err)
+	}
+	if created.Phone != canonical {
+		t.Fatalf("created phone = %q, want %q", created.Phone, canonical)
+	}
+
+	secondHash, err := svc.SendCode(ctx, canonical)
+	if err != nil {
+		t.Fatalf("SendCode existing virtual phone: %v", err)
+	}
+	signedIn, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: [8]byte{0x55}}, formatted, secondHash, "12345")
+	if err != nil {
+		t.Fatalf("SignIn virtual phone: %v", err)
+	}
+	if needSignUp || signedIn.ID != created.ID {
+		t.Fatalf("SignIn user=%d needSignUp=%v, want existing user %d", signedIn.ID, needSignUp, created.ID)
+	}
+}
+
+func TestIranNationalTrunkVariantsShareOneAccountIdentity(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	authz := memory.NewAuthorizationStore()
+	delivery := &captureLoginCodeDelivery{}
+	svc := NewService(
+		users,
+		authz,
+		memory.NewCodeStore(),
+		nil,
+		nil,
+		"12345",
+		WithLoginCodeDelivery(delivery),
+	)
+	const (
+		withNationalTrunk = "+98 0998 167 9461"
+		international     = "989981679461"
+		canonical         = "989981679461"
+	)
+
+	firstHash, err := svc.SendCode(ctx, withNationalTrunk)
+	if err != nil {
+		t.Fatalf("SendCode trunk variant: %v", err)
+	}
+	verifyCodeForSignUp(t, svc, international, firstHash, "12345")
+	created, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: [8]byte{1}}, international, firstHash, "Iran", "User")
+	if err != nil {
+		t.Fatalf("SignUp international variant: %v", err)
+	}
+	if created.Phone != canonical {
+		t.Fatalf("created phone = %q, want %q", created.Phone, canonical)
+	}
+
+	secondHash, err := svc.SendCode(ctx, international)
+	if err != nil {
+		t.Fatalf("SendCode existing international variant: %v", err)
+	}
+	signedIn, _, needSignUp, err := svc.SignIn(ctx, domain.Authorization{AuthKeyID: [8]byte{2}}, withNationalTrunk, secondHash, "12345")
+	if err != nil {
+		t.Fatalf("SignIn trunk variant: %v", err)
+	}
+	if needSignUp || signedIn.ID != created.ID {
+		t.Fatalf("SignIn user=%d needSignUp=%v, want existing user %d", signedIn.ID, needSignUp, created.ID)
+	}
+	if got, found, err := users.ByPhone(ctx, canonical); err != nil || !found || got.ID != created.ID {
+		t.Fatalf("canonical lookup user=%+v found=%v err=%v", got, found, err)
 	}
 }
 
@@ -809,7 +956,10 @@ func TestSignInExistingTwoFactorAccountNeedsPassword(t *testing.T) {
 		t.Fatalf("PendingPasswordUserID = %d pending=%v err=%v, want %d", pendingUID, pending, err, u.ID)
 	}
 	// 两步验证通过后转为完全授权。
-	if err := svc.CompletePasswordSignIn(ctx, key); err != nil {
+	if err := svc.CompletePasswordSignIn(ctx, key, 0); !errors.Is(err, store.ErrAuthorizationStateChanged) {
+		t.Fatalf("CompletePasswordSignIn without expected user err=%v, want authorization state changed", err)
+	}
+	if err := svc.CompletePasswordSignIn(ctx, key, u.ID); err != nil {
 		t.Fatalf("CompletePasswordSignIn: %v", err)
 	}
 	bound, found, err = svc.UserID(ctx, key)

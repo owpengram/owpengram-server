@@ -114,9 +114,9 @@ func TestCachedRawSessionWithoutMetadataFailsClosedToDurableResolver(t *testing.
 	}
 }
 
-// TestTempKeyResolveCacheHitsWithinTTL 验证：TempKeyResolveCacheTTL>0 时，同一 temp key 的连续
-// 请求在 TTL 内只解析一次（首帧走 !hasCached 解析 1 次、次帧 hasCached 解析并填缓存 1 次，之后命中
-// 缓存不再打 ResolveAuthKey）。固化「缓存生效」语义，与现有「TTL=0 每帧重校验」的安全测试互补。
+// TestTempKeyResolveCacheHitsWithinTTL verifies that the first authoritative
+// positive resolution fills the shared cache; later frames do not need a
+// second session-binder-specific warmup lookup.
 func TestTempKeyResolveCacheHitsWithinTTL(t *testing.T) {
 	tempAuthKeyID := [8]byte{0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77}
 	permAuthKeyID := [8]byte{0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33}
@@ -141,13 +141,38 @@ func TestTempKeyResolveCacheHitsWithinTTL(t *testing.T) {
 			t.Fatalf("dispatch %d: %v", i, err)
 		}
 	}
-	// 首帧 !hasCached 解析 1 次；次帧 hasCached miss 解析 1 次并填缓存；其余 6 帧命中缓存。
-	if auth.resolveCount != 2 {
-		t.Fatalf("ResolveAuthKey calls = %d over 8 dispatches, want 2 (cached within TTL)", auth.resolveCount)
+	if auth.resolveCount != 1 {
+		t.Fatalf("ResolveAuthKey calls = %d over 8 dispatches, want 1 (first positive result cached)", auth.resolveCount)
 	}
 	got := sessions.snapshot()
 	if got.authKeyID != permAuthKeyID || got.userID != 1000000001 {
 		t.Fatalf("session = auth %x user %d, want perm/user", got.authKeyID, got.userID)
+	}
+}
+
+func TestSuccessfulBindSeedsPositiveIdentityCache(t *testing.T) {
+	rawAuthKeyID := [8]byte{0x7b, 1}
+	permAuthKeyID := [8]byte{0x4b, 1}
+	const sessionID = int64(557)
+	auth := &captureAuthService{}
+	r := New(Config{TempKeyResolveCacheTTL: time.Minute}, Deps{
+		Auth:     auth,
+		Sessions: &captureSessions{},
+	}, zaptest.NewLogger(t), clock.System)
+	ctx := WithAuthKeyID(WithSessionID(WithRawAuthKeyID(context.Background(), rawAuthKeyID), sessionID), rawAuthKeyID)
+	ctx = r.WithLayerRPCProfileEvidenceFresh(ctx, true)
+	ok, err := r.onAuthBindTempAuthKey(ctx, &tg.AuthBindTempAuthKeyRequest{
+		PermAuthKeyID: businessAuthKeyInt64(permAuthKeyID),
+	})
+	if err != nil || !ok {
+		t.Fatalf("bind = (%v,%v), want (true,nil)", ok, err)
+	}
+	resolved, found, err := r.resolveAuthKeyCached(context.Background(), rawAuthKeyID)
+	if err != nil || !found || resolved != permAuthKeyID {
+		t.Fatalf("cached binding = (%x,%v,%v), want (%x,true,nil)", resolved, found, err, permAuthKeyID)
+	}
+	if auth.resolveCount != 0 {
+		t.Fatalf("post-bind ResolveAuthKey calls = %d, want 0", auth.resolveCount)
 	}
 }
 

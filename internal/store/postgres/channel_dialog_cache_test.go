@@ -67,6 +67,26 @@ func TestChannelDialogCachePutGetDeleteFlushAndClone(t *testing.T) {
 	}
 }
 
+func TestChannelDialogCacheSeparatesAuthoritativeListProjection(t *testing.T) {
+	c := NewChannelDialogCache(16)
+	dialog := domain.ChannelDialog{UserID: 10, ChannelID: 20, TopMessageID: 9}
+	c.put(dialog)
+	if _, ok := c.getListProjection(10, 20); ok {
+		t.Fatal("single-channel cache entry without active-list proof must not enter getDialogs")
+	}
+	epoch := c.cacheEpoch()
+	c.putListProjectionIfEpoch(dialog, true, true, true, epoch)
+	entry, ok := c.getListProjection(10, 20)
+	if !ok || !entry.listVisible || !entry.topMentioned || !entry.topMediaUnread || !entry.topUnreadProjected {
+		t.Fatalf("list projection = %+v,%v", entry, ok)
+	}
+	entry.dialog.TopMessageID = 99
+	again, ok := c.getListProjection(10, 20)
+	if !ok || again.dialog.TopMessageID != 9 {
+		t.Fatalf("list projection clone isolation = %+v,%v", again, ok)
+	}
+}
+
 func TestChannelDialogCacheDeleteChannelAndCap(t *testing.T) {
 	c := NewChannelDialogCache(2)
 	c.put(domain.ChannelDialog{UserID: 1, ChannelID: 10, TopMessageID: 1})

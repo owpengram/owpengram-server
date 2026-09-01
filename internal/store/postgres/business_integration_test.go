@@ -296,6 +296,46 @@ func TestBusinessStoresRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHasBusinessAutomationUsesConfiguredGreetingOrAwayState(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	suffix := randomSuffix(t)
+	owner, err := NewUserStore(pool).Create(ctx, domain.User{
+		AccessHash: 51,
+		Phone:      "+1999" + suffix + "01",
+		FirstName:  "AutomationOwner",
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", owner.ID)
+	})
+
+	business := NewPasswordStore(pool)
+	if got, err := business.HasBusinessAutomation(ctx, owner.ID); err != nil || got {
+		t.Fatalf("empty HasBusinessAutomation = %v, %v; want false, nil", got, err)
+	}
+	if err := business.SaveBusinessProfile(ctx, domain.BusinessProfile{
+		UserID: owner.ID,
+		Intro:  &domain.BusinessIntro{Title: "profile only"},
+	}); err != nil {
+		t.Fatalf("save non-automation profile: %v", err)
+	}
+	if got, err := business.HasBusinessAutomation(ctx, owner.ID); err != nil || got {
+		t.Fatalf("profile-only HasBusinessAutomation = %v, %v; want false, nil", got, err)
+	}
+	if err := business.SaveBusinessProfile(ctx, domain.BusinessProfile{
+		UserID:   owner.ID,
+		Greeting: &domain.BusinessGreetingMessage{ShortcutID: 7},
+	}); err != nil {
+		t.Fatalf("save greeting profile: %v", err)
+	}
+	if got, err := business.HasBusinessAutomation(ctx, owner.ID); err != nil || !got {
+		t.Fatalf("greeting HasBusinessAutomation = %v, %v; want true, nil", got, err)
+	}
+}
+
 func randomSuffix(t *testing.T) string {
 	t.Helper()
 	var b [4]byte

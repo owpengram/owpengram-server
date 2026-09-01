@@ -56,6 +56,27 @@ func (c *ChannelMemberCache) put(member domain.ChannelMember) {
 	c.cache.Store(channelMemberCacheKey{channelID: member.ChannelID, userID: member.UserID}, member)
 }
 
+func (c *ChannelMemberCache) cacheEpoch() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.cache.LoadEpoch()
+}
+
+// putIfEpoch prevents a materialized owner snapshot that raced a membership
+// invalidation from restoring stale access rights after the listener advanced
+// the cache epoch.
+func (c *ChannelMemberCache) putIfEpoch(member domain.ChannelMember, loadEpoch uint64) {
+	if c == nil || member.ChannelID == 0 || member.UserID == 0 {
+		return
+	}
+	c.cache.StoreIfEpoch(
+		channelMemberCacheKey{channelID: member.ChannelID, userID: member.UserID},
+		member,
+		loadEpoch,
+	)
+}
+
 func (c *ChannelMemberCache) delete(channelID, userID int64) {
 	if c == nil || channelID == 0 || userID == 0 {
 		return

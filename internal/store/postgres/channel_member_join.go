@@ -126,6 +126,9 @@ WHERE channel_id = $1 AND user_id = $2`, channelID, userID, member.ReadInboxMaxI
 	if err := refreshChannelUnreadReactionsCountTx(ctx, tx, userID, channelID); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
+	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channelID, []domain.ChannelMember{member}); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.CreateChannelResult{}, fmt.Errorf("commit join channel: %w", err)
 	}
@@ -240,6 +243,9 @@ WHERE id = $1`, channelID, channel.CreatorUserID, adminsDelta); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
 	if err := clearChannelMentionsForUserTx(ctx, tx, channelID, userID); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
+	if err := deleteWelcomeMessageDeliveriesTx(ctx, tx, channelID, []int64{userID}); err != nil {
 		return domain.CreateChannelResult{}, err
 	}
 	var msg domain.ChannelMessage

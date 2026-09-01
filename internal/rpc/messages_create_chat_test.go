@@ -53,8 +53,8 @@ func TestMessagesCreateChatCreatesMegagroupAndDialogsRPC(t *testing.T) {
 		t.Fatalf("updates len = %d, want create/invite service messages plus channel refreshes", len(updates.Updates))
 	}
 	newMsg, ok := updates.Updates[0].(*tg.UpdateNewChannelMessage)
-	if !ok || newMsg.Pts != 1 || newMsg.PtsCount != 1 {
-		t.Fatalf("create update = %#v, want channel pts=1", updates.Updates[0])
+	if !ok || newMsg.Pts != domain.FirstChannelEventPts || newMsg.PtsCount != 1 {
+		t.Fatalf("create update = %#v, want channel pts=2", updates.Updates[0])
 	}
 	if refresh, ok := updates.Updates[1].(*tg.UpdateChannel); !ok || refresh.ChannelID != channel.ID {
 		t.Fatalf("create refresh = %#v, want channel refresh", updates.Updates[1])
@@ -67,8 +67,8 @@ func TestMessagesCreateChatCreatesMegagroupAndDialogsRPC(t *testing.T) {
 		t.Fatalf("service action = %T, want channel create", service.Action)
 	}
 	inviteMsg, ok := updates.Updates[2].(*tg.UpdateNewChannelMessage)
-	if !ok || inviteMsg.Pts != 2 || inviteMsg.PtsCount != 1 {
-		t.Fatalf("invite update = %#v, want channel pts=2", updates.Updates[2])
+	if !ok || inviteMsg.Pts != 3 || inviteMsg.PtsCount != 1 {
+		t.Fatalf("invite update = %#v, want channel pts=3", updates.Updates[2])
 	}
 	if refresh, ok := updates.Updates[3].(*tg.UpdateChannel); !ok || refresh.ChannelID != channel.ID {
 		t.Fatalf("invite refresh = %#v, want channel refresh", updates.Updates[3])
@@ -296,8 +296,8 @@ func TestMessagesCreateChatCreatesOwnerOnlyMegagroupRPC(t *testing.T) {
 				t.Fatalf("updates len = %d, want create service message + channel refresh only", len(updates.Updates))
 			}
 			created, ok := updates.Updates[0].(*tg.UpdateNewChannelMessage)
-			if !ok || created.Pts != 1 || created.PtsCount != 1 {
-				t.Fatalf("create update = %#v, want pts=1/count=1", updates.Updates[0])
+			if !ok || created.Pts != domain.FirstChannelEventPts || created.PtsCount != 1 {
+				t.Fatalf("create update = %#v, want pts=2/count=1", updates.Updates[0])
 			}
 			createdMessage, ok := created.Message.(*tg.MessageService)
 			if !ok {
@@ -400,9 +400,13 @@ func TestMessagesCreateChatCreatesOwnerOnlyMegagroupRPC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("getChannelDifference from pts=0: %v", err)
 			}
-			fullDifference, ok := difference.(*tg.UpdatesChannelDifference)
-			if !ok || fullDifference.Pts != 1 || len(fullDifference.NewMessages) != 1 {
-				t.Fatalf("difference = %T %+v, want creation event at pts=1", difference, difference)
+			fullDifference, ok := difference.(*tg.UpdatesChannelDifferenceTooLong)
+			if !ok {
+				t.Fatalf("difference = %T %+v, want baseline-gap snapshot at pts=2", difference, difference)
+			}
+			differenceDialog, dialogOK := fullDifference.Dialog.(*tg.Dialog)
+			if !dialogOK || differenceDialog.Pts != domain.FirstChannelEventPts || len(fullDifference.Messages) != 1 {
+				t.Fatalf("difference = %T %+v, want baseline-gap snapshot at pts=2", difference, difference)
 			}
 		})
 	}

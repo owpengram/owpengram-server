@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap"
 
@@ -14,9 +15,9 @@ import (
 // 私聊端对端加密（Secret Chat / encrypted chat）握手 RPC handler。状态机与 DH 校验
 // 归 app/secretchat；本文件只做鉴权、入参校验、TL 转换与在线推送编排。
 //
-// P0 范围：requestEncryption / acceptEncryption / discardEncryption 的握手闭环 +
-// updateEncryption 在线推送（账号级 pushUserMessage，与 phone 同套）。设备级定向、
-// durable 离线 getDifference 补偿、qts 消息投递（sendEncrypted 等）见 P1，
+// requestEncryption / acceptEncryption / discardEncryption 的握手闭环 +
+// updateEncryption 在线设备定向、durable 离线 getDifference 补偿与输家设备收敛；
+// qts 消息投递（sendEncrypted 等）见 encrypted_messages.go，
 // 设计 docs/secret-chat-module.md。服务端是盲中继，永不接触共享密钥与明文。
 
 // secretChatErr 把 app/secretchat + domain 业务错误映射为 RPC_ERROR。
@@ -28,6 +29,8 @@ func secretChatErr(err error) error {
 		return encryptionAlreadyAcceptedErr()
 	case errors.Is(err, domain.ErrSecretChatAlreadyDeclined):
 		return encryptionAlreadyDeclinedErr()
+	case errors.Is(err, domain.ErrSecretChatRandomIDDuplicate):
+		return secretChatRandomIDDuplicateErr()
 	case errors.Is(err, domain.ErrSecretChatNotFound):
 		return chatIDInvalidErr()
 	default:
@@ -56,9 +59,9 @@ func businessAuthKeyIDFrom(ctx context.Context) (int64, bool) {
 	return businessAuthKeyInt64(id), true
 }
 
-// pushUpdateEncryption 把 targetUserID 视角的 updateEncryption 推给其全部在线设备。
-// P0 用账号级在线推送（设备级定向 + 离线补偿见 P1）。
-func (r *Router) pushUpdateEncryption(ctx context.Context, targetUserID int64, chat domain.SecretChat, logMessage string) {
+// pushUpdateEncryption 把 updateEncryption 投给目标账号或精确绑定设备。targetAuthKeyID=0
+// 仅允许用于 accept 前邀请/撤回；accept 后必须非零，缺少定向 binder 时 fail-closed。
+func (r *Router) pushUpdateEncryption(ctx context.Context, targetUserID, targetAuthKeyID int64, chat domain.SecretChat, logMessage string) {
 	now := int(r.clock.Now().Unix())
 	upd := &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateEncryption{
@@ -70,7 +73,45 @@ func (r *Router) pushUpdateEncryption(ctx context.Context, targetUserID int64, c
 		Date:  now,
 		Seq:   0,
 	}
-	r.pushUserMessage(ctx, targetUserID, logMessage, upd)
+	if targetAuthKeyID == 0 {
+		r.pushUserMessage(ctx, targetUserID, logMessage, upd)
+		return
+	}
+	if targeted, ok := r.deps.Sessions.(AuthKeyTargetedSessionBinder); ok {
+		_, _ = targeted.PushToUserAuthKey(ctx, targetUserID, deviceAuthKeyBytes(targetAuthKeyID), proto.MessageFromServer, upd)
+		return
+	}
+	r.log.Error("secret chat targeted session binder unavailable",
+		zap.String("update", logMessage),
+		zap.Int64("target_user_id", targetUserID),
+		zap.Int64("target_auth_key_id", targetAuthKeyID))
+}
+
+// pushAcceptedLoserDiscarded 让 participant 账号中除获胜 business auth key 外的在线设备
+// 删除 requested 幽灵。离线/未就绪设备由 accept 后新增的账号级 state event 收敛。
+func (r *Router) pushAcceptedLoserDiscarded(ctx context.Context, chat domain.SecretChat, date int) {
+	if chat.ParticipantUserID == 0 || chat.ParticipantAuthKeyID == 0 {
+		return
+	}
+	upd := &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateEncryption{
+			Chat: &tg.EncryptedChatDiscarded{ID: chat.ID, HistoryDeleted: true},
+			Date: date,
+		}},
+		Users: r.tgUsersForIDs(ctx, chat.ParticipantUserID, []int64{chat.AdminUserID, chat.ParticipantUserID}),
+		Chats: []tg.ChatClass{},
+		Date:  date,
+		Seq:   0,
+	}
+	if targeted, ok := r.deps.Sessions.(AuthKeyTargetedSessionBinder); ok {
+		_, _ = targeted.PushToUserExceptBusinessAuthKey(ctx, chat.ParticipantUserID,
+			deviceAuthKeyBytes(chat.ParticipantAuthKeyID), proto.MessageFromServer, upd, r.cfg.OutboundPushTimeout)
+		return
+	}
+	r.log.Error("secret chat targeted session binder unavailable",
+		zap.String("update", "secret chat accept loser discarded"),
+		zap.Int64("target_user_id", chat.ParticipantUserID),
+		zap.Int64("exclude_auth_key_id", chat.ParticipantAuthKeyID))
 }
 
 // recordEncryptionEventBestEffort 写入 durable updateEncryption 状态事件供离线设备
@@ -106,13 +147,16 @@ func (r *Router) discardSecretChatsForAuthKey(ctx context.Context, businessAuthK
 		}
 		// 对端绑定设备已知则 device-level 定向，建链前（未绑定，0）则账号级。
 		r.recordEncryptionEventBestEffort(ctx, chat.ID, peer, chat.PeerAuthKeyOf(ownerUserID), now)
-		r.pushUpdateEncryption(ctx, peer, chat, "secret chat discarded on peer logout/revoke")
+		r.pushUpdateEncryption(ctx, peer, chat.PeerAuthKeyOf(ownerUserID), chat, "secret chat discarded on peer logout/revoke")
 	}
 }
 
 func (r *Router) onMessagesRequestEncryption(ctx context.Context, req *tg.MessagesRequestEncryptionRequest) (tg.EncryptedChatClass, error) {
 	if req == nil {
 		return nil, inputRequestInvalidErr()
+	}
+	if req.RandomID == 0 || int(int32(req.RandomID)) != req.RandomID {
+		return nil, secretChatRandomIDDuplicateErr()
 	}
 	if r.deps.SecretChats == nil || r.deps.Users == nil {
 		return nil, notImplementedErr()
@@ -152,7 +196,7 @@ func (r *Router) onMessagesRequestEncryption(ctx context.Context, req *tg.Messag
 	// 建链前邀请是账号级（targetAuthKeyID=0）：participant 所有设备（含离线）可见。
 	r.recordEncryptionEventBestEffort(ctx, chat.ID, chat.ParticipantUserID, 0, chat.Date)
 	// 推接受方全部在线设备 encryptedChatRequested（携 g_a）。离线设备经 getDifference 补回。
-	r.pushUpdateEncryption(ctx, chat.ParticipantUserID, chat, "secret chat requested")
+	r.pushUpdateEncryption(ctx, chat.ParticipantUserID, 0, chat, "secret chat requested")
 	// 发起方同步收 encryptedChatWaiting（无 g_a）。
 	return tgEncryptedChatForViewer(chat, adminID), nil
 }
@@ -177,11 +221,15 @@ func (r *Router) onMessagesAcceptEncryption(ctx context.Context, req *tg.Message
 	if err != nil {
 		return nil, secretChatErr(err)
 	}
+	now := int(r.clock.Now().Unix())
 	// 建链完成定向发起方绑定设备（device-level）：离线发起方经 getDifference 补回成型态。
-	r.recordEncryptionEventBestEffort(ctx, chat.ID, chat.AdminUserID, chat.AdminAuthKeyID, int(r.clock.Now().Unix()))
-	// 推发起方全部在线设备 encryptedChat（GAOrB=g_b, key_fingerprint），发起方据此
-	// 算共享密钥并比对指纹。
-	r.pushUpdateEncryption(ctx, chat.AdminUserID, chat, "secret chat accepted")
+	r.recordEncryptionEventBestEffort(ctx, chat.ID, chat.AdminUserID, chat.AdminAuthKeyID, now)
+	// 给 participant 账号新增一次收敛事件：获胜 auth key 跳过，其它已见/未见邀请的设备
+	// 均投影为 discarded，避免 requested 幽灵与 future-device normal 泄漏。
+	r.recordEncryptionEventBestEffort(ctx, chat.ID, chat.ParticipantUserID, 0, now)
+	// 仅推发起方绑定设备 encryptedChat（GAOrB=g_b, key_fingerprint）。
+	r.pushUpdateEncryption(ctx, chat.AdminUserID, chat.AdminAuthKeyID, chat, "secret chat accepted")
+	r.pushAcceptedLoserDiscarded(ctx, chat, now)
 	// 接受方同步收 encryptedChat（GAOrB=g_a）。
 	return tgEncryptedChatForViewer(chat, userID), nil
 }
@@ -197,7 +245,11 @@ func (r *Router) onMessagesDiscardEncryption(ctx context.Context, req *tg.Messag
 	if err != nil {
 		return false, err
 	}
-	chat, already, err := r.deps.SecretChats.DiscardEncryption(ctx, req.ChatID, userID, req.DeleteHistory)
+	deviceAuthKeyID, ok := businessAuthKeyIDFrom(ctx)
+	if !ok {
+		return false, internalErr()
+	}
+	chat, already, err := r.deps.SecretChats.DiscardEncryption(ctx, req.ChatID, userID, deviceAuthKeyID, req.DeleteHistory)
 	if err != nil {
 		return false, secretChatErr(err)
 	}
@@ -206,7 +258,7 @@ func (r *Router) onMessagesDiscardEncryption(ctx context.Context, req *tg.Messag
 		// 对端绑定设备已知则 device-level，建链前（未绑定）则账号级（同 requested 集合）。
 		if peer := chat.PeerOf(userID); peer != 0 {
 			r.recordEncryptionEventBestEffort(ctx, chat.ID, peer, chat.PeerAuthKeyOf(userID), int(r.clock.Now().Unix()))
-			r.pushUpdateEncryption(ctx, peer, chat, "secret chat discarded")
+			r.pushUpdateEncryption(ctx, peer, chat.PeerAuthKeyOf(userID), chat, "secret chat discarded")
 		}
 	}
 	return true, nil

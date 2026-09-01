@@ -12,7 +12,7 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-// SecretChatStore 是 store.SecretChatStore 的 PostgreSQL 实现（迁移 0137）。
+// SecretChatStore 是 store.SecretChatStore 的 PostgreSQL 实现。
 // 盲中继：g_a/g_b/key_fingerprint 原样 BYTEA/BIGINT 存储；握手态迁移用条件
 // UPDATE 做原子 CAS（accept 绑定接受设备、discard 幂等）。行为契约与 memory
 // 实现由 storetest 钉死。
@@ -44,8 +44,8 @@ func scanSecretChat(row rowScanner) (domain.SecretChat, error) {
 }
 
 func (s *SecretChatStore) CreateSecretChat(ctx context.Context, chat domain.SecretChat) error {
-	if chat.ID == 0 {
-		return domain.ErrSecretChatNotFound
+	if chat.ID == 0 || chat.ID != int(chat.RandomID) {
+		return domain.ErrSecretChatRandomIDDuplicate
 	}
 	if chat.State == "" {
 		chat.State = domain.SecretChatStateRequested
@@ -62,12 +62,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			if pgErr.ConstraintName == "secret_chats_pkey" {
-				return domain.ErrSecretChatIDConflict
-			}
-			// uq_secret_chats_admin_random：与并发同 random_id 请求竞态（罕见，
-			// 服务端 GetByAdminRandom 预检已收口大多数情况）。
-			return fmt.Errorf("insert secret chat: duplicate admin random: %w", err)
+			return domain.ErrSecretChatRandomIDDuplicate
 		}
 		return fmt.Errorf("insert secret chat: %w", err)
 	}
@@ -82,20 +77,6 @@ func (s *SecretChatStore) GetSecretChat(ctx context.Context, chatID int) (domain
 	}
 	if err != nil {
 		return domain.SecretChat{}, false, fmt.Errorf("get secret chat: %w", err)
-	}
-	return chat, true, nil
-}
-
-func (s *SecretChatStore) GetByAdminRandom(ctx context.Context, adminAuthKeyID int64, randomID int32) (domain.SecretChat, bool, error) {
-	chat, err := scanSecretChat(s.db.QueryRow(ctx,
-		`SELECT `+secretChatColumns+` FROM secret_chats
-WHERE admin_auth_key_id = $1 AND random_id = $2 AND state <> 'discarded' LIMIT 1`,
-		adminAuthKeyID, randomID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return domain.SecretChat{}, false, nil
-	}
-	if err != nil {
-		return domain.SecretChat{}, false, fmt.Errorf("get secret chat by admin random: %w", err)
 	}
 	return chat, true, nil
 }
@@ -175,14 +156,6 @@ ORDER BY chat_id`, authKeyID)
 		return nil, fmt.Errorf("list secret chats by auth key rows: %w", err)
 	}
 	return out, nil
-}
-
-func (s *SecretChatStore) MaxSecretChatID(ctx context.Context) (int, error) {
-	var id int
-	if err := s.db.QueryRow(ctx, `SELECT COALESCE(MAX(chat_id), 0) FROM secret_chats`).Scan(&id); err != nil {
-		return 0, fmt.Errorf("max secret chat id: %w", err)
-	}
-	return id, nil
 }
 
 func nullableBytes(b []byte) any {

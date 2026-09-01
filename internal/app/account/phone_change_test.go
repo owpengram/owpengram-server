@@ -147,7 +147,7 @@ func TestPhoneChangeScopesCodeAndPersistsDurableEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("change phone after session reconnect: %v", err)
 	}
-	if !result.Changed || result.User.Phone != "15550012002" || result.Event.Type != domain.UpdateEventUserPhone || result.Event.Phone != "15550012002" || result.Event.Pts != 1 {
+	if !result.Changed || result.User.Phone != "15550012002" {
 		t.Fatalf("change result = %+v", result)
 	}
 	if got := f.changes.lastRequest().ExcludeAuthKeyID; got != rawAuthKeyID {
@@ -160,7 +160,7 @@ func TestPhoneChangeScopesCodeAndPersistsDurableEvent(t *testing.T) {
 		t.Fatalf("new phone resolves to %+v found=%v", got, found)
 	}
 	events, err := f.events.ListAfter(f.ctx, f.user.ID, 0, 10)
-	if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventUserPhone || events[0].Phone != "15550012002" {
+	if err != nil || len(events) != 0 {
 		t.Fatalf("durable events = %+v err=%v", events, err)
 	}
 	if _, found, _ := f.codes.Get(f.ctx, hash); found {
@@ -191,6 +191,26 @@ func TestPhoneChangeRejectsOccupiedAndCrossAuthCode(t *testing.T) {
 	}
 	if got, found, _ := f.users.ByID(f.ctx, occupied.ID); !found || got.Phone != "15550012003" {
 		t.Fatalf("other user changed = %+v found=%v", got, found)
+	}
+}
+
+func TestPhoneChangeRejectsOccupiedNationalTrunkVariant(t *testing.T) {
+	f := newPhoneChangeFixture(t)
+	occupied, err := f.users.Create(f.ctx, domain.User{AccessHash: 103, Phone: "989981679461", FirstName: "Iran"})
+	if err != nil {
+		t.Fatalf("create occupied user: %v", err)
+	}
+	if _, _, err := f.service.SendChangePhoneCode(
+		f.ctx,
+		f.user.ID,
+		f.authKeyID,
+		77,
+		"+98 0998 167 9461",
+	); !errors.Is(err, domain.ErrPhoneNumberOccupied) {
+		t.Fatalf("occupied trunk variant err = %v", err)
+	}
+	if got, found, err := f.users.ByPhone(f.ctx, "989981679461"); err != nil || !found || got.ID != occupied.ID {
+		t.Fatalf("canonical owner user=%+v found=%v err=%v", got, found, err)
 	}
 }
 
@@ -233,12 +253,12 @@ func TestPhoneChangeNewSendInvalidatesPreviousHash(t *testing.T) {
 		t.Fatalf("new hash change: %v", err)
 	}
 	events, err := f.events.ListAfter(f.ctx, f.user.ID, 0, 10)
-	if err != nil || len(events) != 1 || events[0].Type != domain.UpdateEventUserPhone {
+	if err != nil || len(events) != 0 {
 		t.Fatalf("events = %+v err=%v", events, err)
 	}
 }
 
-func TestPhoneChangeConcurrentReplayAppendsOneEvent(t *testing.T) {
+func TestPhoneChangeConcurrentReplayChangesOnceWithoutPTSEvent(t *testing.T) {
 	f := newPhoneChangeFixture(t)
 	hash, _, err := f.service.SendChangePhoneCode(f.ctx, f.user.ID, f.authKeyID, 77, "15550012007")
 	if err != nil {
@@ -273,7 +293,7 @@ func TestPhoneChangeConcurrentReplayAppendsOneEvent(t *testing.T) {
 		t.Fatalf("successes=%d expired=%d", successes, expired)
 	}
 	events, err := f.events.ListAfter(f.ctx, f.user.ID, 0, 10)
-	if err != nil || len(events) != 1 || events[0].Pts != 1 {
+	if err != nil || len(events) != 0 {
 		t.Fatalf("events = %+v err=%v", events, err)
 	}
 }

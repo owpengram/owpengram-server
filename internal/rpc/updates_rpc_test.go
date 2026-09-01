@@ -558,6 +558,51 @@ func TestUpdatesDifferenceMarksViewerUserAsSelf(t *testing.T) {
 	}
 }
 
+func TestUpdatesDifferenceSuppressesDeletedNewMessageSnapshot(t *testing.T) {
+	const viewerID int64 = 1000000001
+	msg := domain.Message{
+		ID:          547,
+		OwnerUserID: viewerID,
+		Out:         true,
+		Peer:        domain.Peer{Type: domain.PeerTypeUser, ID: 1000000002},
+		From:        domain.Peer{Type: domain.PeerTypeUser, ID: viewerID},
+		Date:        1700000103,
+		Body:        "deleted while web was offline",
+		Deleted:     true,
+	}
+	got, ok := tgUpdatesDifference(viewerID, domain.UpdateDifference{
+		State: domain.UpdateState{Pts: 2036, Date: msg.Date},
+		Events: []domain.UpdateEvent{
+			{
+				UserID:   viewerID,
+				Type:     domain.UpdateEventNewMessage,
+				Pts:      2035,
+				PtsCount: 1,
+				Date:     msg.Date,
+				Message:  msg,
+			},
+			{
+				UserID:     viewerID,
+				Type:       domain.UpdateEventDeleteMessages,
+				Pts:        2036,
+				PtsCount:   1,
+				Date:       msg.Date + 1,
+				MessageIDs: []int{msg.ID},
+			},
+		},
+	}).(*tg.UpdatesDifference)
+	if !ok {
+		t.Fatalf("difference = %T, want *tg.UpdatesDifference", got)
+	}
+	if got.State.Pts != 2036 || len(got.NewMessages) != 0 || len(got.OtherUpdates) != 1 {
+		t.Fatalf("difference = %+v, want no resurrecting new_messages and one delete update", got)
+	}
+	del, ok := got.OtherUpdates[0].(*tg.UpdateDeleteMessages)
+	if !ok || del.Pts != 2036 || del.PtsCount != 1 || len(del.Messages) != 1 || del.Messages[0] != msg.ID {
+		t.Fatalf("delete update = %#v, want message %d at pts=2036", got.OtherUpdates[0], msg.ID)
+	}
+}
+
 func TestUpdatesDifferenceIncludesForwardSourceChannelChat(t *testing.T) {
 	source := domain.Channel{
 		ID:         2000000001,

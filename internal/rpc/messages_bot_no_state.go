@@ -338,9 +338,13 @@ func (r *Router) mentionedUserIDsFromDomainMessage(ctx context.Context, currentU
 		}
 	}
 	if identity != nil {
-		for _, username := range extractMentionUsernames(message, domain.MaxChannelMentionRecipients-len(out)) {
+		blocked := mentionScanBlockedSpansFromDomainEntities(message, entities)
+		for _, username := range extractMentionUsernames(message, domain.MaxChannelMentionRecipients-len(out), blocked) {
 			user, found, err := identity.ResolveUsername(ctx, currentUserID, username)
 			if err != nil {
+				if isMentionResolveMiss(err) {
+					continue
+				}
 				return nil, internalErr()
 			}
 			if found {

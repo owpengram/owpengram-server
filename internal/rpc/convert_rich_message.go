@@ -2,52 +2,39 @@ package rpc
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 
 	"telesrv/internal/domain"
 )
 
-// 本文件集中 Layer 228 富文本消息（richMessage）的 tg.* ↔ domain 转换。
+// 本文件集中富文本消息（richMessage）的 tg.* ↔ domain 转换。
 // inputRichMessage 的 blocks、HTML 与 Markdown 三种输入均在 RPC 边界归一为 PageBlock；
 // blocks 以 TL 向量序列化为不透明字节存 domain（详见 domain.MessageRichMessage）。
 
-// encodeRichBlocks 把 []tg.PageBlockClass 序列化为 TL 向量字节（含 vector 头）。
-func encodeRichBlocks(blocks []tg.PageBlockClass) ([]byte, error) {
+// encodeRichBlocks 把 []tg.PageBlockClass 按明确的存储 profile 序列化为 TL 向量字节。
+func encodeRichBlocks(profile tlprofile.Profile, blocks []tg.PageBlockClass) ([]byte, error) {
 	var b bin.Buffer
-	b.PutVectorHeader(len(blocks))
-	for _, blk := range blocks {
-		if blk == nil {
-			return nil, mediaInvalidErr()
-		}
-		if err := blk.Encode(&b); err != nil {
-			return nil, err
-		}
+	if err := tlprofile.EncodePageBlockVector(profile, blocks, &b); err != nil {
+		return nil, err
 	}
 	return b.Buf, nil
 }
 
-// decodeRichBlocks 把 encodeRichBlocks 产生的字节还原为 []tg.PageBlockClass。
-func decodeRichBlocks(data []byte) ([]tg.PageBlockClass, error) {
+// decodeRichBlocks 按写入时的 exact profile 还原完整 PageBlock 向量。调用方必须提供
+// 持久化元数据确定的 profile，不允许失败后换 profile 重试。
+func decodeRichBlocks(profile tlprofile.Profile, data []byte) ([]tg.PageBlockClass, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 	b := &bin.Buffer{Buf: append([]byte(nil), data...)}
-	n, err := b.VectorHeader()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]tg.PageBlockClass, 0, n)
-	for i := 0; i < n; i++ {
-		blk, err := tg.DecodePageBlock(b)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, blk)
-	}
-	return out, nil
+	return tlprofile.DecodePageBlockVector(profile, b, tlprofile.Limits{})
 }
 
 // richMessageMediaRefs is the media closure referenced by one PageBlock graph.
@@ -376,13 +363,14 @@ func (r *Router) domainRichMessageFromInput(ctx context.Context, input tg.InputR
 		return nil, notImplementedErr()
 	}
 	normalizeRichBlocksForClients(in.Blocks)
-	blocks, err := encodeRichBlocks(in.Blocks)
+	blocks, err := encodeRichBlocks(tlprofile.ProfileCanonical, in.Blocks)
 	if err != nil {
 		return nil, err
 	}
 	rich := &domain.MessageRichMessage{
-		Rtl:    in.Rtl,
-		Blocks: blocks,
+		Rtl:         in.Rtl,
+		BlocksLayer: int(tlprofile.ProfileCanonical),
+		Blocks:      blocks,
 	}
 	projection, projectionErr := botAPIRichMessageProjection(in.Blocks, in.Rtl)
 	if projectionErr != nil && sourceParsed {
@@ -411,9 +399,14 @@ func tgRichMessage(m *domain.MessageRichMessage) (*tg.RichMessage, error) {
 	if m.IsZero() {
 		return nil, nil
 	}
-	blocks, err := decodeRichBlocks(m.Blocks)
+	layer := m.EffectiveBlocksLayer()
+	profile, ok := tlprofile.ResolveProfile(layer)
+	if !ok {
+		return nil, fmt.Errorf("stored rich_message blocks layer %d is unavailable", layer)
+	}
+	blocks, err := decodeRichBlocks(profile, m.Blocks)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode stored rich_message blocks at layer %d: %w", layer, err)
 	}
 	out := &tg.RichMessage{
 		Rtl:       m.Rtl,
@@ -431,10 +424,22 @@ func tgRichMessage(m *domain.MessageRichMessage) (*tg.RichMessage, error) {
 	return out, nil
 }
 
-func mustTGRichMessage(m *domain.MessageRichMessage) *tg.RichMessage {
+var richMessageProjectionFailureCount atomic.Uint64
+
+// optionalTGRichMessage projects an optional extension without allowing one
+// malformed persisted snapshot to terminate the RPC worker or server process.
+// Known historical formats are decoded exactly above. Truly invalid data is
+// omitted from the base message and compatibility-traced with logarithmic
+// sampling so a repeatedly requested row cannot create an unbounded log storm.
+func optionalTGRichMessage(scope string, id int, m *domain.MessageRichMessage) *tg.RichMessage {
 	out, err := tgRichMessage(m)
 	if err != nil {
-		panic("invalid stored rich_message: " + err.Error())
+		count := richMessageProjectionFailureCount.Add(1)
+		if count <= 10 || count&(count-1) == 0 {
+			log.Printf("rich_message compatibility trace: scope=%s id=%d blocks_layer=%d failures=%d error=%q",
+				scope, id, m.EffectiveBlocksLayer(), count, err)
+		}
+		return nil
 	}
 	return out
 }

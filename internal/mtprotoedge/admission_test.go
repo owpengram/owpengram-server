@@ -272,12 +272,18 @@ func TestServeMixedStopsAllComponentsWhenOneReturnsCleanly(t *testing.T) {
 
 type countingAuthKeyStore struct {
 	store.AuthKeyStore
-	gets atomic.Int32
+	gets        atomic.Int32
+	revalidates atomic.Int32
 }
 
 func (s *countingAuthKeyStore) Get(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
 	s.gets.Add(1)
 	return s.AuthKeyStore.Get(ctx, id)
+}
+
+func (s *countingAuthKeyStore) Revalidate(ctx context.Context, id [8]byte) (store.AuthKeyData, bool, error) {
+	s.revalidates.Add(1)
+	return s.AuthKeyStore.Revalidate(ctx, id)
 }
 
 func TestUnknownAuthKeyRespondsOnceThenCloses(t *testing.T) {

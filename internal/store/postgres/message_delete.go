@@ -55,6 +55,9 @@ func (s *MessageStore) DeleteMessages(ctx context.Context, req domain.DeleteMess
 	if err := lockUsersForUpdate(ctx, tx, lockUserIDs...); err != nil {
 		return res, fmt.Errorf("lock delete messages user: %w", err)
 	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, lockUserIDs); err != nil {
+		return res, fmt.Errorf("lock delete messages dispatch append fences: %w", err)
+	}
 
 	rows, err := qtx.DeleteMessageBoxesByIDs(ctx, sqlcgen.DeleteMessageBoxesByIDsParams{
 		OwnerUserID: req.OwnerUserID,

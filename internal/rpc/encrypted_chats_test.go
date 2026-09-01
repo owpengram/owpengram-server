@@ -2,36 +2,24 @@ package rpc
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/binary"
+	"math/big"
 	"testing"
 
+	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 	"go.uber.org/zap/zaptest"
 
+	appphone "telesrv/internal/app/phone"
 	appsecret "telesrv/internal/app/secretchat"
 	appupdates "telesrv/internal/app/updates"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
 )
-
-// seqSecretChatIDAllocator 是单调自增的测试 chat id 分配器。
-type seqSecretChatIDAllocator struct{ n int }
-
-func (a *seqSecretChatIDAllocator) NextSecretChatID(context.Context) (int, error) {
-	a.n++
-	return a.n, nil
-}
-
-func (a *seqSecretChatIDAllocator) NextSecretChatIDAtLeast(_ context.Context, floor int) (int, error) {
-	if a.n < floor {
-		a.n = floor
-	}
-	a.n++
-	return a.n, nil
-}
-
-func (a *seqSecretChatIDAllocator) CurrentSecretChatID(context.Context) (int, error) { return a.n, nil }
 
 func dhParam(lead byte) []byte {
 	b := make([]byte, 256)
@@ -53,13 +41,15 @@ type encryptedFixture struct {
 }
 
 const (
-	encAdminSession = int64(301)
-	encPartSession  = int64(302)
+	encAdminSession     = int64(301)
+	encPartSession      = int64(302)
+	encPartOtherSession = int64(303)
 )
 
 var (
-	encAdminAuthKey = [8]byte{1, 0, 0, 0, 0, 0, 0, 0}
-	encPartAuthKey  = [8]byte{2, 0, 0, 0, 0, 0, 0, 0}
+	encAdminAuthKey     = [8]byte{1, 0, 0, 0, 0, 0, 0, 0}
+	encPartAuthKey      = [8]byte{2, 0, 0, 0, 0, 0, 0, 0}
+	encPartOtherAuthKey = [8]byte{3, 0, 0, 0, 0, 0, 0, 0}
 )
 
 func newEncryptedFixture(t *testing.T) *encryptedFixture {
@@ -71,7 +61,7 @@ func newEncryptedFixture(t *testing.T) *encryptedFixture {
 	queueStore := memory.NewEncryptedQueueStore()
 	router := New(Config{}, Deps{
 		Users:       appusers.NewService(userStore),
-		SecretChats: appsecret.NewService(secretStore, queueStore, &seqSecretChatIDAllocator{}),
+		SecretChats: appsecret.NewService(secretStore, queueStore),
 		Updates:     appupdates.NewService(memory.NewUpdateStateStore(), memory.NewUpdateEventStore()),
 		Files:       &fakeFiles{},
 		Sessions:    sessions,
@@ -97,6 +87,10 @@ func (f *encryptedFixture) participantCtx() context.Context {
 	return WithAuthKeyID(WithSessionID(WithUserID(f.ctx, f.participant.ID), encPartSession), encPartAuthKey)
 }
 
+func (f *encryptedFixture) participantOtherCtx() context.Context {
+	return WithAuthKeyID(WithSessionID(WithUserID(f.ctx, f.participant.ID), encPartOtherSession), encPartOtherAuthKey)
+}
+
 // encChatPayload 从捕获的推送里取出 updateEncryption 载荷。
 func encChatPayload(t *testing.T, rec phonePushRecord) tg.EncryptedChatClass {
 	t.Helper()
@@ -109,6 +103,121 @@ func encChatPayload(t *testing.T, rec phonePushRecord) tg.EncryptedChatClass {
 		t.Fatalf("pushed update = %T, want UpdateEncryption", updates.Updates[0])
 	}
 	return upd.Chat
+}
+
+func secretChatDHFixture(t *testing.T, wantNegativeFingerprint bool) (ga, gb []byte, fingerprint int64) {
+	t.Helper()
+	prime := new(big.Int).SetBytes(appphone.DHPrime())
+	generator := big.NewInt(int64(appphone.DHG))
+	privateA := new(big.Int).SetBytes(make([]byte, 256))
+	privateA.SetBit(privateA, 2046, 1)
+	privateA.Add(privateA, big.NewInt(0x12345))
+	gaInt := new(big.Int).Exp(generator, privateA, prime)
+	ga = gaInt.Bytes()
+
+	for n := int64(1); n < 128; n++ {
+		privateB := new(big.Int).SetBit(new(big.Int), 2045, 1)
+		privateB.Add(privateB, big.NewInt(0x54321+n))
+		gbInt := new(big.Int).Exp(generator, privateB, prime)
+		sharedA := new(big.Int).Exp(gbInt, privateA, prime)
+		sharedB := new(big.Int).Exp(gaInt, privateB, prime)
+		if sharedA.Cmp(sharedB) != 0 {
+			t.Fatal("DH fixture derived different shared keys")
+		}
+		key := make([]byte, 256)
+		sharedBytes := sharedA.Bytes()
+		copy(key[len(key)-len(sharedBytes):], sharedBytes)
+		digest := sha1.Sum(key)
+		fingerprint = int64(binary.LittleEndian.Uint64(digest[12:20]))
+		if (fingerprint < 0) == wantNegativeFingerprint {
+			return ga, gbInt.Bytes(), fingerprint
+		}
+	}
+	t.Fatalf("could not generate DH fixture with negative=%v fingerprint", wantNegativeFingerprint)
+	return nil, nil, 0
+}
+
+func TestEncryptedChatRealDHHandshakeAcrossExactLayers(t *testing.T) {
+	for _, negative := range []bool{false, true} {
+		name := "positive_fingerprint"
+		if negative {
+			name = "negative_fingerprint"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newEncryptedFixture(t)
+			ga, gb, fingerprint := secretChatDHFixture(t, negative)
+			waitingClass, err := f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
+				UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
+				RandomID: 909,
+				GA:       ga,
+			})
+			if err != nil {
+				t.Fatalf("requestEncryption: %v", err)
+			}
+			waiting := waitingClass.(*tg.EncryptedChatWaiting)
+			if waiting.ID != 909 {
+				t.Fatalf("waiting id = %d, want request random_id 909", waiting.ID)
+			}
+			chat, ok, err := f.store.GetSecretChat(f.ctx, waiting.ID)
+			if err != nil || !ok {
+				t.Fatalf("stored requested chat: ok=%v err=%v", ok, err)
+			}
+
+			f.sessions.reset()
+			if _, err := f.router.onMessagesAcceptEncryption(f.participantCtx(), &tg.MessagesAcceptEncryptionRequest{
+				Peer:           tg.InputEncryptedChat{ChatID: chat.ID, AccessHash: chat.ParticipantAccessHash},
+				GB:             gb,
+				KeyFingerprint: fingerprint,
+			}); err != nil {
+				t.Fatalf("acceptEncryption: %v", err)
+			}
+
+			var adminUpdates *tg.Updates
+			for _, rec := range f.sessions.records() {
+				if rec.userID == f.admin.ID {
+					adminUpdates = rec.msg.(*tg.Updates)
+					break
+				}
+			}
+			if adminUpdates == nil {
+				t.Fatal("missing accepted update for the initiating device")
+			}
+
+			for _, profile := range []tlprofile.Profile{
+				tlprofile.Profile225,
+				tlprofile.Profile226,
+				tlprofile.Profile227,
+				tlprofile.Profile228,
+			} {
+				var body bin.Buffer
+				if err := tlprofile.EncodeObject(profile, adminUpdates, &body); err != nil {
+					t.Fatalf("encode accepted update for profile %d: %v", profile, err)
+				}
+				decoded, err := tlprofile.DecodeObject(profile, &bin.Buffer{Buf: body.Buf}, tlprofile.Limits{})
+				if err != nil {
+					t.Fatalf("decode accepted update for profile %d: %v", profile, err)
+				}
+				updates, ok := decoded.(*tg.Updates)
+				if !ok || len(updates.Updates) != 1 {
+					t.Fatalf("profile %d decoded update = %T", profile, decoded)
+				}
+				encUpdate, ok := updates.Updates[0].(*tg.UpdateEncryption)
+				if !ok {
+					t.Fatalf("profile %d nested update = %T", profile, updates.Updates[0])
+				}
+				accepted, ok := encUpdate.Chat.(*tg.EncryptedChat)
+				if !ok {
+					t.Fatalf("profile %d chat = %T", profile, encUpdate.Chat)
+				}
+				if new(big.Int).SetBytes(accepted.GAOrB).Cmp(new(big.Int).SetBytes(gb)) != 0 {
+					t.Fatalf("profile %d changed g_b", profile)
+				}
+				if accepted.KeyFingerprint != fingerprint {
+					t.Fatalf("profile %d fingerprint = %d, want %d", profile, accepted.KeyFingerprint, fingerprint)
+				}
+			}
+		})
+	}
 }
 
 func TestEncryptedChatRPCHappyPath(t *testing.T) {
@@ -129,6 +238,9 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("request response = %T, want *tg.EncryptedChatWaiting", res)
 	}
+	if waiting.ID != 777 {
+		t.Fatalf("waiting id = %d, want request random_id 777", waiting.ID)
+	}
 	// 推送给接受方的 encryptedChatRequested（携 g_a）。
 	recs := f.sessions.records()
 	if len(recs) != 1 || recs[0].userID != f.participant.ID {
@@ -138,8 +250,8 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("participant payload = %T, want EncryptedChatRequested", encChatPayload(t, recs[0]))
 	}
-	if requested.ID != waiting.ID {
-		t.Fatalf("chat id mismatch admin=%d participant=%d", waiting.ID, requested.ID)
+	if requested.ID != 777 {
+		t.Fatalf("participant requested id = %d, want request random_id 777", requested.ID)
 	}
 	if string(requested.GA) != string(ga) {
 		t.Fatal("requested g_a not relayed verbatim")
@@ -172,20 +284,38 @@ func TestEncryptedChatRPCHappyPath(t *testing.T) {
 	if partView.KeyFingerprint != fp {
 		t.Fatalf("key fingerprint = %x, want %x", partView.KeyFingerprint, fp)
 	}
-	// 推送给发起方：encryptedChat，GAOrB = g_b。
+	// 定向推送给发起设备 encryptedChat，并让 participant 其它设备收敛为 discarded。
 	recs = f.sessions.records()
-	if len(recs) != 1 || recs[0].userID != f.admin.ID {
-		t.Fatalf("accept push = %+v, want single push to admin %d", recs, f.admin.ID)
+	if len(recs) != 2 {
+		t.Fatalf("accept pushes = %+v, want admin accepted + participant loser discarded", recs)
 	}
-	adminView, ok := encChatPayload(t, recs[0]).(*tg.EncryptedChat)
+	var adminRec, loserRec *phonePushRecord
+	for i := range recs {
+		switch recs[i].userID {
+		case f.admin.ID:
+			adminRec = &recs[i]
+		case f.participant.ID:
+			loserRec = &recs[i]
+		}
+	}
+	if adminRec == nil || adminRec.rawAuthKeyID != encAdminAuthKey {
+		t.Fatalf("admin accept push = %+v, want target auth key %x", adminRec, encAdminAuthKey)
+	}
+	if loserRec == nil || loserRec.rawAuthKeyID != encPartAuthKey {
+		t.Fatalf("loser discard push = %+v, want exclusion auth key %x", loserRec, encPartAuthKey)
+	}
+	adminView, ok := encChatPayload(t, *adminRec).(*tg.EncryptedChat)
 	if !ok {
-		t.Fatalf("admin payload = %T, want EncryptedChat", encChatPayload(t, recs[0]))
+		t.Fatalf("admin payload = %T, want EncryptedChat", encChatPayload(t, *adminRec))
 	}
 	if string(adminView.GAOrB) != string(gb) {
 		t.Fatal("admin view GAOrB must be g_b")
 	}
 	if adminView.KeyFingerprint != fp {
 		t.Fatal("admin view key fingerprint not relayed byte-for-byte")
+	}
+	if discarded, ok := encChatPayload(t, *loserRec).(*tg.EncryptedChatDiscarded); !ok || !discarded.HistoryDeleted {
+		t.Fatalf("loser payload = %+v, want history-deleting EncryptedChatDiscarded", encChatPayload(t, *loserRec))
 	}
 
 	// --- discardEncryption（发起方） ---
@@ -275,6 +405,58 @@ func TestRequestEncryptionSelf(t *testing.T) {
 		GA:       dhParam(0x55),
 	})
 	assertPhoneRPCErr(t, err, "USER_ID_INVALID")
+}
+
+func TestRequestEncryptionRandomIDContractRPC(t *testing.T) {
+	f := newEncryptedFixture(t)
+	request := func(randomID int) (tg.EncryptedChatClass, error) {
+		return f.router.onMessagesRequestEncryption(f.adminCtx(), &tg.MessagesRequestEncryptionRequest{
+			UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
+			RandomID: randomID,
+			GA:       dhParam(0x55),
+		})
+	}
+
+	negative, err := request(-808)
+	if err != nil {
+		t.Fatalf("negative random_id: %v", err)
+	}
+	if got := negative.(*tg.EncryptedChatWaiting).ID; got != -808 {
+		t.Fatalf("negative waiting id = %d, want -808", got)
+	}
+	negativeChat, found, err := f.store.GetSecretChat(f.ctx, -808)
+	if err != nil || !found {
+		t.Fatalf("stored negative chat: found=%v err=%v", found, err)
+	}
+	accepted, err := f.router.onMessagesAcceptEncryption(f.participantCtx(), &tg.MessagesAcceptEncryptionRequest{
+		Peer:           tg.InputEncryptedChat{ChatID: -808, AccessHash: negativeChat.ParticipantAccessHash},
+		GB:             dhParam(0x66),
+		KeyFingerprint: 0x1234,
+	})
+	if err != nil {
+		t.Fatalf("accept negative chat id: %v", err)
+	}
+	if got := accepted.(*tg.EncryptedChat).ID; got != -808 {
+		t.Fatalf("accepted id = %d, want -808", got)
+	}
+
+	if _, err := request(0); err == nil {
+		t.Fatal("zero random_id succeeded, want RANDOM_ID_DUPLICATE")
+	} else {
+		assertPhoneRPCErr(t, err, "RANDOM_ID_DUPLICATE")
+	}
+
+	// 同一全局 chat_id 改变握手意图不能被幂等吞掉。
+	changed := &tg.MessagesRequestEncryptionRequest{
+		UserID:   &tg.InputUser{UserID: f.participant.ID, AccessHash: f.participant.AccessHash},
+		RandomID: -808,
+		GA:       dhParam(0x66),
+	}
+	if _, err := f.router.onMessagesRequestEncryption(f.adminCtx(), changed); err == nil {
+		t.Fatal("changed intent succeeded, want RANDOM_ID_DUPLICATE")
+	} else {
+		assertPhoneRPCErr(t, err, "RANDOM_ID_DUPLICATE")
+	}
 }
 
 func TestAcceptEncryptionWrongAccessHashRPC(t *testing.T) {

@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/iamxvbaba/td/tg"
 
@@ -91,11 +92,15 @@ func (r *Router) monoforumSavedDialogs(ctx context.Context, userID int64, mono d
 			messages = append(messages, item)
 		}
 	}
+	users, err := r.monoforumSubscriberUsersWithPeerCacheAndOverlaysStrict(ctx, userID, list.Dialogs, list.Messages, nil, nil)
+	if err != nil {
+		return nil, internalErr()
+	}
 	return &tg.MessagesSavedDialogs{
 		Dialogs:  dialogs,
 		Messages: messages,
 		Chats:    r.monoforumChats(ctx, userID, mono),
-		Users:    r.monoforumSubscriberUsers(ctx, userID, list.Dialogs, list.Messages),
+		Users:    users,
 	}, nil
 }
 
@@ -119,11 +124,15 @@ func (r *Router) monoforumSavedHistory(ctx context.Context, userID int64, mono d
 			messages = append(messages, item)
 		}
 	}
+	users, err := r.monoforumSubscriberUsersWithPeerCacheAndOverlaysStrict(ctx, userID, nil, hist.Messages, nil, nil)
+	if err != nil {
+		return nil, internalErr()
+	}
 	result := &tg.MessagesMessagesSlice{
 		Count:    hist.Count,
 		Messages: messages,
 		Chats:    r.monoforumChats(ctx, userID, mono),
-		Users:    r.monoforumSubscriberUsers(ctx, userID, nil, hist.Messages),
+		Users:    users,
 	}
 	r.applyPeerReadModelsToMessages(ctx, userID, result)
 	return result, nil
@@ -145,8 +154,13 @@ func (r *Router) monoforumChats(ctx context.Context, userID int64, mono domain.C
 	return chats
 }
 
-// monoforumSubscriberUsers 投影订阅者用户(子会话 saved_peer + 消息发件人)。
-func (r *Router) monoforumSubscriberUsers(ctx context.Context, userID int64, dialogs []domain.MonoforumDialog, messages []domain.ChannelMessage) []tg.UserClass {
+type monoforumPeerOverlays struct {
+	usernames        map[domain.Peer][]domain.Username
+	botProfiles      map[int64]domain.BotProfile
+	botVerifications map[domain.Peer]domain.CustomVerification
+}
+
+func monoforumSubscriberUserIDs(dialogs []domain.MonoforumDialog, messages []domain.ChannelMessage) []int64 {
 	ids := make([]int64, 0, len(dialogs)+len(messages))
 	seen := map[int64]struct{}{}
 	add := func(id int64) {
@@ -167,14 +181,132 @@ func (r *Router) monoforumSubscriberUsers(ctx context.Context, userID int64, dia
 	for _, m := range messages {
 		add(m.SenderUserID)
 	}
-	if len(ids) == 0 || r.deps.Users == nil {
-		return []tg.UserClass{}
+	// tgChannelMessage can reference users beyond its sender (from/send_as,
+	// forward, via_bot, reply/quote mention, contact/poll/todo/action/reaction).
+	// Reuse the common channel-message closure so saved history, send echo and
+	// online fan-out all materialize the same complete Users envelope.
+	userIDs := make(map[int64]struct{})
+	channelIDs := make(map[int64]struct{})
+	for _, message := range messages {
+		collectChannelMessagePeerRefs(message, message.ChannelID, userIDs, channelIDs)
 	}
-	found, err := r.deps.Users.ByIDs(ctx, userID, ids)
+	extra := peerIDMapKeys(userIDs)
+	sort.Slice(extra, func(i, j int) bool { return extra[i] < extra[j] })
+	for _, id := range extra {
+		add(id)
+	}
+	return ids
+}
+
+func monoforumProjectionPeers(monoforumID, parentID int64, userIDs []int64) []domain.Peer {
+	peers := make([]domain.Peer, 0, len(userIDs)+2)
+	seen := make(map[domain.Peer]struct{}, len(userIDs)+2)
+	add := func(peer domain.Peer) {
+		if peer.ID == 0 {
+			return
+		}
+		if _, ok := seen[peer]; ok {
+			return
+		}
+		seen[peer] = struct{}{}
+		peers = append(peers, peer)
+	}
+	for _, userID := range userIDs {
+		add(domain.Peer{Type: domain.PeerTypeUser, ID: userID})
+	}
+	add(domain.Peer{Type: domain.PeerTypeChannel, ID: monoforumID})
+	add(domain.Peer{Type: domain.PeerTypeChannel, ID: parentID})
+	return peers
+}
+
+// loadMonoforumPeerOverlays resolves peer-wide facts once before a fan-out. The
+// returned snapshot is immutable for the lifetime of that job and can therefore
+// be reused by every viewer builder without turning overlays into N+1 reads.
+func (r *Router) loadMonoforumPeerOverlays(ctx context.Context, peers []domain.Peer) *monoforumPeerOverlays {
+	overlays := &monoforumPeerOverlays{
+		usernames:        r.usernameRegistryMap(ctx, peers),
+		botVerifications: r.botVerificationMap(ctx, peers),
+	}
+	if r.deps.Bots == nil {
+		return overlays
+	}
+	userIDs := make([]int64, 0, len(peers))
+	for _, peer := range peers {
+		if peer.Type == domain.PeerTypeUser && peer.ID != 0 {
+			userIDs = append(userIDs, peer.ID)
+		}
+	}
+	if len(userIDs) == 0 {
+		return overlays
+	}
+	if batch, ok := r.deps.Bots.(botProfileBatchResolver); ok {
+		if profiles, err := batch.BotInfos(ctx, userIDs); err == nil {
+			overlays.botProfiles = profiles
+			return overlays
+		}
+	}
+	overlays.botProfiles = make(map[int64]domain.BotProfile)
+	for _, userID := range userIDs {
+		if profile, found, err := r.deps.Bots.BotInfo(ctx, userID); err == nil && found {
+			overlays.botProfiles[userID] = profile
+		}
+	}
+	return overlays
+}
+
+func applyMonoforumPeerOverlays(users []tg.UserClass, chats []tg.ChatClass, overlays *monoforumPeerOverlays) {
+	if overlays == nil {
+		return
+	}
+	applyUsernamesFromRegistry(users, chats, overlays.usernames)
+	for _, item := range users {
+		u, ok := item.(*tg.User)
+		if !ok || u == nil || u.Deleted {
+			continue
+		}
+		if u.Bot {
+			if profile, found := overlays.botProfiles[u.ID]; found {
+				applyBotProfileFlags(u, profile)
+			}
+		}
+		if mark, found := overlays.botVerifications[domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}]; found && mark.IconDocumentID > 0 {
+			u.SetBotVerificationIcon(mark.IconDocumentID)
+		}
+	}
+	for _, item := range chats {
+		ch, ok := item.(*tg.Channel)
+		if !ok || ch == nil {
+			continue
+		}
+		if mark, found := overlays.botVerifications[domain.Peer{Type: domain.PeerTypeChannel, ID: ch.ID}]; found && mark.IconDocumentID > 0 {
+			ch.SetBotVerificationIcon(mark.IconDocumentID)
+		}
+	}
+}
+
+// monoforumSubscriberUsers projects subscriber users (saved_peer + message
+// senders) for one viewer. Fan-out callers pass their preheated peer cache and
+// overlay snapshot; single-viewer callers retain the same output shape through a
+// one-shot local cache. The pure TL conversion is viewer-aware so self is never
+// lost for a subscriber viewing their own envelope.
+func (r *Router) monoforumSubscriberUsersWithPeerCacheAndOverlaysStrict(ctx context.Context, userID int64, dialogs []domain.MonoforumDialog, messages []domain.ChannelMessage, cache *viewerPeerCache, overlays *monoforumPeerOverlays) ([]tg.UserClass, error) {
+	ids := monoforumSubscriberUserIDs(dialogs, messages)
+	if len(ids) == 0 {
+		return []tg.UserClass{}, nil
+	}
+	if cache == nil {
+		cache = newViewerPeerCache(r)
+	}
+	projected, err := cache.usersForIDsStrict(ctx, userID, ids)
 	if err != nil {
-		return []tg.UserClass{}
+		return nil, err
 	}
-	return r.tgUsers(found)
+	if overlays == nil {
+		overlays = r.loadMonoforumPeerOverlays(ctx, monoforumProjectionPeers(0, 0, ids))
+	}
+	out := tgUsersForViewer(userID, projected)
+	applyMonoforumPeerOverlays(out, nil, overlays)
+	return out, nil
 }
 
 // monoforumReplyPresent 判断 sendMessage 的 reply_to 是否显式携带 monoforum_peer_id。
@@ -283,12 +415,21 @@ func (r *Router) sendMonoforumMessage(ctx context.Context, userID int64, peer do
 	if !res.Duplicate {
 		r.enqueueMonoforumMessageFanout(ctx, userID, mono, req.SavedPeer, res)
 	}
-	return r.monoforumSendUpdates(ctx, userID, mono, req.SavedPeer, res), nil
+	return r.monoforumSendUpdatesStrict(ctx, userID, mono, req.SavedPeer, res)
 }
 
 // monoforumSendUpdates 给发送者构造回声 Updates:updateMessageID(关联 random_id)+ updateNewChannelMessage
 // (monoforum 走 channel pts)。另一方经 monoforum 频道的 getChannelDifference 收取该 durable 事件。
-func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) tg.UpdatesClass {
+func (r *Router) monoforumSendUpdatesStrict(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) (tg.UpdatesClass, error) {
+	return r.monoforumSendUpdatesWithPeerCacheAndOverlaysStrict(ctx, userID, mono, savedPeer, res, nil, nil)
+}
+
+func (r *Router) monoforumSendUpdatesWithPeerCacheAndOverlays(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult, cache *viewerPeerCache, overlays *monoforumPeerOverlays) tg.UpdatesClass {
+	updates, _ := r.monoforumSendUpdatesWithPeerCacheAndOverlaysStrict(ctx, userID, mono, savedPeer, res, cache, overlays)
+	return updates
+}
+
+func (r *Router) monoforumSendUpdatesWithPeerCacheAndOverlaysStrict(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult, cache *viewerPeerCache, overlays *monoforumPeerOverlays) (tg.UpdatesClass, error) {
 	updates := make([]tg.UpdateClass, 0, 3)
 	if res.Message.RandomID != 0 {
 		updates = append(updates, &tg.UpdateMessageID{ID: res.Message.ID, RandomID: res.Message.RandomID})
@@ -309,16 +450,35 @@ func (r *Router) monoforumSendUpdates(ctx context.Context, userID int64, mono do
 			date = res.ReplayDeleteEvent.Date
 		}
 	}
+	dialogs := []domain.MonoforumDialog{{SavedPeer: savedPeer}}
+	messages := []domain.ChannelMessage{res.Message}
+	if cache == nil {
+		cache = newViewerPeerCache(r)
+	}
+	if overlays == nil {
+		ids := monoforumSubscriberUserIDs(dialogs, messages)
+		overlays = r.loadMonoforumPeerOverlays(ctx, monoforumProjectionPeers(mono.ID, mono.LinkedMonoforumID, ids))
+	}
+	chats := r.monoforumChats(ctx, userID, mono)
+	users, err := r.monoforumSubscriberUsersWithPeerCacheAndOverlaysStrict(ctx, userID, dialogs, messages, cache, overlays)
+	if err != nil {
+		return nil, err
+	}
+	applyMonoforumPeerOverlays(nil, chats, overlays)
 	return &tg.Updates{
 		Updates: updates,
-		Chats:   r.monoforumChats(ctx, userID, mono),
-		Users:   r.monoforumSubscriberUsers(ctx, userID, []domain.MonoforumDialog{{SavedPeer: savedPeer}}, []domain.ChannelMessage{res.Message}),
+		Chats:   chats,
+		Users:   users,
 		Date:    date,
-	}
+	}, nil
 }
 
 func (r *Router) monoforumDeliveryUpdates(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult) *tg.Updates {
-	updates, _ := r.monoforumSendUpdates(ctx, userID, mono, savedPeer, res).(*tg.Updates)
+	return r.monoforumDeliveryUpdatesWithPeerCacheAndOverlays(ctx, userID, mono, savedPeer, res, nil, nil)
+}
+
+func (r *Router) monoforumDeliveryUpdatesWithPeerCacheAndOverlays(ctx context.Context, userID int64, mono domain.Channel, savedPeer domain.Peer, res domain.SendChannelMessageResult, cache *viewerPeerCache, overlays *monoforumPeerOverlays) *tg.Updates {
+	updates, _ := r.monoforumSendUpdatesWithPeerCacheAndOverlays(ctx, userID, mono, savedPeer, res, cache, overlays).(*tg.Updates)
 	if updates == nil {
 		return nil
 	}

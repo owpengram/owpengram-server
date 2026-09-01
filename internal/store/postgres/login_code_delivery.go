@@ -139,7 +139,7 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("create login code private message: %w", err)
 	}
 
-	boxID, err := s.nextLoginCodeBoxID(ctx, qtx, req.UserID)
+	boxID, err := s.nextIncomingSystemBoxID(ctx, qtx, req.UserID)
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("allocate login code box id: %w", err)
 	}
@@ -324,7 +324,7 @@ WHERE delivery_key = $1`, deliveryKey[:]).Scan(
 	return receipt, true, nil
 }
 
-func (s *MessageStore) nextLoginCodeBoxID(ctx context.Context, qtx *sqlcgen.Queries, userID int64) (int, error) {
+func (s *MessageStore) nextIncomingSystemBoxID(ctx context.Context, qtx *sqlcgen.Queries, userID int64) (int, error) {
 	// The default allocator queries PostgreSQL. Run that query on the active
 	// transaction connection: querying s.q while holding the transaction can
 	// deadlock a MaxConns=1 pool. External allocators (Redis/counters) retain

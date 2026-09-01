@@ -10,14 +10,11 @@ import (
 // storetest 钉死）。服务端是盲中继：g_a/g_b/key_fingerprint 原样不透明存储。
 // 设计见 docs/secret-chat-module.md。
 type SecretChatStore interface {
-	// CreateSecretChat 插入 requested 态密聊。chat_id 主键撞键返回
-	// domain.ErrSecretChatIDConflict（调用方按 AtLeast 重分配重试）。
+	// CreateSecretChat 插入 requested 态密聊。chat_id 必须等于 requestEncryption.random_id；
+	// 主键/幂等键撞键返回 domain.ErrSecretChatRandomIDDuplicate，禁止另分配 ID。
 	CreateSecretChat(ctx context.Context, chat domain.SecretChat) error
 	// GetSecretChat 按 chat_id 取密聊。
 	GetSecretChat(ctx context.Context, chatID int) (domain.SecretChat, bool, error)
-	// GetByAdminRandom 幂等查询：按发起设备 perm auth_key + random_id 找既有密聊
-	//（同 random_id 重发 requestEncryption 返回同 chat）。
-	GetByAdminRandom(ctx context.Context, adminAuthKeyID int64, randomID int32) (domain.SecretChat, bool, error)
 	// AcceptSecretChat 原子 CAS 绑定：仅当 requested 且 participant_auth_key_id 未绑定时
 	// 迁移到 normal、落 g_b/key_fingerprint、绑定接受设备。并发第二个 accept 或已成型/
 	// 已销毁分别返回 domain.ErrSecretChatAlreadyAccepted / ErrSecretChatAlreadyDeclined；
@@ -30,8 +27,6 @@ type SecretChatStore interface {
 	// 接受方 participant）且未终态的密聊，按 chat_id 升序。设备登出 / 授权撤销时用于级联
 	// discard 并通知对端（避免对端继续往死 auth_key 投递的静默死链）。authKeyID==0 返回 nil。
 	ListActiveSecretChatsByAuthKey(ctx context.Context, authKeyID int64) ([]domain.SecretChat, error)
-	// MaxSecretChatID 返回当前最大 chat_id（id 计数器冷恢复 / 撞键自愈用，空表返回 0）。
-	MaxSecretChatID(ctx context.Context) (int, error)
 }
 
 // EncryptedQueueStore 持久化密聊 qts 投递队列（设备级，memory/postgres 双实现）。
@@ -63,12 +58,4 @@ type EncryptedQueueStore interface {
 	PutEncryptedFile(ctx context.Context, ownerUserID int64, ref domain.EncryptedFileRef) error
 	// GetEncryptedFile 按 id + access_hash 回查文件快照（inputEncryptedFile 复用路径）。
 	GetEncryptedFile(ctx context.Context, id, accessHash int64) (domain.EncryptedFileRef, bool, error)
-}
-
-// SecretChatIDAllocator 分配全局单调 chat_id（int32 量级）。Redis INCR 实现 + PG
-// CounterSource 冷恢复；撞键时 AtLeast 自愈。语义同 ChannelIDAllocator。
-type SecretChatIDAllocator interface {
-	NextSecretChatID(ctx context.Context) (int, error)
-	NextSecretChatIDAtLeast(ctx context.Context, floor int) (int, error)
-	CurrentSecretChatID(ctx context.Context) (int, error)
 }

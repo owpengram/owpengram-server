@@ -159,6 +159,9 @@ type Message struct {
 	// Pinned 是 owner 视角的置顶标志（官方私聊多置顶语义：双方各自
 	// 的 box 行独立持有，非 pm_oneside 操作两侧同步翻转）。
 	Pinned bool
+	// Deleted 是 owner 视角的软删除可见性标记。它只用于更新重放/差分恢复
+	// 判断是否还能下发消息快照；普通历史查询应在 store 层直接过滤 deleted box。
+	Deleted bool
 	// SavedPeer 是 Saved Messages 分会话分组键（message.saved_peer_id）。
 	// 仅 self-chat box 行非零：直发笔记 = self；转发进收藏夹 = 源会话 peer；
 	// 存量回填兜底 hidden author 占位 user 2666000。非 self-chat 行恒零值。
@@ -196,7 +199,9 @@ func IsHistoryClearServiceMessage(msg Message) bool {
 		msg.Media.ServiceAction.Kind == MessageServiceActionHistoryClear
 }
 
-// MessageRichMessage 是 Layer 228 富文本消息（richMessage）的协议中立快照：一组 IV
+const MessageRichBlocksLegacyLayer = 228
+
+// MessageRichMessage 是富文本消息（richMessage）的协议中立快照：一组 IV
 // PageBlock（Blocks）+ 内嵌已解析的 Photos/Documents。
 //
 // Blocks 存 gotd TL 序列化后的 []tg.PageBlockClass 不透明字节——PageBlock 体系庞大且
@@ -205,18 +210,30 @@ func IsHistoryClearServiceMessage(msg Message) bool {
 // 与 message media 同理，Photos/Documents 存已解析快照（含 viewer 无关的 access_hash），
 // 投影复用 tgPhoto/tgDocument。HTML/Markdown 输入也会在 RPC 边界归一为同一组 Blocks。
 //
-// 已知局限：Blocks 是 gotd 线格式不透明字节，跨 gotd 版本（PageBlock 构造器变更）可能
-// 失效——富文本消息为全新实验特性、无存量数据，Phase 1 接受该耦合。
+// BlocksLayer 是这份持久化字节的 exact TL profile，而不是发送客户端的 Layer。历史记录
+// 没有该字段；0 是正式的 storage-v1 标记，固定解释为 Layer 228。新写入必须显式保存
+// 编码时的 profile，读取不得靠 constructor 试解或失败后回退。
 type MessageRichMessage struct {
-	Rtl       bool       `json:"rtl,omitempty"`
-	Part      bool       `json:"part,omitempty"`
-	Blocks    []byte     `json:"blocks,omitempty"`
-	Photos    []Photo    `json:"photos,omitempty"`
-	Documents []Document `json:"documents,omitempty"`
+	Rtl         bool       `json:"rtl,omitempty"`
+	Part        bool       `json:"part,omitempty"`
+	BlocksLayer int        `json:"blocks_layer,omitempty"`
+	Blocks      []byte     `json:"blocks,omitempty"`
+	Photos      []Photo    `json:"photos,omitempty"`
+	Documents   []Document `json:"documents,omitempty"`
 	// BotAPIProjection 是由 RPC 边界从同一组已校验 PageBlock 派生出的
 	// Bot API RichMessage JSON。它不是第二事实源：写入边界只允许从 Blocks
 	// 生成，HTTP Bot API 投影只读，避免 botapi 包反向依赖 tg 类型。
 	BotAPIProjection []byte `json:"bot_api_projection,omitempty"`
+}
+
+// EffectiveBlocksLayer returns the deterministic storage grammar for Blocks.
+// A missing JSON field is the original storage-v1 format and therefore Layer
+// 228; it is not an adaptive decode fallback.
+func (m *MessageRichMessage) EffectiveBlocksLayer() int {
+	if m == nil || m.BlocksLayer == 0 {
+		return MessageRichBlocksLegacyLayer
+	}
+	return m.BlocksLayer
 }
 
 // IsZero 表示无富文本载荷（落库时跳过空快照、投影时不下发 rich_message）。
@@ -274,7 +291,11 @@ type MessageFilter struct {
 	// userFull.pinned_msg_id 的查询路径）。
 	PinnedOnly     bool
 	MusicOnly      bool
-	NeedTotalCount bool
+	PhoneCallsOnly bool
+	// MissedPhoneCallsOnly narrows PhoneCallsOnly to incoming calls that ended
+	// with the protocol-level "missed" reason.
+	MissedPhoneCallsOnly bool
+	NeedTotalCount       bool
 	// SavedPeer 非零时仅返回 self-chat 中该 saved 子会话的消息
 	// （messages.getSavedHistory）；Peer 必须同时是 self。
 	SavedPeer Peer
@@ -302,6 +323,10 @@ type SendPrivateTextRequest struct {
 	Date            int
 	OriginAuthKeyID [8]byte
 	OriginSessionID int64
+	// OriginClientSession carries the exact request's initConnection language
+	// into an in-process bot responder. Stores and idempotency fingerprints
+	// intentionally ignore this ephemeral metadata.
+	OriginClientSession ClientSessionMetadata
 	// OriginUserID identifies the authenticated initiator when a server-generated
 	// service message is authored by another user. Zero preserves the ordinary
 	// send path where the sender is the initiator.

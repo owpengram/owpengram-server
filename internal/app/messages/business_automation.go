@@ -72,6 +72,10 @@ func (s *Service) prepareBusinessAutomation(ctx context.Context, req domain.Send
 	if !s.shouldConsiderBusinessAutomation(req) {
 		return businessAutomationContext{}, false
 	}
+	hasAutomation, err := s.business.store.HasBusinessAutomation(ctx, req.RecipientUserID)
+	if err != nil || !hasAutomation {
+		return businessAutomationContext{}, false
+	}
 	out := businessAutomationContext{
 		ownerUserID:    req.RecipientUserID,
 		customerUserID: req.SenderUserID,

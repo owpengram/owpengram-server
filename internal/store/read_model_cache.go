@@ -1,6 +1,7 @@
 package store
 
 import (
+	"container/list"
 	"context"
 	"sort"
 	"sync"
@@ -11,17 +12,20 @@ import (
 
 const (
 	defaultReadModelHashCacheTTL = 30 * time.Minute
-	defaultReadModelHashCacheMax = 65536
+	defaultReadModelHashCacheMax = 1000000
 )
 
 type readModelHashCacheEntry struct {
+	key      ReadModelKey
 	hash     int64
 	expireAt time.Time
 }
 
 type readModelHashInflight struct {
-	done chan struct{}
-	err  error
+	done     chan struct{}
+	err      error
+	hash     int64
+	accepted bool
 }
 
 // CachedReadModelVersionStore caches read_model_versions hash tokens in-process.
@@ -33,13 +37,16 @@ type CachedReadModelVersionStore struct {
 	max  int
 	now  func() time.Time
 
-	mu       sync.RWMutex
-	m        map[ReadModelKey]readModelHashCacheEntry
+	mu       sync.Mutex
+	lru      *list.List
+	m        map[ReadModelKey]*list.Element
 	inflight map[ReadModelKey]*readModelHashInflight
-	// epoch 在每次 invalidate/update/flush 时自增；一次锁外 DB load 若跨越了一次失效，
-	// finishReadModelHashInflight 会拒绝把 stale hash 写回，避免 NOTIFY 送来的新 hash 被覆盖。
-	// 与 contacts/privacy 读模缓存的 epoch 守卫同构。
-	epoch uint64
+	// flushGeneration rejects every refill that started before a listener
+	// reconnect/full flush. keyGeneration rejects only the exact key whose
+	// NOTIFY arrived while it was loading; unrelated high-churn keys must not
+	// keep the complete version spine permanently cold.
+	flushGeneration uint64
+	keyGeneration   map[ReadModelKey]uint64
 }
 
 func NewCachedReadModelVersionStore(base ReadModelVersionStore, ttl time.Duration, max int) *CachedReadModelVersionStore {
@@ -53,12 +60,14 @@ func NewCachedReadModelVersionStore(base ReadModelVersionStore, ttl time.Duratio
 		max = defaultReadModelHashCacheMax
 	}
 	return &CachedReadModelVersionStore{
-		base:     base,
-		ttl:      ttl,
-		max:      max,
-		now:      time.Now,
-		m:        make(map[ReadModelKey]readModelHashCacheEntry, 1024),
-		inflight: make(map[ReadModelKey]*readModelHashInflight),
+		base:          base,
+		ttl:           ttl,
+		max:           max,
+		now:           time.Now,
+		lru:           list.New(),
+		m:             make(map[ReadModelKey]*list.Element, 1024),
+		inflight:      make(map[ReadModelKey]*readModelHashInflight),
+		keyGeneration: make(map[ReadModelKey]uint64, 1024),
 	}
 }
 
@@ -85,7 +94,7 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 	done := make(map[ReadModelKey]struct{}, len(keys))
 	seen := make(map[ReadModelKey]struct{}, len(keys))
 
-	s.mu.RLock()
+	s.mu.Lock()
 	for _, key := range keys {
 		if key.Model == "" {
 			continue
@@ -94,14 +103,14 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 			continue
 		}
 		seen[key] = struct{}{}
-		if entry, ok := s.m[key]; ok && entry.expireAt.After(now) {
+		if entry, ok := s.readHashLocked(key, now); ok {
 			out[key] = entry.hash
 			done[key] = struct{}{}
 			continue
 		}
 		misses = append(misses, key)
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	if len(misses) == 0 {
 		return out, nil
@@ -111,15 +120,17 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 	for len(done) < len(seen) {
 		owned := make([]ReadModelKey, 0, len(misses))
 		waiting := make(map[ReadModelKey]*readModelHashInflight)
-		var loadEpoch uint64
+		var loadFlushGeneration uint64
+		ownedGeneration := make(map[ReadModelKey]uint64, len(misses))
+		ownedInflight := make(map[ReadModelKey]*readModelHashInflight, len(misses))
 		now = s.now()
 		s.mu.Lock()
-		loadEpoch = s.epoch
+		loadFlushGeneration = s.flushGeneration
 		for _, key := range misses {
 			if _, ok := done[key]; ok {
 				continue
 			}
-			if entry, ok := s.m[key]; ok && entry.expireAt.After(now) {
+			if entry, ok := s.readHashLocked(key, now); ok {
 				out[key] = entry.hash
 				done[key] = struct{}{}
 				continue
@@ -131,6 +142,8 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 			inflight := &readModelHashInflight{done: make(chan struct{})}
 			s.inflight[key] = inflight
 			owned = append(owned, key)
+			ownedGeneration[key] = s.keyGeneration[key]
+			ownedInflight[key] = inflight
 		}
 		s.mu.Unlock()
 		if len(owned) == 0 && len(waiting) == 0 {
@@ -139,24 +152,31 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 		if len(owned) > 0 {
 			loaded, err := s.base.ReadModelHashes(ctx, owned)
 			if err != nil {
-				s.finishReadModelHashInflight(owned, nil, err, time.Time{}, loadEpoch)
+				s.finishReadModelHashInflight(owned, ownedGeneration, nil, err, time.Time{}, loadFlushGeneration)
 				return nil, err
 			}
 			expireAt := s.now().Add(s.ttl)
-			s.finishReadModelHashInflight(owned, loaded, nil, expireAt, loadEpoch)
+			s.finishReadModelHashInflight(owned, ownedGeneration, loaded, nil, expireAt, loadFlushGeneration)
 			// 失效可能在 load 期间到达并写入更新的 hash；优先返回缓存里的当前值
-			// (可能是 NOTIFY 刚写入的新 hash)，而不是这次 load 读到的可能已过期的值。
+			// (可能是 NOTIFY 刚写入的新 hash)。精确 invalidation/flush 后若没有
+			// 当前值则不返回旧 load，而是在下一轮重新 claim/load。
 			effNow := s.now()
-			s.mu.RLock()
+			s.mu.Lock()
 			for _, key := range owned {
-				if entry, ok := s.m[key]; ok && entry.expireAt.After(effNow) {
+				if entry, ok := s.readHashLocked(key, effNow); ok {
 					out[key] = entry.hash
-				} else {
-					out[key] = loaded[key]
+					done[key] = struct{}{}
+					continue
 				}
-				done[key] = struct{}{}
+				if inflight := ownedInflight[key]; inflight != nil && inflight.accepted {
+					// A capacity eviction may remove an otherwise generation-valid
+					// entry before this owner reacquires the lock. Its accepted value
+					// remains a valid result for this call even if it is not retained.
+					out[key] = inflight.hash
+					done[key] = struct{}{}
+				}
 			}
-			s.mu.RUnlock()
+			s.mu.Unlock()
 		}
 		for key, inflight := range waiting {
 			select {
@@ -167,37 +187,55 @@ func (s *CachedReadModelVersionStore) ReadModelHashes(ctx context.Context, keys 
 			if inflight.err != nil {
 				return nil, inflight.err
 			}
-			s.mu.RLock()
-			entry, ok := s.m[key]
-			s.mu.RUnlock()
-			if ok && entry.expireAt.After(s.now()) {
+			s.mu.Lock()
+			entry, ok := s.readHashLocked(key, s.now())
+			s.mu.Unlock()
+			if ok {
 				out[key] = entry.hash
+				done[key] = struct{}{}
+				continue
 			}
-			done[key] = struct{}{}
+			if inflight.accepted {
+				out[key] = inflight.hash
+				done[key] = struct{}{}
+			}
 		}
 	}
 	return out, nil
 }
 
-func (s *CachedReadModelVersionStore) finishReadModelHashInflight(keys []ReadModelKey, loaded map[ReadModelKey]int64, err error, expireAt time.Time, loadEpoch uint64) {
+func (s *CachedReadModelVersionStore) finishReadModelHashInflight(
+	keys []ReadModelKey,
+	keyGeneration map[ReadModelKey]uint64,
+	loaded map[ReadModelKey]int64,
+	err error,
+	expireAt time.Time,
+	loadFlushGeneration uint64,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err == nil && s.epoch == loadEpoch {
-		if len(s.m)+len(keys) > s.max {
-			s.m = make(map[ReadModelKey]readModelHashCacheEntry, 1024)
-		}
+	if err == nil {
 		if expireAt.IsZero() {
 			expireAt = s.now().Add(s.ttl)
 		}
 		for _, key := range keys {
-			hash := loaded[key]
-			s.m[key] = readModelHashCacheEntry{hash: hash, expireAt: expireAt}
+			inflight := s.inflight[key]
+			if inflight == nil {
+				continue
+			}
+			if s.flushGeneration != loadFlushGeneration || s.keyGeneration[key] != keyGeneration[key] {
+				continue
+			}
+			inflight.hash = loaded[key]
+			inflight.accepted = true
+			s.storeHashLocked(key, inflight.hash, expireAt)
 		}
 	}
 	for _, key := range keys {
 		if inflight := s.inflight[key]; inflight != nil {
 			inflight.err = err
 			delete(s.inflight, key)
+			delete(s.keyGeneration, key)
 			close(inflight.done)
 		}
 	}
@@ -208,8 +246,8 @@ func (s *CachedReadModelVersionStore) InvalidateReadModel(key ReadModelKey) {
 		return
 	}
 	s.mu.Lock()
-	delete(s.m, key)
-	s.epoch++
+	s.removeHashLocked(key)
+	s.bumpReadModelKeyGenerationLocked(key)
 	s.mu.Unlock()
 }
 
@@ -222,13 +260,21 @@ func (s *CachedReadModelVersionStore) UpdateReadModelHash(key ReadModelKey, hash
 		return
 	}
 	s.mu.Lock()
-	if len(s.m)+1 > s.max {
-		s.m = make(map[ReadModelKey]readModelHashCacheEntry, 1024)
-	}
-	s.m[key] = readModelHashCacheEntry{hash: hash, expireAt: s.now().Add(s.ttl)}
-	// 写入权威新 hash 后自增 epoch：任何此刻在飞的 load 都不得再用旧值覆盖它。
-	s.epoch++
+	s.storeHashLocked(key, hash, s.now().Add(s.ttl))
+	// 写入权威新 hash 后只推进该 exact key 的 generation；其它 key 的
+	// inflight refill 仍可正常完成。
+	s.bumpReadModelKeyGenerationLocked(key)
 	s.mu.Unlock()
+}
+
+func (s *CachedReadModelVersionStore) bumpReadModelKeyGenerationLocked(key ReadModelKey) {
+	if s.inflight[key] == nil {
+		// Generations only guard a currently unlocked refill. Keeping tombstones
+		// for every historical notification would make this side map unbounded.
+		delete(s.keyGeneration, key)
+		return
+	}
+	s.keyGeneration[key]++
 }
 
 func (s *CachedReadModelVersionStore) FlushReadModelCache() {
@@ -236,9 +282,54 @@ func (s *CachedReadModelVersionStore) FlushReadModelCache() {
 		return
 	}
 	s.mu.Lock()
-	s.m = make(map[ReadModelKey]readModelHashCacheEntry, 1024)
-	s.epoch++
+	s.lru.Init()
+	s.m = make(map[ReadModelKey]*list.Element, 1024)
+	s.keyGeneration = make(map[ReadModelKey]uint64, 1024)
+	s.flushGeneration++
 	s.mu.Unlock()
+}
+
+func (s *CachedReadModelVersionStore) readHashLocked(key ReadModelKey, now time.Time) (readModelHashCacheEntry, bool) {
+	el := s.m[key]
+	if el == nil {
+		return readModelHashCacheEntry{}, false
+	}
+	entry := el.Value.(*readModelHashCacheEntry)
+	if !entry.expireAt.After(now) {
+		s.lru.Remove(el)
+		delete(s.m, key)
+		return readModelHashCacheEntry{}, false
+	}
+	s.lru.MoveToFront(el)
+	return *entry, true
+}
+
+func (s *CachedReadModelVersionStore) storeHashLocked(key ReadModelKey, hash int64, expireAt time.Time) {
+	if el := s.m[key]; el != nil {
+		entry := el.Value.(*readModelHashCacheEntry)
+		entry.hash = hash
+		entry.expireAt = expireAt
+		s.lru.MoveToFront(el)
+		return
+	}
+	entry := &readModelHashCacheEntry{key: key, hash: hash, expireAt: expireAt}
+	s.m[key] = s.lru.PushFront(entry)
+	for len(s.m) > s.max {
+		oldest := s.lru.Back()
+		if oldest == nil {
+			break
+		}
+		old := oldest.Value.(*readModelHashCacheEntry)
+		delete(s.m, old.key)
+		s.lru.Remove(oldest)
+	}
+}
+
+func (s *CachedReadModelVersionStore) removeHashLocked(key ReadModelKey) {
+	if el := s.m[key]; el != nil {
+		delete(s.m, key)
+		s.lru.Remove(el)
+	}
 }
 
 func sortReadModelKeys(keys []ReadModelKey) {

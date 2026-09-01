@@ -64,6 +64,9 @@ func (r *Router) onMessagesSendEncryptedFile(ctx context.Context, req *tg.Messag
 	if req == nil {
 		return nil, inputRequestInvalidErr()
 	}
+	if len(req.Data) > domain.MaxSecretMessageDataBytes {
+		return nil, dataTooLongErr()
+	}
 	if r.deps.SecretChats == nil {
 		return nil, notImplementedErr()
 	}
@@ -71,11 +74,19 @@ func (r *Router) onMessagesSendEncryptedFile(ctx context.Context, req *tg.Messag
 	if err != nil {
 		return nil, err
 	}
+	deviceAuthKeyID, ok := businessAuthKeyIDFrom(ctx)
+	if !ok {
+		return nil, internalErr()
+	}
+	// 先完成 chat/device 授权，避免无权或终态请求先组装 blob、写元数据后才失败。
+	if _, _, _, err := r.resolveSecretChatPeer(ctx, userID, req.Peer); err != nil {
+		return nil, err
+	}
 	fileRef, err := r.resolveInputEncryptedFile(ctx, userID, req.File)
 	if err != nil {
 		return nil, err
 	}
-	_, stored, err := r.deps.SecretChats.SendEncrypted(ctx, req.Peer.ChatID, userID, req.Peer.AccessHash, domain.SecretMessageDelivery{
+	_, stored, err := r.deps.SecretChats.SendEncrypted(ctx, req.Peer.ChatID, userID, deviceAuthKeyID, req.Peer.AccessHash, domain.SecretMessageDelivery{
 		RandomID:  req.RandomID,
 		Bytes:     req.Data,
 		IsService: false,

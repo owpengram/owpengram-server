@@ -252,9 +252,9 @@ func TestBotsLongtailCommercialAndSettingsStubs(t *testing.T) {
 	}
 	if _, err := f.router.onBotsRequestWebViewButton(botCtx, &tg.BotsRequestWebViewButtonRequest{
 		UserID: inputUser(f.owner),
-		Button: &tg.KeyboardButtonSimpleWebView{
+		Button: tg.KeyboardButton{
 			Text: "Open",
-			URL:  "https://example.com/app",
+			Type: &tg.ButtonTypeSimpleWebView{URL: "https://example.com/app"},
 		},
 	}); !tgerr.Is(err, "BUTTON_DATA_INVALID") {
 		t.Fatalf("request webview button err = %v, want BUTTON_DATA_INVALID", err)

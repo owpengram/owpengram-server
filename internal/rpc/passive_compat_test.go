@@ -55,7 +55,7 @@ func TestAccountGetUniqueGiftChatThemesReturnsEmptyStub(t *testing.T) {
 	}
 }
 
-func TestAccountGetWallPapersReturnsOrangeCatalog(t *testing.T) {
+func TestAccountGetWallPapersReturnsDefaultCatalog(t *testing.T) {
 	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{}, zaptest.NewLogger(t), clock.System)
 	req := &tg.AccountGetWallPapersRequest{}
 	var in bin.Buffer

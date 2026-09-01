@@ -618,8 +618,8 @@ func (r *Router) enqueueChannelWallpaperFanout(ctx context.Context, originUserID
 	ownerIDs := channelMessageFanoutOwnerIDs(sendRes, nil)
 	r.enqueueChannelFanoutWithPrefetch(ctx, channelFanoutMessageBox, originUserID, res.Channel.ID, res.Event.Pts, res.Recipients,
 		0,
-		func(bgCtx context.Context, viewers []int64) {
-			r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
+		func(bgCtx context.Context, viewers []int64) bool {
+			return r.prefetchChannelFanoutUsers(bgCtx, fanoutCache, viewers, ownerIDs)
 		},
 		func(bgCtx context.Context, viewerUserID int64) *tg.Updates {
 			return r.channelWallpaperUpdatesWithPeerCache(bgCtx, viewerUserID, res, fanoutCache)

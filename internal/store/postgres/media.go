@@ -1,8 +1,11 @@
 package postgres
 
 import (
+	"bytes"
 	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -204,17 +207,30 @@ func (s *MediaStore) DeleteExpiredUploadParts(ctx context.Context, before time.T
 // ---- blob 索引 ----
 
 func (s *MediaStore) PutFileBlob(ctx context.Context, blob domain.FileBlob) error {
-	backend := string(blob.Backend)
-	if backend == "" {
-		backend = string(domain.MediaBackendLocalFS)
+	if blob.LocationKey == "" || blob.Size < 0 {
+		return fmt.Errorf("invalid file blob location or size")
+	}
+	switch blob.Backend {
+	case domain.MediaBackendLocalFS, domain.MediaBackendS3:
+	default:
+		return fmt.Errorf("invalid file blob backend %q", blob.Backend)
+	}
+	keyDigest, err := hex.DecodeString(blob.ObjectKey)
+	if err != nil || len(keyDigest) != sha256.Size || hex.EncodeToString(keyDigest) != blob.ObjectKey {
+		return fmt.Errorf("file blob object key must be lowercase SHA-256 hex")
 	}
 	sha := blob.SHA256
-	if sha == nil {
-		sha = []byte{} // 列为 NOT NULL；nil []byte 会被 pgx 当作 NULL。
+	if len(sha) == 0 {
+		// Canonicalize at the write boundary: BlobBackend guarantees that its
+		// returned object key is the content digest, so callers using Put (rather
+		// than PutReader) need not hash the same bytes a second time.
+		sha = keyDigest
+	} else if len(sha) != sha256.Size || !bytes.Equal(sha, keyDigest) {
+		return fmt.Errorf("file blob SHA-256 does not match object key")
 	}
 	return s.q.PutFileBlob(ctx, sqlcgen.PutFileBlobParams{
 		LocationKey: blob.LocationKey,
-		Backend:     backend,
+		Backend:     string(blob.Backend),
 		ObjectKey:   blob.ObjectKey,
 		Size:        blob.Size,
 		Sha256:      sha,
@@ -274,6 +290,59 @@ WHERE location_key = ANY($1::text[])`, locationKeys)
 
 func (s *MediaStore) SumFileBlobBytes(ctx context.Context) (int64, error) {
 	return s.q.SumFileBlobBytes(ctx)
+}
+
+// FileBlobBackendCounts returns the persisted permanent-backend distribution.
+// Startup uses it as a fail-fast invariant: a configured backend is never
+// allowed to read rows written for another backend through an implicit fallback.
+func (s *MediaStore) FileBlobBackendCounts(ctx context.Context) (map[domain.MediaBackend]int64, error) {
+	rows, err := s.db.Query(ctx, `
+SELECT backend, count(*)::bigint
+FROM file_blobs
+GROUP BY backend`)
+	if err != nil {
+		return nil, fmt.Errorf("count file blob backends: %w", err)
+	}
+	defer rows.Close()
+	counts := make(map[domain.MediaBackend]int64)
+	for rows.Next() {
+		var backend string
+		var count int64
+		if err := rows.Scan(&backend, &count); err != nil {
+			return nil, fmt.Errorf("scan file blob backend count: %w", err)
+		}
+		counts[domain.MediaBackend(backend)] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate file blob backend counts: %w", err)
+	}
+	return counts, nil
+}
+
+// UniqueFileBlobBytes returns the physical byte total represented by active
+// metadata for one backend. Multiple logical locations may point at the same
+// content-addressed object, so each object_key is counted exactly once. Size
+// disagreement for a shared key is an invariant violation, not something to
+// normalize for capacity accounting.
+func (s *MediaStore) UniqueFileBlobBytes(ctx context.Context, backend domain.MediaBackend) (int64, error) {
+	var used int64
+	var consistent bool
+	err := s.db.QueryRow(ctx, `
+SELECT COALESCE(SUM(max_size), 0)::bigint,
+       COALESCE(bool_and(min_size = max_size), true)
+FROM (
+    SELECT object_key, MIN(size)::bigint AS min_size, MAX(size)::bigint AS max_size
+    FROM file_blobs
+    WHERE backend = $1
+    GROUP BY object_key
+) objects`, string(backend)).Scan(&used, &consistent)
+	if err != nil {
+		return 0, fmt.Errorf("sum unique %s file blob bytes: %w", backend, err)
+	}
+	if !consistent {
+		return 0, fmt.Errorf("file_blobs contains inconsistent sizes for shared %s object keys", backend)
+	}
+	return used, nil
 }
 
 func (s *MediaStore) GetSeedState(ctx context.Context, key string) (string, bool, error) {

@@ -54,10 +54,10 @@ func TestPushTransientSkipsNotReadySession(t *testing.T) {
 	}
 }
 
-// Layer-228-only transient constructors must be filtered before encoding. A
-// Layer 227 or unknown session is skipped without disconnecting it or queuing
-// an unreplayable update, while the ready Layer 228 session receives it.
-func TestPushTransientAtLeastLayerSkipsOldAndUnknownProfiles(t *testing.T) {
+// Constructor compatibility comes from generated profile metadata, not a
+// hard-coded minimum layer. Old/unknown sessions are skipped without encoding,
+// disconnecting or queuing, while every generated compatible profile receives.
+func TestPushTransientCompatibleSkipsUnavailableAndUnknownProfiles(t *testing.T) {
 	sm := NewSessionManager(zaptest.NewLogger(t))
 	const userID = int64(101)
 	makeConn := func(sessionID int64, profile tlprofile.Profile, known bool) *Conn {
@@ -80,25 +80,26 @@ func TestPushTransientAtLeastLayerSkipsOldAndUnknownProfiles(t *testing.T) {
 		return c
 	}
 	old := makeConn(1, tlprofile.Profile227, true)
-	current := makeConn(2, tlprofile.Profile228, true)
+	introduced := makeConn(2, tlprofile.Profile228, true)
 	unknown := makeConn(3, 0, false)
+	newer := makeConn(4, tlprofile.Profile229, true)
 
 	message := tg.EphemeralMessage{
 		ID: 7, FromID: &tg.PeerUser{UserID: 2001}, PeerID: &tg.PeerChannel{ChannelID: 3001},
 		ReceiverID: userID, Date: 1_900_000_000, Message: "private",
 	}
 	updates := &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateNewEphemeralMessage{Message: message}}, Date: 1_900_000_000}
-	sent, err := sm.PushToUserTransientAtLeastLayer(context.Background(), userID, 228, proto.MessageFromServer, updates, time.Second)
-	if err != nil || sent != 1 {
+	sent, err := sm.PushToUserTransientCompatible(context.Background(), userID, tlprofile.SemanticTypeUpdateNewEphemeralMessage, proto.MessageFromServer, updates, time.Second)
+	if err != nil || sent != 2 {
 		t.Fatalf("sent=%d err=%v", sent, err)
 	}
-	if len(old.outbound) != 0 || len(unknown.outbound) != 0 || len(current.outbound) != 1 {
-		t.Fatalf("queues old=%d unknown=%d current=%d", len(old.outbound), len(unknown.outbound), len(current.outbound))
+	if len(old.outbound) != 0 || len(unknown.outbound) != 0 || len(introduced.outbound) != 1 || len(newer.outbound) != 1 {
+		t.Fatalf("queues old=%d unknown=%d introduced=%d newer=%d", len(old.outbound), len(unknown.outbound), len(introduced.outbound), len(newer.outbound))
 	}
 	if old.isRetired() || unknown.isRetired() {
 		t.Fatal("unsupported transient update retired an old/unknown session")
 	}
-	for _, c := range []*Conn{old, current, unknown} {
+	for _, c := range []*Conn{old, introduced, unknown, newer} {
 		sm.mu.RLock()
 		pending := len(sm.pending[connSessionKey(c)])
 		sm.mu.RUnlock()

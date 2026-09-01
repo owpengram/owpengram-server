@@ -202,7 +202,7 @@ func tgDialogDraft(d domain.DialogDraft) tg.DraftMessageClass {
 		Date:        d.Date,
 		Effect:      d.Effect,
 	}
-	if rich := mustTGRichMessage(d.RichMessage); rich != nil {
+	if rich := optionalTGRichMessage("dialog_draft", 0, d.RichMessage); rich != nil {
 		out.SetRichMessage(*rich)
 	}
 	if suggested, ok := tgSuggestedPost(d.SuggestedPost); ok {

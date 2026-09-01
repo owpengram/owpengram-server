@@ -33,6 +33,43 @@ type inlineBotRPCTestFixture struct {
 	document domain.Document
 }
 
+type builtinGifCatalogRPCSource struct{ doc domain.Document }
+
+func (s builtinGifCatalogRPCSource) ListGifCatalog(context.Context, bool) ([]domain.GifCatalogEntry, error) {
+	return []domain.GifCatalogEntry{{ID: 91, Title: "Wave", DocumentID: s.doc.ID, Enabled: true}}, nil
+}
+func (s builtinGifCatalogRPCSource) GetDocuments(context.Context, []int64) ([]domain.Document, error) {
+	return []domain.Document{s.doc}, nil
+}
+
+func TestBuiltinGifInlineQueryAcceptsGlobalEmptyPeerAndRegistersQuery(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	botStore := memory.NewBotStore(users)
+	owner, err := users.Create(ctx, domain.User{AccessHash: 7001, Phone: "15550007001", FirstName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := domain.Document{ID: 901, AccessHash: 902, DCID: 2, MimeType: "video/mp4", Attributes: []domain.DocumentAttribute{{Kind: domain.DocAttrAnimated}, {Kind: domain.DocAttrVideo, W: 320, H: 240, Duration: 1}}}
+	bots := botsapp.NewService(users, botStore, memory.NewMessageStore(memory.NewDialogStore()), botsapp.WithGifCatalogSource(builtinGifCatalogRPCSource{doc: doc}))
+	router := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{Users: appusers.NewService(users), Bots: bots, ServiceBotInlineResults: bots}, zaptest.NewLogger(t), clock.System)
+	got, err := router.onMessagesGetInlineBotResults(WithUserID(ctx, owner.ID), &tg.MessagesGetInlineBotResultsRequest{Bot: inputUser(domain.GifBotUser()), Peer: &tg.InputPeerEmpty{}, Query: "wave"})
+	if err != nil {
+		t.Fatalf("global @gif query: %v", err)
+	}
+	if got.QueryID == 0 || len(got.Results) != 1 {
+		t.Fatalf("results = query_id %d len %d", got.QueryID, len(got.Results))
+	}
+	media, ok := got.Results[0].(*tg.BotInlineMediaResult)
+	if !ok {
+		t.Fatalf("result type = %T", got.Results[0])
+	}
+	wireDoc, ok := media.Document.(*tg.Document)
+	if !ok || wireDoc.ID != doc.ID {
+		t.Fatalf("document = %#v", media.Document)
+	}
+}
+
 func newInlineBotRPCTestFixture(t *testing.T) inlineBotRPCTestFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -844,8 +881,8 @@ func TestInlineBotArticleTextChannelRoundTrip(t *testing.T) {
 	}
 	editReq := &tg.MessagesEditInlineBotMessageRequest{ID: msgID}
 	editReq.SetMessage("inline group edited")
-	editReq.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{
-		Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "Done", Data: []byte("v2")}},
+	editReq.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{
+		Buttons: []tg.KeyboardInlineButton{{Text: "Done", Type: &tg.InlineButtonTypeCallback{Data: []byte("v2")}}},
 	}}})
 	if ok, err := f.router.onMessagesEditInlineBotMessage(botCtx, editReq); err != nil || !ok {
 		t.Fatalf("channel inline edit = %v,%v, want true,nil", ok, err)
@@ -2065,12 +2102,13 @@ func assertTGInlineReplyMarkup(t *testing.T, msg *tg.Message, wantText string, w
 	if len(markup.Rows) != 1 || len(markup.Rows[0].Buttons) != 1 {
 		t.Fatalf("reply_markup rows = %+v, want one callback button", markup.Rows)
 	}
-	button, ok := markup.Rows[0].Buttons[0].(*tg.KeyboardButtonCallback)
+	button := markup.Rows[0].Buttons[0]
+	callback, ok := button.Type.(*tg.InlineButtonTypeCallback)
 	if !ok {
-		t.Fatalf("reply_markup button = %T, want callback", markup.Rows[0].Buttons[0])
+		t.Fatalf("reply_markup button type = %T, want callback", button.Type)
 	}
-	if button.Text != wantText || !bytes.Equal(button.Data, wantData) {
-		t.Fatalf("reply_markup button = %q/%v, want %q/%v", button.Text, button.Data, wantText, wantData)
+	if button.Text != wantText || !bytes.Equal(callback.Data, wantData) {
+		t.Fatalf("reply_markup button = %q/%v, want %q/%v", button.Text, callback.Data, wantText, wantData)
 	}
 }
 
@@ -2119,8 +2157,8 @@ func inlineArticleResult(id, message string) tg.InputBotInlineResultClass {
 func inlineArticleResultWithCallback(id, message, button string, data []byte) tg.InputBotInlineResultClass {
 	result := inlineArticleResult(id, message).(*tg.InputBotInlineResult)
 	msg := result.SendMessage.(*tg.InputBotInlineMessageText)
-	msg.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{
-		Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: button, Data: data}},
+	msg.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{
+		Buttons: []tg.KeyboardInlineButton{{Text: button, Type: &tg.InlineButtonTypeCallback{Data: data}}},
 	}}})
 	return result
 }
@@ -2308,8 +2346,8 @@ func inlineContactResult(id, phone, first, last, vcard string) *tg.InputBotInlin
 func inlineContactResultWithCallback(id, phone, first, last string, data []byte) tg.InputBotInlineResultClass {
 	result := inlineContactResult(id, phone, first, last, "BEGIN:VCARD\nFN:"+first+" "+last+"\nEND:VCARD")
 	msg := result.SendMessage.(*tg.InputBotInlineMessageMediaContact)
-	msg.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{
-		Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonCallback{Text: "Contact", Data: data}},
+	msg.SetReplyMarkup(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{
+		Buttons: []tg.KeyboardInlineButton{{Text: "Contact", Type: &tg.InlineButtonTypeCallback{Data: data}}},
 	}}})
 	return result
 }

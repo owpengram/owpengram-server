@@ -375,6 +375,14 @@ func dialogDraftErr(err error) error {
 }
 
 func (r *Router) clearDraftAfterSend(ctx context.Context, userID int64, peer domain.Peer, replyTo *domain.MessageReply) {
+	r.clearDraftAfterSendWithOptionalPeerObjects(ctx, userID, peer, replyTo, nil, nil, false)
+}
+
+func (r *Router) clearDraftAfterSendWithPeerObjects(ctx context.Context, userID int64, peer domain.Peer, replyTo *domain.MessageReply, users []tg.UserClass, chats []tg.ChatClass) {
+	r.clearDraftAfterSendWithOptionalPeerObjects(ctx, userID, peer, replyTo, users, chats, true)
+}
+
+func (r *Router) clearDraftAfterSendWithOptionalPeerObjects(ctx context.Context, userID int64, peer domain.Peer, replyTo *domain.MessageReply, users []tg.UserClass, chats []tg.ChatClass, peerObjectsReady bool) {
 	if r.deps.Dialogs == nil || userID == 0 || peer.ID == 0 {
 		return
 	}
@@ -397,7 +405,9 @@ func (r *Router) clearDraftAfterSend(ctx context.Context, userID int64, peer dom
 	}
 	recorded := r.recordDraftMessageEvent(ctx, userID, peer, topMessageID, &date)
 	r.bookkeepAuxPtsForCurrentSession(ctx, recorded)
-	users, chats := r.peerObjectsForDraftUpdate(ctx, userID, peer)
+	if !peerObjectsReady {
+		users, chats = r.peerObjectsForDraftUpdate(ctx, userID, peer)
+	}
 	r.pushUserUpdatesIfNoReliableDispatch(ctx, userID, &tg.Updates{
 		Updates: appendAuxPtsBookkeeping([]tg.UpdateClass{update}, recorded),
 		Users:   users,
@@ -982,11 +992,17 @@ func (r *Router) dialogFilterFromRequest(ctx context.Context, userID int64, req 
 		filter.HasFolderID = true
 		filter.FolderID = folderID
 	}
-	if peer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.OffsetPeer); err == nil {
+	// offset_peer is only the stable tie-breaker paired with offset_date/id. It
+	// neither grants access nor selects content, so resolving a channel view (and
+	// validating its access_hash) here adds database work without a security
+	// boundary. Content-bearing peer arguments continue through checkedDomainPeer.
+	if _, empty := req.OffsetPeer.(*tg.InputPeerEmpty); !empty && !inputPeerClassNil(req.OffsetPeer) {
+		peer, ok := r.domainPeerFromInputPeer(userID, req.OffsetPeer)
+		if !ok || peer.ID <= 0 {
+			return domain.DialogFilter{}, peerIDInvalidErr()
+		}
 		filter.HasOffsetPeer = true
 		filter.OffsetPeer = peer
-	} else if _, ok := req.OffsetPeer.(*tg.InputPeerEmpty); !ok && req.OffsetPeer != nil {
-		return domain.DialogFilter{}, err
 	}
 	return filter, nil
 }

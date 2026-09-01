@@ -11,11 +11,10 @@ import (
 )
 
 const (
-	dialogLightReadModel          = readmodel.ModelDialogLight
-	channelBaseReadModel          = readmodel.ModelChannelBase
-	channelMemberReadModel        = readmodel.ModelChannelMember
-	defaultDialogPeerReadModelTTL = 24 * time.Hour
-	dialogPeerReadModelMaxEntries = 8192
+	dialogLightReadModel                       = readmodel.ModelDialogLight
+	defaultDialogPeerReadModelTTL              = 24 * time.Hour
+	defaultDialogPeerReadModelMaxEntries       = 500000
+	defaultDialogPeerReadModelMaxBytes   int64 = 256 << 20
 )
 
 type dialogPeerCacheKey struct {
@@ -32,12 +31,18 @@ type dialogPeerReadModelCache struct {
 }
 
 func newDialogPeerReadModelCache(ttl time.Duration) *dialogPeerReadModelCache {
+	return newDialogPeerReadModelCacheWithLimits(defaultDialogPeerReadModelMaxEntries, defaultDialogPeerReadModelMaxBytes, ttl)
+}
+
+func newDialogPeerReadModelCacheWithLimits(maxEntries int, maxBytes int64, ttl time.Duration) *dialogPeerReadModelCache {
 	if ttl <= 0 {
 		ttl = defaultDialogPeerReadModelTTL
 	}
 	return &dialogPeerReadModelCache{
 		cache: readmodelcache.New[dialogPeerCacheKey, domain.DialogList](readmodelcache.Config[dialogPeerCacheKey, domain.DialogList]{
-			MaxEntries: dialogPeerReadModelMaxEntries,
+			MaxEntries: maxEntries,
+			MaxWeight:  maxBytes,
+			Weight:     dialogPeerListApproxBytes,
 			TTL:        ttl,
 			Clone:      cloneDialogList,
 		}),
@@ -52,7 +57,7 @@ func (s *Service) userPeerDialogsReadModel(ctx context.Context, userID int64, pe
 	if len(unique) == 0 {
 		return domain.DialogList{}, nil
 	}
-	return s.cachedPeerDialogsReadModel(ctx, userID, unique, s.userDialogHashes, s.loadUserPeerDialogs)
+	return s.cachedPeerDialogsReadModel(ctx, userID, unique, s.dialogHashes, s.loadUserPeerDialogs)
 }
 
 func (s *Service) channelPeerDialogsReadModel(ctx context.Context, userID int64, channelIDs []int64) (domain.DialogList, error) {
@@ -63,7 +68,7 @@ func (s *Service) channelPeerDialogsReadModel(ctx context.Context, userID int64,
 	if len(unique) == 0 {
 		return domain.DialogList{}, nil
 	}
-	return s.cachedPeerDialogsReadModel(ctx, userID, unique, s.channelDialogHashes, s.loadChannelPeerDialogsByPeers)
+	return s.loadChannelPeerDialogsByPeers(ctx, userID, unique)
 }
 
 func (s *Service) cachedPeerDialogsReadModel(
@@ -73,20 +78,20 @@ func (s *Service) cachedPeerDialogsReadModel(
 	hashesFor func(context.Context, int64, []domain.Peer) (map[domain.Peer]int64, error),
 	load func(context.Context, int64, []domain.Peer) (domain.DialogList, error),
 ) (domain.DialogList, error) {
-	if s.peerCache == nil || s.versions == nil {
+	if s.privatePeerCache == nil || s.versions == nil {
 		return load(ctx, userID, peers)
 	}
 	hashes, err := hashesFor(ctx, userID, peers)
 	if err != nil {
 		return domain.DialogList{}, err
 	}
-	loadEpoch := s.peerCache.cacheEpoch()
+	loadEpoch := s.privatePeerCache.cacheEpoch()
 	var out domain.DialogList
 	misses := make([]domain.Peer, 0, len(peers))
 	for _, peer := range peers {
 		hash := hashes[peer]
 		if hash != 0 {
-			if cached, ok := s.peerCache.lookup(dialogPeerCacheKey{userID: userID, peer: peer}, hash); ok {
+			if cached, ok := s.privatePeerCache.lookup(dialogPeerCacheKey{userID: userID, peer: peer}, hash); ok {
 				out = mergeDialogLists(out, cached)
 				continue
 			}
@@ -108,7 +113,7 @@ func (s *Service) cachedPeerDialogsReadModel(
 		}
 		peerList := dialogListForPeer(list, peer)
 		peerList.Hash = hash
-		s.peerCache.putIfEpoch(dialogPeerCacheKey{userID: userID, peer: peer}, peerList, hash, loadEpoch)
+		s.privatePeerCache.putIfEpoch(dialogPeerCacheKey{userID: userID, peer: peer}, peerList, hash, loadEpoch)
 	}
 	if len(out.Dialogs) > 0 || len(out.Messages) > 0 || len(out.ChannelMessages) > 0 || len(out.Users) > 0 || len(out.Channels) > 0 {
 		return mergeDialogLists(out, list), nil
@@ -124,11 +129,8 @@ func (s *Service) loadUserPeerDialogs(ctx context.Context, userID int64, peers [
 	if err != nil {
 		return domain.DialogList{}, err
 	}
-	if err := s.attachDrafts(ctx, userID, &list); err != nil {
-		return domain.DialogList{}, err
-	}
-	if err := s.projectDialogUsers(ctx, userID, &list); err != nil {
-		return domain.DialogList{}, err
+	for i := range list.Dialogs {
+		list.Dialogs[i].Draft = nil
 	}
 	return list, nil
 }
@@ -150,16 +152,10 @@ func (s *Service) loadChannelPeerDialogsByPeers(ctx context.Context, userID int6
 	if err != nil {
 		return domain.DialogList{}, err
 	}
-	if err := s.attachDrafts(ctx, userID, &out); err != nil {
-		return domain.DialogList{}, err
-	}
-	if err := s.projectDialogUsers(ctx, userID, &out); err != nil {
-		return domain.DialogList{}, err
-	}
 	return out, nil
 }
 
-func (s *Service) userDialogHashes(ctx context.Context, userID int64, peers []domain.Peer) (map[domain.Peer]int64, error) {
+func (s *Service) dialogHashes(ctx context.Context, userID int64, peers []domain.Peer) (map[domain.Peer]int64, error) {
 	keys := make([]store.ReadModelKey, 0, len(peers))
 	for _, peer := range peers {
 		keys = append(keys, store.ReadModelKey{Model: dialogLightReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID})
@@ -171,32 +167,6 @@ func (s *Service) userDialogHashes(ctx context.Context, userID int64, peers []do
 	out := make(map[domain.Peer]int64, len(peers))
 	for _, peer := range peers {
 		out[peer] = rows[store.ReadModelKey{Model: dialogLightReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID}]
-	}
-	return out, nil
-}
-
-func (s *Service) channelDialogHashes(ctx context.Context, userID int64, peers []domain.Peer) (map[domain.Peer]int64, error) {
-	keys := make([]store.ReadModelKey, 0, len(peers)*3)
-	for _, peer := range peers {
-		keys = append(keys,
-			store.ReadModelKey{Model: channelBaseReadModel, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID},
-			store.ReadModelKey{Model: channelMemberReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID},
-			store.ReadModelKey{Model: dialogLightReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID},
-		)
-	}
-	rows, err := s.versions.ReadModelHashes(ctx, keys)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[domain.Peer]int64, len(peers))
-	for _, peer := range peers {
-		base := rows[store.ReadModelKey{Model: channelBaseReadModel, OwnerUserID: 0, PeerType: peer.Type, PeerID: peer.ID}]
-		if base == 0 {
-			continue
-		}
-		member := rows[store.ReadModelKey{Model: channelMemberReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID}]
-		dialog := rows[store.ReadModelKey{Model: dialogLightReadModel, OwnerUserID: userID, PeerType: peer.Type, PeerID: peer.ID}]
-		out[peer] = readmodel.MixHashes(base, member, dialog)
 	}
 	return out, nil
 }
@@ -246,23 +216,79 @@ func (s *Service) InvalidateDialog(userID int64, peer domain.Peer) {
 	if s == nil || userID == 0 {
 		return
 	}
-	s.invalidateDialogListHashes(userID)
-	if s.peerCache == nil || peer.Type == "" || peer.ID == 0 {
+	s.InvalidateDialogOwner(userID)
+	if s.draftCache != nil && peer.Type != "" && peer.ID != 0 {
+		s.draftCache.invalidate(dialogPeerCacheKey{userID: userID, peer: peer})
+	}
+	if s.privatePeerCache != nil && peer.Type == domain.PeerTypeUser && peer.ID != 0 {
+		s.privatePeerCache.invalidate(dialogPeerCacheKey{userID: userID, peer: peer})
+	}
+}
+
+// InvalidateDialogOwner invalidates owner-list L1 state without inventing an
+// exact peer. Redis L2 values are version-addressed and validated, so old keys
+// expire naturally rather than requiring a global/key-pattern delete.
+func (s *Service) InvalidateDialogOwner(userID int64) {
+	if s == nil || userID == 0 {
 		return
 	}
-	s.peerCache.invalidate(dialogPeerCacheKey{userID: userID, peer: peer})
+	s.invalidateDialogListHashes(userID)
+	if s.listCache != nil {
+		s.listCache.invalidateOwner(userID)
+	}
+}
+
+// InvalidateDialogListsForChannel invalidates only local bounded owner
+// snapshots that actually contain the changed shared channel. The listener
+// invokes it for channel_base; reconnect flush remains the missed-NOTIFY guard.
+func (s *Service) InvalidateDialogListsForChannel(channelID int64) {
+	if s != nil && s.listCache != nil {
+		s.listCache.invalidateChannel(channelID)
+	}
 }
 
 func (s *Service) FlushReadModelCache() {
 	if s == nil {
 		return
 	}
-	if s.peerCache != nil {
-		s.peerCache.flush()
+	if s.privatePeerCache != nil {
+		s.privatePeerCache.flush()
+	}
+	if s.draftCache != nil {
+		s.draftCache.flush()
 	}
 	if s.listHashCache != nil {
 		s.listHashCache.flush()
 	}
+	if s.listCache != nil {
+		s.listCache.flush()
+	}
+}
+
+func dialogPeerListApproxBytes(list domain.DialogList) int64 {
+	weight := int64(256 + len(list.Dialogs)*256 + len(list.Messages)*512 + len(list.Users)*512)
+	for _, dialog := range list.Dialogs {
+		weight += int64(len(dialog.ThemeEmoticon))
+	}
+	for _, msg := range list.Messages {
+		weight += int64(len(msg.Body) + len(msg.Entities)*64)
+		if msg.ReplyTo != nil {
+			weight += int64(128 + len(msg.ReplyTo.QuoteText) + len(msg.ReplyTo.QuoteEntities)*64)
+		}
+		if msg.Forward != nil {
+			weight += int64(96 + len(msg.Forward.FromName))
+		}
+		if msg.RichMessage != nil {
+			weight += int64(len(msg.RichMessage.Blocks) + len(msg.RichMessage.BotAPIProjection) + len(msg.RichMessage.Photos)*256 + len(msg.RichMessage.Documents)*256)
+		}
+	}
+	for _, user := range list.Users {
+		weight += int64(len(user.Phone) + len(user.FirstName) + len(user.LastName) + len(user.About) + len(user.Username) + len(user.PhotoStripped))
+	}
+	if weight < 1 {
+		return 1
+	}
+	return weight
 }
 
 func (s *Service) invalidateDialogListHashes(userID int64) {
@@ -373,7 +399,20 @@ func cloneDialogList(in domain.DialogList) domain.DialogList {
 	in.ChannelMessages = cloneDialogChannelMessages(in.ChannelMessages)
 	in.Users = cloneDialogUsers(in.Users)
 	in.Channels = cloneDialogChannels(in.Channels)
+	in.ArchiveSummary = cloneDialogArchiveSummary(in.ArchiveSummary)
 	return in
+}
+
+func cloneDialogArchiveSummary(in *domain.DialogArchiveSummary) *domain.DialogArchiveSummary {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.TopDialog != nil {
+		dialog := cloneDialog(*in.TopDialog)
+		out.TopDialog = &dialog
+	}
+	return &out
 }
 
 func cloneDialogSlice(in []domain.Dialog) []domain.Dialog {
@@ -385,6 +424,14 @@ func cloneDialogSlice(in []domain.Dialog) []domain.Dialog {
 }
 
 func cloneDialog(in domain.Dialog) domain.Dialog {
+	if in.DefaultSendAs != nil {
+		peer := *in.DefaultSendAs
+		in.DefaultSendAs = &peer
+	}
+	if in.ChannelMember != nil {
+		member := *in.ChannelMember
+		in.ChannelMember = &member
+	}
 	if in.Draft != nil {
 		draft := cloneDraft(*in.Draft)
 		in.Draft = &draft

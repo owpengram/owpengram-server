@@ -30,6 +30,13 @@ type Metrics interface {
 	OutboundQueueWait(len, cap int)
 }
 
+// RPCDatabaseMetrics is an optional extension for request-scoped database
+// work. queries/errors are counts attributed to one RPC and duration is the
+// cumulative database time observed by the query wrapper under that request.
+type RPCDatabaseMetrics interface {
+	RPCDatabase(method string, queries int64, duration time.Duration, errors int64)
+}
+
 // RPCResultMetrics is an optional extension for the detached response pipeline.
 // Keeping it separate preserves lightweight embedders while production exporters
 // can observe preparation/compression and end-to-end delivery independently from

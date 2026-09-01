@@ -36,6 +36,10 @@ func TestAccountSettingsRoundTripPostgres(t *testing.T) {
 			HideReadMarks:                    true,
 			DisplayGiftsButton:               true,
 			NoncontactPeersPaidStars:         75,
+			DisallowedGifts: domain.DisallowedGifts{
+				UnlimitedStargifts: true,
+				PremiumGifts:       true,
+			},
 		},
 		AccountTTLDays:          30,
 		SensitiveContentEnabled: true,

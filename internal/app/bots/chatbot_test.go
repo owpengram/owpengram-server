@@ -128,6 +128,19 @@ func TestChatBotSystemSeedAndCommands(t *testing.T) {
 	assertReplyEntityText(t, reply, domain.MessageEntityBotCommand, "/help")
 }
 
+func TestChatBotCommandReplyRecognizesHelpFromPreviousBrand(t *testing.T) {
+	oldHelp := chatBotHelpPrefix + "Previous Product" + chatBotHelpSuffix
+	if !chatBotCommandReply(oldHelp) {
+		t.Fatal("help reply from previous product brand should be excluded from AI history")
+	}
+	if chatBotCommandReply(chatBotHelpPrefix + chatBotHelpSuffix) {
+		t.Fatal("help-shaped text without a product name should not be classified as a bot command reply")
+	}
+	if chatBotCommandReply("ordinary assistant reply") {
+		t.Fatal("ordinary assistant reply should remain in AI history")
+	}
+}
+
 func TestChatBotStreamsByTypingDraftThenFinalMessage(t *testing.T) {
 	ai := &fakeChatAI{
 		chunks: []string{"Hel", "Hello from AI"},

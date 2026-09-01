@@ -100,6 +100,7 @@ func (r *Router) onChannelsSearchPosts(ctx context.Context, req *tg.ChannelsSear
 		return nil, channelInvalidErr(err)
 	}
 	history = r.enrichChannelHistory(ctx, userID, history)
+	r.maybeEnqueueExpiredChannelWebPageResolves(userID, history.Messages)
 	result := tgChannelSearchPostsMessages(userID, history)
 	r.applyPeerReadModelsToMessages(ctx, userID, result)
 	return result, nil
@@ -267,15 +268,10 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	if err := r.checkFrozenChannelParticipants(ctx, userID, channelID); err != nil {
 		return nil, err
 	}
-	ids := make([]int, 0, len(req.ID))
-	for _, input := range req.ID {
-		id, ok := inputMessageBoxID(input)
-		if !ok || id <= 0 || id > domain.MaxMessageBoxID {
-			continue
-		}
-		ids = append(ids, id)
-	}
+	trace := newGetMessagesInputTrace(req.ID)
+	ids := trace.lookupIDs
 	if len(ids) == 0 {
+		r.logChannelGetMessagesTrace(ctx, channelID, trace, nil, &tg.MessagesMessages{})
 		return &tg.MessagesMessages{}, nil
 	}
 	history, err := r.deps.Channels.GetMessages(ctx, userID, channelID, ids)
@@ -287,6 +283,7 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 	for _, msg := range history.Messages {
 		byID[msg.ID] = msg
 	}
+	r.maybeEnqueueExpiredChannelWebPageResolves(userID, history.Messages)
 	messages := make([]tg.MessageClass, 0, len(ids))
 	for _, id := range ids {
 		if msg, ok := byID[id]; ok {
@@ -301,6 +298,7 @@ func (r *Router) onChannelsGetMessages(ctx context.Context, req *tg.ChannelsGetM
 		Users:    r.tgUsersForViewer(userID, history.Users), // viewer 补拉自己的消息（含置顶）须带 self
 	}
 	r.applyPeerReadModelsToMessages(ctx, userID, result)
+	r.logChannelGetMessagesTrace(ctx, channelID, trace, history.Messages, result)
 	return result, nil
 }
 

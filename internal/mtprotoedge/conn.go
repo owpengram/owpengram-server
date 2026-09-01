@@ -118,10 +118,13 @@ type Conn struct {
 	transportClose sync.Once
 
 	rpcScheduler *inboundRPCScheduler
-	rpcCancel    context.CancelFunc
-	rpcClose     sync.Once
-	rpcMu        sync.Mutex
-	rpcWG        sync.WaitGroup
+	// rpcDeliveryHooks belongs to the owning Server. Directly constructed test
+	// Conns leave it nil and use the package test fallback.
+	rpcDeliveryHooks *rpcDeliveryHookExecutor
+	rpcCancel        context.CancelFunc
+	rpcClose         sync.Once
+	rpcMu            sync.Mutex
+	rpcWG            sync.WaitGroup
 	// rpcReservationWG 跟踪 Copy 前预算到 commit/abort 的短窗口，使 Close 返回时
 	// 全局/单连接预算都已归还或转交给明确的 queued/running task。
 	rpcReservationWG sync.WaitGroup
@@ -177,6 +180,17 @@ type Conn struct {
 	// 同步失败时保持 false，让置位短路放行、下一条 RPC 重试同步，避免
 	// 「已置位但 channel 路由缺失」的 session 静默漏收超级群推送。
 	membershipsSynced atomic.Bool
+	// updatesActivationToken/At are protected by SessionManager.mu. They make
+	// readiness activation single-flight per physical connection generation;
+	// an old delivery callback can only release the exact token it acquired.
+	updatesActivationToken uint64
+	updatesActivationAt    time.Time
+	// bootstrapProbeToken/bootstrapProbed are protected by SessionManager.mu.
+	// A delivered updates baseline performs the durable bootstrap-job probe once
+	// per physical connection generation. A failed callback releases the token;
+	// a replacement Conn starts with a fresh zero value and probes again.
+	bootstrapProbeToken uint64
+	bootstrapProbed     bool
 	// membershipGen 是本连接 channel membership 索引的修订号：任何增量修订
 	// （join/leave/kick 的 Add/Remove、身份切换/下线的整体清除）都递增。全量同步方
 	// 在读取持久成员列表前采样、落地时带回比对，检测「读取窗口内发生增量修订」的

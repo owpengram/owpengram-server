@@ -11,7 +11,7 @@ import (
 	"fmt"
 )
 
-// DHConfigVersion 是 messages.getDhConfig 的静态版本号。p/g 是编译期常量，
+// DHConfigVersion 是 messages.getDhConfig 的服务端配置版本。p/g 是编译期常量，
 // 客户端缓存命中（请求 version 相同）时只回 dhConfigNotModified{random}。
 //
 // ⚠ 提高此值会让所有客户端在下一次 messages.getDhConfig（每次拨打/接听通话都会调用）

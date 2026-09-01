@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/iamxvbaba/td/tg"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
 	"telesrv/internal/domain"
@@ -151,6 +153,46 @@ func (r *Router) storyProjectionMaps(ctx context.Context, viewerUserID int64, pe
 	if r.deps.Stories == nil || viewerUserID == 0 || len(peers) == 0 {
 		return nil, nil
 	}
+	provider, sparse := r.deps.Stories.(storySparseProjectionProvider)
+	if sparse && r.storySparseProjectionCache != nil {
+		var (
+			activePeers []domain.Peer
+			hiddenPeers hiddenStoryPeerSet
+		)
+		now := int(r.clock.Now().Unix())
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(func() error {
+			var err error
+			activePeers, err = r.storySparseProjectionCache.activePeers(gctx, provider, peers, now)
+			return err
+		})
+		g.Go(func() error {
+			var err error
+			hiddenPeers, err = r.storySparseProjectionCache.hiddenPeers(gctx, provider, viewerUserID)
+			return err
+		})
+		if err := g.Wait(); err == nil {
+			hidden := make(map[domain.Peer]bool, len(peers))
+			for _, peer := range peers {
+				_, isHidden := hiddenPeers[peer]
+				hidden[peer] = isHidden
+			}
+			if len(activePeers) == 0 {
+				return map[domain.Peer]tg.RecentStory{}, hidden
+			}
+			if r.storyProjectionCache == nil {
+				recent, _ := r.storyProjectionFreshMaps(ctx, viewerUserID, activePeers)
+				return recent, hidden
+			}
+			recent, _ := r.storyProjectionCache.getMany(ctx, viewerUserID, activePeers, func(ctx context.Context, missPeers []domain.Peer) (map[domain.Peer]tg.RecentStory, map[domain.Peer]bool) {
+				return r.storyProjectionFreshMaps(ctx, viewerUserID, missPeers)
+			})
+			return recent, hidden
+		} else {
+			r.log.Warn("story sparse projection read model failed; using authoritative projection",
+				zap.Int64("viewer_user_id", viewerUserID), zap.Int("peer_count", len(peers)), zap.Error(err))
+		}
+	}
 	if r.storyProjectionCache == nil {
 		return r.storyProjectionFreshMaps(ctx, viewerUserID, peers)
 	}
@@ -190,6 +232,9 @@ func storyProjectionSingleflightKey(viewerUserID int64, peers []domain.Peer) str
 }
 
 func (r *Router) invalidateStoryProjectionCache(viewerUserID int64, peer domain.Peer) {
+	if r.storySparseProjectionCache != nil {
+		r.storySparseProjectionCache.DeleteViewer(viewerUserID)
+	}
 	if r.storyProjectionCache != nil {
 		r.storyProjectionCache.Delete(viewerUserID, peer)
 	}
@@ -202,6 +247,9 @@ func (r *Router) invalidateStoryProjectionCache(viewerUserID int64, peer domain.
 }
 
 func (r *Router) invalidateStoryProjectionCacheForViewer(viewerUserID int64) {
+	if r.storySparseProjectionCache != nil {
+		r.storySparseProjectionCache.DeleteViewer(viewerUserID)
+	}
 	if r.storyProjectionCache != nil {
 		r.storyProjectionCache.DeleteViewer(viewerUserID)
 	}
@@ -214,6 +262,9 @@ func (r *Router) invalidateStoryProjectionCacheForViewer(viewerUserID int64) {
 }
 
 func (r *Router) invalidateStoryProjectionCacheForPeer(peer domain.Peer) {
+	if r.storySparseProjectionCache != nil {
+		r.storySparseProjectionCache.DeletePeer(peer)
+	}
 	if r.storyProjectionCache != nil {
 		r.storyProjectionCache.DeletePeer(peer)
 	}
@@ -236,6 +287,9 @@ func (r *Router) InvalidateStoryReadModelPeer(peer domain.Peer) {
 }
 
 func (r *Router) FlushStoryReadModelCache() {
+	if r.storySparseProjectionCache != nil {
+		r.storySparseProjectionCache.Flush()
+	}
 	if r.storyProjectionCache != nil {
 		r.storyProjectionCache.Flush()
 	}

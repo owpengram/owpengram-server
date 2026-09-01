@@ -209,12 +209,24 @@ WHERE channel_id = $1`, channelID, cursor, checkpoint.LatestEventDate, checkpoin
 		if tag.RowsAffected() != 1 {
 			return fmt.Errorf("advance channel update retained floor: checkpoint row disappeared for channel %d", channelID)
 		}
+		// Retention changes whether an old cursor receives a normal page or
+		// channelDifferenceTooLong without changing channel.pts. Publish a
+		// dedicated generation so every instance drops immutable pages built
+		// against the previous floor.
+		if _, err := tx.Exec(ctx, `SELECT telesrv_bump_read_model_version(
+    'channel_difference_base', 0, 'channel', $1
+)`, channelID); err != nil {
+			return fmt.Errorf("bump channel difference retention read model: %w", err)
+		}
 		checkpoint.RetainedThroughPts = cursor
 		result = domain.ChannelUpdateRetentionResult{Checkpoint: checkpoint, Deleted: len(ptsToDelete)}
 		return nil
 	})
 	if err != nil {
 		return domain.ChannelUpdateRetentionResult{}, err
+	}
+	if result.Deleted > 0 && s.differenceCache != nil {
+		s.differenceCache.deleteChannel(channelID)
 	}
 	return result, nil
 }

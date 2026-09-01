@@ -176,7 +176,7 @@ func (f *webpageFetcher) fetch(ctx context.Context, rawURL, accept string) ([]by
 	if err != nil {
 		// SSRF 拦截（dial Control 返回的 terminal）经 url.Error 传上来，errors.Is 仍能识别；
 		// 其余 dial/超时错误是瞬时。
-		return nil, "", fmt.Errorf("%w: %v", ErrWebPagePreviewInvalid, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrWebPagePreviewInvalid, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -293,7 +293,7 @@ func (f *webpageFetcher) resolve(ctx context.Context, s *Service, normalizedURL 
 	if err != nil {
 		// 终态失败（SSRF/4xx/非法 URL）→ 负缓存为空预览，避免重复按键/发送重打 PG+外网。
 		// 瞬时失败（5xx/超时/dial/限速）→ 上抛 error，GetOrLoad 不缓存、可重试。
-		if errors.Is(err, errWebPageTerminal) {
+		if isTerminalWebPageFetchError(err) {
 			return emptyWebPage(normalizedURL, urlHash), nil
 		}
 		return domain.MessageWebPage{}, err
@@ -314,6 +314,14 @@ func (f *webpageFetcher) resolve(ctx context.Context, s *Service, normalizedURL 
 		}
 	}
 	return page, nil
+}
+
+func isTerminalWebPageFetchError(err error) bool {
+	if errors.Is(err, errWebPageTerminal) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
 // fetchImage 抓取并铸造预览图（best-effort）。解码前按尺寸拦截解压炸弹；非图片/失败丢弃。

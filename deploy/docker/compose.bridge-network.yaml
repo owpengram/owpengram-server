@@ -1,0 +1,63 @@
+services:
+  server:
+    # Compatibility fallback for hosts without network_mode: host. The bounded
+    # TURN relay range is published 1:1 to avoid address translation mismatch.
+    network_mode: !reset null
+    environment:
+      TELESRV_LISTEN: 0.0.0.0:${TELESRV_SERVER_PORT:-2398}
+      TELESRV_PUBLIC_LINK_WEB_ADDR: 0.0.0.0:${TELESRV_PUBLIC_LINK_PORT:-2401}
+      TELESRV_POSTGRES_DSN: postgres://${POSTGRES_USER:-telesrv}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-telesrv_main}?sslmode=disable
+      TELESRV_REDIS_ADDR: redis:6379
+      TELESRV_ADMIN_API_ADDR: 0.0.0.0:${TELESRV_ADMIN_API_PORT:-2599}
+      TELESRV_TURN_RELAY_MAX_PORT: ${TELESRV_TURN_BRIDGE_RELAY_MAX_PORT:-12563}
+      TELESRV_SERVER_HEALTH_IP: 127.0.0.1
+      TELESRV_SERVER_HEALTH_URL_HOST: 127.0.0.1
+    ports:
+      - name: mtproto
+        target: ${TELESRV_SERVER_PORT:-2398}
+        published: "${TELESRV_SERVER_PORT:-2398}"
+        host_ip: ${TELESRV_PUBLIC_BIND_IP:-127.0.0.1}
+        protocol: tcp
+      - name: public-links
+        target: ${TELESRV_PUBLIC_LINK_PORT:-2401}
+        published: "${TELESRV_PUBLIC_LINK_PORT:-2401}"
+        host_ip: ${TELESRV_LOCAL_BIND_IP:-127.0.0.1}
+        protocol: tcp
+      - name: rtmp-ingest
+        target: ${TELESRV_LIVESTREAM_RTMP_PORT:-2400}
+        published: "${TELESRV_LIVESTREAM_RTMP_PORT:-2400}"
+        host_ip: ${TELESRV_PUBLIC_BIND_IP:-127.0.0.1}
+        protocol: tcp
+      - name: sfu-media
+        target: ${TELESRV_SFU_UDP_PORT:-12399}
+        published: "${TELESRV_SFU_UDP_PORT:-12399}"
+        host_ip: ${TELESRV_PUBLIC_BIND_IP:-127.0.0.1}
+        protocol: udp
+      - name: turn
+        target: ${TELESRV_TURN_UDP_PORT:-12400}
+        published: "${TELESRV_TURN_UDP_PORT:-12400}"
+        host_ip: ${TELESRV_PUBLIC_BIND_IP:-127.0.0.1}
+        protocol: udp
+      - "${TELESRV_PUBLIC_BIND_IP:-127.0.0.1}:${TELESRV_TURN_RELAY_MIN_PORT:-12500}-${TELESRV_TURN_BRIDGE_RELAY_MAX_PORT:-12563}:${TELESRV_TURN_RELAY_MIN_PORT:-12500}-${TELESRV_TURN_BRIDGE_RELAY_MAX_PORT:-12563}/udp"
+    networks:
+      - data
+      - control
+      - outbound
+
+  admin:
+    network_mode: !reset null
+    environment:
+      TELESRV_POSTGRES_DSN: postgres://${POSTGRES_USER:-telesrv}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-telesrv_main}?sslmode=disable
+      TELESRV_ADMIN_API_ADDR: server:${TELESRV_ADMIN_API_PORT:-2599}
+      TELESRV_ADMIN_UI_ADDR: 0.0.0.0:${TELESRV_ADMIN_PORT:-2600}
+      TELESRV_ADMIN_HEALTH_IP: 127.0.0.1
+    ports:
+      - name: admin-ui
+        target: ${TELESRV_ADMIN_PORT:-2600}
+        published: "${TELESRV_ADMIN_PORT:-2600}"
+        host_ip: ${TELESRV_ADMIN_BIND_IP:-127.0.0.1}
+        protocol: tcp
+    networks:
+      - data
+      - control
+      - admin_host_access

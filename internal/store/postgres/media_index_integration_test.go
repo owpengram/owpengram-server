@@ -88,6 +88,18 @@ func TestChannelMediaIndexSearch(t *testing.T) {
 	wantIDs("music", search(domain.MediaCategoryMusic), musicID)
 	wantIDs("photoVideo", search(domain.MediaCategoryPhoto, domain.MediaCategoryVideo), videoID, photoID) // newest-first
 	wantIDs("voice empty", search(domain.MediaCategoryVoice))
+	combined, err := channels.SearchChannelMedia(ctx, owner.ID, channelID, domain.MediaSearchRequest{
+		Categories:   []domain.MediaCategory{domain.MediaCategoryVideo},
+		Query:        "VID",
+		SenderUserID: owner.ID,
+		MinDate:      1700002002,
+		MaxDate:      1700002004,
+		Limit:        50,
+	})
+	if err != nil {
+		t.Fatalf("combined channel media search: %v", err)
+	}
+	wantIDs("combined channel media", combined, videoID)
 	countOnly, err := channels.SearchChannelMedia(ctx, owner.ID, channelID, domain.MediaSearchRequest{
 		Categories: []domain.MediaCategory{domain.MediaCategoryPhoto},
 		Limit:      0,
@@ -174,6 +186,20 @@ func TestPrivateMediaCategoryCountsMaterialized(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("send private media: %v", err)
+	}
+	combined, err := messages.SearchPrivateMedia(ctx, bob.ID, alice.ID, domain.MediaSearchRequest{
+		Categories:   []domain.MediaCategory{domain.MediaCategoryFile},
+		Query:        "DOC",
+		SenderUserID: alice.ID,
+		MinDate:      1700003000,
+		MaxDate:      1700003200,
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("combined private media search: %v", err)
+	}
+	if combined.Count != 1 || len(combined.Messages) != 1 || combined.Messages[0].ID != sent.RecipientMessage.ID {
+		t.Fatalf("combined private media = count %d messages %+v", combined.Count, combined.Messages)
 	}
 	wantCount := func(name string, ownerID, peerID int64, category domain.MediaCategory, want int) {
 		counts, err := messages.CountPrivateMediaCategories(ctx, ownerID, peerID)

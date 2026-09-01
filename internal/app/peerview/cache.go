@@ -103,6 +103,29 @@ func (c *BatchCache) Prime(viewerUserID int64, users []domain.User) {
 	}
 }
 
+// PrimeExpected preheats one viewer with the complete result of a bounded batch
+// projection. IDs omitted by the resolver are negative-cached as missing, so a
+// later fan-out builder cannot silently fall back to a per-viewer ByIDs query.
+// System users remain locally synthesised even when the resolver omits them.
+func (c *BatchCache) PrimeExpected(viewerUserID int64, expectedIDs []int64, users []domain.User) {
+	if c == nil || viewerUserID == 0 {
+		return
+	}
+	c.Prime(viewerUserID, users)
+	byID := c.viewerUsers(viewerUserID)
+	missing := c.viewerMissing(viewerUserID)
+	for _, id := range uniqueIDs(expectedIDs) {
+		if _, ok := byID[id]; ok {
+			continue
+		}
+		if system, ok := domain.SystemUserByID(id); ok {
+			byID[id] = system
+			continue
+		}
+		missing[id] = struct{}{}
+	}
+}
+
 func (c *BatchCache) viewerUsers(viewerUserID int64) map[int64]domain.User {
 	if byID, ok := c.byViewer[viewerUserID]; ok {
 		return byID

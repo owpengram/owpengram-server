@@ -18,6 +18,9 @@ var (
 	// ErrGifCatalogEntryNotFound is returned by an update/delete against an id
 	// that doesn't exist.
 	ErrGifCatalogEntryNotFound = errors.New("gif catalog entry not found")
+	// ErrGifCatalogFull is returned when a create would push the catalog past
+	// MaxGifCatalogEntries.
+	ErrGifCatalogFull = errors.New("gif catalog is full")
 )
 
 const (

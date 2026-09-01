@@ -88,7 +88,10 @@ func (s *Server) handleExchange(ctx context.Context, conn transport.Conn, first 
 	}
 
 	s.metrics.HandshakeDone(s.clock.Now().Sub(start))
-	s.log.Info("Key exchange completed",
+	// Successful handshakes are already covered by the bounded latency metric.
+	// One INFO write per PFS connection turns a 10,000-account login burst into
+	// synchronous logger and filesystem pressure.
+	s.log.Debug("Key exchange completed",
 		zap.Int64("auth_key_id", res.Key.IntID()),
 		zap.Int64("server_salt", res.ServerSalt),
 		zap.Duration("dur", s.clock.Now().Sub(start)),

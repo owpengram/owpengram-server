@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"telesrv/internal/domain"
+	"time"
 )
 
 func (s *ChannelStore) GetChannelMessageViews(_ context.Context, req domain.ChannelMessageViewsRequest) (domain.ChannelMessageViewsResult, error) {
@@ -43,16 +44,25 @@ func (s *ChannelStore) GetChannelMessageViews(_ context.Context, req domain.Chan
 		s.msgViews[req.ChannelID] = make(map[int]int)
 	}
 	if s.msgViewers[req.ChannelID] == nil {
-		s.msgViewers[req.ChannelID] = make(map[int]map[int64]struct{})
+		s.msgViewers[req.ChannelID] = make(map[int]map[int64]int)
+	}
+	viewedAt := req.Date
+	if viewedAt <= 0 {
+		viewedAt = int(time.Now().Unix())
 	}
 	for id := range visible {
 		if req.Increment {
 			if s.msgViewers[req.ChannelID][id] == nil {
-				s.msgViewers[req.ChannelID][id] = make(map[int64]struct{})
+				s.msgViewers[req.ChannelID][id] = make(map[int64]int)
 			}
 			if _, seen := s.msgViewers[req.ChannelID][id][req.UserID]; !seen {
-				s.msgViewers[req.ChannelID][id][req.UserID] = struct{}{}
+				s.msgViewers[req.ChannelID][id][req.UserID] = viewedAt
 				s.msgViews[req.ChannelID][id]++
+				if idx, ok := s.findMessageIndexLocked(req.ChannelID, id); ok {
+					msg := s.messages[req.ChannelID][idx]
+					msg.ViewsCount = s.msgViews[req.ChannelID][id]
+					s.messages[req.ChannelID][idx] = msg
+				}
 			}
 		}
 	}

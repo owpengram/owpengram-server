@@ -3,10 +3,13 @@ package rpc
 import (
 	"context"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/iamxvbaba/td/tg"
+	"golang.org/x/net/publicsuffix"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
@@ -17,43 +20,165 @@ import (
 // foo:// 都提升为服务端认证的可点击实体。
 var urlInTextRe = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s<>"'）】]+`)
 
+// bareURLInTextRe 匹配官方客户端会本地识别的裸域名 URL（例如 github.com/@alice）。
+// 前导边界排除 email、已有 scheme URL 内部和域名中间；候选命中后仍由 publicsuffix
+// 校验 TLD，避免把普通带点文本误升为链接。
+var bareURLInTextRe = regexp.MustCompile(`(?i)(^|[^a-z0-9_@./:+-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})(?::[0-9]{1,5})?(?:[/?#][^\s<>"'）】]*)?)`)
+
 // urlTrailingPunct 是不属于 URL 的句末标点（'/' 是合法路径末尾，保留）。
 const urlTrailingPunct = ".,;:!?)]}'\"。，、！？"
 
-// detectURLEntities 服务端扫描消息文本生成 url 高亮实体（MessageEntityURL）。除 http(s)
-// 外，仅接受当前 Router 配置允许的 app-link scheme/host。偏移/长度按 UTF-16 码元
-// （Telegram 实体口径）。自定义 scheme 只参与 entity，不改变网页预览的 http(s) 边界。
+type byteSpan struct {
+	start  int
+	end    int
+	scheme string
+}
+
+func rawURLByteSpans(message string) []byteSpan {
+	if !strings.Contains(message, "://") && !strings.Contains(message, ".") {
+		return nil
+	}
+	var out []byteSpan
+	if strings.Contains(message, "://") {
+		for _, loc := range urlInTextRe.FindAllStringIndex(message, -1) {
+			raw := strings.TrimRight(message[loc[0]:loc[1]], urlTrailingPunct)
+			if raw == "" {
+				continue
+			}
+			schemeEnd := strings.Index(raw, "://")
+			if schemeEnd <= 0 {
+				continue
+			}
+			out = append(out, byteSpan{
+				start:  loc[0],
+				end:    loc[0] + len(raw),
+				scheme: strings.ToLower(raw[:schemeEnd]),
+			})
+		}
+	}
+	if strings.Contains(message, ".") {
+		for _, loc := range bareURLInTextRe.FindAllStringSubmatchIndex(message, -1) {
+			if len(loc) < 6 || loc[4] < 0 || loc[5] <= loc[4] {
+				continue
+			}
+			start, end := loc[4], loc[5]
+			raw := strings.TrimRight(message[start:end], urlTrailingPunct)
+			end = start + len(raw)
+			if raw == "" || overlapsByteSpan(out, start, end) || !bareURLCandidateValid(raw) {
+				continue
+			}
+			out = append(out, byteSpan{start: start, end: end})
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].start == out[j].start {
+			return out[i].end < out[j].end
+		}
+		return out[i].start < out[j].start
+	})
+	return out
+}
+
+func overlapsByteSpan(spans []byteSpan, start, end int) bool {
+	for _, span := range spans {
+		if start < span.end && span.start < end {
+			return true
+		}
+	}
+	return false
+}
+
+// detectURLEntities 服务端扫描消息文本生成 url 高亮实体（MessageEntityURL）。裸域名
+// URL（github.com/@alice）按官方客户端行为接纳；带 scheme URL 除 http(s) 外，仅接受当前
+// Router 配置允许的 app-link scheme/host。偏移/长度按 UTF-16 码元（Telegram 实体口径）。
+// 自定义 scheme 只参与 entity，不改变网页预览的 http(s) 边界。
 func detectURLEntities(message string, appLinks links.AppLinkBuilder) []tg.MessageEntityClass {
-	if !strings.Contains(message, "://") {
+	spans := rawURLByteSpans(message)
+	if len(spans) == 0 {
 		return nil
 	}
-	locs := urlInTextRe.FindAllStringIndex(message, -1)
-	if len(locs) == 0 {
-		return nil
-	}
-	out := make([]tg.MessageEntityClass, 0, len(locs))
-	for _, loc := range locs {
-		raw := strings.TrimRight(message[loc[0]:loc[1]], urlTrailingPunct)
-		if raw == "" {
-			continue
-		}
-		schemeEnd := strings.Index(raw, "://")
-		if schemeEnd <= 0 {
-			continue
-		}
-		scheme := raw[:schemeEnd]
-		if !strings.EqualFold(scheme, "http") && !strings.EqualFold(scheme, "https") && !appLinks.AcceptsEntityURL(raw) {
+	out := make([]tg.MessageEntityClass, 0, len(spans))
+	for _, span := range spans {
+		raw := message[span.start:span.end]
+		if span.scheme != "" && span.scheme != "http" && span.scheme != "https" && !appLinks.AcceptsEntityURL(raw) {
 			continue
 		}
 		out = append(out, &tg.MessageEntityURL{
-			Offset: utf16CodeUnitLen(message[:loc[0]]),
+			Offset: utf16CodeUnitLen(message[:span.start]),
 			Length: utf16CodeUnitLen(raw),
 		})
 	}
 	return out
 }
 
-// firstPreviewableURL 从消息文本+实体中提取首个可预览的 http/https 链接，用于链接预览：
+func bareURLCandidateValid(raw string) bool {
+	if raw == "" || strings.Contains(raw, "://") || strings.ContainsAny(raw, " \t\r\n<>\"'") {
+		return false
+	}
+	hostPort := raw
+	if cut := strings.IndexAny(hostPort, "/?#"); cut >= 0 {
+		hostPort = hostPort[:cut]
+	}
+	if hostPort == "" || strings.Contains(hostPort, "@") {
+		return false
+	}
+	host := hostPort
+	if h, port, ok := splitBareHostPort(hostPort); ok {
+		host = h
+		n, err := strconv.Atoi(port)
+		if err != nil || n <= 0 || n > 65535 {
+			return false
+		}
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !bareDomainHostValid(host) {
+		return false
+	}
+	return bareDomainTLDValid(host)
+}
+
+func splitBareHostPort(hostPort string) (string, string, bool) {
+	idx := strings.LastIndexByte(hostPort, ':')
+	if idx < 0 {
+		return hostPort, "", false
+	}
+	return hostPort[:idx], hostPort[idx+1:], true
+}
+
+func bareDomainHostValid(host string) bool {
+	if host == "" || strings.Contains(host, ":") || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func bareDomainTLDValid(host string) bool {
+	tld := host[strings.LastIndexByte(host, '.')+1:]
+	suffix, icann := publicsuffix.PublicSuffix("x." + tld)
+	return icann && suffix == tld
+}
+
+// firstPreviewableURL 从消息文本+实体中提取首个可预览链接，用于链接预览；裸域名会按
+// https:// 规范化：
 //   - MessageEntityTextURL：URL 直接在实体里（markdown 风格 [text](url)）。
 //   - MessageEntityURL：URL 是文本里 [offset,offset+length) 的子串（Telegram 实体偏移以
 //     UTF-16 码元计，需按 UTF-16 切片，不能按 rune/byte）。
@@ -76,31 +201,38 @@ func firstPreviewableURL(message string, entities []tg.MessageEntityClass) (stri
 		default:
 			continue
 		}
-		if normalized, ok := domain.NormalizeWebPageURL(candidate); ok {
+		if normalized, ok := normalizePreviewURLCandidate(candidate); ok {
 			return normalized, true
 		}
 	}
-	// 回退扫原始文本：绝大多数消息无链接，无 "://" 子串则直接跳过正则与分配。
-	// firstURLInText 会继续限定为 http(s)，自定义 app-link 永不进入网页预览。
-	if !strings.Contains(message, "://") {
+	// 回退扫原始文本：绝大多数消息无链接，无 URL 触发字符则直接跳过正则与分配。
+	// firstURLInText 会继续限定为 http(s)/裸域名，自定义 app-link 永不进入网页预览。
+	if !strings.Contains(message, "://") && !strings.Contains(message, ".") {
 		return "", false
 	}
 	if raw, ok := firstURLInText(message); ok {
-		if normalized, ok := domain.NormalizeWebPageURL(raw); ok {
-			return normalized, true
-		}
+		return raw, true
 	}
 	return "", false
 }
 
-// firstURLInText 扫描原始文本里的首个 http(s) 链接，剥掉句末标点。
+func normalizePreviewURLCandidate(candidate string) (string, bool) {
+	candidate = strings.TrimRight(strings.TrimSpace(candidate), urlTrailingPunct)
+	if normalized, ok := domain.NormalizeWebPageURL(candidate); ok {
+		return normalized, true
+	}
+	if !bareURLCandidateValid(candidate) {
+		return "", false
+	}
+	return domain.NormalizeWebPageURL("https://" + candidate)
+}
+
+// firstURLInText 扫描原始文本里的首个可预览 http(s)/裸域名链接，剥掉句末标点。
 func firstURLInText(message string) (string, bool) {
-	for _, match := range urlInTextRe.FindAllString(message, -1) {
-		// 句末标点不属于 URL（"见 https://example.com。" / "...go)."）。'/' 是合法路径末尾，保留。
-		match = strings.TrimRight(match, urlTrailingPunct)
-		schemeEnd := strings.Index(match, "://")
-		if schemeEnd > 0 && (strings.EqualFold(match[:schemeEnd], "http") || strings.EqualFold(match[:schemeEnd], "https")) {
-			return match, true
+	for _, span := range rawURLByteSpans(message) {
+		raw := message[span.start:span.end]
+		if normalized, ok := normalizePreviewURLCandidate(raw); ok {
+			return normalized, true
 		}
 	}
 	return "", false
@@ -130,14 +262,19 @@ func (r *Router) webPagePendingOrCachedMedia(ctx context.Context, rawURL string,
 	if r.deps.Files == nil || !r.deps.Files.WebPagePreviewEnabled() {
 		return nil
 	}
-	normalized, ok := domain.NormalizeWebPageURL(rawURL)
+	normalized, ok := normalizePreviewURLCandidate(rawURL)
 	if !ok {
 		return nil
 	}
-	if page, found := r.deps.Files.LookupWebPage(ctx, normalized); found && page.State == domain.MessageWebPageStateDone {
-		page.ForceLargeMedia = forceLarge
-		page.ForceSmallMedia = forceSmall
-		return &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, InvertMedia: invertMedia, WebPage: &page}
+	if page, found := r.deps.Files.LookupWebPage(ctx, normalized); found {
+		if page.State == domain.MessageWebPageStateEmpty {
+			return nil
+		}
+		if page.State == domain.MessageWebPageStateDone {
+			page.ForceLargeMedia = forceLarge
+			page.ForceSmallMedia = forceSmall
+			return &domain.MessageMedia{Kind: domain.MessageMediaKindWebPage, InvertMedia: invertMedia, WebPage: &page}
+		}
 	}
 	return &domain.MessageMedia{
 		Kind:        domain.MessageMediaKindWebPage,

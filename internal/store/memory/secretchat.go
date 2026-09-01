@@ -28,13 +28,13 @@ func cloneSecretChat(c domain.SecretChat) domain.SecretChat {
 }
 
 func (s *SecretChatStore) CreateSecretChat(_ context.Context, chat domain.SecretChat) error {
-	if chat.ID == 0 {
-		return domain.ErrSecretChatNotFound
+	if chat.ID == 0 || chat.ID != int(chat.RandomID) {
+		return domain.ErrSecretChatRandomIDDuplicate
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.chats[chat.ID]; exists {
-		return domain.ErrSecretChatIDConflict
+		return domain.ErrSecretChatRandomIDDuplicate
 	}
 	if chat.State == "" {
 		chat.State = domain.SecretChatStateRequested
@@ -51,18 +51,6 @@ func (s *SecretChatStore) GetSecretChat(_ context.Context, chatID int) (domain.S
 		return domain.SecretChat{}, false, nil
 	}
 	return cloneSecretChat(c), true, nil
-}
-
-func (s *SecretChatStore) GetByAdminRandom(_ context.Context, adminAuthKeyID int64, randomID int32) (domain.SecretChat, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// 仅返回非终态匹配（与部分唯一索引 WHERE state <> 'discarded' 一致）。
-	for _, c := range s.chats {
-		if c.AdminAuthKeyID == adminAuthKeyID && c.RandomID == randomID && !c.Terminal() {
-			return cloneSecretChat(c), true, nil
-		}
-	}
-	return domain.SecretChat{}, false, nil
 }
 
 func (s *SecretChatStore) AcceptSecretChat(_ context.Context, chatID int, participantAuthKeyID int64, gb []byte, keyFingerprint int64) (domain.SecretChat, error) {
@@ -124,18 +112,6 @@ func (s *SecretChatStore) ListActiveSecretChatsByAuthKey(_ context.Context, auth
 	// map 遍历无序：按 chat_id 升序与 postgres ORDER BY 对齐，确定性供测试断言。
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
-}
-
-func (s *SecretChatStore) MaxSecretChatID(_ context.Context) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	max := 0
-	for id := range s.chats {
-		if id > max {
-			max = id
-		}
-	}
-	return max, nil
 }
 
 // EncryptedQueueStore 是 store.EncryptedQueueStore 的进程内实现。

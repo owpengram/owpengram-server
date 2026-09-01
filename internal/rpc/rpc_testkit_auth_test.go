@@ -10,6 +10,7 @@ type captureAuthService struct {
 	bindTempCalls         int
 	bindTempLayer         int
 	bindTempHook          func(domain.TempAuthKeyBinding) error
+	bindTempResult        domain.TempAuthKeyBindingResult
 	resolvedAuthKeyID     [8]byte
 	hasResolved           bool
 	resolveCount          int
@@ -33,6 +34,7 @@ type captureAuthService struct {
 	pendingPasswordUserID int64
 	pendingPassword       bool
 	completedPasswordKey  [8]byte
+	completedPasswordUser int64
 	completePasswordCount int
 	codeDelivery          domain.AuthCodeDelivery
 	signInCount           int
@@ -65,8 +67,8 @@ func (s *blockingUserAuthService) UserIDCount() int {
 	return s.count
 }
 
-func (s *blockingUserAuthService) BindTempAuthKey(context.Context, int64, domain.TempAuthKeyBinding) error {
-	return nil
+func (s *blockingUserAuthService) BindTempAuthKey(context.Context, int64, domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
+	return domain.TempAuthKeyBindingResult{}, nil
 }
 
 func (s *blockingUserAuthService) ResolveAuthKey(context.Context, [8]byte) ([8]byte, bool, error) {
@@ -158,17 +160,28 @@ func (s *blockingUserAuthService) PendingPasswordUserID(context.Context, [8]byte
 	return 0, false, nil
 }
 
-func (s *blockingUserAuthService) CompletePasswordSignIn(context.Context, [8]byte) error {
+func (s *blockingUserAuthService) CompletePasswordSignIn(context.Context, [8]byte, int64) error {
 	return nil
 }
 
-func (s *captureAuthService) BindTempAuthKey(ctx context.Context, _ int64, binding domain.TempAuthKeyBinding) error {
+func (s *captureAuthService) BindTempAuthKey(ctx context.Context, _ int64, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error) {
 	s.bindTempCalls++
 	s.bindTempLayer = LayerFrom(ctx)
 	if s.bindTempHook != nil {
-		return s.bindTempHook(binding)
+		if err := s.bindTempHook(binding); err != nil {
+			return domain.TempAuthKeyBindingResult{}, err
+		}
 	}
-	return nil
+	if s.bindTempResult != (domain.TempAuthKeyBindingResult{}) {
+		return s.bindTempResult, nil
+	}
+	permID := authKeyIDFromInt64(binding.PermAuthKeyID)
+	if info, ok := s.authKeyClientInfos[permID]; ok {
+		return domain.TempAuthKeyBindingResult{
+			Layer: info.Layer, LayerObservationID: info.LayerObservationID,
+		}, nil
+	}
+	return domain.TempAuthKeyBindingResult{}, nil
 }
 
 func (s *captureAuthService) ResolveAuthKey(context.Context, [8]byte) ([8]byte, bool, error) {
@@ -343,8 +356,9 @@ func (s *captureAuthService) PendingPasswordUserID(context.Context, [8]byte) (in
 	return s.pendingPasswordUserID, s.pendingPassword, nil
 }
 
-func (s *captureAuthService) CompletePasswordSignIn(_ context.Context, authKeyID [8]byte) error {
+func (s *captureAuthService) CompletePasswordSignIn(_ context.Context, authKeyID [8]byte, userID int64) error {
 	s.completedPasswordKey = authKeyID
+	s.completedPasswordUser = userID
 	s.completePasswordCount++
 	return nil
 }

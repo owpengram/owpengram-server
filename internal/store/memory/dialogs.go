@@ -98,6 +98,39 @@ func (s *DialogStore) ListByPeers(_ context.Context, userID int64, peers []domai
 	return out, nil
 }
 
+// ListPrivateDialogPeerIDs returns the bounded private-dialog peer set used by
+// presence fan-out. Keep this narrow read available in the in-memory
+// production-shaped fake as well: callers must not fall back to hydrating a
+// complete dialog page when a store implementation lacks the optimized path.
+func (s *DialogStore) ListPrivateDialogPeerIDs(_ context.Context, userID int64, limit int) ([]int64, error) {
+	s.mu.RLock()
+	dialogs := cloneDialogs(s.m[userID].Dialogs)
+	s.mu.RUnlock()
+
+	sort.SliceStable(dialogs, func(i, j int) bool {
+		return dialogLess(dialogs[i], dialogs[j])
+	})
+	if limit <= 0 || limit > 4096 {
+		limit = 4096
+	}
+	out := make([]int64, 0, min(limit, len(dialogs)))
+	seen := make(map[int64]struct{}, min(limit, len(dialogs)))
+	for _, dialog := range dialogs {
+		if dialog.Peer.Type != domain.PeerTypeUser || dialog.Peer.ID == 0 || dialog.Peer.ID == userID {
+			continue
+		}
+		if _, ok := seen[dialog.Peer.ID]; ok {
+			continue
+		}
+		seen[dialog.Peer.ID] = struct{}{}
+		out = append(out, dialog.Peer.ID)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // SaveList 保存一份用户会话列表，供测试和本地替身使用。
 func (s *DialogStore) SaveList(_ context.Context, userID int64, list domain.DialogList) error {
 	list.Dialogs = cloneDialogs(list.Dialogs)
@@ -214,6 +247,27 @@ func (s *DialogStore) ListDrafts(_ context.Context, userID int64, limit int) ([]
 	if len(out) > limit {
 		out = out[:limit]
 	}
+	return out, nil
+}
+
+func (s *DialogStore) ListDraftsByPeers(_ context.Context, userID int64, peers []domain.Peer) ([]domain.DialogDraft, error) {
+	s.mu.RLock()
+	items := s.drafts[userID]
+	out := make([]domain.DialogDraft, 0, len(peers))
+	seen := make(map[domain.Peer]struct{}, len(peers))
+	for _, peer := range peers {
+		if peer.ID == 0 {
+			continue
+		}
+		if _, ok := seen[peer]; ok {
+			continue
+		}
+		seen[peer] = struct{}{}
+		if draft, ok := items[draftKey(peer, 0)]; ok {
+			out = append(out, cloneDialogDraft(draft))
+		}
+	}
+	s.mu.RUnlock()
 	return out, nil
 }
 

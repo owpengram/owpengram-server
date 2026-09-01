@@ -12,7 +12,7 @@ import (
 // 字段带 json tag 是为了 store 层可直接 json.Marshal 落 JSONB（消息 media 快照、
 // 文档/照片元数据）。它们是协议无关的纯数据，不是 tg 生成类型。
 
-// MediaBackend 标识 blob 字节实际存放后端。第一阶段只有本地磁盘。
+// MediaBackend 标识 blob 字节实际存放的唯一永久后端。
 type MediaBackend string
 
 const (
@@ -664,15 +664,15 @@ type MessageNoForwardsAction struct {
 
 // MessageServiceAction 是私聊服务消息动作的协议中立表示。
 type MessageServiceAction struct {
-	Kind                  MessageServiceActionKind            `json:"kind"`
-	Photo                 *Photo                              `json:"photo,omitempty"`
-	Call                  *MessagePhoneCallAction             `json:"call,omitempty"`
-	ConferenceCall        *MessageConferenceCallAction        `json:"conference_call,omitempty"`
-	BotAllowed            *MessageBotAllowedAction            `json:"bot_allowed,omitempty"`
-	WebViewData           *MessageWebViewDataAction           `json:"web_view_data,omitempty"`
-	RequestedPeer         *MessageRequestedPeerAction         `json:"requested_peer,omitempty"`
-	ChatThemeEmoticon     string                              `json:"chat_theme_emoticon,omitempty"`
-	NoForwards            *MessageNoForwardsAction            `json:"no_forwards,omitempty"`
+	Kind              MessageServiceActionKind     `json:"kind"`
+	Photo             *Photo                       `json:"photo,omitempty"`
+	Call              *MessagePhoneCallAction      `json:"call,omitempty"`
+	ConferenceCall    *MessageConferenceCallAction `json:"conference_call,omitempty"`
+	BotAllowed        *MessageBotAllowedAction     `json:"bot_allowed,omitempty"`
+	WebViewData       *MessageWebViewDataAction    `json:"web_view_data,omitempty"`
+	RequestedPeer     *MessageRequestedPeerAction  `json:"requested_peer,omitempty"`
+	ChatThemeEmoticon string                       `json:"chat_theme_emoticon,omitempty"`
+	NoForwards        *MessageNoForwardsAction     `json:"no_forwards,omitempty"`
 }
 
 // MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。

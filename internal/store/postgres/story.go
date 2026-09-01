@@ -933,6 +933,88 @@ ORDER BY recent.ord ASC`, peerTypes, peerIDs, int32(now), viewerUserID)
 	return out, nil
 }
 
+func (s *StoryStore) ActiveStoryPeerExpirations(ctx context.Context, peers []domain.Peer, now int) (map[domain.Peer]int, error) {
+	if len(peers) > domain.MaxStoryIDs {
+		return nil, domain.ErrStoryIDInvalid
+	}
+	if len(peers) == 0 {
+		return map[domain.Peer]int{}, nil
+	}
+	peerTypes := make([]string, 0, len(peers))
+	peerIDs := make([]int64, 0, len(peers))
+	for _, peer := range peers {
+		if err := validatePGStoryPeer(peer); err != nil {
+			return nil, err
+		}
+		peerTypes = append(peerTypes, string(peer.Type))
+		peerIDs = append(peerIDs, peer.ID)
+	}
+	rows, err := s.db.Query(ctx, `
+WITH input AS (
+  SELECT p.peer_type, i.peer_id
+  FROM unnest($1::text[]) WITH ORDINALITY AS p(peer_type, ord)
+  JOIN unnest($2::bigint[]) WITH ORDINALITY AS i(peer_id, ord) USING (ord)
+)
+SELECT input.peer_type, input.peer_id, MAX(s.expire_date)::int
+FROM input
+JOIN stories s
+  ON s.owner_peer_type = input.peer_type
+ AND s.owner_peer_id = input.peer_id
+ AND s.deleted = false
+ AND s.expire_date > $3
+GROUP BY input.peer_type, input.peer_id`, peerTypes, peerIDs, int32(now))
+	if err != nil {
+		return nil, fmt.Errorf("get active story peer expirations: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[domain.Peer]int, len(peers))
+	for rows.Next() {
+		var peerType string
+		var peerID int64
+		var expireAt int
+		if err := rows.Scan(&peerType, &peerID, &expireAt); err != nil {
+			return nil, fmt.Errorf("scan active story peer expiration: %w", err)
+		}
+		out[domain.Peer{Type: domain.PeerType(peerType), ID: peerID}] = expireAt
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan active story peer expirations: %w", err)
+	}
+	return out, nil
+}
+
+func (s *StoryStore) ListHiddenStoryPeers(ctx context.Context, viewerUserID int64) ([]domain.Peer, error) {
+	if viewerUserID == 0 {
+		return nil, domain.ErrStoryPeerInvalid
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT owner_peer_type, owner_peer_id
+FROM story_hidden_peers
+WHERE viewer_user_id = $1
+ORDER BY owner_peer_type, owner_peer_id`, viewerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list hidden story peers: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.Peer, 0)
+	for rows.Next() {
+		var peerType string
+		var peerID int64
+		if err := rows.Scan(&peerType, &peerID); err != nil {
+			return nil, fmt.Errorf("scan hidden story peer: %w", err)
+		}
+		peer := domain.Peer{Type: domain.PeerType(peerType), ID: peerID}
+		if err := validatePGStoryPeer(peer); err != nil {
+			return nil, err
+		}
+		out = append(out, peer)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan hidden story peers: %w", err)
+	}
+	return out, nil
+}
+
 func (s *StoryStore) MarkRead(ctx context.Context, viewerUserID int64, peer domain.Peer, maxID, date int) (domain.StoryReadResult, error) {
 	if viewerUserID == 0 {
 		return domain.StoryReadResult{}, domain.ErrStoryPeerInvalid

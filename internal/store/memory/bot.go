@@ -62,6 +62,10 @@ func NewBotStore(users *UserStore) *BotStore {
 	s.byID[domain.BotFatherUserID] = botFatherSeedProfile()
 	s.byID[domain.StickersBotUserID] = stickersSeedProfile()
 	s.byID[domain.ChatBotUserID] = chatBotSeedProfile()
+	s.byID[domain.GifBotUserID] = domain.BotProfile{
+		BotUserID: domain.GifBotUserID, OwnerUserID: domain.GifBotUserID,
+		Description: "Search the server-curated GIF catalog.", InlinePlaceholder: "Search GIFs",
+	}
 	return s
 }
 
@@ -89,7 +93,7 @@ func stickersSeedProfile() domain.BotProfile {
 	return domain.BotProfile{
 		BotUserID:   domain.StickersBotUserID,
 		OwnerUserID: domain.StickersBotUserID,
-		Description: "Create custom sticker and emoji packs for telesrv.",
+		Description: domain.StickersBotDescription(),
 		Commands: []domain.BotCommand{
 			{Command: "start", Description: "start the sticker pack assistant"},
 			{Command: "help", Description: "show help"},
@@ -108,7 +112,7 @@ func chatBotSeedProfile() domain.BotProfile {
 	return domain.BotProfile{
 		BotUserID:   domain.ChatBotUserID,
 		OwnerUserID: domain.ChatBotUserID,
-		Description: "Chat with the configured telesrv AI provider.",
+		Description: domain.ChatBotDescription(),
 		Commands: []domain.BotCommand{
 			{Command: "start", Description: "start chatting"},
 			{Command: "help", Description: "show help"},

@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"sort"
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 	"telesrv/internal/store/postgres/sqlcgen"
@@ -63,6 +62,20 @@ func ensureOfficialSystemUserWithDB(ctx context.Context, db sqlcgen.DBTX, msg do
 		u, ok = domain.SystemUserByID(msg.From.ID)
 	}
 	if !ok {
+		return nil
+	}
+	// Login-code delivery is a critical authentication path, not a branding
+	// migration. Once the official identity exists, never rewrite its unique
+	// phone/username from request-time code: a source update may change the
+	// compiled defaults while the old or new value is temporarily occupied,
+	// turning every auth.sendCode for an existing account into a generic 500.
+	// Explicit schema/data migrations own identity changes; this helper only
+	// seeds a missing row.
+	var exists bool
+	if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, u.ID).Scan(&exists); err != nil {
+		return fmt.Errorf("check official system user: %w", err)
+	}
+	if exists {
 		return nil
 	}
 	if _, err := db.Exec(ctx, `
@@ -168,19 +181,24 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if req.Date == 0 {
 		req.Date = int(time.Now().Unix())
 	}
-	entities, err := encodeMessageEntities(req.Entities)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
-	// reply_markup（bot reply/inline keyboard）随消息一并入双盒；普通用户发送恒 nil → "{}"。
-	replyMarkupJSON, err := encodeReplyMarkup(req.ReplyMarkup)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
-	// rich_message（Layer 227 富文本）随消息一并入双盒；普通消息恒 nil → "{}"。
-	richMessageJSON, err := encodeRichMessage(req.RichMessage)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
+	plainHotPath := plainPrivateSendHotPath(req, hooks)
+	var entities, replyMarkupJSON, richMessageJSON []byte
+	if !plainHotPath {
+		var err error
+		entities, err = encodeMessageEntities(req.Entities)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		// reply_markup（bot reply/inline keyboard）随消息一并入双盒。
+		replyMarkupJSON, err = encodeReplyMarkup(req.ReplyMarkup)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
+		// rich_message（Layer 227 富文本）随消息一并入双盒。
+		richMessageJSON, err = encodeRichMessage(req.RichMessage)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, err
+		}
 	}
 	requestFingerprint, err := store.PrivateSendFingerprint(req)
 	if err != nil {
@@ -197,6 +215,14 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 			return duplicate, nil
 		}
 	}
+	if plainHotPath && processPlainPrivateSendBatcher.Eligible(s) {
+		return processPlainPrivateSendBatcher.Submit(ctx, s, req, requestFingerprint)
+	}
+	releaseLanes, err := s.privateSendLanes.acquire(ctx, req.SenderUserID, req.RecipientUserID)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("wait private send actor lanes: %w", err)
+	}
+	defer releaseLanes()
 	senderReply, recipientReply, err := s.resolvePrivateSendReply(ctx, req)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
@@ -214,13 +240,27 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("send private text: db does not support transactions")
 	}
 
-	var recipientBoxID, recipientPts int
+	var senderBoxID, recipientBoxID, recipientPts int
 	selfMessage := req.RecipientUserID == req.SenderUserID
 	deliverRecipient := !selfMessage && !req.RecipientBlocked
 	if selfMessage {
 		savedPeer := domain.SavedPeerForSelfChat(req.SenderUserID, req.Forward)
 		senderMeta.SavedPeerType = string(savedPeer.Type)
 		senderMeta.SavedPeerID = savedPeer.ID
+	}
+	// Box ids allow gaps. Allocate them before borrowing a PostgreSQL connection
+	// so Redis latency never extends the database transaction's lock lifetime.
+	if plainHotPath {
+		senderBoxID, err = s.boxIDs.NextBoxID(ctx, req.SenderUserID)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("allocate sender box id: %w", err)
+		}
+		if deliverRecipient {
+			recipientBoxID, err = s.boxIDs.NextBoxID(ctx, req.RecipientUserID)
+			if err != nil {
+				return domain.SendPrivateTextResult{}, fmt.Errorf("allocate recipient box id: %w", err)
+			}
+		}
 	}
 
 	tx, err := beginner.Begin(ctx)
@@ -241,10 +281,54 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	if err := lockUsersForUpdate(ctx, tx, req.SenderUserID, req.RecipientUserID); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send users: %w", err)
 	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.SenderUserID, req.RecipientUserID}); err != nil {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send dispatch append fences: %w", err)
+	}
 	if hooks.before != nil {
 		if err := hooks.before(ctx, tx, &req); err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
+	}
+	if plainHotPath {
+		pm, createErr := createPlainPrivateMessage(ctx, tx, req, requestFingerprint, deliverRecipient)
+		if createErr != nil {
+			if errors.Is(createErr, pgx.ErrNoRows) {
+				dup, found, dupErr := s.duplicateSendResult(ctx, qtx, req, requestFingerprint)
+				if dupErr != nil {
+					return domain.SendPrivateTextResult{}, dupErr
+				}
+				if !found {
+					return domain.SendPrivateTextResult{}, fmt.Errorf("duplicate private message disappeared after unique conflict")
+				}
+				dup.Duplicate = true
+				return dup, nil
+			}
+			return domain.SendPrivateTextResult{}, fmt.Errorf("create plain private message: %w", createErr)
+		}
+		projection, projectErr := persistPlainPrivateSendProjection(
+			ctx,
+			tx,
+			req,
+			pm.ID,
+			senderBoxID,
+			recipientBoxID,
+			int(pm.TtlPeriod),
+			int(pm.ExpiresAt),
+		)
+		if projectErr != nil {
+			return domain.SendPrivateTextResult{}, projectErr
+		}
+		result := domain.SendPrivateTextResult{
+			SenderMessage:    projection.Sender,
+			RecipientMessage: projection.Recipient,
+			SenderEvent:      eventFromMessage(projection.Sender),
+			RecipientEvent:   eventFromMessage(projection.Recipient),
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("commit plain send message tx: %w", err)
+		}
+		committed = true
+		return result, nil
 	}
 	media := privateSendMediaProjection{Shared: req.Media, Sender: req.Media, Recipient: req.Media}
 	if hooks.projectMedia != nil {
@@ -314,7 +398,7 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("create private message: %w", err)
 	}
 
-	senderBoxID, err := s.boxIDs.NextBoxID(ctx, req.SenderUserID)
+	senderBoxID, err = s.boxIDs.NextBoxID(ctx, req.SenderUserID)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("allocate sender box id: %w", err)
 	}
@@ -721,8 +805,16 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.S
 	if peer.ID == 0 {
 		peer = domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}
 	}
-	if peer.Type != domain.PeerTypeUser || peer.ID != req.RecipientUserID {
+	if peer.Type != domain.PeerTypeUser && peer.Type != domain.PeerTypeChannel {
 		return nil, nil, domain.ErrReplyMessageIDInvalid
+	}
+	// Channel messages are validated at the RPC boundary through Channels.GetMessages.
+	// They have no private message_box row, so retain the cross-dialog reference
+	// and quote verbatim in both recipient projections.
+	if peer.Type == domain.PeerTypeChannel {
+		reply := cloneMessageReply(req.ReplyTo)
+		reply.Peer = peer
+		return reply, cloneMessageReply(reply), nil
 	}
 	source, err := s.q.GetMessageBoxForReply(ctx, sqlcgen.GetMessageBoxForReplyParams{
 		OwnerUserID: req.SenderUserID,
@@ -740,6 +832,12 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.S
 	senderReply.MessageID = int(source.BoxID)
 	senderReply.Peer = peer
 	if req.SenderUserID == req.RecipientUserID {
+		return senderReply, cloneMessageReply(senderReply), nil
+	}
+	if peer.ID != req.RecipientUserID {
+		// A cross-dialog reply references the sender's source box. There is no
+		// corresponding row in the destination dialog to remap to; both sides
+		// therefore receive the explicit source peer/message pair.
 		return senderReply, cloneMessageReply(senderReply), nil
 	}
 
@@ -810,11 +908,14 @@ func lockUsersForUpdate(ctx context.Context, tx pgx.Tx, userIDs ...int64) error 
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
-	for _, id := range unique {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", id); err != nil {
-			return fmt.Errorf("advisory lock user %d: %w", id, err)
-		}
+	if len(unique) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+SELECT pg_advisory_xact_lock(requested.user_id)
+FROM unnest($1::bigint[]) AS requested(user_id)
+ORDER BY requested.user_id`, unique); err != nil {
+		return fmt.Errorf("advisory lock users: %w", err)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -16,7 +17,7 @@ import (
 )
 
 const (
-	defaultOutboxBatch    = 100
+	defaultOutboxBatch    = 10
 	defaultOutboxInterval = 200 * time.Millisecond
 	defaultOutboxWorkers  = 4
 	// outboxLogicalShards 是稳定 user→lane 哈希空间。它不随运行时 worker 数变化，
@@ -31,6 +32,9 @@ const (
 
 var (
 	errMissingOutboxEvent         = errors.New("missing outbox update event")
+	errOutboxUpdateBuilderMissing = errors.New("outbox update builder is required")
+	errOutboxUpdateBuilderCount   = errors.New("outbox update builder returned mismatched count")
+	errOutboxUpdateBuilderEmpty   = errors.New("outbox update builder returned a nil non-noop update")
 	errInvalidOutboxExclusionPair = errors.New("outbox exclusion requires both raw auth key and session id")
 )
 
@@ -60,7 +64,7 @@ type OutboxUpdateRequest struct {
 }
 
 // OutboxUpdateBuilder 按接收者视角批量把 domain.UpdateEvent 转为 TL updates。
-type OutboxUpdateBuilder func(ctx context.Context, requests []OutboxUpdateRequest) []*tg.Updates
+type OutboxUpdateBuilder func(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error)
 
 // WithOutboxUpdateBuilder 注入按接收者视角的批量 updates 构建器。
 func WithOutboxUpdateBuilder(builder OutboxUpdateBuilder) OutboxOption {
@@ -333,7 +337,24 @@ func (d *OutboxDispatcher) dispatchBatch(ctx context.Context, items []store.Disp
 		ready = append(ready, outboxDispatchReady{item: item})
 		requests = append(requests, OutboxUpdateRequest{TargetUserID: item.TargetUserID, Event: event})
 	}
-	builtUpdates := d.buildOutboxUpdates(ctx, requests)
+	builtUpdates, err := d.buildOutboxUpdates(ctx, requests)
+	if err != nil {
+		// 聚合构建失败不代表每个 durable row 都坏了。复用本批已经加载的 event
+		// 做 singleton 隔离，避免某一条坏数据或批量容量错误污染无关用户；同一用户
+		// 的 lane head 一旦失败，后续 pts 仍不得越过。
+		d.log.Warn("batch build dispatch outbox updates; isolating items", zap.Error(err))
+		clear(blockedUsers)
+		for i, entry := range ready {
+			item := entry.item
+			if _, blocked := blockedUsers[item.TargetUserID]; blocked {
+				continue
+			}
+			if !d.dispatchPreparedItem(ctx, item, requests[i].Event, time.Now()) {
+				blockedUsers[item.TargetUserID] = struct{}{}
+			}
+		}
+		return
+	}
 	delivered := make([]store.DispatchOutboxItem, 0, len(items))
 	clear(blockedUsers)
 	for i, entry := range ready {
@@ -395,7 +416,17 @@ func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.Dispatch
 		d.markDispatchFailed(ctx, item, errMissingOutboxEvent)
 		return false
 	}
-	update := d.buildOutboxUpdate(ctx, item, events[0])
+	return d.dispatchPreparedItem(ctx, item, events[0], start)
+}
+
+// dispatchPreparedItem 构建并投递一条已经加载、且 exclusion pair 已验证的 event。
+// 批量构建隔离路径调用它时不会再次读取 event store。
+func (d *OutboxDispatcher) dispatchPreparedItem(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent, start time.Time) bool {
+	update, err := d.buildOutboxUpdate(ctx, item, event)
+	if err != nil {
+		d.markDispatchFailed(ctx, item, err)
+		return false
+	}
 	if update == nil {
 		if err := d.outbox.MarkDelivered(ctx, item); err != nil {
 			d.log.Warn("mark noop dispatch delivered", zap.Int64("target_user_id", item.TargetUserID), zap.Int64("outbox_id", item.ID), zap.Error(err))
@@ -433,33 +464,38 @@ func (d *OutboxDispatcher) dispatchItem(ctx context.Context, item store.Dispatch
 	return true
 }
 
-func (d *OutboxDispatcher) buildOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent) *tg.Updates {
-	updates := d.buildOutboxUpdates(ctx, []OutboxUpdateRequest{{TargetUserID: item.TargetUserID, Event: event}})
-	if len(updates) == 0 {
-		return nil
+func (d *OutboxDispatcher) buildOutboxUpdate(ctx context.Context, item store.DispatchOutboxItem, event domain.UpdateEvent) (*tg.Updates, error) {
+	updates, err := d.buildOutboxUpdates(ctx, []OutboxUpdateRequest{{TargetUserID: item.TargetUserID, Event: event}})
+	if err != nil {
+		return nil, err
 	}
-	return updates[0]
+	if len(updates) == 0 {
+		return nil, nil
+	}
+	return updates[0], nil
 }
 
-func (d *OutboxDispatcher) buildOutboxUpdates(ctx context.Context, requests []OutboxUpdateRequest) []*tg.Updates {
+func (d *OutboxDispatcher) buildOutboxUpdates(ctx context.Context, requests []OutboxUpdateRequest) ([]*tg.Updates, error) {
 	out := make([]*tg.Updates, len(requests))
 	if len(requests) == 0 {
-		return out
+		return out, nil
 	}
-	if d.updateBuilder != nil {
-		built := d.updateBuilder(ctx, requests)
-		if len(built) == len(requests) {
-			return built
+	if d.updateBuilder == nil {
+		return nil, errOutboxUpdateBuilderMissing
+	}
+	built, err := d.updateBuilder(ctx, requests)
+	if err != nil {
+		return nil, err
+	}
+	if len(built) != len(requests) {
+		return nil, fmt.Errorf("%w: got %d want %d", errOutboxUpdateBuilderCount, len(built), len(requests))
+	}
+	for i := range built {
+		if built[i] == nil && requests[i].Event.Type != domain.UpdateEventNoop {
+			return nil, fmt.Errorf("%w: index=%d user_id=%d pts=%d event_type=%s", errOutboxUpdateBuilderEmpty, i, requests[i].TargetUserID, requests[i].Event.Pts, requests[i].Event.Type)
 		}
-		d.log.Warn("outbox update builder returned mismatched count",
-			zap.Int("requests", len(requests)),
-			zap.Int("updates", len(built)),
-		)
 	}
-	for i, req := range requests {
-		out[i] = tgUpdateForOutboxEvent(req.Event)
-	}
-	return out
+	return built, nil
 }
 
 // pushOutboxUpdate 投递一条 outbox update，返回 (送达的在线 session 数, 是否可重试, err)。
@@ -527,6 +563,9 @@ func tgUpdateForOutboxEventForViewer(event domain.UpdateEvent, viewerUserID int6
 	}
 	switch event.Type {
 	case domain.UpdateEventNewMessage:
+		if event.Message.Deleted {
+			return tgDeletedPrivateMessageOutboxUpdate(event)
+		}
 		return tgPrivateMessageUpdates(event, event.Message, 0, false, tgUsersForViewer(viewerUserID, event.Users), tgChannels(viewerUserID, event.Channels))
 	case domain.UpdateEventReadHistoryInbox, domain.UpdateEventReadHistoryOutbox:
 		var update tg.UpdateClass
@@ -566,6 +605,29 @@ func tgUpdateForOutboxEventForViewer(event domain.UpdateEvent, viewerUserID int6
 			Date:    event.Date,
 			Seq:     0,
 		}
+	}
+}
+
+func tgDeletedPrivateMessageOutboxUpdate(event domain.UpdateEvent) *tg.Updates {
+	if event.Pts <= 0 || event.PtsCount <= 0 {
+		return nil
+	}
+	ids := []int{}
+	if event.Message.ID > 0 && event.Message.ID <= domain.MaxMessageBoxID {
+		ids = append(ids, event.Message.ID)
+	}
+	date := event.Date
+	if date == 0 {
+		date = event.Message.Date
+	}
+	return &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateDeleteMessages{
+			Messages: ids,
+			Pts:      event.Pts,
+			PtsCount: event.PtsCount,
+		}},
+		Date: date,
+		Seq:  0,
 	}
 }
 

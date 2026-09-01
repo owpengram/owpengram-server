@@ -372,6 +372,46 @@ func (q *Queries) ListDialogDrafts(ctx context.Context, arg ListDialogDraftsPara
 	return items, nil
 }
 
+const listDialogDraftsByPeers = `-- name: ListDialogDraftsByPeers :many
+SELECT d.draft::text AS draft_json
+FROM dialog_drafts d
+WHERE d.user_id = $1
+  AND d.top_message_id = 0
+  AND EXISTS (
+    SELECT 1
+    FROM unnest($2::text[]) WITH ORDINALITY AS requested_type(peer_type, ord)
+    JOIN unnest($3::bigint[]) WITH ORDINALITY AS requested_id(peer_id, ord) USING (ord)
+    WHERE requested_type.peer_type = d.peer_type
+      AND requested_id.peer_id = d.peer_id
+  )
+`
+
+type ListDialogDraftsByPeersParams struct {
+	UserID    int64
+	PeerTypes []string
+	PeerIds   []int64
+}
+
+func (q *Queries) ListDialogDraftsByPeers(ctx context.Context, arg ListDialogDraftsByPeersParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDialogDraftsByPeers, arg.UserID, arg.PeerTypes, arg.PeerIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var draft_json string
+		if err := rows.Scan(&draft_json); err != nil {
+			return nil, err
+		}
+		items = append(items, draft_json)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDialogFolders = `-- name: ListDialogFolders :many
 SELECT
   filter_id,

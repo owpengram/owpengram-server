@@ -45,13 +45,20 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 		}
 		return nil, channelInvalidErr(err)
 	}
+	diff, err = r.enrichChannelDifferenceStrict(ctx, userID, diff)
+	if err != nil {
+		r.log.Error("project durable channel difference users",
+			zap.Int64("viewer_user_id", userID),
+			zap.Int64("channel_id", channelID),
+			zap.Error(err))
+		return nil, internalErr()
+	}
 	if diff.Channel.Username != "" && diff.Self.Status != domain.ChannelMemberActive {
 		// Telegram's public-channel passive delivery is enabled only after a
 		// successful short-poll difference. The runtime subscription is renewed
 		// by subsequent polls and never creates membership/dialog/read state.
 		r.refreshPublicChannelSubscription(ctx, userID, channelID)
 	}
-	diff = r.enrichChannelDifference(ctx, userID, diff)
 	out := r.tgChannelDifference(ctx, userID, diff)
 	if linked, ok := r.linkedDiscussionChat(ctx, userID, channelID); ok {
 		switch value := out.(type) {

@@ -16,7 +16,7 @@ import (
 )
 
 // AccountLifecycleStore is the PostgreSQL implementation of the unified
-// account tombstone, delayed deletion and deletion notification boundary.
+// account tombstone and delayed deletion boundary.
 type AccountLifecycleStore struct {
 	pool *pgxpool.Pool
 }
@@ -157,18 +157,14 @@ func (s *AccountLifecycleStore) ExecuteAccountDeletion(ctx context.Context, user
 	if !due {
 		return domain.AccountDeletionResult{User: u, Changed: false}, nil
 	}
-	if err := enqueueAccountDeletionNotifications(ctx, tx, userID); err != nil {
-		return domain.AccountDeletionResult{}, err
-	}
-	if err := settleDeletedAccountFinancialState(ctx, tx, userID, now); err != nil {
-		return domain.AccountDeletionResult{}, err
-	}
+	// Human account deletion is deliberately a short logical tombstone boundary.
+	// Relationships, history, memberships, settings and financial rows remain
+	// attached to the stable user id; reads project that id as Deleted Account.
+	// The physical cleanup helpers remain available only to the separate bot-
+	// deletion boundary, whose lifecycle semantics are intentionally different.
 	revoked, err := revokeByUserExceptTx(ctx, tx, userID, 0)
 	if err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("revoke deleted account authorizations: %w", err)
-	}
-	if err := purgeDeletedAccountPrivateState(ctx, tx, userID, now); err != nil {
-		return domain.AccountDeletionResult{}, err
 	}
 	if err := replacePeerUsernameTx(ctx, tx, peerUsernameTypeUser, userID, "", ""); err != nil {
 		return domain.AccountDeletionResult{}, fmt.Errorf("release deleted account username: %w", err)
@@ -279,45 +275,6 @@ SELECT user_id, source, due_at FROM dedup ORDER BY due_at, user_id LIMIT $2`, no
 		out = append(out, c)
 	}
 	return out, rows.Err()
-}
-
-func (s *AccountLifecycleStore) ClaimAccountDeletionNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountDeletionNotification, error) {
-	if s == nil || s.pool == nil || limit <= 0 || lease <= 0 {
-		return nil, nil
-	}
-	rows, err := s.pool.Query(ctx, `
-WITH claim AS (
-  SELECT id FROM account_deletion_notifications
-  WHERE (status = 'pending' AND next_attempt_at <= $1)
-     OR (status = 'dispatching' AND lease_until <= $1)
-  ORDER BY next_attempt_at, id FOR UPDATE SKIP LOCKED LIMIT $2
-)
-UPDATE account_deletion_notifications n
-SET status = 'dispatching', attempts = attempts + 1, lease_until = $3, updated_at = $1
-FROM claim WHERE n.id = claim.id
-RETURNING n.id, n.target_user_id, n.deleted_user_id, n.attempts`, now, limit, now.Add(lease))
-	if err != nil {
-		return nil, fmt.Errorf("claim account deletion notifications: %w", err)
-	}
-	defer rows.Close()
-	out := make([]domain.AccountDeletionNotification, 0)
-	for rows.Next() {
-		var n domain.AccountDeletionNotification
-		if err := rows.Scan(&n.ID, &n.TargetUserID, &n.DeletedUserID, &n.Attempts); err != nil {
-			return nil, fmt.Errorf("scan account deletion notification: %w", err)
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
-}
-
-func (s *AccountLifecycleStore) CompleteAccountDeletionNotification(ctx context.Context, id int64, now time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE account_deletion_notifications
-SET status = 'delivered', lease_until = NULL, last_error = '', updated_at = $2 WHERE id = $1`, id, now)
-	if err != nil {
-		return fmt.Errorf("complete account deletion notification: %w", err)
-	}
-	return nil
 }
 
 type accountDeletionRowScanner interface {
@@ -448,38 +405,6 @@ func truncateUTF8Bytes(value string, maxBytes int) string {
 	return value[:cut]
 }
 
-func enqueueAccountDeletionNotifications(ctx context.Context, tx pgx.Tx, userID int64) error {
-	const maxAccountDeletionNotificationAudience = 4096
-	_, err := tx.Exec(ctx, `
-INSERT INTO account_deletion_notifications (target_user_id, deleted_user_id)
-SELECT audience.user_id, $1
-FROM (
-  SELECT user_id
-  FROM (
-    SELECT contact_user_id AS user_id, 0 AS priority, 0 AS activity
-      FROM contacts WHERE user_id = $1
-    UNION ALL
-    SELECT user_id, 0, 0 FROM contacts WHERE contact_user_id = $1
-    UNION ALL
-    SELECT peer_id, 1, top_message_date
-      FROM dialogs WHERE user_id = $1 AND peer_type = 'user'
-    UNION ALL
-    SELECT user_id, 1, top_message_date
-      FROM dialogs WHERE peer_type = 'user' AND peer_id = $1
-  ) candidates
-  GROUP BY user_id
-  ORDER BY min(priority), max(activity) DESC, user_id
-  LIMIT $2
-) audience
-JOIN users u ON u.id = audience.user_id
-WHERE audience.user_id <> $1 AND u.deleted_at IS NULL
-ON CONFLICT (target_user_id, deleted_user_id) DO NOTHING`, userID, maxAccountDeletionNotificationAudience)
-	if err != nil {
-		return fmt.Errorf("enqueue account deletion notifications: %w", err)
-	}
-	return nil
-}
-
 func revokeOneAuthorizationTx(ctx context.Context, tx pgx.Tx, userID int64, authKeyID [8]byte) ([]domain.Authorization, error) {
 	id := authKeyIDToInt64(authKeyID)
 	if id == 0 {
@@ -514,10 +439,16 @@ FROM authorizations WHERE auth_key_id = $1 AND user_id = $2 FOR UPDATE`, id, use
 	return []domain.Authorization{a}, nil
 }
 
-func purgeDeletedAccountPrivateState(ctx context.Context, tx pgx.Tx, userID int64, now time.Time) error {
+func purgeDeletedBotPrivateState(ctx context.Context, tx pgx.Tx, userID int64, now time.Time) error {
 	// Leave shared private_messages/channel_messages and immutable transaction
 	// ledgers intact. Only the deleted user's private projections and settings are
 	// removed; other users continue to reference the tombstone sender.
+	// The purge can empty the durable delivery lane. Fence concurrent appends
+	// before deleting its outbox/head/event facts so no committed task becomes
+	// undiscoverable during the account lifecycle transition.
+	if err := lockDispatchOutboxLanesExclusive(ctx, tx, []int64{userID}); err != nil {
+		return fmt.Errorf("lock deleted bot dispatch lane: %w", err)
+	}
 	statements := []string{
 		`DELETE FROM account_privacy_rules WHERE owner_user_id = $1`,
 		`DELETE FROM account_reaction_settings WHERE user_id = $1`,
@@ -580,6 +511,7 @@ func purgeDeletedAccountPrivateState(ctx context.Context, tx pgx.Tx, userID int6
 		`DELETE FROM group_call_invites WHERE inviter_user_id = $1 OR invitee_user_id = $1`,
 		`DELETE FROM channel_boost_slots WHERE user_id = $1`,
 		`DELETE FROM channel_invite_importers WHERE user_id = $1`,
+		`DELETE FROM welcome_message_deliveries WHERE target_user_id = $1`,
 		`DELETE FROM channel_topic_read WHERE user_id = $1`,
 		`DELETE FROM channel_unread_mentions WHERE user_id = $1`,
 		`DELETE FROM channel_unread_mention_index WHERE user_id = $1`,
@@ -618,124 +550,6 @@ UPDATE secret_chats SET state = 'discarded', history_deleted = true,
        g_a = ''::bytea, g_b = ''::bytea, key_fingerprint = 0
 WHERE admin_user_id = $1 OR participant_user_id = $1`, userID); err != nil {
 		return fmt.Errorf("discard deleted account secret chats: %w", err)
-	}
-	return nil
-}
-
-func settleDeletedAccountFinancialState(ctx context.Context, tx pgx.Tx, userID int64, now time.Time) error {
-	nowUnix := int(now.Unix())
-	rows, err := tx.Query(ctx, `
-SELECT id, buyer_user_id, currency, amount
-FROM star_gift_offers
-WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND status = 'pending'
-ORDER BY id FOR UPDATE`, userID)
-	if err != nil {
-		return fmt.Errorf("lock deleted account gift offers: %w", err)
-	}
-	type offer struct {
-		id, buyer, amount int64
-		currency          string
-	}
-	offers := make([]offer, 0)
-	for rows.Next() {
-		var o offer
-		if err := rows.Scan(&o.id, &o.buyer, &o.currency, &o.amount); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan deleted account gift offer: %w", err)
-		}
-		offers = append(offers, o)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, o := range offers {
-		var balance int64
-		if o.currency == "XTR" {
-			if err := tx.QueryRow(ctx, `
-INSERT INTO stars_balances (user_id, balance) VALUES ($1, $2)
-ON CONFLICT (user_id) DO UPDATE SET balance = stars_balances.balance + EXCLUDED.balance, updated_at = now()
-RETURNING balance`, o.buyer, o.amount).Scan(&balance); err != nil {
-				return fmt.Errorf("refund deleted account stars offer: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO stars_transactions
-(user_id, peer_type, peer_id, amount, reason, title, description, date)
-VALUES ($1, 'user', $2, $3, 'gift_offer_refund_account_deleted', 'Gift offer refunded', '', $4)`, o.buyer, userID, o.amount, nowUnix); err != nil {
-				return fmt.Errorf("record deleted account stars refund: %w", err)
-			}
-		} else {
-			if err := tx.QueryRow(ctx, `
-INSERT INTO ton_balances (user_id, balance_nanoton) VALUES ($1, $2)
-ON CONFLICT (user_id) DO UPDATE SET balance_nanoton = ton_balances.balance_nanoton + EXCLUDED.balance_nanoton, updated_at = now()
-RETURNING balance_nanoton`, o.buyer, o.amount).Scan(&balance); err != nil {
-				return fmt.Errorf("refund deleted account TON offer: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO ton_transactions
-(user_id, amount_nanoton, reason, peer_type, peer_id, date)
-VALUES ($1, $2, 'gift_offer_refund_account_deleted', 'user', $3, $4)`, o.buyer, o.amount, userID, nowUnix); err != nil {
-				return fmt.Errorf("record deleted account TON refund: %w", err)
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE star_gift_offers
-SET status = 'cancelled', resolved_at = $2, balance_after = $3
-WHERE id = $1 AND status = 'pending'`, o.id, nowUnix, balance); err != nil {
-			return fmt.Errorf("cancel deleted account gift offer: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `UPDATE star_gift_offers
-SET status = 'cancelled', resolved_at = $2, balance_after = 0
-WHERE buyer_user_id = $1 AND status = 'pending'`, userID, nowUnix); err != nil {
-		return fmt.Errorf("cancel deleted buyer gift offers: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE star_gift_withdrawal_requests
-SET status = 'failed', completed_at = $2 WHERE owner_user_id = $1 AND status = 'pending'`, userID, nowUnix); err != nil {
-		return fmt.Errorf("fail deleted account withdrawals: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE star_gift_auction_bids SET active = false, version = version + 1
-WHERE bidder_user_id = $1 AND active = true`, userID); err != nil {
-		return fmt.Errorf("deactivate deleted account auction bids: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE unique_star_gifts
-SET burned = true, owner_name = '', updated_at = $2
-WHERE owner_peer_type = 'user' AND owner_peer_id = $1`, userID, now); err != nil {
-		return fmt.Errorf("burn deleted account unique gifts: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `UPDATE peer_star_gifts
-SET lifecycle_status = 'burned', unsaved = true, pinned_order = 0
-WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND unique_gift_id IS NOT NULL`, userID); err != nil {
-		return fmt.Errorf("burn deleted account saved gifts: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM peer_star_gifts
-WHERE owner_peer_type = 'user' AND owner_peer_id = $1 AND unique_gift_id IS NULL`, userID); err != nil {
-		return fmt.Errorf("delete deleted account regular gifts: %w", err)
-	}
-	var stars int64
-	if err := tx.QueryRow(ctx, `SELECT balance FROM stars_balances WHERE user_id = $1 FOR UPDATE`, userID).Scan(&stars); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lock deleted account stars balance: %w", err)
-	}
-	if stars != 0 {
-		if _, err := tx.Exec(ctx, `UPDATE stars_balances SET balance = 0, updated_at = $2 WHERE user_id = $1`, userID, now); err != nil {
-			return fmt.Errorf("zero deleted account stars: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO stars_transactions
-(user_id, peer_type, peer_id, amount, reason, title, description, date)
-VALUES ($1, 'user', $1, $2, 'account_deleted', 'Account deleted', '', $3)`, userID, -stars, nowUnix); err != nil {
-			return fmt.Errorf("record deleted account stars clearing: %w", err)
-		}
-	}
-	var ton int64
-	if err := tx.QueryRow(ctx, `SELECT balance_nanoton FROM ton_balances WHERE user_id = $1 FOR UPDATE`, userID).Scan(&ton); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("lock deleted account TON balance: %w", err)
-	}
-	if ton != 0 {
-		if _, err := tx.Exec(ctx, `UPDATE ton_balances SET balance_nanoton = 0, updated_at = $2 WHERE user_id = $1`, userID, now); err != nil {
-			return fmt.Errorf("zero deleted account TON: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO ton_transactions
-(user_id, amount_nanoton, reason, date) VALUES ($1, $2, 'account_deleted', $3)`, userID, -ton, nowUnix); err != nil {
-			return fmt.Errorf("record deleted account TON clearing: %w", err)
-		}
 	}
 	return nil
 }

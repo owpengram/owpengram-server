@@ -23,6 +23,15 @@ type RuntimeSnapshot struct {
 	InboundRPCReadyConnections     int64
 	InboundRPCMaxTasks             int64
 	InboundRPCMaxBytes             int64
+	RPCDeliveryHookWorkers         int64
+	RPCDeliveryHookCapacity        int64
+	RPCDeliveryHookReserved        int64
+	RPCDeliveryHookQueued          int64
+	RPCDeliveryHookRunning         int64
+	RPCDeliveryHookCompleted       uint64
+	RPCDeliveryHookRejected        uint64
+	RPCDeliveryHookPanics          uint64
+	RPCDeliveryHookDurationSeconds float64
 	InboundFrameBytes              int64
 	InboundFrameMaxBytes           int64
 	OutboundTrackedBytes           int64
@@ -139,21 +148,31 @@ func (s *Server) RuntimeSnapshot() RuntimeSnapshot {
 	sessions := s.conns.runtimeSnapshot()
 	admission := s.admission.runtimeSnapshot()
 	inbound := s.rpcScheduler.runtimeSnapshot()
+	deliveryHooks := s.rpcDeliveryHooks.runtimeSnapshot()
 	result := RuntimeSnapshot{
-		RawConnections:             admission.connections,
-		RawConnectionLimit:         admission.connectionLimit,
-		Handshakes:                 admission.handshakes,
-		HandshakeLimit:             admission.handshakeLimit,
-		ActiveSessions:             sessions.active,
-		ProvisionalSessions:        sessions.provisional,
-		LogicalSessions:            sessions.logical,
-		OfflineLogicalSessions:     sessions.offlineLogical,
-		LogicalOutboxFrames:        sessions.frames,
-		LogicalOutboxBytes:         sessions.bytes,
-		PendingPushBytes:           sessions.pendingBytes,
-		InboundRPCTasks:            inbound.tasks,
-		InboundRPCBytes:            inbound.bytes,
-		InboundRPCReadyConnections: inbound.ready,
+		RawConnections:                 admission.connections,
+		RawConnectionLimit:             admission.connectionLimit,
+		Handshakes:                     admission.handshakes,
+		HandshakeLimit:                 admission.handshakeLimit,
+		ActiveSessions:                 sessions.active,
+		ProvisionalSessions:            sessions.provisional,
+		LogicalSessions:                sessions.logical,
+		OfflineLogicalSessions:         sessions.offlineLogical,
+		LogicalOutboxFrames:            sessions.frames,
+		LogicalOutboxBytes:             sessions.bytes,
+		PendingPushBytes:               sessions.pendingBytes,
+		InboundRPCTasks:                inbound.tasks,
+		InboundRPCBytes:                inbound.bytes,
+		InboundRPCReadyConnections:     inbound.ready,
+		RPCDeliveryHookWorkers:         deliveryHooks.workers,
+		RPCDeliveryHookCapacity:        deliveryHooks.capacity,
+		RPCDeliveryHookReserved:        deliveryHooks.reserved,
+		RPCDeliveryHookQueued:          deliveryHooks.queued,
+		RPCDeliveryHookRunning:         deliveryHooks.running,
+		RPCDeliveryHookCompleted:       deliveryHooks.completed,
+		RPCDeliveryHookRejected:        deliveryHooks.rejected,
+		RPCDeliveryHookPanics:          deliveryHooks.panics,
+		RPCDeliveryHookDurationSeconds: deliveryHooks.durationSeconds,
 	}
 	if s.rpcScheduler != nil {
 		result.InboundRPCMaxTasks = int64(s.rpcScheduler.maxTasks)

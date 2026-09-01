@@ -104,6 +104,9 @@ func TestServiceProjectsMessageUsersForViewerContacts(t *testing.T) {
 		friendID:   {PhotoID: 9101, DCID: 2, Stripped: []byte{5, 6}},
 		strangerID: {PhotoID: 9102, DCID: 4},
 	}))
+	if svc.ProjectsMessageUsersForViewer() {
+		t.Fatal("partially configured message projector must not claim a complete viewer envelope")
+	}
 
 	list, err := svc.GetHistory(ctx, ownerID, domain.MessageFilter{Limit: 10})
 	if err != nil {
@@ -126,6 +129,62 @@ func TestServiceProjectsMessageUsersForViewerContacts(t *testing.T) {
 	self := findUser(t, list.Users, ownerID)
 	if self.Phone != "15550000001" {
 		t.Fatalf("self phone = %q, want preserved", self.Phone)
+	}
+
+	media, err := svc.SearchPrivateMedia(ctx, ownerID, friendID, domain.MediaSearchRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchPrivateMedia: %v", err)
+	}
+	mediaFriend := findUser(t, media.Users, friendID)
+	if !mediaFriend.Contact || mediaFriend.FirstName != "Remark" || mediaFriend.Phone != "15550000002" || mediaFriend.PhotoID != 9101 {
+		t.Fatalf("shared-media friend projection = %+v, want the same viewer projection as history", mediaFriend)
+	}
+}
+
+func TestServiceMarksOnlyFullyConfiguredViewerProjectionComplete(t *testing.T) {
+	store := projectionMessageStore{}
+	svc := NewService(store, nil,
+		WithContactStore(memory.NewContactStore()),
+		WithPhotoProvider(messageProfilePhotos{}),
+		WithPrivacyEvaluator(messageProjectionPrivacy{}),
+		WithAccountFreezeProvider(messageProjectionFreezes{}),
+	)
+	if !svc.ProjectsMessageUsersForViewer() {
+		t.Fatal("fully configured message projector must advertise a complete viewer envelope")
+	}
+}
+
+func TestSendPrivateTextWithoutBusinessAutomationSkipsDialogAndContactReads(t *testing.T) {
+	ctx := context.Background()
+	const ownerID int64 = 2001
+	const customerID int64 = 2002
+
+	dialogs := memory.NewDialogStore()
+	messages := memory.NewMessageStore(dialogs)
+	business := &countingBusinessAutomationStore{BusinessAutomationStore: memory.NewPasswordStore()}
+	countingDialogs := &countingBusinessDialogStore{DialogStore: dialogs}
+	countingContacts := &countingBusinessContactStore{ContactStore: memory.NewContactStore()}
+	svc := NewService(
+		messages,
+		countingDialogs,
+		WithBusinessAutomation(business),
+		WithContactStore(countingContacts),
+	)
+
+	if _, err := svc.SendPrivateText(ctx, customerID, domain.SendPrivateTextRequest{
+		SenderUserID:    customerID,
+		RecipientUserID: ownerID,
+		RandomID:        9001,
+		Message:         "ordinary message",
+		Date:            1_700_000_000,
+	}); err != nil {
+		t.Fatalf("SendPrivateText: %v", err)
+	}
+	if business.hasCalls != 1 {
+		t.Fatalf("HasBusinessAutomation calls = %d, want one lightweight gate", business.hasCalls)
+	}
+	if countingDialogs.listByPeersCalls != 0 || countingContacts.getCalls != 0 {
+		t.Fatalf("business detail reads dialogs/contacts = %d/%d, want 0/0 without automation", countingDialogs.listByPeersCalls, countingContacts.getCalls)
 	}
 }
 
@@ -567,6 +626,36 @@ type staticBusinessAutomationProvider struct {
 	message string
 }
 
+type countingBusinessAutomationStore struct {
+	store.BusinessAutomationStore
+	hasCalls int
+}
+
+func (s *countingBusinessAutomationStore) HasBusinessAutomation(ctx context.Context, userID int64) (bool, error) {
+	s.hasCalls++
+	return s.BusinessAutomationStore.HasBusinessAutomation(ctx, userID)
+}
+
+type countingBusinessDialogStore struct {
+	store.DialogStore
+	listByPeersCalls int
+}
+
+func (s *countingBusinessDialogStore) ListByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.DialogList, error) {
+	s.listByPeersCalls++
+	return s.DialogStore.ListByPeers(ctx, userID, peers)
+}
+
+type countingBusinessContactStore struct {
+	store.ContactStore
+	getCalls int
+}
+
+func (s *countingBusinessContactStore) Get(ctx context.Context, userID, contactUserID int64) (domain.Contact, bool, error) {
+	s.getCalls++
+	return s.ContactStore.Get(ctx, userID, contactUserID)
+}
+
 func (p staticBusinessAutomationProvider) BusinessAutomationReplies(context.Context, BusinessAutomationReplyInput) ([]domain.QuickReplyMessage, error) {
 	return []domain.QuickReplyMessage{{ID: 1, Message: p.message}}, nil
 }
@@ -751,9 +840,21 @@ func (s projectionMessageStore) ListByUser(context.Context, int64, domain.Messag
 }
 
 func (s projectionMessageStore) SearchPrivateMedia(context.Context, int64, int64, domain.MediaSearchRequest) (domain.MessageList, error) {
-	return domain.MessageList{}, nil
+	return s.list, nil
 }
 
 func (s projectionMessageStore) CountPrivateMediaCategories(context.Context, int64, int64) (domain.MediaCategoryCounts, error) {
 	return domain.MediaCategoryCounts{}, nil
+}
+
+type messageProjectionPrivacy struct{}
+
+func (messageProjectionPrivacy) CanSee(context.Context, int64, int64, domain.PrivacyKey) (bool, error) {
+	return true, nil
+}
+
+type messageProjectionFreezes struct{}
+
+func (messageProjectionFreezes) AccountFreezes(context.Context, []int64) (map[int64]domain.AccountFreeze, error) {
+	return map[int64]domain.AccountFreeze{}, nil
 }

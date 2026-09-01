@@ -121,6 +121,7 @@ SELECT
   COALESCE(m.effect, 0)::bigint AS effect,
   COALESCE(m.reply_markup::text, '{}')::text AS reply_markup_json,
   COALESCE(m.rich_message::text, '{}')::text AS rich_message_json,
+  COALESCE(m.deleted, false)::boolean AS message_deleted,
   COALESCE(peer_u.id, 0)::bigint AS peer_user_id,
   COALESCE(peer_u.access_hash, 0)::bigint AS peer_access_hash,
   COALESCE(peer_u.phone, '')::text AS peer_phone,
@@ -395,6 +396,7 @@ SELECT
   COALESCE(m.effect, 0)::bigint AS effect,
   COALESCE(m.reply_markup::text, '{}')::text AS reply_markup_json,
   COALESCE(m.rich_message::text, '{}')::text AS rich_message_json,
+  COALESCE(m.deleted, false)::boolean AS message_deleted,
   COALESCE(peer_u.id, 0)::bigint AS peer_user_id,
   COALESCE(peer_u.access_hash, 0)::bigint AS peer_access_hash,
   COALESCE(peer_u.phone, '')::text AS peer_phone,
@@ -495,6 +497,7 @@ WITH doomed AS MATERIALIZED (
   FROM dispatch_outbox_user_heads h
   WHERE h.status = 'failed'
     AND h.updated_at < now() - make_interval(secs => sqlc.arg(older_than_seconds)::int)
+    AND h.target_user_id = ANY(sqlc.arg(target_user_ids)::bigint[])
   ORDER BY h.updated_at ASC, h.target_user_id ASC, h.head_id ASC
   LIMIT sqlc.arg(limit_count)
   FOR UPDATE OF h SKIP LOCKED

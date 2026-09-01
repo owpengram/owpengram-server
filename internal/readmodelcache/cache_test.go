@@ -3,6 +3,7 @@ package readmodelcache
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,6 +79,28 @@ func TestGetOrLoadSingleflightsConcurrentMiss(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("cache hit re-loaded: calls=%d", got)
+	}
+}
+
+func TestInvalidateWhereValueUsesImmutableDependency(t *testing.T) {
+	type value struct{ channels []int64 }
+	c := New[int, value](Config[int, value]{MaxEntries: 4})
+	c.Store(1, value{channels: []int64{7, 8}})
+	c.Store(2, value{channels: []int64{9}})
+
+	c.InvalidateWhereValue(func(_ int, v value) bool {
+		for _, id := range v.channels {
+			if id == 8 {
+				return true
+			}
+		}
+		return false
+	})
+	if _, ok := c.Peek(1); ok {
+		t.Fatal("dependency match remained cached")
+	}
+	if got, ok := c.Peek(2); !ok || len(got.channels) != 1 || got.channels[0] != 9 {
+		t.Fatalf("unrelated value = %+v,%v, want cached channel 9", got, ok)
 	}
 }
 
@@ -175,6 +198,76 @@ func TestLRUTouchOnGet(t *testing.T) {
 	}
 	if _, ok := c.Peek(1); !ok {
 		t.Fatal("key 1 was touched and must survive")
+	}
+}
+
+func TestWeightedLRUEvictsByTotalWeightAndSkipsOversize(t *testing.T) {
+	ctx := context.Background()
+	c := New[int, int](Config[int, int]{
+		MaxEntries: 10,
+		MaxWeight:  5,
+		Weight:     func(v int) int64 { return int64(v) },
+	})
+	mustLoad(t, c, 1, 2)
+	mustLoad(t, c, 2, 2)
+	mustLoad(t, c, 3, 3)
+	if _, ok := c.Peek(1); ok {
+		t.Fatal("oldest entry should be evicted when aggregate weight exceeds five")
+	}
+	for _, key := range []int{2, 3} {
+		if _, ok := c.Peek(key); !ok {
+			t.Fatalf("weighted LRU lost retained key %d", key)
+		}
+	}
+	loads := 0
+	loadOversize := func() (int, error) { loads++; return 6, nil }
+	if v, err := c.GetOrLoad(ctx, 4, loadOversize); err != nil || v != 6 {
+		t.Fatalf("oversize first load = %d,%v", v, err)
+	}
+	if v, err := c.GetOrLoad(ctx, 4, loadOversize); err != nil || v != 6 {
+		t.Fatalf("oversize second load = %d,%v", v, err)
+	}
+	if loads != 2 {
+		t.Fatalf("oversize value unexpectedly retained: loads=%d, want 2", loads)
+	}
+	if _, ok := c.Peek(4); ok {
+		t.Fatal("single value above MaxWeight must not remain cached")
+	}
+}
+
+func TestLifecycleCallbacksCoverReplaceEvictAndFlush(t *testing.T) {
+	type event struct {
+		op    string
+		key   int
+		value string
+	}
+	var events []event
+	c := New[int, string](Config[int, string]{
+		MaxEntries: 2,
+		OnStore: func(key int, value string) {
+			events = append(events, event{op: "store", key: key, value: value})
+		},
+		OnRemove: func(key int, value string) {
+			events = append(events, event{op: "remove", key: key, value: value})
+		},
+	})
+	c.Store(1, "a")
+	c.Store(1, "b")
+	c.Store(2, "c")
+	c.Store(3, "d")
+	c.Flush()
+	want := []event{
+		{op: "store", key: 1, value: "a"},
+		{op: "remove", key: 1, value: "a"},
+		{op: "store", key: 1, value: "b"},
+		{op: "store", key: 2, value: "c"},
+		{op: "store", key: 3, value: "d"},
+		{op: "remove", key: 1, value: "b"},
+		{op: "remove", key: 3, value: "d"},
+		{op: "remove", key: 2, value: "c"},
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("lifecycle events = %#v, want %#v", events, want)
 	}
 }
 
@@ -386,6 +479,74 @@ func TestGetOrLoadBatchCachesHitsMissesAndNegatives(t *testing.T) {
 	}
 	if got2[6].n != 60 || !got2[6].found {
 		t.Fatalf("key 6 = %+v, want 60/found", got2[6])
+	}
+}
+
+func TestGetOrLoadBatchCoalescesOverlappingConcurrentMissesPerKey(t *testing.T) {
+	ctx := context.Background()
+	c := New[int, batchVal](Config[int, batchVal]{MaxEntries: 64})
+	noVersion := func(int) (int64, bool) { return 0, true }
+
+	firstStarted := make(chan struct{})
+	secondLoaded := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+	var mu sync.Mutex
+	loadedKeys := make(map[int]int)
+	load := func(_ context.Context, missing []int) (map[int]batchVal, error) {
+		call := calls.Add(1)
+		mu.Lock()
+		for _, key := range missing {
+			loadedKeys[key]++
+		}
+		mu.Unlock()
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		} else {
+			close(secondLoaded)
+		}
+		out := make(map[int]batchVal, len(missing))
+		for _, key := range missing {
+			out[key] = batchVal{n: key * 10, found: true}
+		}
+		return out, nil
+	}
+
+	firstResult := make(chan map[int]batchVal, 1)
+	firstErr := make(chan error, 1)
+	go func() {
+		got, err := c.GetOrLoadBatch(ctx, []int{1, 2, 3}, noVersion, load)
+		firstResult <- got
+		firstErr <- err
+	}()
+	<-firstStarted
+
+	secondResult := make(chan map[int]batchVal, 1)
+	secondErr := make(chan error, 1)
+	go func() {
+		got, err := c.GetOrLoadBatch(ctx, []int{2, 3, 4}, noVersion, load)
+		secondResult <- got
+		secondErr <- err
+	}()
+	<-secondLoaded
+	close(releaseFirst)
+
+	first, second := <-firstResult, <-secondResult
+	if err := <-firstErr; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondErr; err != nil {
+		t.Fatal(err)
+	}
+	if first[1].n != 10 || first[2].n != 20 || first[3].n != 30 ||
+		second[2].n != 20 || second[3].n != 30 || second[4].n != 40 {
+		t.Fatalf("overlapping results first=%+v second=%+v", first, second)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls.Load() != 2 || loadedKeys[1] != 1 || loadedKeys[2] != 1 || loadedKeys[3] != 1 || loadedKeys[4] != 1 {
+		t.Fatalf("backend calls=%d loaded=%v, want two batches and every key exactly once", calls.Load(), loadedKeys)
 	}
 }
 

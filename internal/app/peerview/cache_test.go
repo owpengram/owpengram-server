@@ -86,6 +86,42 @@ func TestBatchCachePrimeServesWithoutResolver(t *testing.T) {
 	}
 }
 
+func TestBatchCachePrimeExpectedNegativeCachesOmittedUsers(t *testing.T) {
+	resolver := &captureUserResolver{
+		users: map[int64]domain.User{
+			1000000002: {ID: 1000000002, FirstName: "must not be loaded"},
+		},
+	}
+	cache := NewBatchCache(resolver)
+	const viewer = int64(1000000003)
+	cache.PrimeExpected(viewer,
+		[]int64{1000000001, 1000000002, domain.OfficialSystemUserID},
+		[]domain.User{{ID: 1000000001, FirstName: "Primed"}},
+	)
+
+	got, err := cache.UsersForView(context.Background(), viewer,
+		[]int64{1000000001, 1000000002, domain.OfficialSystemUserID})
+	if err != nil {
+		t.Fatalf("UsersForView: %v", err)
+	}
+	if len(resolver.calls) != 0 {
+		t.Fatalf("resolver calls = %+v, want none after complete batch preheat", resolver.calls)
+	}
+	byID := make(map[int64]domain.User, len(got))
+	for _, user := range got {
+		byID[user.ID] = user
+	}
+	if byID[1000000001].FirstName != "Primed" {
+		t.Fatalf("primed user = %+v", byID[1000000001])
+	}
+	if _, ok := byID[1000000002]; ok {
+		t.Fatalf("omitted user unexpectedly resolved: %+v", byID[1000000002])
+	}
+	if _, ok := byID[domain.OfficialSystemUserID]; !ok {
+		t.Fatalf("system user missing from local synthesis: %+v", got)
+	}
+}
+
 type resolverCall struct {
 	viewerUserID int64
 	ids          []int64

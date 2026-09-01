@@ -346,8 +346,8 @@ func (s *Service) ViewerIsPremium(ctx context.Context, viewerUserID int64) (bool
 }
 
 // CanSeeMatrix 批量评估 owners × viewers × keys 的可见性矩阵，结果等价于逐 (owner,viewer,key)
-// 调 CanSee，但只用一次 ListPrivacyRules + 每 owner 一次 GetMany(owner,viewers) + 内存 Evaluate
-// （把 fan-out 投影从 O(viewer) 次 privacy 查询降到 O(owner)）。返回 map[owner]map[viewer]map[key]bool。
+// 调 CanSee。生产 contact store 通过一次 exact owner->viewer pair batch 读取联系人关系；仅不支持
+// sparse projection 的测试/替代实现按 owner 回退 GetMany。返回 map[owner]map[viewer]map[key]bool。
 func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs []int64, keys []domain.PrivacyKey) (map[int64]map[int64]map[domain.PrivacyKey]bool, error) {
 	out := make(map[int64]map[int64]map[domain.PrivacyKey]bool, len(ownerUserIDs))
 	if len(ownerUserIDs) == 0 || len(viewerUserIDs) == 0 || len(keys) == 0 {
@@ -408,11 +408,29 @@ func (s *Service) CanSeeMatrix(ctx context.Context, ownerUserIDs, viewerUserIDs 
 			return nil, err
 		}
 	}
+	var contactsByOwner map[int64]map[int64]domain.Contact
+	useSparseContacts := false
+	if s != nil && s.contacts != nil {
+		if loader, ok := s.contacts.(store.SparseContactProjectionStore); ok {
+			requested := make(map[int64][]int64, len(owners))
+			for _, owner := range owners {
+				requested[owner] = viewers
+			}
+			batch, err := loader.ContactProjectionForViewerUserIDs(ctx, requested)
+			if err != nil {
+				return nil, err
+			}
+			contactsByOwner = batch.Contacts
+			useSparseContacts = true
+		}
+	}
 	now := s.now().Unix()
 	for _, owner := range owners {
 		// owner 的联系人中哪些是本批 viewer（= privacy 的 ViewerIsContact，对应 contacts.Get(owner,viewer)）。
 		var ownerContacts map[int64]domain.Contact
-		if s != nil && s.contacts != nil {
+		if useSparseContacts {
+			ownerContacts = contactsByOwner[owner]
+		} else if s != nil && s.contacts != nil {
 			var err error
 			ownerContacts, err = s.contacts.GetMany(ctx, owner, viewers)
 			if err != nil {

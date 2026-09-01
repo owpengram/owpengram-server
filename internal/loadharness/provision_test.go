@@ -3,6 +3,8 @@ package loadharness
 import (
 	"path/filepath"
 	"testing"
+
+	"telesrv/internal/domain"
 )
 
 func TestSessionDirectoryForManifestIsolatesNamedBundles(t *testing.T) {
@@ -20,6 +22,14 @@ func TestSessionDirectoryForManifestIsolatesNamedBundles(t *testing.T) {
 				t.Fatalf("session directory = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestDefaultProvisionPhonePrefixProducesCanonicalPossibleNumber(t *testing.T) {
+	cfg := ProvisionConfig{PhonePrefix: DefaultPhonePrefix, FirstNamePrefix: "Load"}
+	record := desiredSessionRecord(0, 0, 0, cfg)
+	if got, want := domain.NormalizePhone(record.Phone), "15550000001"; got != want {
+		t.Fatalf("normalized default phone = %q, want %q (wire %q)", got, want, record.Phone)
 	}
 }
 

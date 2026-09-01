@@ -14,6 +14,14 @@ func (a fixedBoxIDAllocator) NextBoxID(context.Context, int64) (int, error) {
 	return a.next, nil
 }
 
+func (a fixedBoxIDAllocator) NextBoxIDs(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		out[userID] = a.next
+	}
+	return out, nil
+}
+
 func (a fixedBoxIDAllocator) CurrentBoxID(context.Context, int64) (int, error) {
 	return a.next, nil
 }
@@ -25,6 +33,16 @@ type perUserCounterAllocator struct {
 
 func (a *perUserCounterAllocator) NextBoxID(_ context.Context, userID int64) (int, error) {
 	return a.next(userID), nil
+}
+
+func (a *perUserCounterAllocator) NextBoxIDs(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		if _, ok := out[userID]; !ok {
+			out[userID] = a.next(userID)
+		}
+	}
+	return out, nil
 }
 
 func (a *perUserCounterAllocator) CurrentBoxID(_ context.Context, userID int64) (int, error) {

@@ -132,6 +132,14 @@ func (s *ChannelStore) DeleteChannel(ctx context.Context, req domain.DeleteChann
 			linkedMono = &mono
 		}
 	}
+	if err := deleteChannelWelcomeMessageDeliveriesTx(ctx, tx, channel.ID); err != nil {
+		return domain.DeleteChannelResult{}, err
+	}
+	if linkedMono != nil {
+		if err := deleteChannelWelcomeMessageDeliveriesTx(ctx, tx, linkedMono.ID); err != nil {
+			return domain.DeleteChannelResult{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.DeleteChannelResult{}, fmt.Errorf("commit delete channel: %w", err)
 	}
@@ -556,6 +564,27 @@ func listChannelsByIDs(ctx context.Context, db sqlcgen.DBTX, ids []int64) ([]dom
 	return out, nil
 }
 
+// channelsByIDs hydrates viewer-independent channel rows in one batch and
+// reuses them across owners. The per-viewer member/dialog state stays outside
+// this cache and is read by its own owner-scoped query.
+func (s *ChannelStore) channelsByIDs(ctx context.Context, db sqlcgen.DBTX, ids []int64) (map[int64]domain.Channel, error) {
+	load := func(ctx context.Context, missing []int64) (map[int64]domain.Channel, error) {
+		channels, err := listChannelsByIDs(ctx, db, missing)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[int64]domain.Channel, len(channels))
+		for _, channel := range channels {
+			out[channel.ID] = channel
+		}
+		return out, nil
+	}
+	if s.cacheActive(db) {
+		return s.rowCache.getOrLoadBatch(ctx, ids, load)
+	}
+	return load(ctx, ids)
+}
+
 func listChannelsByIDsInOrder(ctx context.Context, db sqlcgen.DBTX, ids []int64) ([]domain.Channel, error) {
 	channels, err := listChannelsByIDs(ctx, db, ids)
 	if err != nil {
@@ -789,7 +818,33 @@ func (s *ChannelStore) resolveChannelReply(ctx context.Context, db sqlcgen.DBTX,
 		peer = channelPeer
 	}
 	if peer != channelPeer {
-		return nil, domain.ErrReplyMessageIDInvalid
+		// inputReplyToMessage.reply_to_peer_id may deliberately reference a
+		// message from another dialog (the official clients expose this as
+		// "Reply in another chat"). Keep that source pair intact instead of
+		// resolving it as a destination-channel thread reply.
+		if req.ReplyTo.MessageID <= 0 {
+			return nil, domain.ErrReplyMessageIDInvalid
+		}
+		switch peer.Type {
+		case domain.PeerTypeUser:
+			var exists bool
+			if err := db.QueryRow(ctx, `SELECT EXISTS (
+SELECT 1 FROM message_boxes
+WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT deleted
+)`, req.UserID, peer.ID, req.ReplyTo.MessageID).Scan(&exists); err != nil || !exists {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+		case domain.PeerTypeChannel:
+			target, err := s.getChannelMessage(ctx, db, peer.ID, req.ReplyTo.MessageID)
+			if err != nil || target.Deleted {
+				return nil, domain.ErrReplyMessageIDInvalid
+			}
+		default:
+			return nil, domain.ErrReplyMessageIDInvalid
+		}
+		reply := cloneMessageReply(req.ReplyTo)
+		reply.Peer = peer
+		return reply, nil
 	}
 	if req.ReplyTo.MessageID == 0 {
 		if req.ReplyTo.TopMessageID <= 0 || !channel.Forum {

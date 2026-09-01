@@ -59,15 +59,11 @@ func (r *Router) onAccountDeleteAccount(ctx context.Context, req *tg.AccountDele
 		return false, tgerr.New(420, fmt.Sprintf("2FA_CONFIRM_WAIT_%d", wait))
 	}
 	r.finishDeletedAccountAuthorizations(ctx, userID, outcome.Deletion.RevokedAuthorizations)
-	r.invalidateRPCProjectionForUser(userID)
-	dispatchNotifications := func() {
-		dispatchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		r.runAccountLifecycleOnce(dispatchCtx, 500)
-	}
-	if !postresponse.Register(ctx, dispatchNotifications) {
-		go dispatchNotifications()
-	}
+	r.invalidateDeletedUserProjectionFacts(userID)
+	// A tombstone changes this target for every viewer. Flushing once is bounded
+	// and avoids four full-cache predicate scans; the PostgreSQL user_deleted
+	// event performs the same coarse invalidation on other instances.
+	r.flushRPCProjectionCache()
 	return true, nil
 }
 
@@ -128,6 +124,26 @@ func (r *Router) finishDeletedAccountAuthorizations(ctx context.Context, userID 
 		}
 		finish()
 	}
+}
+
+// NotifyModerationAccountDeletion completes the runtime half of the durable
+// moderation tombstone. Moderation runs off-request, so every revoked auth key
+// can be disconnected immediately; reconnects then observe the missing durable
+// authorization and the auth service's tombstone guard.
+func (r *Router) NotifyModerationAccountDeletion(ctx context.Context, result domain.AccountDeletionResult) {
+	if r == nil || !result.Changed || result.User.ID == 0 {
+		return
+	}
+	r.finishDeletedAccountAuthorizations(ctx, result.User.ID, result.RevokedAuthorizations)
+	r.invalidateDeletedUserProjectionFacts(result.User.ID)
+	r.flushRPCProjectionCache()
+}
+
+func (r *Router) invalidateDeletedUserProjectionFacts(userID int64) {
+	if r == nil || userID == 0 || r.deps.UserProjectionFacts == nil {
+		return
+	}
+	r.deps.UserProjectionFacts.InvalidateAccountFreezeFact(userID)
 }
 
 func accountDeletionErr(err error) error {

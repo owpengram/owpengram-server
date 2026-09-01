@@ -218,6 +218,38 @@ func (a pgBoxIDAllocator) NextBoxID(ctx context.Context, userID int64) (int, err
 	return cur + 1, nil
 }
 
+func (a pgBoxIDAllocator) NextBoxIDs(ctx context.Context, userIDs []int64) (map[int64]int, error) {
+	unique := normalizedUserLaneIDs(userIDs)
+	if len(unique) == 0 {
+		return map[int64]int{}, nil
+	}
+	rows, err := a.s.db.Query(ctx, `
+SELECT requested.user_id, COALESCE(MAX(boxes.box_id), 0)::int + 1
+FROM unnest($1::bigint[]) AS requested(user_id)
+LEFT JOIN message_boxes boxes ON boxes.owner_user_id = requested.user_id
+GROUP BY requested.user_id`, unique)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]int, len(unique))
+	for rows.Next() {
+		var userID int64
+		var next int
+		if err := rows.Scan(&userID, &next); err != nil {
+			return nil, err
+		}
+		out[userID] = next
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) != len(unique) {
+		return nil, fmt.Errorf("batch current box ids returned %d of %d users", len(out), len(unique))
+	}
+	return out, nil
+}
+
 func (a pgBoxIDAllocator) CurrentBoxID(ctx context.Context, userID int64) (int, error) {
 	v, err := a.s.q.MaxMessageBoxID(ctx, userID)
 	if err != nil {

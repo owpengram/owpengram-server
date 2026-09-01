@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -159,6 +160,99 @@ func TestAuthorizationStoreUpdateClientInfoMergesPostgres(t *testing.T) {
 	}
 }
 
+func TestAuthorizationStoreLoginAndPasswordCompletionRefreshSessionAgePostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	userA := createRevokeTestUser(t, ctx, pool, "session-age-a")
+	userB := createRevokeTestUser(t, ctx, pool, "session-age-b")
+	keys := NewAuthKeyStore(pool)
+	auths := NewAuthorizationStore(pool)
+	key := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+
+	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: userA, Hash: 9251}); err != nil {
+		t.Fatalf("bind initial authorization: %v", err)
+	}
+	var oldCreatedAt time.Time
+	if err := pool.QueryRow(ctx, `UPDATE authorizations SET created_at=now()-interval '48 hours'
+WHERE auth_key_id=$1 RETURNING created_at`, authKeyIDToInt64(key)).Scan(&oldCreatedAt); err != nil {
+		t.Fatalf("backdate initial authorization: %v", err)
+	}
+
+	// Bind is an explicit login boundary, not a metadata refresh. Even a login
+	// to the same account must start a new withdrawal freshness window.
+	if err := auths.Bind(ctx, domain.Authorization{AuthKeyID: key, UserID: userA, Hash: 9252}); err != nil {
+		t.Fatalf("rebind same owner: %v", err)
+	}
+	assertFreshAuthorizationCreatedAt(t, ctx, pool, key, userA, oldCreatedAt)
+
+	if _, err := pool.Exec(ctx, `UPDATE authorizations SET created_at=now()-interval '48 hours'
+WHERE auth_key_id=$1`, authKeyIDToInt64(key)); err != nil {
+		t.Fatalf("backdate authorization before owner change: %v", err)
+	}
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID: key, UserID: userB, Hash: 9253, PasswordPending: true,
+	}); err != nil {
+		t.Fatalf("bind new owner pending password: %v", err)
+	}
+	assertFreshAuthorizationCreatedAt(t, ctx, pool, key, userB, oldCreatedAt)
+
+	// A pending login may wait longer than 24 hours before auth.checkPassword.
+	// Full authorization starts only when that proof succeeds, so its age must
+	// be reset here rather than inheriting the pending row's old timestamp.
+	if _, err := pool.Exec(ctx, `UPDATE authorizations SET created_at=now()-interval '48 hours'
+WHERE auth_key_id=$1`, authKeyIDToInt64(key)); err != nil {
+		t.Fatalf("backdate pending authorization: %v", err)
+	}
+	if err := auths.MarkPasswordPassed(ctx, key, userB); err != nil {
+		t.Fatalf("mark password passed: %v", err)
+	}
+	got, found, err := auths.ByAuthKey(ctx, key)
+	if err != nil || !found || got.PasswordPending {
+		t.Fatalf("completed password authorization = %+v found=%v err=%v", got, found, err)
+	}
+	assertFreshAuthorizationCreatedAt(t, ctx, pool, key, userB, oldCreatedAt)
+
+	// Model the exact proof/promote race: A's password was verified, then the
+	// same auth key was rebound to B in password_pending state before promotion.
+	// A's proof must not promote B or turn Router's stale A identity into a cache
+	// fact for this key.
+	raceKey := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID: raceKey, UserID: userA, Hash: 9254, PasswordPending: true,
+	}); err != nil {
+		t.Fatalf("bind proof owner A: %v", err)
+	}
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID: raceKey, UserID: userB, Hash: 9255, PasswordPending: true,
+	}); err != nil {
+		t.Fatalf("rebind pending owner B: %v", err)
+	}
+	if err := auths.MarkPasswordPassed(ctx, raceKey, userA); !errors.Is(err, store.ErrAuthorizationStateChanged) {
+		t.Fatalf("stale A proof promotion err=%v, want authorization state changed", err)
+	}
+	raced, found, err := auths.ByAuthKey(ctx, raceKey)
+	if err != nil || !found || raced.UserID != userB || !raced.PasswordPending {
+		t.Fatalf("authorization after stale A proof = %+v found=%v err=%v, want pending B", raced, found, err)
+	}
+}
+
+func assertFreshAuthorizationCreatedAt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, key [8]byte, userID int64, old time.Time) {
+	t.Helper()
+	var (
+		actualUserID int64
+		createdAt    time.Time
+		fresh        bool
+	)
+	if err := pool.QueryRow(ctx, `SELECT user_id,created_at,created_at > now()-interval '1 minute'
+FROM authorizations WHERE auth_key_id=$1`, authKeyIDToInt64(key)).Scan(&actualUserID, &createdAt, &fresh); err != nil {
+		t.Fatalf("read refreshed authorization: %v", err)
+	}
+	if actualUserID != userID || !fresh || !createdAt.After(old) {
+		t.Fatalf("authorization session age user=%d created_at=%v fresh=%v, want user=%d newer than %v",
+			actualUserID, createdAt, fresh, userID, old)
+	}
+}
+
 func TestAuthorizationStoreRevokeByHashConcurrentTempBindKeepsProtocolIdentityPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -258,9 +352,10 @@ func TestAuthorizationStoreRevokeByHashSkipsKeyTransferredAfterCandidateReadPost
 		t.Fatalf("save temp binding before owner transfer: %v", err)
 	}
 
-	// Bind B performs the auth_keys-first ownership change inside an open
-	// transaction. Its uncommitted row is invisible to A's candidate lookup, but
-	// the parent FOR UPDATE lock is the deterministic barrier for revocation.
+	// Bind B locks its target user before performing the auth-key ownership change
+	// inside an open transaction. Its uncommitted row is invisible to A's candidate
+	// lookup, while the parent auth-key FOR UPDATE lock remains the deterministic
+	// barrier for revocation.
 	bindB, err := pool.Begin(testCtx)
 	if err != nil {
 		t.Fatalf("begin B bind transaction: %v", err)

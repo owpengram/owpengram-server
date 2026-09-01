@@ -55,6 +55,29 @@ func TestChannelMemberCachePutGetDeleteFlush(t *testing.T) {
 	}
 }
 
+func TestChannelMemberCachePutIfEpochRejectsStaleSnapshot(t *testing.T) {
+	c := NewChannelMemberCache(16)
+	epoch := c.cacheEpoch()
+	c.delete(10, 20)
+	c.putIfEpoch(domain.ChannelMember{
+		ChannelID: 10,
+		UserID:    20,
+		Status:    domain.ChannelMemberActive,
+	}, epoch)
+	if _, ok := c.get(10, 20); ok {
+		t.Fatal("stale materialized membership restored after invalidation")
+	}
+	freshEpoch := c.cacheEpoch()
+	c.putIfEpoch(domain.ChannelMember{
+		ChannelID: 10,
+		UserID:    20,
+		Status:    domain.ChannelMemberActive,
+	}, freshEpoch)
+	if member, ok := c.get(10, 20); !ok || member.Status != domain.ChannelMemberActive {
+		t.Fatalf("fresh materialized membership = %+v ok=%v", member, ok)
+	}
+}
+
 func TestChannelMemberCacheDeleteChannelAndCap(t *testing.T) {
 	c := NewChannelMemberCache(2)
 	c.put(domain.ChannelMember{ChannelID: 1, UserID: 10})

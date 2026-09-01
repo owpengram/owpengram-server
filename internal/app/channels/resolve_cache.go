@@ -20,6 +20,14 @@ type channelResolveReadModelCache struct {
 	cache *readmodelcache.Cache[channelViewCacheKey, domain.ChannelView]
 }
 
+// authoritativeResolveChannelCache marks a store whose ResolveChannel path is
+// already guarded by exact channel/member invalidation and reconnect flushes.
+// Wrapping that path in a second version-token cache adds no freshness boundary
+// and turns every process-cold access check into a read_model_versions query.
+type authoritativeResolveChannelCache interface {
+	AuthoritativeResolveChannelCache()
+}
+
 func newChannelResolveReadModelCache(ttl time.Duration) *channelResolveReadModelCache {
 	if ttl <= 0 {
 		ttl = defaultChannelResolveReadModelTTL
@@ -41,6 +49,9 @@ func (c *channelResolveReadModelCache) getOrLoad(ctx context.Context, key channe
 }
 
 func (s *Service) cachedResolveChannel(ctx context.Context, userID, channelID int64) (domain.ChannelView, error) {
+	if _, ok := s.channels.(authoritativeResolveChannelCache); ok {
+		return s.channels.ResolveChannel(ctx, userID, channelID)
+	}
 	if s.resolveCache == nil || s.versions == nil {
 		return s.channels.ResolveChannel(ctx, userID, channelID)
 	}

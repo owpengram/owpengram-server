@@ -64,7 +64,7 @@ func run() error {
 	}
 	defer pool.Close()
 
-	hs := hoststats.NewPoller(cfg.BlobDir)
+	hs := hoststats.NewPoller(cfg.DiskStatsPath)
 	go hs.Run(ctx, hostStatsPollInterval)
 
 	srv, err := newServer(cfg, newReadStore(pool), hs)
@@ -97,10 +97,10 @@ type uiConfig struct {
 	Password      string
 	Token         string
 	SessionKey    []byte
-	// BlobDir is the local blob-storage root, reused only to pick which
-	// filesystem the dashboard's disk-free reading statfs's -- irrelevant when
-	// TELESRV_BLOB_BACKEND=s3, where disk space isn't the storage constraint.
-	BlobDir string
+	// DiskStatsPath points the dashboard host-disk sampler at the local path
+	// that matters for the selected blob backend: permanent localfs storage or
+	// the S3 upload spool.
+	DiskStatsPath string
 	// Permissions is the right set a panel session is issued with, from
 	// TELESRV_ADMIN_UI_PERMISSIONS. The shipped default is the single wildcard
 	// entry, so introducing the permission model never locks an operator out of a
@@ -163,12 +163,19 @@ func loadConfig() (uiConfig, error) {
 		Password:                   appCfg.AdminUIPassword,
 		Token:                      appCfg.AdminUIToken,
 		SessionKey:                 sum[:],
+		DiskStatsPath:              dashboardDiskPath(appCfg),
 		Permissions:                appCfg.AdminUIPermissions,
 		HideThirdPartyVerification: appCfg.HideThirdPartyVerification,
-		BlobDir:                    appCfg.BlobDir,
 		IdentityDir:                appCfg.IdentityDir,
 		RepoRoot:                   repoRoot,
 	}, nil
+}
+
+func dashboardDiskPath(cfg config.Config) string {
+	if strings.EqualFold(strings.TrimSpace(cfg.BlobBackendKind), "s3") && strings.TrimSpace(cfg.BlobStagingDir) != "" {
+		return cfg.BlobStagingDir
+	}
+	return cfg.BlobDir
 }
 
 func adminAPIURL(addr string) string {

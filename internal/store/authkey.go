@@ -70,6 +70,17 @@ type AuthKeyClientInfo struct {
 	AppVersion    string
 }
 
+// AuthKeyBindingKeys is the authoritative pair used to verify one
+// auth.bindTempAuthKey proof. Stores load and activity-touch both requested
+// rows in one database statement so orphan collection cannot split proof
+// validation across two independent leases.
+type AuthKeyBindingKeys struct {
+	Temporary      AuthKeyData
+	TemporaryFound bool
+	Permanent      AuthKeyData
+	PermanentFound bool
+}
+
 // MergeAuthKeyLayerObservations resolves the inherited default when a raw
 // temporary key is bound to its permanent identity. Positive observation IDs
 // are globally ordered durable evidence. Equal positive IDs must describe the
@@ -104,13 +115,21 @@ func MergeAuthKeyLayerObservations(
 type AuthKeyStore interface {
 	// Save 保存一条 auth key 记录；同 ID 重试只能保持 key body 与协议类型/寿命不变。
 	Save(ctx context.Context, k AuthKeyData) error
-	// Get 按 auth_key_id 查询；不存在时 found=false。
+	// Get 按 auth_key_id 查询并刷新 durable orphan-activity lease；不存在时
+	// found=false。只用于 physical connection 首次取得 key 或其它确需建立
+	// 新 lease 的边界。
 	Get(ctx context.Context, id [8]byte) (data AuthKeyData, found bool, err error)
+	// Revalidate 在 activation claim 已可见后重新读取权威 row，但不重复刷新
+	// last_used_at。首次 Get 与 active-key heartbeat 已负责跨实例 orphan lease。
+	Revalidate(ctx context.Context, id [8]byte) (data AuthKeyData, found bool, err error)
+	// LoadBindingKeys 在一个权威调用中取得并 touch temp/permanent proof key。
+	LoadBindingKeys(ctx context.Context, tempID, permID [8]byte) (AuthKeyBindingKeys, error)
 	// UpdateClientInfo 合并更新 auth key 的客户端协商元数据。目标 key 不存在时
 	// 必须返回 ErrAuthKeyNotFound，禁止把缺失 primary 当成成功后继续更新 mirror。
 	// 空字段不覆盖已有值，layer/api_id 为 0 时不覆盖。
 	UpdateClientInfo(ctx context.Context, id [8]byte, info AuthKeyClientInfo) error
 	// Delete 删除一条 auth key 记录（destroy_auth_key）。不存在时静默成功。
-	// 连接层每帧按 auth_key_id 回查本接口，删除后该 key 的入站帧立即失效。
+	// SessionManager/control fabric 负责 fence active connection；activation
+	// claim 仍通过 Revalidate 关闭首次取得与注册之间的竞态。
 	Delete(ctx context.Context, id [8]byte) error
 }

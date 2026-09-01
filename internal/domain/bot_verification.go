@@ -39,7 +39,7 @@ const (
 	MaxVerifierCompanyLength = 128
 	// MaxCustomVerificationDescriptionLength is the app-configured limit for text
 	// supplied by a verifier (bot_verification_description_length_limit).
-	MaxCustomVerificationDescriptionLength = 70
+	MaxCustomVerificationDescriptionLength = 128
 	// MaxBotVerificationDescriptionLength bounds the final wire description. It
 	// may exceed the custom-input limit because the server-generated fallback
 	// includes the organization name.

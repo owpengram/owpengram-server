@@ -90,10 +90,3 @@ type AccountDeletionCandidate struct {
 	Source AccountDeletionSource
 	DueAt  time.Time
 }
-
-type AccountDeletionNotification struct {
-	ID            int64
-	TargetUserID  int64
-	DeletedUserID int64
-	Attempts      int
-}

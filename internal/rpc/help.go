@@ -9,7 +9,6 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/branding"
 	androidcompat "telesrv/internal/compat/android"
-	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"
 )
 
@@ -32,14 +31,7 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		return r.onHelpSaveAppLog(ctx)
 	})
 	registerRPC[*tg.HelpGetAppUpdateRequest](d, tlprofile.SemanticMethodHelpGetAppUpdate, func(ctx context.Context, layerRequest *tg.HelpGetAppUpdateRequest) (any, error) {
-		source := layerRequest.
-			Source
-		_ = source
-
-		if _, _, err := r.currentUserID(ctx); err != nil {
-			return nil, internalErr()
-		}
-		return ioscompat.NoAppUpdate(), nil
+		return r.onHelpGetAppUpdate(ctx, layerRequest.Source)
 	})
 	registerRPC[*tg.HelpGetAppConfigRequest](d, tlprofile.SemanticMethodHelpGetAppConfig, func(ctx context.Context, layerRequest *tg.HelpGetAppConfigRequest) (any, error) {
 		hash := layerRequest.
@@ -137,7 +129,7 @@ func (r *Router) onHelpSaveAppLog(ctx context.Context) (bool, error) {
 }
 
 func (r *Router) onHelpGetConfig(ctx context.Context) (*tg.Config, error) {
-	config := tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL)
+	config := tdesktop.BuildConfig(r.cfg.DC, r.cfg.IP, r.cfg.Port, r.clock.Now(), r.cfg.PublicBaseURL, r.cfg.UpdatePublicURL)
 	userID, authorized, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()

@@ -112,18 +112,21 @@ func (r *Router) tgResolvedChannelPeerWithStories(ctx context.Context, viewerUse
 }
 
 func (r *Router) tgGlobalChannelMessages(ctx context.Context, viewerUserID int64, history domain.ChannelHistory) tg.MessagesMessagesClass {
+	r.maybeEnqueueExpiredChannelWebPageResolves(viewerUserID, history.Messages)
 	out := tgGlobalChannelMessages(viewerUserID, history)
 	r.applyPeerReadModelsToMessages(ctx, viewerUserID, out)
 	return out
 }
 
 func (r *Router) tgMessagesMessages(ctx context.Context, viewerUserID int64, list domain.MessageList) tg.MessagesMessagesClass {
+	r.maybeEnqueueExpiredPrivateWebPageResolves(list.Messages)
 	out := tgMessagesMessages(viewerUserID, list)
 	r.applyPeerReadModelsToMessages(ctx, viewerUserID, out)
 	return out
 }
 
 func (r *Router) tgChannelHistoryMessages(ctx context.Context, viewerUserID int64, history domain.ChannelHistory) tg.MessagesMessagesClass {
+	r.maybeEnqueueExpiredChannelWebPageResolves(viewerUserID, history.Messages)
 	out := tgChannelHistoryMessages(viewerUserID, history)
 	if linked, ok := r.linkedDiscussionChat(ctx, viewerUserID, history.Channel.ID); ok {
 		switch value := out.(type) {
@@ -173,6 +176,8 @@ func (r *Router) applyStoryMaxIDsToMessageReactionsList(ctx context.Context, vie
 }
 
 func (r *Router) tgGlobalSearchMessages(ctx context.Context, viewerUserID int64, limit int, private domain.MessageList, channel domain.ChannelHistory) tg.MessagesMessagesClass {
+	r.maybeEnqueueExpiredPrivateWebPageResolves(private.Messages)
+	r.maybeEnqueueExpiredChannelWebPageResolves(viewerUserID, channel.Messages)
 	out := tgGlobalSearchMessages(viewerUserID, limit, private, channel)
 	r.applyPeerReadModelsToMessages(ctx, viewerUserID, out)
 	return out
@@ -248,10 +253,14 @@ func (r *Router) withStoryUpdatePeerObjects(ctx context.Context, viewerUserID in
 // BuildOutboxUpdates' claim-wide pass. This avoids turning story events into an
 // extra username-registry query per event before the final batch projection.
 func (r *Router) withStoryUpdatePeerObjectsForOutbox(ctx context.Context, viewerUserID int64, updates *tg.Updates, peers ...domain.Peer) *tg.Updates {
+	return r.withStoryUpdatePeerObjectsForOutboxWithCache(ctx, viewerUserID, updates, newViewerPeerCache(r), peers...)
+}
+
+func (r *Router) withStoryUpdatePeerObjectsForOutboxWithCache(ctx context.Context, viewerUserID int64, updates *tg.Updates, cache *viewerPeerCache, peers ...domain.Peer) *tg.Updates {
 	if updates == nil {
 		return nil
 	}
-	users, channels := r.storyPeerObjects(ctx, viewerUserID, peers)
+	users, channels := r.storyPeerObjectsWithCache(ctx, viewerUserID, cache, peers)
 	if len(users) > 0 {
 		projected := tgUsersForViewer(viewerUserID, r.withUsersPresence(users))
 		updates.Users = appendUniqueTGUsers(updates.Users, projected...)
@@ -391,6 +400,10 @@ func storyViewPeers(views []domain.StoryView) []domain.Peer {
 }
 
 func (r *Router) storyPeerObjects(ctx context.Context, viewerUserID int64, peers []domain.Peer) ([]domain.User, []domain.Channel) {
+	return r.storyPeerObjectsWithCache(ctx, viewerUserID, newViewerPeerCache(r), peers)
+}
+
+func (r *Router) storyPeerObjectsWithCache(ctx context.Context, viewerUserID int64, cache *viewerPeerCache, peers []domain.Peer) ([]domain.User, []domain.Channel) {
 	if viewerUserID == 0 || len(peers) == 0 {
 		return nil, nil
 	}
@@ -408,7 +421,9 @@ func (r *Router) storyPeerObjects(ctx context.Context, viewerUserID int64, peers
 			}
 		}
 	}
-	cache := newViewerPeerCache(r)
+	if cache == nil {
+		cache = newViewerPeerCache(r)
+	}
 	return cache.usersForIDs(ctx, viewerUserID, mapKeys(userIDs)),
 		cache.channelsForIDs(ctx, viewerUserID, mapKeys(channelIDs))
 }
@@ -545,8 +560,26 @@ func appendUniqueTGChats(base []tg.ChatClass, extra ...tg.ChatClass) []tg.ChatCl
 // helpers instead.
 func (r *Router) applyPeerReadModels(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {
 	r.applyStoryMaxIDsToPeerObjects(ctx, viewerUserID, users, chats)
-	r.applyUsernamesToPeerObjects(ctx, users, chats)
-	r.applyBotVerificationIconsToPeerObjects(ctx, users, chats)
+	r.applyPeerIdentitiesToPeerObjects(ctx, users, chats)
+}
+
+func (r *Router) applyPeerIdentitiesToPeerObjects(ctx context.Context, users []tg.UserClass, chats []tg.ChatClass) {
+	if len(users)+len(chats) == 0 || (r.deps.Usernames == nil && r.deps.BotVerifications == nil) {
+		return
+	}
+	peers := make([]domain.Peer, 0, len(users)+len(chats))
+	seen := make(map[domain.Peer]struct{}, len(users)+len(chats))
+	peers = appendUsernameProjectionPeers(peers, seen, users, chats)
+	if len(peers) == 0 {
+		return
+	}
+	usernames, verifications := r.peerIdentityMaps(ctx, peers, r.deps.Usernames != nil, r.deps.BotVerifications != nil)
+	if len(usernames) > 0 {
+		applyUsernamesFromRegistry(users, chats, usernames)
+	}
+	if len(verifications) > 0 {
+		applyBotVerificationIconsFromMap(users, chats, verifications)
+	}
 }
 
 func (r *Router) applyStoryMaxIDsToPeerObjects(ctx context.Context, viewerUserID int64, users []tg.UserClass, chats []tg.ChatClass) {
@@ -566,7 +599,7 @@ func (r *Router) applyStoryMaxIDsToPeerObjects(ctx context.Context, viewerUserID
 		peers = append(peers, peer)
 	}
 	for _, item := range users {
-		if u, ok := item.(*tg.User); ok {
+		if u, ok := item.(*tg.User); ok && u != nil && !u.Deleted {
 			addPeer(domain.Peer{Type: domain.PeerTypeUser, ID: u.ID})
 		}
 	}
@@ -578,7 +611,7 @@ func (r *Router) applyStoryMaxIDsToPeerObjects(ctx context.Context, viewerUserID
 	recent, hidden := r.storyProjectionMaps(ctx, viewerUserID, peers)
 	for _, item := range users {
 		u, ok := item.(*tg.User)
-		if !ok {
+		if !ok || u == nil || u.Deleted {
 			continue
 		}
 		peer := domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}

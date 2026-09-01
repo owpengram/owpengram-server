@@ -169,6 +169,52 @@ func TestSendEncryptedRPCFlow(t *testing.T) {
 	}
 }
 
+func TestSecretChatRejectsUnboundAccountDeviceMutations(t *testing.T) {
+	f := newEncryptedFixture(t)
+	chatID, participantAccessHash := f.acceptChat(t)
+	peer := tg.InputEncryptedChat{ChatID: chatID, AccessHash: participantAccessHash}
+	ctx := f.participantOtherCtx()
+
+	if _, err := f.router.onMessagesSendEncrypted(ctx, &tg.MessagesSendEncryptedRequest{
+		Peer: peer, RandomID: 8101, Data: []byte{1},
+	}); err == nil {
+		t.Fatal("unbound sendEncrypted succeeded")
+	} else {
+		assertPhoneRPCErr(t, err, "CHAT_ID_INVALID")
+	}
+	if _, err := f.router.onMessagesReadEncryptedHistory(ctx, &tg.MessagesReadEncryptedHistoryRequest{
+		Peer: peer, MaxDate: int(f.router.clock.Now().Unix()),
+	}); err == nil {
+		t.Fatal("unbound readEncryptedHistory succeeded")
+	} else {
+		assertPhoneRPCErr(t, err, "CHAT_ID_INVALID")
+	}
+	if _, err := f.router.onMessagesSetEncryptedTyping(ctx, &tg.MessagesSetEncryptedTypingRequest{
+		Peer: peer, Typing: true,
+	}); err == nil {
+		t.Fatal("unbound setEncryptedTyping succeeded")
+	} else {
+		assertPhoneRPCErr(t, err, "CHAT_ID_INVALID")
+	}
+	if _, err := f.router.onMessagesUploadEncryptedFile(ctx, &tg.MessagesUploadEncryptedFileRequest{
+		Peer: peer, File: &tg.InputEncryptedFileUploaded{ID: 991, Parts: 1, KeyFingerprint: 7},
+	}); err == nil {
+		t.Fatal("unbound uploadEncryptedFile succeeded")
+	} else {
+		assertPhoneRPCErr(t, err, "CHAT_ID_INVALID")
+	}
+	if _, err := f.router.onMessagesDiscardEncryption(ctx, &tg.MessagesDiscardEncryptionRequest{ChatID: chatID}); err == nil {
+		t.Fatal("unbound discardEncryption succeeded")
+	} else {
+		assertPhoneRPCErr(t, err, "CHAT_ID_INVALID")
+	}
+
+	chat, ok, err := f.store.GetSecretChat(f.ctx, chatID)
+	if err != nil || !ok || chat.State != domain.SecretChatStateNormal {
+		t.Fatalf("chat after rejected mutations = %+v ok=%v err=%v", chat, ok, err)
+	}
+}
+
 func encOtherUpdate[T tg.UpdateClass](t *testing.T, diff tg.UpdatesDifferenceClass) T {
 	t.Helper()
 	full, ok := diff.(*tg.UpdatesDifference)
@@ -228,6 +274,131 @@ func TestEncryptionStateEventOfflineDelivery(t *testing.T) {
 	}
 	if _, ok := diff2.(*tg.UpdatesDifferenceEmpty); !ok {
 		t.Fatalf("redelivery: difference = %T, want UpdatesDifferenceEmpty", diff2)
+	}
+}
+
+func TestAcceptConvergesLosingAndFutureParticipantDevices(t *testing.T) {
+	f := newEncryptedFixture(t)
+	chatID, _ := f.acceptChat(t)
+
+	// 未绑定 participant 设备只能看到 history-deleting discarded，不能拿到 normal/access_hash。
+	loserCtx := postresponse.WithCallbacks(f.participantOtherCtx())
+	diff, err := f.router.onUpdatesGetDifference(loserCtx, &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("loser difference: %v", err)
+	}
+	loserUpdate := encOtherUpdate[*tg.UpdateEncryption](t, diff)
+	loserDiscarded, ok := loserUpdate.Chat.(*tg.EncryptedChatDiscarded)
+	if !ok || loserDiscarded.ID != chatID || !loserDiscarded.HistoryDeleted {
+		t.Fatalf("loser update = %+v, want history-deleting discarded", loserUpdate.Chat)
+	}
+	postresponse.Run(loserCtx)
+
+	// 获胜设备已经从 accept 同步响应获得 normal；账号级邀请事件仅确认、不回放。
+	winnerCtx := postresponse.WithCallbacks(f.participantCtx())
+	winnerDiff, err := f.router.onUpdatesGetDifference(winnerCtx, &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("winner difference: %v", err)
+	}
+	if _, ok := winnerDiff.(*tg.UpdatesDifferenceEmpty); !ok {
+		t.Fatalf("winner difference = %T, want UpdatesDifferenceEmpty", winnerDiff)
+	}
+	postresponse.Run(winnerCtx)
+
+	for name, deviceKey := range map[string]int64{
+		"winner": businessAuthKeyInt64(encPartAuthKey),
+		"loser":  businessAuthKeyInt64(encPartOtherAuthKey),
+	} {
+		pending, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 100)
+		if err != nil || len(pending) != 0 {
+			t.Fatalf("%s pending events = %+v err=%v, want none", name, pending, err)
+		}
+	}
+}
+
+func TestEncryptedDifferenceUsesSliceForQtsPagination(t *testing.T) {
+	f := newEncryptedFixture(t)
+	deviceKey := businessAuthKeyInt64(encPartAuthKey)
+	for i := 1; i <= encryptedDifferencePageSize+1; i++ {
+		if _, _, err := f.queue.AppendEncryptedMessage(f.ctx, domain.SecretChatMessage{
+			ReceiverAuthKeyID: deviceKey,
+			ReceiverUserID:    f.participant.ID,
+			ChatID:            700,
+			RandomID:          int64(70000 + i),
+			Date:              1700000000 + i,
+			Bytes:             []byte{byte(i)},
+		}); err != nil {
+			t.Fatalf("append encrypted message %d: %v", i, err)
+		}
+	}
+
+	first, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("first difference: %v", err)
+	}
+	slice, ok := first.(*tg.UpdatesDifferenceSlice)
+	if !ok {
+		t.Fatalf("first difference = %T, want UpdatesDifferenceSlice", first)
+	}
+	if len(slice.NewEncryptedMessages) != encryptedDifferencePageSize || slice.IntermediateState.Qts != encryptedDifferencePageSize {
+		t.Fatalf("first encrypted page len/qts = %d/%d, want %d/%d",
+			len(slice.NewEncryptedMessages), slice.IntermediateState.Qts, encryptedDifferencePageSize, encryptedDifferencePageSize)
+	}
+
+	second, err := f.router.onUpdatesGetDifference(f.participantCtx(), &tg.UpdatesGetDifferenceRequest{Qts: slice.IntermediateState.Qts})
+	if err != nil {
+		t.Fatalf("second difference: %v", err)
+	}
+	full, ok := second.(*tg.UpdatesDifference)
+	if !ok {
+		t.Fatalf("second difference = %T, want UpdatesDifference", second)
+	}
+	if len(full.NewEncryptedMessages) != 1 || full.State.Qts != encryptedDifferencePageSize+1 {
+		t.Fatalf("second encrypted page len/qts = %d/%d, want 1/%d",
+			len(full.NewEncryptedMessages), full.State.Qts, encryptedDifferencePageSize+1)
+	}
+}
+
+func TestEncryptedDifferenceUsesSliceForStateEventPagination(t *testing.T) {
+	f := newEncryptedFixture(t)
+	deviceKey := businessAuthKeyInt64(encPartAuthKey)
+	for i := 1; i <= encryptedDifferencePageSize+1; i++ {
+		if _, err := f.queue.AppendStateEvent(f.ctx, domain.EncryptedStateEvent{
+			TargetUserID:    f.participant.ID,
+			TargetAuthKeyID: deviceKey,
+			ChatID:          701,
+			Type:            domain.EncryptedStateEventRead,
+			MaxDate:         1700000000 + i,
+			Date:            1700001000 + i,
+		}); err != nil {
+			t.Fatalf("append state event %d: %v", i, err)
+		}
+	}
+
+	firstCtx := postresponse.WithCallbacks(f.participantCtx())
+	first, err := f.router.onUpdatesGetDifference(firstCtx, &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("first difference: %v", err)
+	}
+	slice, ok := first.(*tg.UpdatesDifferenceSlice)
+	if !ok || len(slice.OtherUpdates) != encryptedDifferencePageSize {
+		t.Fatalf("first state page = %T updates=%d, want slice/%d", first, len(slice.OtherUpdates), encryptedDifferencePageSize)
+	}
+	postresponse.Run(firstCtx)
+
+	secondCtx := postresponse.WithCallbacks(f.participantCtx())
+	second, err := f.router.onUpdatesGetDifference(secondCtx, &tg.UpdatesGetDifferenceRequest{})
+	if err != nil {
+		t.Fatalf("second difference: %v", err)
+	}
+	full, ok := second.(*tg.UpdatesDifference)
+	if !ok || len(full.OtherUpdates) != 1 {
+		t.Fatalf("second state page = %T updates=%d, want full/1", second, len(full.OtherUpdates))
+	}
+	postresponse.Run(secondCtx)
+
+	if pending, err := f.queue.ListUndeliveredStateEvents(f.ctx, f.participant.ID, deviceKey, 10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after two pages = %+v err=%v, want none", pending, err)
 	}
 }
 

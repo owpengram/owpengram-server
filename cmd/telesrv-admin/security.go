@@ -36,6 +36,8 @@ import (
 // TELESRV_ADMIN_UI_PERMISSIONS and the ones the admin API enforces.
 const (
 	permissionAll                = "*"
+	permissionPremiumManage      = "premium.manage"
+	permissionBotTokenRead       = "bots.token.read"
 	permissionVerificationReview = "verification.review"
 	permissionVerificationRevoke = "verification.revoke"
 	// Third-party bot verification. Deliberately not implied by the official

@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+
+	"telesrv/internal/domain"
 )
 
 type ctxKey int
@@ -94,6 +96,18 @@ func WithClientInfo(ctx context.Context, info ClientInfo) context.Context {
 func ClientInfoFrom(ctx context.Context) (ClientInfo, bool) {
 	v, ok := ctx.Value(clientInfoKey).(ClientInfo)
 	return v, ok
+}
+
+func clientSessionMetadataFromContext(ctx context.Context) domain.ClientSessionMetadata {
+	metadata := domain.ClientSessionMetadata{}
+	metadata.AuthKeyID = rawAuthKeyIDForOrigin(ctx)
+	metadata.SessionID, _ = SessionIDFrom(ctx)
+	if info, ok := ClientInfoFrom(ctx); ok {
+		metadata.SystemLangCode = info.SystemLangCode
+		metadata.LangPack = info.LangPack
+		metadata.LangCode = info.LangCode
+	}
+	return metadata
 }
 
 func ClientTypeFrom(ctx context.Context) ClientType {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"telesrv/internal/domain"
@@ -36,6 +37,7 @@ func enqueueDispatch(ctx context.Context, q *sqlcgen.Queries, arg sqlcgen.Enqueu
 
 // DispatchOutboxStore 用 PostgreSQL 实现 transactional outbox。
 type DispatchOutboxStore struct {
+	db           sqlcgen.DBTX
 	q            *sqlcgen.Queries
 	leaseSeconds int32
 }
@@ -58,6 +60,7 @@ func WithLeaseTimeout(d time.Duration) DispatchOutboxOption {
 // NewDispatchOutboxStore 基于 pgx 连接池（或事务）创建 DispatchOutboxStore。
 func NewDispatchOutboxStore(db sqlcgen.DBTX, opts ...DispatchOutboxOption) *DispatchOutboxStore {
 	s := &DispatchOutboxStore{
+		db:           db,
 		q:            sqlcgen.New(db),
 		leaseSeconds: int32(defaultDispatchLease / time.Second),
 	}
@@ -169,10 +172,12 @@ func (s *DispatchOutboxStore) MarkDeliveredBatch(ctx context.Context, items []st
 		ids[i] = it.ID
 		expectedAttempts[i] = int32(it.Attempts)
 	}
-	rows, err := s.q.MarkDispatchDeliveredBatch(ctx, sqlcgen.MarkDispatchDeliveredBatchParams{
-		TargetUserIds:    targetUserIDs,
-		Ids:              ids,
-		ExpectedAttempts: expectedAttempts,
+	rows, err := s.withExclusiveLaneFences(ctx, targetUserIDs, func(db sqlcgen.DBTX) (int64, error) {
+		return sqlcgen.New(db).MarkDispatchDeliveredBatch(ctx, sqlcgen.MarkDispatchDeliveredBatchParams{
+			TargetUserIds:    targetUserIDs,
+			Ids:              ids,
+			ExpectedAttempts: expectedAttempts,
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("mark dispatch delivered batch: %w", err)
@@ -184,16 +189,80 @@ func (s *DispatchOutboxStore) MarkDeliveredBatch(ctx context.Context, items []st
 }
 
 func (s *DispatchOutboxStore) MarkDelivered(ctx context.Context, item store.DispatchOutboxItem) error {
-	rows, err := s.q.MarkDispatchDelivered(ctx, sqlcgen.MarkDispatchDeliveredParams{
-		TargetUserID:     item.TargetUserID,
-		ID:               item.ID,
-		ExpectedAttempts: int32(item.Attempts),
+	rows, err := s.withExclusiveLaneFences(ctx, []int64{item.TargetUserID}, func(db sqlcgen.DBTX) (int64, error) {
+		return sqlcgen.New(db).MarkDispatchDelivered(ctx, sqlcgen.MarkDispatchDeliveredParams{
+			TargetUserID:     item.TargetUserID,
+			ID:               item.ID,
+			ExpectedAttempts: int32(item.Attempts),
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("mark dispatch delivered: %w", err)
 	}
 	if rows != 1 {
 		return fmt.Errorf("mark dispatch delivered: %w", store.ErrDispatchLeaseLost)
+	}
+	return nil
+}
+
+// withExclusiveLaneFences serializes the empty-lane transition with producers'
+// shared append fences. The DELETE runs as a later READ COMMITTED statement, so
+// it sees every producer that committed before the exclusive fence was granted.
+func (s *DispatchOutboxStore) withExclusiveLaneFences(
+	ctx context.Context,
+	userIDs []int64,
+	work func(sqlcgen.DBTX) (int64, error),
+) (int64, error) {
+	beginner, ok := s.db.(txBeginner)
+	if !ok {
+		return 0, fmt.Errorf("dispatch lane transition requires transaction-capable database")
+	}
+	tx, err := beginner.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin dispatch lane transition: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err := lockDispatchOutboxLanesExclusive(ctx, tx, userIDs); err != nil {
+		return 0, err
+	}
+	rows, err := work(tx)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit dispatch lane transition: %w", err)
+	}
+	committed = true
+	return rows, nil
+}
+
+func lockDispatchOutboxLanesExclusive(ctx context.Context, db sqlcgen.DBTX, userIDs []int64) error {
+	unique := make([]int64, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID <= 0 {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		unique = append(unique, userID)
+	}
+	if len(unique) == 0 {
+		return nil
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	if _, err := db.Exec(ctx, `
+SELECT pg_advisory_xact_lock(dispatch_outbox_lane_advisory_key(streams.target_user_id))
+FROM unnest($1::bigint[]) AS streams(target_user_id)
+ORDER BY streams.target_user_id`, unique); err != nil {
+		return fmt.Errorf("lock dispatch outbox lane transition: %w", err)
 	}
 	return nil
 }
@@ -224,9 +293,42 @@ func (s *DispatchOutboxStore) DeleteFailed(ctx context.Context, olderThan time.D
 	if limit > maxDispatchPoisonCleanupBatch {
 		limit = maxDispatchPoisonCleanupBatch
 	}
-	deleted, err := s.q.DeleteFailedDispatchOutbox(ctx, sqlcgen.DeleteFailedDispatchOutboxParams{
-		OlderThanSeconds: int32(olderThan / time.Second),
-		LimitCount:       int32(limit),
+	olderThanSeconds := int32(olderThan / time.Second)
+	rows, err := s.db.Query(ctx, `
+SELECT h.target_user_id
+FROM dispatch_outbox_user_heads h
+WHERE h.status = 'failed'
+  AND h.updated_at < now() - make_interval(secs => $1::int)
+ORDER BY h.updated_at ASC, h.target_user_id ASC, h.head_id ASC
+LIMIT $2`, olderThanSeconds, int32(limit))
+	if err != nil {
+		return 0, fmt.Errorf("list failed dispatch outbox lanes: %w", err)
+	}
+	userIDs := make([]int64, 0, limit)
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("scan failed dispatch outbox lane: %w", err)
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("iterate failed dispatch outbox lanes: %w", err)
+	}
+	rows.Close()
+	if len(userIDs) == 0 {
+		return 0, nil
+	}
+
+	deleted, err := s.withExclusiveLaneFences(ctx, userIDs, func(db sqlcgen.DBTX) (int64, error) {
+		count, deleteErr := sqlcgen.New(db).DeleteFailedDispatchOutbox(ctx, sqlcgen.DeleteFailedDispatchOutboxParams{
+			OlderThanSeconds: olderThanSeconds,
+			LimitCount:       int32(limit),
+			TargetUserIds:    userIDs,
+		})
+		return int64(count), deleteErr
 	})
 	if err != nil {
 		return 0, fmt.Errorf("delete failed dispatch outbox: %w", err)

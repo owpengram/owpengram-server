@@ -18,6 +18,25 @@ type captureModerationAdmin struct {
 	frozen    []admin.SetAccountFrozenRequest
 }
 
+type captureModerationAccountDeleter struct {
+	result domain.AccountDeletionResult
+	err    error
+	calls  int
+}
+
+func (d *captureModerationAccountDeleter) ExecuteAccountDeletion(context.Context, int64, domain.AccountDeletionSource, string, time.Time) (domain.AccountDeletionResult, error) {
+	d.calls++
+	return d.result, d.err
+}
+
+type captureModerationAccountDeletionNotifier struct {
+	results []domain.AccountDeletionResult
+}
+
+func (n *captureModerationAccountDeletionNotifier) NotifyModerationAccountDeletion(_ context.Context, result domain.AccountDeletionResult) {
+	n.results = append(n.results, result)
+}
+
 func (a *captureModerationAdmin) SetAccountFrozen(_ context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error) {
 	a.frozen = append(a.frozen, req)
 	return admin.CommandResult{}, nil
@@ -321,5 +340,48 @@ func TestActionExecutorFreezeDefaultsAndBoundsAppealLink(t *testing.T) {
 	}
 	if want := now.Add(domain.MaxModerationAppealLinkLifetime); !issuer.expiresAt.Equal(want) {
 		t.Fatalf("link expiry=%v want=%v", issuer.expiresAt, want)
+	}
+}
+
+func TestActionExecutorNotifiesCommittedAccountDeletion(t *testing.T) {
+	revoked := domain.Authorization{AuthKeyID: [8]byte{7}, UserID: 20}
+	result := domain.AccountDeletionResult{
+		User:                  domain.User{ID: 20, Deleted: true},
+		Changed:               true,
+		RevokedAuthorizations: []domain.Authorization{revoked},
+	}
+	accounts := &captureModerationAccountDeleter{result: result}
+	notifier := &captureModerationAccountDeletionNotifier{}
+	executor := NewActionExecutor(nil, nil, nil, accounts, WithAccountDeletionNotifier(notifier))
+	detail := domain.ModerationCaseDetail{
+		Case:      domain.ModerationCase{ID: 10, Target: domain.Peer{Type: domain.PeerTypeUser, ID: 20}},
+		Decisions: []domain.ModerationDecision{{ID: 30, Actor: "reviewer"}},
+	}
+	action := domain.ModerationAction{
+		CaseID: 10, DecisionID: 30, Kind: domain.ModerationActionDeleteAccount,
+		Payload: []byte(`{}`), CommandID: "delete-account:000",
+	}
+	if err := executor.Execute(context.Background(), detail, action); err != nil {
+		t.Fatal(err)
+	}
+	if accounts.calls != 1 || len(notifier.results) != 1 {
+		t.Fatalf("delete calls=%d notifications=%d, want 1/1", accounts.calls, len(notifier.results))
+	}
+	got := notifier.results[0]
+	if !got.Changed || got.User.ID != result.User.ID || len(got.RevokedAuthorizations) != 1 || got.RevokedAuthorizations[0].AuthKeyID != revoked.AuthKeyID {
+		t.Fatalf("notification result=%+v, want committed deletion", got)
+	}
+
+	accounts.result = domain.AccountDeletionResult{User: result.User, Changed: false}
+	if err := executor.Execute(context.Background(), detail, action); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.results) != 1 {
+		t.Fatalf("notifications after unchanged deletion=%d, want 1", len(notifier.results))
+	}
+
+	withoutNotifier := NewActionExecutor(nil, nil, nil, accounts)
+	if err := withoutNotifier.Execute(context.Background(), detail, action); !errors.Is(err, domain.ErrModerationActionInvalid) {
+		t.Fatalf("delete without runtime notifier err=%v, want ErrModerationActionInvalid", err)
 	}
 }

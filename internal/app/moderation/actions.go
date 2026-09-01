@@ -35,6 +35,10 @@ type moderationAccountDeleter interface {
 	ExecuteAccountDeletion(ctx context.Context, userID int64, source domain.AccountDeletionSource, reason string, now time.Time) (domain.AccountDeletionResult, error)
 }
 
+type moderationAccountDeletionNotifier interface {
+	NotifyModerationAccountDeletion(ctx context.Context, result domain.AccountDeletionResult)
+}
+
 type moderationAppealLinkIssuer interface {
 	IssueAppealLink(ctx context.Context, caseID, appellantUserID int64, expiresAt, now time.Time) (string, error)
 }
@@ -44,12 +48,22 @@ type ActionExecutor struct {
 	channels        moderationChannelDeleter
 	channelNotifier moderationChannelDeleteNotifier
 	accounts        moderationAccountDeleter
+	accountNotifier moderationAccountDeletionNotifier
 	appealLinks     moderationAppealLinkIssuer
 	publicBaseURL   string
 	now             func() time.Time
 }
 
 type ActionExecutorOption func(*ActionExecutor)
+
+// WithAccountDeletionNotifier installs the post-commit runtime boundary for a
+// moderation deletion. The deleter owns the durable tombstone transaction; the
+// notifier retires the returned authorizations from live RPC sessions/caches.
+func WithAccountDeletionNotifier(notifier moderationAccountDeletionNotifier) ActionExecutorOption {
+	return func(executor *ActionExecutor) {
+		executor.accountNotifier = notifier
+	}
+}
 
 func WithAppealLinks(issuer moderationAppealLinkIssuer, publicBaseURL string) ActionExecutorOption {
 	return func(executor *ActionExecutor) {
@@ -206,17 +220,26 @@ func (e *ActionExecutor) Execute(ctx context.Context, detail domain.ModerationCa
 		}
 		return nil
 	case domain.ModerationActionDeleteAccount:
-		if e.accounts == nil || detail.Case.Target.Type != domain.PeerTypeUser {
+		// The tombstone and live-session revocation are one application-level
+		// outcome. Refuse to commit the durable half if this process cannot run the
+		// post-commit half; otherwise an already-bound session keeps its cached user.
+		if e.accounts == nil || e.accountNotifier == nil || detail.Case.Target.Type != domain.PeerTypeUser {
 			return domain.ErrModerationActionInvalid
 		}
 		if err := decodeStrictActionPayload(action.Payload, &struct{}{}); err != nil {
 			return err
 		}
-		_, err := e.accounts.ExecuteAccountDeletion(
+		result, err := e.accounts.ExecuteAccountDeletion(
 			ctx, detail.Case.Target.ID, domain.AccountDeletionManual,
 			fmt.Sprintf("moderation case %d", detail.Case.ID), e.now().UTC(),
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if result.Changed && e.accountNotifier != nil {
+			e.accountNotifier.NotifyModerationAccountDeletion(ctx, result)
+		}
+		return nil
 	default:
 		return domain.ErrModerationActionInvalid
 	}

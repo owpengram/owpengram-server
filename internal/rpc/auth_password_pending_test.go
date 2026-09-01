@@ -96,8 +96,9 @@ func TestAuthRecoverPasswordCompletesPendingSignIn(t *testing.T) {
 	if _, err := router.onAuthRecoverPassword(ctx, &tg.AuthRecoverPasswordRequest{Code: sender.code}); err != nil {
 		t.Fatalf("auth.recoverPassword: %v", err)
 	}
-	if auth.completePasswordCount != 1 || auth.completedPasswordKey != authKeyID {
-		t.Fatalf("CompletePasswordSignIn count=%d key=%x, want one call for %x", auth.completePasswordCount, auth.completedPasswordKey, authKeyID)
+	if auth.completePasswordCount != 1 || auth.completedPasswordKey != authKeyID || auth.completedPasswordUser != userID {
+		t.Fatalf("CompletePasswordSignIn count=%d key=%x user=%d, want one call for %x/%d",
+			auth.completePasswordCount, auth.completedPasswordKey, auth.completedPasswordUser, authKeyID, userID)
 	}
 	if snap := sessions.snapshot(); snap.userID != userID || !snap.userResolved {
 		t.Fatalf("session user = %d resolved=%v, want %d resolved", snap.userID, snap.userResolved, userID)

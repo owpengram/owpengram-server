@@ -152,6 +152,64 @@ func TestMessagesGetStickersSpecialCategories(t *testing.T) {
 	}
 }
 
+// TestMessagesGetStickersGreetingCategoryIsBounded 固定 greeting 与普通 👋 搜索的
+// 边界：每个贴纸集只贡献一个 greeting 代表项，且启动预取目录总数有界；普通搜索
+// 不受影响，避免为了优化启动资源而缩窄用户主动搜索结果。
+func TestMessagesGetStickersGreetingCategoryIsBounded(t *testing.T) {
+	docs := make(map[int64]domain.Document)
+	sets := make([]domain.StickerSet, 0, maxGreetingStickers+4)
+	for i := 0; i < maxGreetingStickers+4; i++ {
+		first := int64(10_000 + i*2)
+		second := first + 1
+		docs[first] = domain.Document{ID: first, AccessHash: first + 100_000, DCID: 2}
+		docs[second] = domain.Document{ID: second, AccessHash: second + 100_000, DCID: 2}
+		sets = append(sets, domain.StickerSet{
+			ID:          int64(1_000 + i),
+			Kind:        domain.StickerSetKindStickers,
+			DocumentIDs: []int64{first, second},
+			Packs: []domain.StickerPack{{
+				Emoticon:    "👋",
+				DocumentIDs: []int64{first, second},
+			}},
+		})
+	}
+	r := New(Config{}, Deps{Files: &fakeFiles{
+		docs: docs,
+		sets: map[domain.StickerSetKind][]domain.StickerSet{
+			domain.StickerSetKindStickers: sets,
+		},
+	}}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 1000000001)
+
+	greeting := mustStickers(t, r, ctx, "👋⭐️", 0).(*tg.MessagesStickers)
+	greetingIDs := stickerDocIDs(t, greeting)
+	if len(greetingIDs) != maxGreetingStickers {
+		t.Fatalf("greeting documents = %d, want bounded %d", len(greetingIDs), maxGreetingStickers)
+	}
+	for i, id := range greetingIDs {
+		want := int64(10_000 + i*2)
+		if id != want {
+			t.Fatalf("greeting document[%d] = %d, want per-set representative %d", i, id, want)
+		}
+	}
+
+	wave := mustStickers(t, r, ctx, "👋", 0).(*tg.MessagesStickers)
+	if got, want := len(stickerDocIDs(t, wave)), (maxGreetingStickers+4)*2; got != want {
+		t.Fatalf("ordinary wave search documents = %d, want full %d", got, want)
+	}
+	if greeting.Hash == 0 || greeting.Hash == wave.Hash {
+		t.Fatalf("greeting/wave hashes = %d/%d, want independent non-zero catalogs", greeting.Hash, wave.Hash)
+	}
+	if cached, err := r.onMessagesGetStickers(ctx, &tg.MessagesGetStickersRequest{
+		Emoticon: "👋⭐",
+		Hash:     greeting.Hash,
+	}); err != nil {
+		t.Fatalf("get bounded greeting with hash: %v", err)
+	} else if _, ok := cached.(*tg.MessagesStickersNotModified); !ok {
+		t.Fatalf("bounded greeting matching hash = %T, want NotModified", cached)
+	}
+}
+
 func mustStickers(t *testing.T, r *Router, ctx context.Context, emoticon string, hash int64) tg.MessagesStickersClass {
 	t.Helper()
 	res, err := r.onMessagesGetStickers(ctx, &tg.MessagesGetStickersRequest{Emoticon: emoticon, Hash: hash})

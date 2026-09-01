@@ -15,10 +15,10 @@ func TestReplyKeyboardTLDomainRoundTrip(t *testing.T) {
 		Selective:   true,
 		Persistent:  true,
 		Placeholder: "Choose",
-		Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{
-			&tg.KeyboardButton{Text: "Help"},
-			func() *tg.KeyboardButton {
-				button := &tg.KeyboardButton{Text: "Status"}
+		Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButton{
+			{Text: "Help", Type: &tg.ButtonTypeDefault{}},
+			func() tg.KeyboardButton {
+				button := tg.KeyboardButton{Text: "Status", Type: &tg.ButtonTypeDefault{}}
 				style := tg.KeyboardButtonStyle{}
 				style.SetBgPrimary(true)
 				style.SetIcon(123456)
@@ -43,7 +43,8 @@ func TestReplyKeyboardTLDomainRoundTrip(t *testing.T) {
 	if !ok || len(wire.Rows) != 1 || len(wire.Rows[0].Buttons) != 2 {
 		t.Fatalf("wire markup = %#v", wire)
 	}
-	if button, ok := wire.Rows[0].Buttons[1].(*tg.KeyboardButton); !ok || button.Text != "Status" {
+	button := &wire.Rows[0].Buttons[1]
+	if button.Text != "Status" {
 		t.Fatalf("second button = %#v", wire.Rows[0].Buttons[1])
 	} else if style, ok := button.GetStyle(); !ok || !style.GetBgPrimary() || style.Icon != 123456 {
 		t.Fatalf("second button style = %#v ok=%v", style, ok)
@@ -54,30 +55,31 @@ func TestReplyKeyboardTLDomainRoundTrip(t *testing.T) {
 }
 
 func TestInlineButtonStyleTLDomainRoundTrip(t *testing.T) {
-	button := &tg.KeyboardButtonCallback{Text: "Delete", Data: []byte("delete")}
+	button := tg.KeyboardInlineButton{Text: "Delete", Type: &tg.InlineButtonTypeCallback{Data: []byte("delete")}}
 	style := tg.KeyboardButtonStyle{}
 	style.SetBgDanger(true)
 	button.SetStyle(style)
-	got, err := domainReplyMarkupForSender(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{button}}}}, true)
+	got, err := domainReplyMarkupForSender(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{Buttons: []tg.KeyboardInlineButton{button}}}}, true)
 	if err != nil {
 		t.Fatalf("domainReplyMarkupForSender: %v", err)
 	}
 	if got.Inline[0][0].Style != domain.MarkupButtonStyleDanger {
 		t.Fatalf("domain style = %#v", got.Inline[0][0])
 	}
-	wire := tgReplyMarkup(got).(*tg.ReplyInlineMarkup).Rows[0].Buttons[0].(*tg.KeyboardButtonCallback)
+	wire := tgReplyMarkup(got).(*tg.ReplyInlineMarkup).Rows[0].Buttons[0]
 	if roundTrip, ok := wire.GetStyle(); !ok || !roundTrip.GetBgDanger() {
 		t.Fatalf("wire style = %#v ok=%v", roundTrip, ok)
 	}
 }
 
 func TestLoginURLButtonTLDomainProjection(t *testing.T) {
-	button := &tg.InputKeyboardButtonURLAuth{
-		Text: "Log in", URL: "https://example.com/login", Bot: &tg.InputUser{UserID: 9001, AccessHash: 77},
+	buttonType := &tg.InputInlineButtonTypeURLAuth{
+		URL: "https://example.com/login", Bot: &tg.InputUser{UserID: 9001, AccessHash: 77},
 	}
-	button.SetRequestWriteAccess(true)
-	button.SetFwdText("Open login")
-	markup, err := domainReplyMarkupForSender(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{button}}}}, true)
+	buttonType.SetRequestWriteAccess(true)
+	buttonType.SetFwdText("Open login")
+	button := tg.KeyboardInlineButton{Text: "Log in", Type: buttonType}
+	markup, err := domainReplyMarkupForSender(&tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{Buttons: []tg.KeyboardInlineButton{button}}}}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +87,9 @@ func TestLoginURLButtonTLDomainProjection(t *testing.T) {
 	if got.Type != domain.MarkupButtonLoginURL || got.LoginBotUserID != 9001 || !got.RequestWriteAccess || got.ForwardText != "Open login" || got.ButtonID != 0 {
 		t.Fatalf("domain login_url = %#v", got)
 	}
-	wire, ok := tgReplyMarkup(markup).(*tg.ReplyInlineMarkup).Rows[0].Buttons[0].(*tg.KeyboardButtonURLAuth)
-	if !ok || wire.Text != "Log in" || wire.URL != "https://example.com/login" || wire.ButtonID != 0 || wire.FwdText != "Open login" {
+	wire := tgReplyMarkup(markup).(*tg.ReplyInlineMarkup).Rows[0].Buttons[0]
+	wireType, ok := wire.Type.(*tg.InlineButtonTypeURLAuth)
+	if !ok || wire.Text != "Log in" || wireType.URL != "https://example.com/login" || wireType.ButtonID != 0 || wireType.FwdText != "Open login" {
 		t.Fatalf("wire login_url = %#v", wire)
 	}
 }
@@ -112,7 +115,7 @@ func TestReplyKeyboardHideAndForceReplyTLDomainRoundTrip(t *testing.T) {
 
 func TestReplyKeyboardRequestPhoneTLDomainRoundTrip(t *testing.T) {
 	markup, err := domainOutgoingReplyMarkupForSender(&tg.ReplyKeyboardMarkup{Rows: []tg.KeyboardButtonRow{{
-		Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonRequestPhone{Text: "Share phone"}},
+		Buttons: []tg.KeyboardButton{{Text: "Share phone", Type: &tg.ButtonTypeRequestPhone{}}},
 	}}}, true)
 	if err != nil || markup == nil || len(markup.Keyboard) != 1 || len(markup.Keyboard[0]) != 1 ||
 		markup.Keyboard[0][0].Type != domain.MarkupButtonRequestPhone {
@@ -122,7 +125,7 @@ func TestReplyKeyboardRequestPhoneTLDomainRoundTrip(t *testing.T) {
 	if !ok || len(wire.Rows) != 1 || len(wire.Rows[0].Buttons) != 1 {
 		t.Fatalf("request_phone wire = %#v", wire)
 	}
-	if _, ok := wire.Rows[0].Buttons[0].(*tg.KeyboardButtonRequestPhone); !ok {
+	if _, ok := wire.Rows[0].Buttons[0].Type.(*tg.ButtonTypeRequestPhone); !ok {
 		t.Fatalf("request_phone button = %#v", wire.Rows[0].Buttons[0])
 	}
 	if _, err := domainReplyMarkupForSender(&tg.ReplyKeyboardHide{}, true); err == nil {
@@ -138,9 +141,9 @@ func TestReplyKeyboardRequestPeerFiltersTLDomainRoundTrip(t *testing.T) {
 	chatType.SetHasUsername(false)
 	chatType.SetForum(true)
 	chatType.SetUserAdminRights(tg.ChatAdminRights{DeleteMessages: true, ManageTopics: true})
-	in := &tg.ReplyKeyboardMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{
-		&tg.KeyboardButtonRequestPeer{Text: "Premium person", ButtonID: 1, PeerType: userType, MaxQuantity: 2},
-		&tg.KeyboardButtonRequestPeer{Text: "Forum", ButtonID: 2, PeerType: chatType, MaxQuantity: 1},
+	in := &tg.ReplyKeyboardMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButton{
+		{Text: "Premium person", Type: &tg.ButtonTypeRequestPeer{ButtonID: 1, PeerType: userType, MaxQuantity: 2}},
+		{Text: "Forum", Type: &tg.ButtonTypeRequestPeer{ButtonID: 2, PeerType: chatType, MaxQuantity: 1}},
 	}}}}
 	markup, err := domainOutgoingReplyMarkupForSender(in, true)
 	if err != nil {
@@ -157,14 +160,14 @@ func TestReplyKeyboardRequestPeerFiltersTLDomainRoundTrip(t *testing.T) {
 		t.Fatalf("chat filter = %#v", chatFilter)
 	}
 	wire := tgReplyMarkup(markup).(*tg.ReplyKeyboardMarkup)
-	wireUser := wire.Rows[0].Buttons[0].(*tg.KeyboardButtonRequestPeer).PeerType.(*tg.RequestPeerTypeUser)
+	wireUser := wire.Rows[0].Buttons[0].Type.(*tg.ButtonTypeRequestPeer).PeerType.(*tg.RequestPeerTypeUser)
 	if bot, ok := wireUser.GetBot(); !ok || bot {
 		t.Fatalf("wire user bot=%v ok=%v", bot, ok)
 	}
 	if premium, ok := wireUser.GetPremium(); !ok || !premium {
 		t.Fatalf("wire user premium=%v ok=%v", premium, ok)
 	}
-	wireChat := wire.Rows[0].Buttons[1].(*tg.KeyboardButtonRequestPeer).PeerType.(*tg.RequestPeerTypeChat)
+	wireChat := wire.Rows[0].Buttons[1].Type.(*tg.ButtonTypeRequestPeer).PeerType.(*tg.RequestPeerTypeChat)
 	if !wireChat.Creator || !wireChat.BotParticipant {
 		t.Fatalf("wire chat = %#v", wireChat)
 	}
@@ -177,10 +180,10 @@ func TestReplyKeyboardRequestPeerFiltersTLDomainRoundTrip(t *testing.T) {
 }
 
 func TestInputRequestPeerButtonPreservesRequestedMetadata(t *testing.T) {
-	button := &tg.InputKeyboardButtonRequestPeer{
+	button := tg.KeyboardButton{Text: "Share", Type: &tg.InputButtonTypeRequestPeer{
 		NameRequested: true, UsernameRequested: true, PhotoRequested: true,
-		Text: "Share", ButtonID: 99, PeerType: &tg.RequestPeerTypeUser{}, MaxQuantity: 3,
-	}
+		ButtonID: 99, PeerType: &tg.RequestPeerTypeUser{}, MaxQuantity: 3,
+	}}
 	got, err := domainRequestedButtonFromTG(1001, nil, button)
 	if err != nil {
 		t.Fatal(err)

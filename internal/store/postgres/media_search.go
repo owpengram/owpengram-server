@@ -76,6 +76,106 @@ func reorderChannelMessagesByID(msgs []domain.ChannelMessage, order []int) []dom
 	return out
 }
 
+func privateMediaSearchBase(ownerUserID, peerID int64, cats []int16, req domain.MediaSearchRequest) (string, []any) {
+	args := []any{ownerUserID, peerID, cats}
+	where := `
+FROM message_box_media mi
+JOIN message_boxes mb ON mb.owner_user_id = mi.owner_user_id AND mb.box_id = mi.box_id
+WHERE mi.owner_user_id = $1 AND mi.peer_id = $2 AND mi.category = ANY($3::smallint[])
+  AND NOT mb.deleted`
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where += fmt.Sprintf(clause, len(args))
+	}
+	if req.MaxID > 0 {
+		add(" AND mi.box_id <= $%d", pgInt32NonNegative(req.MaxID))
+	}
+	if req.MinID > 0 {
+		add(" AND mi.box_id >= $%d", pgInt32NonNegative(req.MinID))
+	}
+	if req.Query != "" {
+		add(" AND mb.body ILIKE '%%' || $%d || '%%'", req.Query)
+	}
+	if req.SenderUserID != 0 {
+		add(" AND mb.from_user_id = $%d", req.SenderUserID)
+	}
+	if req.MinDate > 0 {
+		add(" AND mb.message_date > $%d", pgInt32NonNegative(req.MinDate))
+	}
+	if req.MaxDate > 0 {
+		add(" AND mb.message_date < $%d", pgInt32NonNegative(req.MaxDate))
+	}
+	if req.TopMsgID > 0 {
+		args = append(args, pgInt32NonNegative(req.TopMsgID))
+		where += fmt.Sprintf(" AND (mb.box_id = $%d OR mb.reply_to_top_id = $%d)", len(args), len(args))
+	}
+	if req.SavedPeer.ID != 0 {
+		args = append(args, string(req.SavedPeer.Type), req.SavedPeer.ID)
+		where += fmt.Sprintf(" AND mb.saved_peer_type = $%d AND mb.saved_peer_id = $%d", len(args)-1, len(args))
+	}
+	if keys := postgresSavedReactionKeys(req.SavedReactions); len(keys) > 0 {
+		args = append(args, keys)
+		where += fmt.Sprintf(` AND EXISTS (
+    SELECT 1 FROM saved_message_reaction_tags tag
+    WHERE tag.user_id = mb.owner_user_id AND tag.message_box_id = mb.box_id
+      AND (tag.reaction_type || ':' || tag.reaction_value) = ANY($%d::text[])
+  )`, len(args))
+	}
+	return where, args
+}
+
+func channelMediaSearchBase(
+	viewerUserID, channelID int64,
+	cats []int16,
+	channel domain.Channel,
+	member domain.ChannelMember,
+	req domain.MediaSearchRequest,
+) (string, []any) {
+	args := []any{channelID, cats}
+	where := `
+FROM channel_message_media mi
+JOIN channel_messages m ON m.channel_id = mi.channel_id AND m.id = mi.id
+WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
+  AND NOT m.deleted`
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where += fmt.Sprintf(clause, len(args))
+	}
+	if member.AvailableMinID > 0 {
+		add(" AND mi.id > $%d", pgInt32NonNegative(member.AvailableMinID))
+	}
+	if channel.Monoforum {
+		if member.CanManageDirectMessages() {
+			where += " AND m.saved_peer_id = 0"
+		} else {
+			add(" AND m.saved_peer_type = 'user' AND m.saved_peer_id = $%d", viewerUserID)
+		}
+	}
+	if req.MaxID > 0 {
+		add(" AND mi.id <= $%d", pgInt32NonNegative(req.MaxID))
+	}
+	if req.MinID > 0 {
+		add(" AND mi.id >= $%d", pgInt32NonNegative(req.MinID))
+	}
+	if req.Query != "" {
+		add(" AND m.body ILIKE '%%' || $%d || '%%'", req.Query)
+	}
+	if req.SenderUserID != 0 {
+		add(" AND m.sender_user_id = $%d", req.SenderUserID)
+	}
+	if req.MinDate > 0 {
+		add(" AND m.message_date > $%d", pgInt32NonNegative(req.MinDate))
+	}
+	if req.MaxDate > 0 {
+		add(" AND m.message_date < $%d", pgInt32NonNegative(req.MaxDate))
+	}
+	if req.TopMsgID > 0 {
+		args = append(args, pgInt32NonNegative(req.TopMsgID))
+		where += fmt.Sprintf(" AND (m.id = $%d OR m.reply_to_top_id = $%d)", len(args), len(args))
+	}
+	return where, args
+}
+
 // SearchPrivateMedia 返回某私聊会话中属于给定类别的消息(newest-first 分页)。
 func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peerID int64, req domain.MediaSearchRequest) (domain.MessageList, error) {
 	cats := mediaCategoriesToInt16(req.Categories)
@@ -83,19 +183,12 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 		return domain.MessageList{}, nil
 	}
 	limit, offset := mediaSearchPaging(req)
-	maxID, minID, offsetID := int32(req.MaxID), int32(req.MinID), int32(req.OffsetID)
+	base, baseArgs := privateMediaSearchBase(ownerUserID, peerID, cats, req)
 
 	count := req.KnownCount
 	if !req.HasKnownCount {
 		var err error
-		count, err = mediaSearchCount(ctx, s.db, `
-SELECT count(DISTINCT mi.box_id)::int
-FROM message_box_media mi
-JOIN message_boxes mb ON mb.owner_user_id = mi.owner_user_id AND mb.box_id = mi.box_id
-WHERE mi.owner_user_id = $1 AND mi.peer_id = $2 AND mi.category = ANY($3::smallint[])
-  AND NOT mb.deleted
-  AND ($4 = 0 OR mi.box_id <= $4)
-  AND ($5 = 0 OR mi.box_id >= $5)`, ownerUserID, peerID, cats, maxID, minID)
+		count, err = mediaSearchCount(ctx, s.db, "SELECT count(DISTINCT mi.box_id)::int"+base, baseArgs...)
 		if err != nil {
 			return domain.MessageList{}, fmt.Errorf("count private media: %w", err)
 		}
@@ -103,17 +196,14 @@ WHERE mi.owner_user_id = $1 AND mi.peer_id = $2 AND mi.category = ANY($3::smalli
 	if limit == 0 {
 		return domain.MessageList{Count: count}, nil
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT DISTINCT mi.box_id
-FROM message_box_media mi
-JOIN message_boxes mb ON mb.owner_user_id = mi.owner_user_id AND mb.box_id = mi.box_id
-WHERE mi.owner_user_id = $1 AND mi.peer_id = $2 AND mi.category = ANY($3::smallint[])
-  AND NOT mb.deleted
-  AND ($4 = 0 OR mi.box_id <= $4)
-  AND ($5 = 0 OR mi.box_id >= $5)
-  AND ($6 = 0 OR mi.box_id < $6)
-ORDER BY mi.box_id DESC
-OFFSET $7 LIMIT $8`, ownerUserID, peerID, cats, maxID, minID, offsetID, offset, limit)
+	args := append([]any(nil), baseArgs...)
+	if req.OffsetID > 0 {
+		args = append(args, pgInt32NonNegative(req.OffsetID))
+		base += fmt.Sprintf(" AND mi.box_id < $%d", len(args))
+	}
+	args = append(args, offset, limit)
+	rows, err := s.db.Query(ctx, "SELECT DISTINCT mi.box_id"+base+
+		fmt.Sprintf(" ORDER BY mi.box_id DESC OFFSET $%d LIMIT $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return domain.MessageList{}, fmt.Errorf("list private media ids: %w", err)
 	}
@@ -174,24 +264,16 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 		return domain.ChannelHistory{}, nil
 	}
 	limit, offset := mediaSearchPaging(req)
-	maxID, minID, offsetID := int32(req.MaxID), int32(req.MinID), int32(req.OffsetID)
 
 	channel, member, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
 		return domain.ChannelHistory{}, err
 	}
+	base, baseArgs := channelMediaSearchBase(viewerUserID, channelID, cats, channel, member, req)
 	count := req.KnownCount
 	if !req.HasKnownCount {
 		var err error
-		count, err = mediaSearchCount(ctx, s.db, `
-SELECT count(DISTINCT mi.id)::int
-FROM channel_message_media mi
-JOIN channel_messages m ON m.channel_id = mi.channel_id AND m.id = mi.id
-WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
-  AND NOT m.deleted
-  AND ($3 <= 0 OR mi.id > $3)
-  AND ($4 = 0 OR mi.id <= $4)
-  AND ($5 = 0 OR mi.id >= $5)`, channelID, cats, int32(member.AvailableMinID), maxID, minID)
+		count, err = mediaSearchCount(ctx, s.db, "SELECT count(DISTINCT mi.id)::int"+base, baseArgs...)
 		if err != nil {
 			return domain.ChannelHistory{}, fmt.Errorf("count channel media: %w", err)
 		}
@@ -199,18 +281,14 @@ WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
 	if limit == 0 {
 		return domain.ChannelHistory{Channel: channel, Self: member, Count: count}, nil
 	}
-	rows, err := s.db.Query(ctx, `
-SELECT DISTINCT mi.id
-FROM channel_message_media mi
-JOIN channel_messages m ON m.channel_id = mi.channel_id AND m.id = mi.id
-WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
-  AND NOT m.deleted
-  AND ($3 <= 0 OR mi.id > $3)
-  AND ($4 = 0 OR mi.id <= $4)
-  AND ($5 = 0 OR mi.id >= $5)
-  AND ($6 = 0 OR mi.id < $6)
-ORDER BY mi.id DESC
-OFFSET $7 LIMIT $8`, channelID, cats, int32(member.AvailableMinID), maxID, minID, offsetID, offset, limit)
+	args := append([]any(nil), baseArgs...)
+	if req.OffsetID > 0 {
+		args = append(args, pgInt32NonNegative(req.OffsetID))
+		base += fmt.Sprintf(" AND mi.id < $%d", len(args))
+	}
+	args = append(args, offset, limit)
+	rows, err := s.db.Query(ctx, "SELECT DISTINCT mi.id"+base+
+		fmt.Sprintf(" ORDER BY mi.id DESC OFFSET $%d LIMIT $%d", len(args)-1, len(args)), args...)
 	if err != nil {
 		return domain.ChannelHistory{}, fmt.Errorf("list channel media ids: %w", err)
 	}

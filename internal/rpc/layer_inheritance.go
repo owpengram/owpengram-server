@@ -111,7 +111,7 @@ func (r *Router) PublishAdmittedLayerProfileEvidence(
 	effectiveAuthKeyID := rawAuthKeyID
 	if r.deps.Auth != nil {
 		resolveCtx, cancel := context.WithTimeout(ctx, authLayerPublicationTimeout)
-		resolved, found, err := r.deps.Auth.ResolveAuthKey(resolveCtx, rawAuthKeyID)
+		resolved, found, err := r.resolveAuthKeyCached(resolveCtx, rawAuthKeyID)
 		cancel()
 		switch {
 		case err != nil:
@@ -386,7 +386,7 @@ func (r *Router) ResolveInheritedAuthKeyLayer(ctx context.Context, rawAuthKeyID 
 	}
 	effectiveAuthKeyID := rawAuthKeyID
 	if r.deps.Auth != nil {
-		resolved, found, err := r.deps.Auth.ResolveAuthKey(ctx, rawAuthKeyID)
+		resolved, found, err := r.resolveAuthKeyCached(ctx, rawAuthKeyID)
 		if err != nil {
 			return 0, false, wrapLayerEvidenceStoreAvailability(err)
 		}

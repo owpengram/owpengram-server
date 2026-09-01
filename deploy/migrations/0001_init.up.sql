@@ -2648,7 +2648,9 @@ CREATE TABLE public.secret_chats (
     history_deleted boolean DEFAULT false NOT NULL,
     random_id integer NOT NULL,
     date integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT secret_chats_nonzero_id CHECK ((chat_id <> 0)),
+    CONSTRAINT secret_chats_random_id_is_chat_id CHECK ((chat_id = random_id))
 );
 
 
@@ -4522,13 +4524,6 @@ CREATE INDEX upload_parts_object_key_idx ON public.upload_parts USING btree (obj
 --
 
 CREATE UNIQUE INDEX uq_emq_dedup ON public.encrypted_message_queue USING btree (receiver_auth_key_id, chat_id, random_id);
-
-
---
--- Name: uq_secret_chats_admin_random; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_secret_chats_admin_random ON public.secret_chats USING btree (admin_auth_key_id, random_id) WHERE (state <> 'discarded'::text);
 
 
 --

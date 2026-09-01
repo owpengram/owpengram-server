@@ -549,6 +549,52 @@ func (s *StoryStore) GetPeerStoryProjections(_ context.Context, viewerUserID int
 	return out, nil
 }
 
+func (s *StoryStore) ActiveStoryPeerExpirations(_ context.Context, peers []domain.Peer, now int) (map[domain.Peer]int, error) {
+	if len(peers) > domain.MaxStoryIDs {
+		return nil, domain.ErrStoryIDInvalid
+	}
+	requested := make(map[domain.Peer]struct{}, len(peers))
+	for _, peer := range peers {
+		if err := validateStoryPeer(peer); err != nil {
+			return nil, err
+		}
+		requested[peer] = struct{}{}
+	}
+	out := make(map[domain.Peer]int, len(peers))
+	s.mu.RLock()
+	for _, story := range s.stories {
+		if _, ok := requested[story.Owner]; !ok || !story.Active(now) {
+			continue
+		}
+		if story.ExpireDate > out[story.Owner] {
+			out[story.Owner] = story.ExpireDate
+		}
+	}
+	s.mu.RUnlock()
+	return out, nil
+}
+
+func (s *StoryStore) ListHiddenStoryPeers(_ context.Context, viewerUserID int64) ([]domain.Peer, error) {
+	if viewerUserID == 0 {
+		return nil, domain.ErrStoryPeerInvalid
+	}
+	out := make([]domain.Peer, 0)
+	s.mu.RLock()
+	for key, hidden := range s.hidden {
+		if key.viewerID == viewerUserID && hidden {
+			out = append(out, domain.Peer{Type: key.peerType, ID: key.peerID})
+		}
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
 func (s *StoryStore) MarkRead(_ context.Context, viewerUserID int64, peer domain.Peer, maxID, date int) (domain.StoryReadResult, error) {
 	if viewerUserID == 0 {
 		return domain.StoryReadResult{}, domain.ErrStoryPeerInvalid

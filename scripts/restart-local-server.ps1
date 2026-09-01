@@ -12,6 +12,9 @@ hidden, and verifies that the port is listening again.
 param(
     [string]$Listen = "0.0.0.0:2398",
     [string]$AdvertiseIP,
+    [string]$PostgresDSN,
+    [string]$PostgresContainer = "telesrv-postgres",
+    [string]$PostgresUser = "telesrv",
     [string]$ExePath,
     [string]$LogDir,
     [int]$HealthTimeoutSeconds = 20,
@@ -221,10 +224,30 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 Push-Location $RepoRoot
 try {
+    $branch = Get-GitOutput @("branch", "--show-current")
+    $postgresDatabase = "external"
+    if ([string]::IsNullOrWhiteSpace($PostgresDSN)) {
+        switch ($branch) {
+            "main" { $postgresDatabase = "telesrv_main" }
+            "v2" { $postgresDatabase = "telesrv_v2" }
+            default {
+                throw "Branch '$branch' has no implicit local PostgreSQL database. Pass -PostgresDSN explicitly."
+            }
+        }
+        Write-Step "Resolve branch-isolated PostgreSQL"
+        & (Join-Path $PSScriptRoot "ensure-local-databases.ps1") `
+            -PostgresContainer $PostgresContainer `
+            -DbUser $PostgresUser
+        $PostgresDSN = "postgres://telesrv:telesrv@127.0.0.1:5432/$postgresDatabase`?sslmode=disable"
+        Write-Host "[ok] branch=$branch database=$postgresDatabase"
+    } else {
+        Write-Step "Use explicit PostgreSQL DSN"
+        Write-Host "[ok] branch=$branch database=explicit-override"
+    }
+
     if (-not $SkipBuild) {
         Write-Step "Build telesrv"
         $commit = Get-GitOutput @("rev-parse", "HEAD")
-        $branch = Get-GitOutput @("branch", "--show-current")
         $dirty = Get-GitOutput @("status", "--porcelain", "--untracked-files=no") -Default ""
         $treeState = "clean"
         if ($dirty.Length -gt 0) {
@@ -293,6 +316,7 @@ try {
     $stderrPath = Join-Path $LogDir "telesrv-$stamp.err.log"
 
     $env:TELESRV_LISTEN = $Listen
+    $env:TELESRV_POSTGRES_DSN = $PostgresDSN
     if ($AdvertiseIP) {
         $env:TELESRV_ADVERTISE_IP = $AdvertiseIP
     }
@@ -338,6 +362,7 @@ try {
         Pid = $proc.Id
         Listen = $Listen
         AdvertiseIP = $env:TELESRV_ADVERTISE_IP
+        PostgresDatabase = $postgresDatabase
         Exe = $ExePath
         Stdout = $stdoutPath
         Stderr = $stderrPath

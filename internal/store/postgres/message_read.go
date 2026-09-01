@@ -85,6 +85,9 @@ WHERE owner_user_id = $1
 	if err := lockUsersForUpdate(ctx, tx, lockIDs...); err != nil {
 		return res, fmt.Errorf("lock read message contents users: %w", err)
 	}
+	if err := lockDispatchOutboxAppendFences(ctx, tx, lockIDs); err != nil {
+		return res, fmt.Errorf("lock read message contents dispatch append fences: %w", err)
+	}
 	rows, err := tx.Query(ctx, `
 WITH target AS (
   SELECT owner_user_id, box_id, peer_type, peer_id, media_unread, reaction_unread,

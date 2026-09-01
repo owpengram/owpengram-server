@@ -25,14 +25,23 @@ const (
 )
 
 type webPageResolveJob struct {
-	senderID    int64
-	peer        domain.Peer
-	msgID       int
-	expectedID  int64
-	url         string
-	invertMedia bool
-	forceLarge  bool
-	forceSmall  bool
+	senderID       int64
+	peer           domain.Peer
+	msgID          int
+	expectedID     int64
+	url            string
+	invertMedia    bool
+	forceLarge     bool
+	forceSmall     bool
+	timeout        time.Duration
+	emptyOnFailure bool
+}
+
+type webPageResolveKey struct {
+	peerType   domain.PeerType
+	scopeID    int64
+	msgID      int
+	expectedID int64
 }
 
 // maybeEnqueueWebPageResolve 若刚发出的消息（私聊或频道）携带 pending 链接预览占位，
@@ -70,7 +79,11 @@ func (r *Router) enqueueWebPageResolve(job webPageResolveJob) {
 	}
 	go func() {
 		defer func() { <-r.webPageResolveSem }()
-		ctx, cancel := context.WithTimeout(context.Background(), webPageResolveTimeout)
+		timeout := job.timeout
+		if timeout <= 0 {
+			timeout = webPageResolveTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		if err := r.resolvePendingWebPage(ctx, job); err != nil {
 			r.log.Debug("web page resolve failed",
@@ -90,9 +103,22 @@ func (r *Router) resolvePendingWebPage(ctx context.Context, job webPageResolveJo
 	}
 	resolved, err := r.deps.Files.ResolveWebPage(ctx, job.url)
 	if err != nil {
-		return err
+		if !job.emptyOnFailure {
+			return err
+		}
+		resolved = emptyWebPageForResolveJob(job)
+		r.log.Info("web page pending finalized as empty",
+			zap.Int64("sender_id", job.senderID),
+			zap.String("peer_type", string(job.peer.Type)),
+			zap.Int64("peer_id", job.peer.ID),
+			zap.Int("msg_id", job.msgID),
+			zap.Int64("expected_id", job.expectedID),
+			zap.Error(err))
 	}
 	// 保留发送时占位上的 wrapper 偏好（force large/small），它们不在抓取结果里。
+	if job.expectedID != 0 {
+		resolved.ID = job.expectedID
+	}
 	resolved.ForceLargeMedia = job.forceLarge
 	resolved.ForceSmallMedia = job.forceSmall
 	media := &domain.MessageMedia{
@@ -141,4 +167,102 @@ func (r *Router) resolvePendingWebPage(ctx context.Context, job webPageResolveJo
 	default:
 		return nil
 	}
+}
+
+func emptyWebPageForResolveJob(job webPageResolveJob) domain.MessageWebPage {
+	url := job.url
+	id := job.expectedID
+	if normalized, ok := domain.NormalizeWebPageURL(url); ok {
+		url = normalized
+		if id == 0 {
+			id = domain.WebPageURLHash(normalized)
+		}
+	}
+	return domain.MessageWebPage{State: domain.MessageWebPageStateEmpty, ID: id, URL: url}
+}
+
+func (r *Router) maybeEnqueueExpiredPrivateWebPageResolves(messages []domain.Message) {
+	now := int(r.clock.Now().Unix())
+	seen := make(map[webPageResolveKey]struct{})
+	for _, msg := range messages {
+		job, ok := expiredPrivateWebPageResolveJob(msg, now)
+		if !ok {
+			continue
+		}
+		key := webPageResolveKey{peerType: domain.PeerTypeUser, scopeID: msg.OwnerUserID, msgID: msg.ID, expectedID: job.expectedID}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		r.enqueueWebPageResolve(job)
+	}
+}
+
+func (r *Router) maybeEnqueueExpiredChannelWebPageResolves(userID int64, messages []domain.ChannelMessage) {
+	now := int(r.clock.Now().Unix())
+	seen := make(map[webPageResolveKey]struct{})
+	for _, msg := range messages {
+		job, ok := expiredChannelWebPageResolveJob(userID, msg, now)
+		if !ok {
+			continue
+		}
+		key := webPageResolveKey{peerType: domain.PeerTypeChannel, scopeID: msg.ChannelID, msgID: msg.ID, expectedID: job.expectedID}
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		r.enqueueWebPageResolve(job)
+	}
+}
+
+func expiredPrivateWebPageResolveJob(msg domain.Message, now int) (webPageResolveJob, bool) {
+	wp, ok := expiredPendingWebPage(msg.Media, now)
+	if !ok || msg.OwnerUserID == 0 || msg.ID <= 0 || msg.Peer.ID == 0 {
+		return webPageResolveJob{}, false
+	}
+	return webPageResolveJob{
+		senderID:       msg.OwnerUserID,
+		peer:           msg.Peer,
+		msgID:          msg.ID,
+		expectedID:     wp.ID,
+		url:            wp.URL,
+		invertMedia:    msg.Media.InvertMedia,
+		forceLarge:     wp.ForceLargeMedia,
+		forceSmall:     wp.ForceSmallMedia,
+		timeout:        webpageRequestResolveBudget,
+		emptyOnFailure: true,
+	}, true
+}
+
+func expiredChannelWebPageResolveJob(userID int64, msg domain.ChannelMessage, now int) (webPageResolveJob, bool) {
+	wp, ok := expiredPendingWebPage(msg.Media, now)
+	if !ok || msg.ChannelID == 0 || msg.ID <= 0 {
+		return webPageResolveJob{}, false
+	}
+	senderID := msg.SenderUserID
+	if senderID == 0 {
+		senderID = userID
+	}
+	return webPageResolveJob{
+		senderID:       senderID,
+		peer:           domain.Peer{Type: domain.PeerTypeChannel, ID: msg.ChannelID},
+		msgID:          msg.ID,
+		expectedID:     wp.ID,
+		url:            wp.URL,
+		invertMedia:    msg.Media.InvertMedia,
+		forceLarge:     wp.ForceLargeMedia,
+		forceSmall:     wp.ForceSmallMedia,
+		timeout:        webpageRequestResolveBudget,
+		emptyOnFailure: true,
+	}, true
+}
+
+func expiredPendingWebPage(media *domain.MessageMedia, now int) (*domain.MessageWebPage, bool) {
+	if media == nil || media.WebPage == nil || media.WebPage.State != domain.MessageWebPageStatePending {
+		return nil, false
+	}
+	if media.WebPage.Date > now {
+		return nil, false
+	}
+	return media.WebPage, true
 }

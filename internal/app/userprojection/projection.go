@@ -118,12 +118,10 @@ func (p *Projector) One(ctx context.Context, viewerUserID int64, user domain.Use
 // ForViewers 跨多个 viewer 批量投影同一组 owner 用户（fan-out 模板化）。它把 per-viewer 各跑
 // 一遍 ForViewer(=projectBatch) 的成本（O(viewer)×(photos+contacts+privacy) 查询）压成：
 //   - 一次 profile/fallback 头像批量（跨 viewer 复用）
-//   - O(owner) 次 GetReverseContacts（改名/电话覆盖，按 owner 反查 viewer）
+//   - 一次 viewer-owned contact projection（联系人改名/电话覆盖 + personal photo overlay）
 //   - O(owner) 次 GetMany + 一次 ListPrivacyRules（CanSeeMatrix 内做）
 //
-// 返回 map[viewerID][]domain.User，每个切片与对应 viewer 的 ForViewer(viewer, users) **字节等价，
-// 唯一例外是 personal photo overlay**：v1 简化为 fan-out 模板不做 per-viewer personal photo
-// （无 O(owner) 反查接口），客户端下次 getChannelDifference/getHistory 会走 projectBatch 完整投影自愈。
+// 返回 map[viewerID][]domain.User，每个切片与对应 viewer 的 ForViewer(viewer, users) 字节等价。
 // 调用方传入的 users 不被修改（内部复制）。
 func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users []domain.User) (map[int64][]domain.User, error) {
 	users = sanitizeDeletedUsers(users)
@@ -143,26 +141,34 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	}
 	ids := uniqueUserIDs(users)
 
-	// 三组预取互不依赖（共享头像、反向联系人覆盖、privacy 矩阵），并发执行收敛成一波。
+	// 三组预取互不依赖（共享头像、viewer-owned 联系人投影、privacy 矩阵），并发执行收敛成一波。
 	var (
-		profileRefs      map[int64]domain.ProfilePhotoRef
-		fallbackRefs     map[int64]domain.ProfilePhotoRef
-		contactsByViewer map[int64]map[int64]domain.Contact
-		matrix           map[int64]map[int64]map[domain.PrivacyKey]bool
-		freezes          map[int64]domain.AccountFreeze
+		profileRefs          map[int64]domain.ProfilePhotoRef
+		fallbackRefs         map[int64]domain.ProfilePhotoRef
+		contactsByViewer     map[int64]map[int64]domain.Contact
+		personalRefsByViewer map[int64]map[int64]domain.ProfilePhotoRef
+		matrix               map[int64]map[int64]map[domain.PrivacyKey]bool
+		freezes              map[int64]domain.AccountFreeze
 	)
 	g, gctx := errgroup.WithContext(ctx)
-	// 1) 共享头像：profile/fallback 一次批量，跨全部 viewer 复用；personal photo v1 跳过（见 doc）。
+	// 1) 共享头像：profile/fallback 一次批量，跨全部 viewer 复用。
 	g.Go(func() error {
 		var err error
 		profileRefs, fallbackRefs, err = p.batchProfileFallbackPhotos(gctx, ids)
 		return err
 	})
-	// 2) 改名/电话覆盖：O(owner) 次 GetReverseContacts(owner, viewers) 重组为 [viewer][owner]Contact，
-	//    与 projectBatch 的 GetMany(viewer, owners) 命中同一条联系人记录（方向对称）。
+	// 2) 改名/电话覆盖 + personal photo：按 viewer 拥有的联系人行批量读取，
+	//    与 projectBatch 的 GetMany/PersonalPhotos(viewer, owners) 命中同一语义。
 	g.Go(func() error {
-		var err error
-		contactsByViewer, err = p.reverseContactsByViewer(gctx, ids, viewers)
+		if p.contacts == nil || len(ids) == 0 || len(viewers) == 0 {
+			return nil
+		}
+		batch, err := p.contacts.ContactProjectionForViewers(gctx, viewers, ids)
+		if err != nil {
+			return err
+		}
+		contactsByViewer = batch.Contacts
+		personalRefsByViewer = batch.PersonalPhotos
 		return err
 	})
 	// 3) privacy 可见性矩阵：O(owner) 查询；nil（无 MatrixPrivacyEvaluator）时 applyPrivacy 回退逐 CanSee。
@@ -183,10 +189,10 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	// 4) 逐 viewer 组装，复用与 projectBatch 完全相同的 apply* 链（personalRefs 传 nil）。
+	// 4) 逐 viewer 组装，复用与 projectBatch 完全相同的 apply* 链。
 	for _, viewer := range viewers {
-		projected := make([]domain.User, len(users))
-		copy(projected, users)
+		personalRefs := personalRefsByViewer[viewer]
+		projected := cloneUsers(users)
 		cache := make(map[int64]domain.User, len(projected))
 		for i := range projected {
 			u := projected[i]
@@ -201,7 +207,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 				projected[i] = pj
 				continue
 			}
-			pj := applyBasePhotos(u, profileRefs, fallbackRefs, nil, viewer)
+			pj := applyBasePhotos(u, profileRefs, fallbackRefs, personalRefs, viewer)
 			if viewer != 0 && u.ID != viewer && u.ID != domain.OfficialSystemUserID && !u.Bot {
 				contact, found := contactsByViewer[viewer][u.ID]
 				pj = applyContactProjection(pj, contact, found)
@@ -211,7 +217,7 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 				}
 				var perr error
 				hasKnownContactPhone := found && contact.Phone != ""
-				pj, perr = applyPrivacy(ctx, p.privacy, viewer, pj, hasKnownContactPhone, vis, profileRefs, fallbackRefs, nil)
+				pj, perr = applyPrivacy(ctx, p.privacy, viewer, pj, hasKnownContactPhone, vis, profileRefs, fallbackRefs, personalRefs)
 				if perr != nil {
 					return nil, perr
 				}
@@ -225,8 +231,8 @@ func (p *Projector) ForViewers(ctx context.Context, viewerUserIDs []int64, users
 	return out, nil
 }
 
-// batchProfileFallbackPhotos 取 owner 的 profile/fallback 头像（与 projectBatch 同逻辑），personal
-// 头像不取（ForViewers v1 跳过）。photos 为 nil 时返回空 map（applyBasePhotos 视为无头像查询）。
+// batchProfileFallbackPhotos 取 owner 的 profile/fallback 头像（与 projectBatch 同逻辑）。
+// photos 为 nil 时返回空 map（applyBasePhotos 视为无头像查询）。
 func (p *Projector) batchProfileFallbackPhotos(ctx context.Context, ids []int64) (profileRefs, fallbackRefs map[int64]domain.ProfilePhotoRef, err error) {
 	profileRefs = map[int64]domain.ProfilePhotoRef{}
 	fallbackRefs = map[int64]domain.ProfilePhotoRef{}
@@ -253,30 +259,6 @@ func (p *Projector) batchProfileFallbackPhotos(ctx context.Context, ids []int64)
 	return refs, fallbackRefs, nil
 }
 
-// reverseContactsByViewer 以 O(owner) 次 GetReverseContacts(owner, viewers) 取「每个 viewer 对各
-// owner 的联系人记录」并重组为 map[viewer]map[owner]Contact。该记录与 projectBatch 的
-// GetMany(viewer, owners)[owner] 是同一条（contacts 表上 (user_id=viewer, contact_user_id=owner)
-// 的同一行，两端 store 均如此），用于 applyContactProjection 的改名/电话覆盖与 isContact 判定。
-func (p *Projector) reverseContactsByViewer(ctx context.Context, ownerIDs, viewers []int64) (map[int64]map[int64]domain.Contact, error) {
-	out := make(map[int64]map[int64]domain.Contact, len(viewers))
-	if p.contacts == nil || len(ownerIDs) == 0 || len(viewers) == 0 {
-		return out, nil
-	}
-	for _, owner := range ownerIDs {
-		byViewer, err := p.contacts.GetReverseContacts(ctx, owner, viewers)
-		if err != nil {
-			return nil, err
-		}
-		for viewer, contact := range byViewer {
-			if out[viewer] == nil {
-				out[viewer] = make(map[int64]domain.Contact, len(ownerIDs))
-			}
-			out[viewer][owner] = contact
-		}
-	}
-	return out, nil
-}
-
 func cloneUsers(users []domain.User) []domain.User {
 	if len(users) == 0 {
 		return nil
@@ -284,6 +266,7 @@ func cloneUsers(users []domain.User) []domain.User {
 	out := make([]domain.User, len(users))
 	copy(out, users)
 	for i := range out {
+		out[i].PhotoStripped = append([]byte(nil), out[i].PhotoStripped...)
 		out[i].ContactNoteEntities = append([]domain.MessageEntity(nil), out[i].ContactNoteEntities...)
 		out[i].RestrictionReasons = append([]domain.UserRestrictionReason(nil), out[i].RestrictionReasons...)
 	}
@@ -332,8 +315,7 @@ func WithProfilePhotos(ctx context.Context, photos ProfilePhotoProvider, users [
 	if err != nil || len(refs) == 0 {
 		return users
 	}
-	out := make([]domain.User, len(users))
-	copy(out, users)
+	out := cloneUsers(users)
 	for i := range out {
 		if ref, ok := refs[out[i].ID]; ok {
 			applyPhotoRef(&out[i], ref)
@@ -351,8 +333,7 @@ func ForViewer(ctx context.Context, contacts store.ContactStore, viewerUserID in
 	if contacts == nil || viewerUserID == 0 || len(users) == 0 {
 		return users, nil
 	}
-	out := make([]domain.User, len(users))
-	copy(out, users)
+	out := cloneUsers(users)
 	cache := make(map[int64]domain.User, len(users))
 	for i := range out {
 		u := out[i]
@@ -386,8 +367,7 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 	if len(users) == 0 {
 		return users, nil
 	}
-	out := make([]domain.User, len(users))
-	copy(out, users)
+	out := cloneUsers(users)
 	out = sanitizeDeletedUsers(out)
 	ids := uniqueUserIDs(out)
 	var (
@@ -619,12 +599,20 @@ func applyContactProjection(user domain.User, contact domain.Contact, found bool
 	if contact.Phone != "" {
 		user.Phone = contact.Phone
 	}
-	if contact.User.FirstName != "" || contact.User.LastName != "" {
+	if contact.FirstName != "" || contact.LastName != "" {
+		// FirstName uses NULLIF at the durable read boundary while LastName is an
+		// explicit owner-local value. Preserve the base first name when only a
+		// local last name exists; setting a local first name with an empty last
+		// name intentionally clears the base last name.
+		if contact.FirstName != "" {
+			user.FirstName = contact.FirstName
+			user.LastName = contact.LastName
+		} else {
+			user.LastName = contact.LastName
+		}
+	} else if contact.User.FirstName != "" || contact.User.LastName != "" {
 		user.FirstName = contact.User.FirstName
 		user.LastName = contact.User.LastName
-	} else if contact.FirstName != "" || contact.LastName != "" {
-		user.FirstName = contact.FirstName
-		user.LastName = contact.LastName
 	}
 	return user
 }

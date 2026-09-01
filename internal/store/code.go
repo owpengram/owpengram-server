@@ -38,9 +38,10 @@ func LoginCodeChannelTakeable(channel string) bool {
 }
 
 // PhoneCodeVersionCurrent is the only version accepted by the atomic login
-// state machine. Version zero is the pre-state-machine shape and deliberately
-// fails closed instead of being normalized on read.
-const PhoneCodeVersionCurrent = 1
+// state machine. Version 2 binds every scope to an E.164 canonical identity;
+// version 1 records are invalidated across rollout instead of being normalized
+// on read and accidentally authorizing a different phone owner.
+const PhoneCodeVersionCurrent = 2
 
 // PhoneCode 是一条验证码记录（与某次 sendCode 的 phone_code_hash 或邮箱验证键关联）。
 // Purpose/UserID/AuthKeyID/SessionID 为已登录敏感操作提供作用域；登录验证码保持零值。

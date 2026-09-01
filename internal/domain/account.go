@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"strings"
+	"time"
 )
 
 var (
@@ -120,6 +121,13 @@ type PasswordSettings struct {
 	SRPBSecret  []byte
 }
 
+// RevenueWithdrawalPasswordState carries only the durable 2FA facts required
+// by high-risk payout admission. It intentionally excludes password material.
+type RevenueWithdrawalPasswordState struct {
+	HasPassword       bool
+	PasswordChangedAt time.Time
+}
+
 // ReactionNotifyFrom stores one account-level reaction notification scope.
 type ReactionNotifyFrom string
 
@@ -181,8 +189,21 @@ const (
 	MaxAccountTTLDays = 3650
 )
 
+// DisallowedGifts stores the Layer 228 global gift-reception switches.
+type DisallowedGifts struct {
+	UnlimitedStargifts   bool
+	LimitedStargifts     bool
+	UniqueStargifts      bool
+	PremiumGifts         bool
+	StargiftsFromChannel bool
+}
+
+func (g DisallowedGifts) Zero() bool {
+	return !g.UnlimitedStargifts && !g.LimitedStargifts && !g.UniqueStargifts &&
+		!g.PremiumGifts && !g.StargiftsFromChannel
+}
+
 // GlobalPrivacy 是 globalPrivacySettings 的业务层表达（账号级隐私开关）。
-// DisallowedGifts 依赖礼物资产模型（当前未实现），故不建模、保持默认。
 type GlobalPrivacy struct {
 	ArchiveAndMuteNewNoncontactPeers bool
 	KeepArchivedUnmuted              bool
@@ -190,6 +211,7 @@ type GlobalPrivacy struct {
 	HideReadMarks                    bool
 	NewNoncontactPeersRequirePremium bool
 	DisplayGiftsButton               bool
+	DisallowedGifts                  DisallowedGifts
 	// NoncontactPeersPaidStars：非联系人给本人发消息所需 Stars 数。Stars 账本尚未实现，
 	// 此处仅做忠实持久化（往返不丢值），不参与计费逻辑。
 	NoncontactPeersPaidStars int64

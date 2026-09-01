@@ -138,6 +138,50 @@ func TestManageStickerSetRejectsNonCreator(t *testing.T) {
 	}
 }
 
+func TestValidateAdminStickerSetUploadPreconditions(t *testing.T) {
+	ctx := context.Background()
+	fullIDs := make([]int64, domain.MaxStickerSetItems)
+	for i := range fullIDs {
+		fullIDs[i] = int64(i + 1)
+	}
+	media := &fakeMediaStore{
+		docs: map[int64]domain.Document{},
+		sets: map[int64]domain.StickerSet{
+			10: {ID: 10, Kind: domain.StickerSetKindEmoji, DocumentIDs: fullIDs},
+			20: {ID: 20, Kind: domain.StickerSetKindSystem, DocumentIDs: []int64{1}},
+			30: {ID: 30, Kind: domain.StickerSetKindEmoji, DocumentIDs: []int64{1}},
+			40: {ID: 40, Kind: domain.StickerSetKindEmoji, Deleted: true, DocumentIDs: []int64{1}},
+		},
+	}
+	svc := NewService(media, nil, 2)
+
+	if err := svc.ValidateAdminAddStickerToSet(ctx, 10, "🙂"); !errors.Is(err, domain.ErrStickerSetTooMuch) {
+		t.Fatalf("full pack validation err = %v, want ErrStickerSetTooMuch", err)
+	}
+	for _, setID := range []int64{20, 40, 999} {
+		if err := svc.ValidateAdminAddStickerToSet(ctx, setID, "🙂"); !errors.Is(err, domain.ErrStickerSetInvalid) {
+			t.Fatalf("set %d validation err = %v, want ErrStickerSetInvalid", setID, err)
+		}
+	}
+	if err := svc.ValidateAdminAddStickerToSet(ctx, 30, ""); !errors.Is(err, domain.ErrStickerSetEmojiInvalid) {
+		t.Fatalf("empty emoji validation err = %v, want ErrStickerSetEmojiInvalid", err)
+	}
+	if err := svc.ValidateAdminAddStickerToSet(ctx, 30, "🙂"); err != nil {
+		t.Fatalf("editable pack validation: %v", err)
+	}
+
+	if err := svc.ValidateAdminCreateStickerSet(ctx, "New Emoji", "new_emoji", "🙂", domain.StickerSetKindEmoji); err != nil {
+		t.Fatalf("create validation: %v", err)
+	}
+	if err := svc.ValidateAdminCreateStickerSet(ctx, "New Emoji", "new_emoji", "🙂", domain.StickerSetKindSystem); !errors.Is(err, domain.ErrStickerSetTypeInvalid) {
+		t.Fatalf("system create validation err = %v, want ErrStickerSetTypeInvalid", err)
+	}
+	media.sets[50] = domain.StickerSet{ID: 50, ShortName: "occupied_name"}
+	if err := svc.ValidateAdminCreateStickerSet(ctx, "New Emoji", "occupied_name", "🙂", domain.StickerSetKindEmoji); !errors.Is(err, domain.ErrStickerSetShortNameOccupied) {
+		t.Fatalf("occupied name validation err = %v, want ErrStickerSetShortNameOccupied", err)
+	}
+}
+
 func TestAddStickerToSetAcceptsUploadedMaterial(t *testing.T) {
 	ctx := context.Background()
 	media := &fakeMediaStore{

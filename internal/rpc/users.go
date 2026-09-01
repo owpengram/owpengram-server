@@ -30,10 +30,7 @@ func (r *Router) registerUsers(d *tlprofile.Dispatcher) {
 		return r.onUsersGetRequirementsToContact(ctx, layerRequest.
 			ID)
 	})
-	registerRPC[*tg.UsersGetSavedMusicRequest](d, tlprofile.SemanticMethodUsersGetSavedMusic, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicRequest) (
-
-		// onUsersGetUsers 处理 users.getUsers：支持 self 和已知 user peer（含 777000 官方账号）。
-		any, error) {
+	registerRPC[*tg.UsersGetSavedMusicRequest](d, tlprofile.SemanticMethodUsersGetSavedMusic, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicRequest) (any, error) {
 		return r.onUsersGetSavedMusic(ctx, layerRequest)
 	})
 	registerRPC[*tg.UsersGetSavedMusicByIDRequest](d, tlprofile.SemanticMethodUsersGetSavedMusicByID, func(ctx context.Context, layerRequest *tg.UsersGetSavedMusicByIDRequest) (any, error) {
@@ -41,6 +38,7 @@ func (r *Router) registerUsers(d *tlprofile.Dispatcher) {
 	})
 }
 
+// onUsersGetUsers 处理 users.getUsers：支持 self 和已知 user peer（含 777000 官方账号）。
 func (r *Router) onUsersGetUsers(ctx context.Context, ids []tg.InputUserClass) ([]tg.UserClass, error) {
 	currentUserID, authorized, err := r.currentUserID(ctx)
 	if err != nil {
@@ -151,6 +149,12 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	if _, ok := id.(*tg.InputUserSelf); ok || u.ID == currentUserID {
 		user = r.tgSelfUser(u)
 	}
+	// A deleted account is a durable peer tombstone. Its retained rows keep
+	// message and membership references resolvable, but none of those private
+	// read models belong in users.getFullUser after deletion.
+	if u.Deleted {
+		return deletedUserFull(u.ID, user), nil
+	}
 	if err := r.applyBotCanEditToUser(ctx, currentUserID, u, user); err != nil {
 		return nil, err
 	}
@@ -164,6 +168,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	if full, ok := r.userFullProjectionCache.Lookup(currentUserID, u.ID); ok {
 		if !applyContactNoteToUserFull(u, &full) {
 			return nil, internalErr()
+		}
+		if err := r.applyContactPeerStateToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
+			return nil, err
 		}
 		if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
 			return nil, err
@@ -187,6 +194,9 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 	if !applyContactNoteToUserFull(u, &full) {
 		return nil, internalErr()
 	}
+	if err := r.applyContactPeerStateToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
+		return nil, err
+	}
 	if err := r.applyTranslationDisabledToUserFull(ctx, currentUserID, u.ID, &full); err != nil {
 		return nil, err
 	}
@@ -203,6 +213,49 @@ func (r *Router) onUsersGetFullUser(ctx context.Context, id tg.InputUserClass) (
 		Users:    []tg.UserClass{user},
 		Chats:    chats,
 	}, nil
+}
+
+// applyContactPeerStateToUserFull keeps users.getFullUser on the same
+// owner-scoped contact read model as contacts.getBlocked and
+// messages.getPeerSettings. Official clients treat UserFull.blocked as an
+// authoritative replacement for their local block state, so omitting these
+// fields can undo a block learned from contacts.getBlocked or updatePeerBlocked.
+//
+// The contact service guarantees BlockContact == !blocked for a non-self user.
+// Reusing the peer-settings projection avoids a second block-store lookup while
+// retaining the shared viewer/peer cache and its mutation invalidation rules.
+func (r *Router) applyContactPeerStateToUserFull(ctx context.Context, viewerUserID, targetUserID int64, full *tg.UserFull) error {
+	if full == nil {
+		return internalErr()
+	}
+	full.SetBlocked(false)
+	full.SetBlockedMyStoriesFrom(false)
+	full.Settings = tg.PeerSettings{}
+	if viewerUserID == 0 || targetUserID == 0 || viewerUserID == targetUserID {
+		return nil
+	}
+
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: targetUserID}
+	loadEpoch := r.peerSettingsProjectionCache.LoadEpoch()
+	settings, ok := r.peerSettingsProjectionCache.Lookup(viewerUserID, peer)
+	if !ok {
+		var err error
+		settings, err = r.buildPeerSettingsProjection(ctx, viewerUserID, peer)
+		if err != nil {
+			return err
+		}
+		r.peerSettingsProjectionCache.StoreIfEpoch(viewerUserID, peer, settings, loadEpoch)
+	}
+	full.Settings = tgPeerSettings(settings)
+	if r.deps.Contacts != nil {
+		blocked := !settings.BlockContact
+		full.SetBlocked(blocked)
+		// telesrv currently models the main and stories block switches as one
+		// durable relation. Keep both wire flags consistent until independent
+		// stories-only blocking is introduced.
+		full.SetBlockedMyStoriesFrom(blocked)
+	}
+	return nil
 }
 
 // applyContactNoteToUserFull overlays the viewer-scoped contact note after the
@@ -431,7 +484,6 @@ func (r *Router) userFullPrivacyVisibility(ctx context.Context, viewerUserID, ow
 	}
 	return out, nil
 }
-
 
 // tgBirthday 把 domain 生日转 tg.Birthday（Year 可选，0 表示不含年份）。
 func tgBirthday(b domain.Birthday) tg.Birthday {
@@ -848,6 +900,14 @@ func emptyUserFull() *tg.UsersUserFull {
 			NotifySettings: *tdesktop.NotifySettings(),
 		},
 	}
+}
+
+func deletedUserFull(userID int64, user tg.UserClass) *tg.UsersUserFull {
+	out := emptyUserFull()
+	out.FullUser.ID = userID
+	out.Users = []tg.UserClass{user}
+	out.Chats = []tg.ChatClass{}
+	return out
 }
 
 func (r *Router) userFromInput(ctx context.Context, currentUserID int64, id tg.InputUserClass) (domain.User, bool, error) {

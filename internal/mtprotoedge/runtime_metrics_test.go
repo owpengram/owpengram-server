@@ -18,8 +18,12 @@ func TestRuntimeSnapshotIsNilSafeAndReportsConfiguredLimits(t *testing.T) {
 	if snapshot.RawConnectionLimit <= 0 || snapshot.HandshakeLimit <= 0 {
 		t.Fatalf("admission limits not reported: %#v", snapshot)
 	}
-	if snapshot.InboundRPCMaxTasks <= 0 || snapshot.InboundRPCMaxBytes <= 0 {
+	if snapshot.InboundRPCMaxTasks != rpcResultFlightDefaultMaxPending || snapshot.InboundRPCMaxBytes <= 0 {
 		t.Fatalf("inbound RPC limits not reported: %#v", snapshot)
+	}
+	if snapshot.RPCDeliveryHookWorkers != defaultRPCDeliveryHookWorkers ||
+		snapshot.RPCDeliveryHookCapacity != defaultRPCDeliveryHookMaxPending {
+		t.Fatalf("delivery hook limits not reported: %#v", snapshot)
 	}
 	if snapshot.InboundFrameMaxBytes <= 0 || snapshot.OutboundTrackedMaxBytes <= 0 || snapshot.OutboundWriteMaxBytes <= 0 {
 		t.Fatalf("byte limits not reported: %#v", snapshot)

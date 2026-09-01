@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
@@ -13,9 +14,13 @@ import (
 )
 
 type channelDialogListItem struct {
-	channel       domain.Channel
-	dialog        domain.Dialog
-	defaultSendAs *domain.Peer
+	channel            domain.Channel
+	dialog             domain.Dialog
+	defaultSendAs      *domain.Peer
+	topMentioned       bool
+	topMediaUnread     bool
+	topUnreadProjected bool
+	listCacheable      bool
 }
 
 func channelDialogVisibleTopIDSQL() string {
@@ -39,6 +44,10 @@ END`
 }
 
 func (s *ChannelStore) ListChannelDialogs(ctx context.Context, viewerUserID int64, filter domain.DialogFilter) (domain.ChannelDialogList, error) {
+	return s.listChannelDialogs(ctx, viewerUserID, filter)
+}
+
+func (s *ChannelStore) listChannelDialogs(ctx context.Context, viewerUserID int64, filter domain.DialogFilter) (domain.ChannelDialogList, error) {
 	if viewerUserID == 0 {
 		return domain.ChannelDialogList{}, nil
 	}
@@ -59,6 +68,21 @@ func (s *ChannelStore) ListChannelDialogs(ctx context.Context, viewerUserID int6
 	visibleUnreadCount := channelDialogVisibleUnreadCountSQL(visibleReadInbox, visibleTopID)
 	args := []any{viewerUserID, channelIDs}
 	where := []string{"m.user_id = $1", "m.channel_id = ANY($2::bigint[])", "m.status = 'active'"}
+	from := `FROM channel_members m
+JOIN channels c ON c.id = m.channel_id AND c.id = ANY($2::bigint[]) AND NOT c.deleted
+LEFT JOIN channel_messages top_msg ON top_msg.channel_id = m.channel_id AND top_msg.channel_id = ANY($2::bigint[]) AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
+LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id`
+	// archive 与 pinned 集合必然有显式 channel_dialogs 行。以该 owner 索引为入口，
+	// 避免 archive summary(limit=1) 和 getPinnedDialogs 为一个通常为空/很小的集合
+	// 仍扫描账号全部 active memberships。保留 $2 的 typed no-op，后续动态条件的
+	// placeholder 编号无需分叉；monoforum 仍在主查询后按原权限路径合并。
+	if (filter.HasFolderID && filter.FolderID == domain.DialogArchiveFolderID) || filter.PinnedOnly {
+		from = `FROM channel_dialogs d
+JOIN channel_members m ON m.user_id = d.user_id AND m.channel_id = d.channel_id AND m.status = 'active'
+JOIN channels c ON c.id = d.channel_id AND NOT c.deleted
+LEFT JOIN channel_messages top_msg ON top_msg.channel_id = d.channel_id AND top_msg.id = c.top_message_id AND NOT top_msg.deleted`
+		where = []string{"d.user_id = $1", "cardinality($2::bigint[]) >= 0"}
+	}
 	if filter.HasFolderID && filter.FolderID < domain.DialogCustomFolderMinID {
 		args = append(args, filter.FolderID)
 		where = append(where, fmt.Sprintf("COALESCE(d.folder_id, 0) = $%d", len(args)))
@@ -138,7 +162,13 @@ func (s *ChannelStore) ListChannelDialogs(ctx context.Context, viewerUserID int6
 			where = append(where, "false")
 		}
 	}
-	args = append(args, channelDialogQueryLimit)
+	// 只多取一行作为 has-more 证据。旧实现无视 RPC limit 固定读取 500 个完整
+	// channel + viewer dialog，并对每行动态派生 unread；getDialogs(limit=100)
+	// 因而最多水合 5 倍对象，archive summary(limit=1) 最坏放大 500 倍。
+	// 所有 folder/offset 条件已经在 SQL LIMIT 前完成，monoforum 结果也会在下方
+	// 合并排序，所以每个来源取 limit+1 足以构造正确的合并页和继续分页信号。
+	queryLimit := limit + 1
+	args = append(args, queryLimit)
 	limitArg := fmt.Sprintf("$%d", len(args))
 	// 暖写回的 epoch 守卫:在加载前快照,写回时若期间收到失效(epoch 变更)则拒绝陈旧投影,
 	// 避免 scan→put 窗口内的并发失效被裸 Store 覆盖回(@角标/未读 lost-update)。
@@ -162,10 +192,7 @@ SELECT `+channelColumns+`,
        d.default_send_as_peer_id,
        m.history_clear_anchor_id,
        m.history_clear_anchor_date
-FROM channel_members m
-JOIN channels c ON c.id = m.channel_id AND c.id = ANY($2::bigint[]) AND NOT c.deleted
-LEFT JOIN channel_messages top_msg ON top_msg.channel_id = m.channel_id AND top_msg.channel_id = ANY($2::bigint[]) AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
-LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id
+	`+from+`
 WHERE `+strings.Join(where, " AND ")+`
 ORDER BY COALESCE(d.pinned, false) DESC,
          COALESCE(d.pinned_order, 0) DESC,
@@ -243,7 +270,7 @@ LIMIT `+limitArg, args...)
 			// default_send_as，否则 getFullChannel/getSendAs 命中暖缓存会丢失「以频道发言」默认值。
 			cd := channelDialogFromDialog(viewerUserID, item.dialog)
 			cd.DefaultSendAs = item.defaultSendAs
-			s.dialogCache.putIfEpoch(cd, dialogCacheEpoch)
+			s.dialogCache.putListProjectionIfEpoch(cd, false, false, false, dialogCacheEpoch)
 		}
 		out.Dialogs = append(out.Dialogs, item.dialog)
 		out.Channels = append(out.Channels, item.channel)
@@ -251,11 +278,306 @@ LIMIT `+limitArg, args...)
 	// getDialogs 的 top message 必须按 viewer 补 mentioned/media_unread 与
 	// reactions：TDesktop 把它先入缓存且不被后续 difference/getHistory 的
 	// 完整版覆盖，缺标志会让客户端永不上报 contents-read，@ 角标重启回潮。
-	if err := s.populateChannelMessagesReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages); err != nil {
+	if err := s.populateChannelDialogTopMessageReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages, false); err != nil {
 		return domain.ChannelDialogList{}, err
 	}
 	projectChannelDialogHistoryClearMessages(out.Dialogs, out.Messages)
 	return out, nil
+}
+
+// ListChannelDialogSnapshotHeaders builds the bounded owner-specific ordering
+// index used by app pagination. It intentionally excludes channel metadata and
+// top-message payloads; those are hydrated per page through versioned peer read
+// models, so one owner snapshot remains lightweight and shared channel facts do
+// not get duplicated for every online account.
+func (s *ChannelStore) ListChannelDialogSnapshotHeaders(ctx context.Context, viewerUserID int64, filter domain.DialogFilter) (domain.ChannelDialogList, error) {
+	if viewerUserID == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	if filter.Folder != nil || (filter.HasFolderID && filter.FolderID >= domain.DialogCustomFolderMinID) ||
+		filter.OffsetDate != 0 || filter.OffsetID != 0 || filter.HasOffsetPeer {
+		return domain.ChannelDialogList{}, errors.New("channel dialog snapshot headers require an offset-free built-in folder")
+	}
+	channelIDs, hasBroadcastAdmin, err := s.listActiveChannelDialogCandidateIDs(ctx, viewerUserID, false)
+	if err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	if len(channelIDs) == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	visibleTopID := channelDialogVisibleTopIDSQL()
+	visibleTopDate := channelDialogVisibleTopDateSQL("COALESCE(top_msg.message_date, d.top_message_date, c.date)", "0")
+	args := []any{viewerUserID}
+	where := []string{"i.user_id = $1", "i.status = 'active'", "NOT i.deleted", "m.status = 'active'"}
+	from := `FROM user_channel_member_index i
+JOIN channel_members m ON m.user_id = i.user_id AND m.channel_id = i.channel_id
+JOIN channels c ON c.id = i.channel_id AND NOT c.deleted
+LEFT JOIN channel_messages top_msg ON top_msg.channel_id = i.channel_id AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
+LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id`
+	if (filter.HasFolderID && filter.FolderID == domain.DialogArchiveFolderID) || filter.PinnedOnly {
+		from = `FROM channel_dialogs d
+JOIN user_channel_member_index i ON i.user_id = d.user_id AND i.channel_id = d.channel_id
+JOIN channel_members m ON m.user_id = i.user_id AND m.channel_id = i.channel_id
+JOIN channels c ON c.id = d.channel_id AND NOT c.deleted
+LEFT JOIN channel_messages top_msg ON top_msg.channel_id = d.channel_id AND top_msg.id = c.top_message_id AND NOT top_msg.deleted`
+		where = []string{"d.user_id = $1", "i.status = 'active'", "NOT i.deleted", "m.status = 'active'"}
+	}
+	if filter.HasFolderID {
+		args = append(args, filter.FolderID)
+		where = append(where, fmt.Sprintf("COALESCE(d.folder_id, 0) = $%d", len(args)))
+	} else {
+		where = append(where, "COALESCE(d.folder_id, 0) = 0")
+	}
+	if filter.PinnedOnly {
+		where = append(where, "COALESCE(d.pinned, false)")
+	}
+	if filter.ExcludePinned {
+		where = append(where, "NOT COALESCE(d.pinned, false)")
+	}
+	args = append(args, channelDialogCandidateLimit)
+	rows, err := s.db.Query(ctx, `
+WITH dependency_peers AS MATERIALIZED (
+    SELECT i.channel_id AS id
+    FROM user_channel_member_index i
+    WHERE i.user_id = $1
+      AND i.status = 'active'
+      AND NOT i.deleted
+    UNION
+    SELECT parent.linked_monoforum_id
+    FROM user_channel_member_index i
+    JOIN channels parent ON parent.id = i.channel_id
+    WHERE i.user_id = $1
+      AND i.status = 'active'
+      AND NOT i.deleted
+      AND parent.linked_monoforum_id <> 0
+),
+dependency AS MATERIALIZED (
+    SELECT COALESCE(bit_xor(v.hash), 0)::bigint AS hash
+    FROM read_model_versions v
+    JOIN dependency_peers peer ON peer.id = v.peer_id
+    WHERE v.peer_type = 'channel'
+      AND (
+        (v.model = 'channel_base' AND v.owner_user_id = 0)
+        OR
+        (v.model IN ('channel_member', 'dialog_light') AND v.owner_user_id = $1)
+      )
+)
+SELECT c.id,
+       `+visibleTopID+`,
+       `+visibleTopDate+`,
+       COALESCE(d.folder_id, 0),
+       COALESCE(d.pinned, false),
+       COALESCE(d.pinned_order, 0),
+	   dependency.hash
+`+from+`
+CROSS JOIN dependency
+WHERE `+strings.Join(where, " AND ")+`
+ORDER BY COALESCE(d.pinned, false) DESC,
+         COALESCE(d.pinned_order, 0) DESC,
+         `+visibleTopDate+` DESC,
+         `+visibleTopID+` DESC,
+         c.id DESC
+LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return domain.ChannelDialogList{}, fmt.Errorf("list channel dialog snapshot headers: %w", err)
+	}
+	defer rows.Close()
+	dialogs := make([]domain.Dialog, 0, minInt(len(channelIDs), 1024))
+	seenChannels := make(map[int64]struct{}, len(channelIDs))
+	var dependencyHash int64
+	for rows.Next() {
+		var dialog domain.Dialog
+		var channelID int64
+		if err := rows.Scan(
+			&channelID,
+			&dialog.TopMessage,
+			&dialog.TopMessageDate,
+			&dialog.FolderID,
+			&dialog.Pinned,
+			&dialog.PinnedOrder,
+			&dependencyHash,
+		); err != nil {
+			return domain.ChannelDialogList{}, err
+		}
+		dialog.Peer = domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}
+		dialogs = append(dialogs, dialog)
+		seenChannels[channelID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	if hasBroadcastAdmin {
+		items, err := s.listMonoforumAdminDialogItems(ctx, viewerUserID, channelIDs, filter, seenChannels)
+		if err != nil {
+			return domain.ChannelDialogList{}, err
+		}
+		for _, item := range items {
+			dialogs = append(dialogs, item.dialog)
+		}
+	}
+	if len(dialogs) > channelDialogCandidateLimit {
+		return domain.ChannelDialogList{}, fmt.Errorf("channel dialog snapshot exceeds %d entries", channelDialogCandidateLimit)
+	}
+	sort.SliceStable(dialogs, func(i, j int) bool {
+		if dialogs[i].Pinned != dialogs[j].Pinned {
+			return dialogs[i].Pinned
+		}
+		if dialogs[i].PinnedOrder != dialogs[j].PinnedOrder {
+			return dialogs[i].PinnedOrder > dialogs[j].PinnedOrder
+		}
+		if dialogs[i].TopMessageDate != dialogs[j].TopMessageDate {
+			return dialogs[i].TopMessageDate > dialogs[j].TopMessageDate
+		}
+		if dialogs[i].TopMessage != dialogs[j].TopMessage {
+			return dialogs[i].TopMessage > dialogs[j].TopMessage
+		}
+		return dialogs[i].Peer.ID > dialogs[j].Peer.ID
+	})
+	return domain.ChannelDialogList{
+		Dialogs: dialogs,
+		Count:   len(dialogs),
+		Hash:    mixDialogListDependencyHash(dialogListHash(dialogs), dependencyHash),
+	}, nil
+}
+
+// ListAllBuiltinChannelDialogSnapshot loads every owner-varying dialog fact
+// needed to derive main/archive/pinned pages in one bounded scan. Shared
+// channel rows and top-message payloads remain channel-keyed response overlays.
+func (s *ChannelStore) ListAllBuiltinChannelDialogSnapshot(ctx context.Context, viewerUserID int64) (domain.ChannelDialogList, error) {
+	if viewerUserID == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	visibleTopID := channelDialogVisibleTopIDSQL()
+	visibleTopDate := channelDialogVisibleTopDateSQL("COALESCE(top_msg.message_date, d.top_message_date, c.date)", "0")
+	visibleReadInbox := "GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id)"
+	visibleUnreadCount := channelDialogVisibleUnreadCountSQL(visibleReadInbox, visibleTopID)
+	rows, err := s.db.Query(ctx, `
+SELECT c.id,
+       `+visibleTopID+`,
+       `+visibleTopDate+`,
+       COALESCE(d.folder_id, 0),
+       `+visibleReadInbox+`,
+       LEAST(GREATEST(c.top_message_id, 0), GREATEST(COALESCE(d.read_outbox_max_id, 0), m.read_outbox_max_id, CASE WHEN c.read_inbox_top1_user_id = m.user_id THEN c.read_inbox_top2 ELSE c.read_inbox_top1 END)),
+       `+visibleUnreadCount+`,
+       COALESCE(d.pinned, false),
+       COALESCE(d.pinned_order, 0),
+       COALESCE(d.unread_mark, m.unread_mark),
+       COALESCE(d.unread_mentions_count, 0),
+       COALESCE(d.unread_reactions_count, 0),
+       COALESCE(d.view_forum_as_messages, false),
+       COALESCE(d.has_scheduled, false),
+       d.default_send_as_peer_type,
+       d.default_send_as_peer_id,
+       m.history_clear_anchor_id,
+		m.history_clear_anchor_date,
+		top_unread.message_id IS NOT NULL,
+		COALESCE(top_unread.unread, false),
+		m.user_id,
+		m.inviter_user_id,
+		m.role,
+		m.status,
+		m.joined_at,
+		m.left_at,
+		m.admin_rights::text,
+		m.banned_rights::text,
+		m.rank,
+		m.available_min_id,
+		m.available_min_pts,
+		m.read_inbox_max_id,
+		m.read_outbox_max_id,
+		m.unread_mark,
+		m.slowmode_last_send_date,
+		bool_or(i.broadcast AND i.role IN ('creator', 'admin')) OVER ()
+FROM user_channel_member_index AS i
+JOIN channel_members AS m
+  ON m.user_id = i.user_id
+ AND m.channel_id = i.channel_id
+ AND m.status = 'active'
+JOIN channels AS c
+  ON c.id = i.channel_id
+ AND NOT c.deleted
+LEFT JOIN channel_messages AS top_msg
+  ON top_msg.channel_id = i.channel_id
+ AND top_msg.id = c.top_message_id
+ AND NOT top_msg.deleted
+LEFT JOIN channel_dialogs AS d
+  ON d.user_id = i.user_id
+ AND d.channel_id = i.channel_id
+LEFT JOIN channel_unread_mentions AS top_unread
+  ON top_unread.user_id = i.user_id
+ AND top_unread.channel_id = i.channel_id
+ AND top_unread.message_id = `+visibleTopID+`
+WHERE i.user_id = $1
+  AND i.status = 'active'
+  AND NOT i.deleted
+  AND COALESCE(d.folder_id, 0) IN (0, 1)
+ORDER BY COALESCE(d.pinned, false) DESC,
+         COALESCE(d.pinned_order, 0) DESC,
+         `+visibleTopDate+` DESC,
+         `+visibleTopID+` DESC,
+         c.id DESC
+LIMIT $2`, viewerUserID, channelDialogCandidateLimit+1)
+	if err != nil {
+		return domain.ChannelDialogList{}, fmt.Errorf("list all built-in channel dialog snapshot: %w", err)
+	}
+	defer rows.Close()
+	dialogs := make([]domain.Dialog, 0, 128)
+	parentChannelIDs := make([]int64, 0, 128)
+	seenChannels := make(map[int64]struct{}, 128)
+	hasBroadcastAdmin := false
+	for rows.Next() {
+		var values channelDialogProjectionValues
+		var rowHasBroadcastAdmin bool
+		destinations := append(values.scanDestinations(), &rowHasBroadcastAdmin)
+		if err := rows.Scan(destinations...); err != nil {
+			return domain.ChannelDialogList{}, fmt.Errorf("scan all built-in channel dialog snapshot: %w", err)
+		}
+		channelID, dialog, defaultSendAs, _, _ := values.result()
+		dialog.DefaultSendAs = defaultSendAs
+		dialogs = append(dialogs, dialog)
+		parentChannelIDs = append(parentChannelIDs, channelID)
+		seenChannels[channelID] = struct{}{}
+		hasBroadcastAdmin = hasBroadcastAdmin || rowHasBroadcastAdmin
+	}
+	if err := rows.Err(); err != nil {
+		return domain.ChannelDialogList{}, fmt.Errorf("list all built-in channel dialog snapshot rows: %w", err)
+	}
+	if len(dialogs) > channelDialogCandidateLimit {
+		return domain.ChannelDialogList{}, fmt.Errorf("channel dialog snapshot exceeds %d entries", channelDialogCandidateLimit)
+	}
+	if hasBroadcastAdmin {
+		items, err := s.listMonoforumAdminDialogItems(
+			ctx, viewerUserID, parentChannelIDs, domain.DialogFilter{}, seenChannels,
+		)
+		if err != nil {
+			return domain.ChannelDialogList{}, err
+		}
+		for _, item := range items {
+			if item.dialog.FolderID == domain.DialogMainFolderID || item.dialog.FolderID == domain.DialogArchiveFolderID {
+				item.dialog.DefaultSendAs = item.defaultSendAs
+				dialogs = append(dialogs, item.dialog)
+			}
+		}
+	}
+	if len(dialogs) > channelDialogCandidateLimit {
+		return domain.ChannelDialogList{}, fmt.Errorf("channel dialog snapshot exceeds %d entries", channelDialogCandidateLimit)
+	}
+	sort.SliceStable(dialogs, func(i, j int) bool {
+		if dialogs[i].Pinned != dialogs[j].Pinned {
+			return dialogs[i].Pinned
+		}
+		if dialogs[i].PinnedOrder != dialogs[j].PinnedOrder {
+			return dialogs[i].PinnedOrder > dialogs[j].PinnedOrder
+		}
+		if dialogs[i].TopMessageDate != dialogs[j].TopMessageDate {
+			return dialogs[i].TopMessageDate > dialogs[j].TopMessageDate
+		}
+		if dialogs[i].TopMessage != dialogs[j].TopMessage {
+			return dialogs[i].TopMessage > dialogs[j].TopMessage
+		}
+		return dialogs[i].Peer.ID > dialogs[j].Peer.ID
+	})
+	return domain.ChannelDialogList{Dialogs: dialogs, Count: len(dialogs)}, nil
 }
 
 func (s *ChannelStore) listMonoforumAdminDialogItems(ctx context.Context, viewerUserID int64, parentChannelIDs []int64, filter domain.DialogFilter, seen map[int64]struct{}) ([]channelDialogListItem, error) {
@@ -331,7 +653,7 @@ type channelMessageLookupKey struct {
 
 func (s *ChannelStore) channelDialogTopMessages(ctx context.Context, db sqlcgen.DBTX, dialogs []domain.Dialog) (map[channelMessageLookupKey]domain.ChannelMessage, error) {
 	seen := make(map[channelMessageLookupKey]struct{}, len(dialogs))
-	idsByChannel := make(map[int64][]int, len(dialogs))
+	keys := make([]channelMessageLookupKey, 0, len(dialogs))
 	for _, dialog := range dialogs {
 		if dialog.Peer.Type != domain.PeerTypeChannel || dialog.Peer.ID == 0 || dialog.TopMessage <= 0 {
 			continue
@@ -341,10 +663,55 @@ func (s *ChannelStore) channelDialogTopMessages(ctx context.Context, db sqlcgen.
 			continue
 		}
 		seen[key] = struct{}{}
-		idsByChannel[dialog.Peer.ID] = append(idsByChannel[dialog.Peer.ID], dialog.TopMessage)
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	load := func(ctx context.Context, missing []channelMessageLookupKey) (map[channelMessageLookupKey]domain.ChannelMessage, error) {
+		return loadChannelDialogTopMessages(ctx, db, missing)
+	}
+	var (
+		out map[channelMessageLookupKey]domain.ChannelMessage
+		err error
+	)
+	if s.topMessageCacheActive(db) {
+		out, err = s.topMsgCache.getOrLoadBatch(ctx, keys, load)
+	} else {
+		out, err = load(ctx, keys)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// History-clear anchors are owner-local projections and must never enter
+	// the shared cache. Apply them to the cloned result after cache hydration.
+	for _, dialog := range dialogs {
+		if dialog.Peer.Type != domain.PeerTypeChannel ||
+			dialog.TopMessage <= 0 ||
+			dialog.TopMessage != dialog.HistoryClearAnchorID {
+			continue
+		}
+		key := channelMessageLookupKey{channelID: dialog.Peer.ID, id: dialog.TopMessage}
+		out[key] = domain.ProjectChannelHistoryClearMessage(
+			out[key],
+			dialog.Peer.ID,
+			dialog.HistoryClearAnchorID,
+			dialog.HistoryClearAnchorDate,
+		)
+	}
+	return out, nil
+}
+
+func loadChannelDialogTopMessages(ctx context.Context, db sqlcgen.DBTX, keys []channelMessageLookupKey) (map[channelMessageLookupKey]domain.ChannelMessage, error) {
+	idsByChannel := make(map[int64][]int, len(keys))
+	for _, key := range keys {
+		if key.channelID == 0 || key.id <= 0 {
+			continue
+		}
+		idsByChannel[key.channelID] = append(idsByChannel[key.channelID], key.id)
 	}
 	if len(idsByChannel) == 0 {
-		return nil, nil
+		return map[channelMessageLookupKey]domain.ChannelMessage{}, nil
 	}
 	channelIDs := make([]int64, 0, len(idsByChannel))
 	for channelID := range idsByChannel {
@@ -371,7 +738,7 @@ WHERE `+where.String(), args...)
 		return nil, fmt.Errorf("list channel dialog top messages: %w", err)
 	}
 	defer rows.Close()
-	out := make(map[channelMessageLookupKey]domain.ChannelMessage, len(seen))
+	out := make(map[channelMessageLookupKey]domain.ChannelMessage, len(keys))
 	for rows.Next() {
 		msg, err := scanChannelMessage(rows)
 		if err != nil {
@@ -382,25 +749,14 @@ WHERE `+where.String(), args...)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("scan channel dialog top messages: %w", err)
 	}
-	for _, dialog := range dialogs {
-		if dialog.Peer.Type != domain.PeerTypeChannel ||
-			dialog.TopMessage <= 0 ||
-			dialog.TopMessage != dialog.HistoryClearAnchorID {
-			continue
-		}
-		key := channelMessageLookupKey{channelID: dialog.Peer.ID, id: dialog.TopMessage}
-		out[key] = domain.ProjectChannelHistoryClearMessage(
-			out[key],
-			dialog.Peer.ID,
-			dialog.HistoryClearAnchorID,
-			dialog.HistoryClearAnchorDate,
-		)
-	}
 	return out, nil
 }
 
 func (s *ChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64, channelIDs []int64) (domain.ChannelDialogList, error) {
-	out := domain.ChannelDialogList{}
+	if viewerUserID == 0 || len(channelIDs) == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	orderedIDs := make([]int64, 0, len(channelIDs))
 	seen := make(map[int64]struct{}, len(channelIDs))
 	for _, channelID := range channelIDs {
 		if channelID == 0 {
@@ -410,6 +766,79 @@ func (s *ChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64
 			continue
 		}
 		seen[channelID] = struct{}{}
+		orderedIDs = append(orderedIDs, channelID)
+	}
+	if len(orderedIDs) == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	itemsByID := make(map[int64]channelDialogListItem, len(orderedIDs))
+	loadedIDs := make([]int64, 0, len(orderedIDs))
+	misses := make([]int64, 0, len(orderedIDs))
+	dialogCacheActive := s.dialogCacheActive(s.db)
+	memberCacheActive := s.memberCacheActive(s.db)
+	var dialogCacheEpoch uint64
+	var memberCacheEpoch uint64
+	if dialogCacheActive {
+		dialogCacheEpoch = s.dialogCache.cacheEpoch()
+	}
+	if memberCacheActive {
+		memberCacheEpoch = s.memberCache.cacheEpoch()
+	}
+	for _, channelID := range orderedIDs {
+		if dialogCacheActive {
+			if cached, ok := s.dialogCache.getListProjection(viewerUserID, channelID); ok {
+				itemsByID[channelID] = channelDialogListItem{
+					dialog:             channelDialogToDialog(cached.dialog, 0),
+					defaultSendAs:      cached.dialog.DefaultSendAs,
+					topMentioned:       cached.topMentioned,
+					topMediaUnread:     cached.topMediaUnread,
+					topUnreadProjected: cached.topUnreadProjected,
+					listCacheable:      true,
+				}
+				loadedIDs = append(loadedIDs, channelID)
+				continue
+			}
+		}
+		misses = append(misses, channelID)
+	}
+	if len(misses) > 0 {
+		loaded, err := s.loadChannelDialogListItems(ctx, viewerUserID, misses)
+		if err != nil {
+			return domain.ChannelDialogList{}, err
+		}
+		for _, channelID := range misses {
+			if item, ok := loaded[channelID]; ok {
+				itemsByID[channelID] = item
+				loadedIDs = append(loadedIDs, channelID)
+			}
+		}
+	}
+	channelsByID, err := s.channelsByIDs(ctx, s.db, loadedIDs)
+	if err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	for _, channelID := range loadedIDs {
+		item := itemsByID[channelID]
+		channel := channelsByID[channelID]
+		if channel.ID == 0 {
+			// The shared row was deleted after the owner-state snapshot. Treat
+			// it as absent instead of returning a half-hydrated dialog.
+			delete(itemsByID, channelID)
+			continue
+		}
+		item.channel = channel
+		item.dialog.Pts = channel.Pts
+		itemsByID[channelID] = item
+	}
+
+	out := domain.ChannelDialogList{}
+	// A requested monoforum preview can be absent from channel_members. Keep the
+	// rare admission path exact, but only pay its per-peer checks for IDs missed
+	// by the normal batch query.
+	for _, channelID := range orderedIDs {
+		if _, ok := itemsByID[channelID]; ok {
+			continue
+		}
 		channel, member, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
 		synthetic := false
 		if err != nil {
@@ -451,29 +880,246 @@ func (s *ChannelStore) GetChannelDialogs(ctx context.Context, viewerUserID int64
 				return domain.ChannelDialogList{}, err
 			}
 		}
-		msg, _ := s.getChannelMessage(ctx, s.db, channelID, dialog.TopMessageID)
-		if dialog.TopMessageID > 0 && dialog.TopMessageID == dialog.HistoryClearAnchorID {
-			msg = domain.ProjectChannelHistoryClearMessage(
-				msg,
-				channelID,
-				dialog.HistoryClearAnchorID,
-				dialog.HistoryClearAnchorDate,
-			)
+		itemsByID[channelID] = channelDialogListItem{
+			channel:       channel,
+			dialog:        channelDialogToDialog(dialog, channel.Pts),
+			defaultSendAs: dialog.DefaultSendAs,
+			listCacheable: !synthetic,
 		}
+	}
+
+	dialogs := make([]domain.Dialog, 0, len(itemsByID))
+	for _, channelID := range orderedIDs {
+		if item, ok := itemsByID[channelID]; ok {
+			item.dialog.TopMessageMentioned = item.topMentioned
+			item.dialog.TopMessageMediaUnread = item.topMediaUnread
+			item.dialog.TopMessageUnreadProjected = item.topUnreadProjected
+			itemsByID[channelID] = item
+			dialogs = append(dialogs, item.dialog)
+		}
+	}
+	topMessages, err := s.channelDialogTopMessages(ctx, s.db, dialogs)
+	if err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	allTopUnreadProjected := true
+	for _, channelID := range orderedIDs {
+		item, ok := itemsByID[channelID]
+		if !ok {
+			continue
+		}
+		msg := topMessages[channelMessageLookupKey{channelID: channelID, id: item.dialog.TopMessage}]
 		if msg.ID != 0 {
-			dialog.TopMessageDate = msg.Date
+			if item.topUnreadProjected {
+				msg.Mentioned = item.topMentioned
+				msg.MediaUnread = item.topMediaUnread
+			} else {
+				allTopUnreadProjected = false
+			}
+			item.dialog.TopMessageDate = msg.Date
 			out.Messages = append(out.Messages, msg)
 		}
-		out.Dialogs = append(out.Dialogs, channelDialogToDialog(dialog, channel.Pts))
-		out.Channels = append(out.Channels, channel)
+		if dialogCacheActive && item.listCacheable {
+			cached := channelDialogFromDialog(viewerUserID, item.dialog)
+			cached.DefaultSendAs = item.defaultSendAs
+			s.dialogCache.putListProjectionIfEpoch(
+				cached,
+				item.topMentioned,
+				item.topMediaUnread,
+				item.topUnreadProjected,
+				dialogCacheEpoch,
+			)
+		}
+		if memberCacheActive && item.dialog.ChannelMember != nil {
+			s.memberCache.putIfEpoch(*item.dialog.ChannelMember, memberCacheEpoch)
+		}
+		out.Dialogs = append(out.Dialogs, item.dialog)
+		out.Channels = append(out.Channels, item.channel)
 	}
 	out.Count = len(out.Dialogs)
 	// 与 ListChannelDialogs 同因：top message 按 viewer 补未读标志与 reactions。
-	if err := s.populateChannelMessagesReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages); err != nil {
+	if err := s.populateChannelDialogTopMessageReactions(ctx, s.db, viewerUserID, out.Channels, out.Messages, allTopUnreadProjected); err != nil {
 		return domain.ChannelDialogList{}, err
 	}
 	projectChannelDialogHistoryClearMessages(out.Dialogs, out.Messages)
 	return out, nil
+}
+
+// HydrateChannelDialogSnapshot attaches viewer-independent channel rows/top
+// messages and the small viewer reaction overlay to already materialized
+// owner dialog facts. It deliberately does not read channel_members or
+// channel_dialogs: dialog_owner + channel_base generations protecting the
+// caller's snapshot are the authority for those fields.
+func (s *ChannelStore) HydrateChannelDialogSnapshot(
+	ctx context.Context,
+	viewerUserID int64,
+	dialogs []domain.Dialog,
+) (domain.ChannelDialogList, error) {
+	if viewerUserID == 0 || len(dialogs) == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	ordered := make([]domain.Dialog, 0, len(dialogs))
+	ids := make([]int64, 0, len(dialogs))
+	seen := make(map[int64]struct{}, len(dialogs))
+	for _, dialog := range dialogs {
+		if dialog.Peer.Type != domain.PeerTypeChannel || dialog.Peer.ID == 0 {
+			continue
+		}
+		if _, duplicate := seen[dialog.Peer.ID]; duplicate {
+			continue
+		}
+		seen[dialog.Peer.ID] = struct{}{}
+		ordered = append(ordered, dialog)
+		ids = append(ids, dialog.Peer.ID)
+	}
+	if len(ordered) == 0 {
+		return domain.ChannelDialogList{}, nil
+	}
+	dialogCacheActive := s.dialogCacheActive(s.db)
+	memberCacheActive := s.memberCacheActive(s.db)
+	var dialogCacheEpoch uint64
+	var memberCacheEpoch uint64
+	if dialogCacheActive {
+		// Snapshot the epoch before any shared hydration. A concurrent
+		// dialog_light/channel_member/channel_base invalidation must prevent
+		// the owner projection from being written back after it became stale.
+		dialogCacheEpoch = s.dialogCache.cacheEpoch()
+	}
+	if memberCacheActive {
+		memberCacheEpoch = s.memberCache.cacheEpoch()
+	}
+	channelsByID, err := s.channelsByIDs(ctx, s.db, ids)
+	if err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	for index := range ordered {
+		channel := channelsByID[ordered[index].Peer.ID]
+		if channel.ID == 0 {
+			return domain.ChannelDialogList{}, fmt.Errorf("hydrate channel dialog snapshot %d: %w", ordered[index].Peer.ID, domain.ErrChannelInvalid)
+		}
+		ordered[index].Pts = channel.Pts
+	}
+	topMessages, err := s.channelDialogTopMessages(ctx, s.db, ordered)
+	if err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	out := domain.ChannelDialogList{Dialogs: make([]domain.Dialog, 0, len(ordered))}
+	allTopUnreadProjected := true
+	for _, dialog := range ordered {
+		channel := channelsByID[dialog.Peer.ID]
+		message := topMessages[channelMessageLookupKey{channelID: dialog.Peer.ID, id: dialog.TopMessage}]
+		if message.ID != 0 {
+			if dialog.TopMessageUnreadProjected {
+				message.Mentioned = dialog.TopMessageMentioned
+				message.MediaUnread = dialog.TopMessageMediaUnread
+			} else {
+				allTopUnreadProjected = false
+			}
+			dialog.TopMessageDate = message.Date
+			out.Messages = append(out.Messages, message)
+		}
+		if dialogCacheActive {
+			cached := channelDialogFromDialog(viewerUserID, dialog)
+			cached.DefaultSendAs = clonePeer(dialog.DefaultSendAs)
+			s.dialogCache.putListProjectionIfEpoch(
+				cached,
+				dialog.TopMessageMentioned,
+				dialog.TopMessageMediaUnread,
+				dialog.TopMessageUnreadProjected,
+				dialogCacheEpoch,
+			)
+		}
+		if memberCacheActive && dialog.ChannelMember != nil {
+			s.memberCache.putIfEpoch(*dialog.ChannelMember, memberCacheEpoch)
+		}
+		out.Dialogs = append(out.Dialogs, dialog)
+		out.Channels = append(out.Channels, channel)
+	}
+	out.Count = len(out.Dialogs)
+	if err := s.populateChannelDialogTopMessageReactions(
+		ctx, s.db, viewerUserID, out.Channels, out.Messages, allTopUnreadProjected,
+	); err != nil {
+		return domain.ChannelDialogList{}, err
+	}
+	projectChannelDialogHistoryClearMessages(out.Dialogs, out.Messages)
+	return out, nil
+}
+
+func (s *ChannelStore) loadChannelDialogListItems(ctx context.Context, viewerUserID int64, channelIDs []int64) (map[int64]channelDialogListItem, error) {
+	visibleTopID := channelDialogVisibleTopIDSQL()
+	visibleTopDate := channelDialogVisibleTopDateSQL("COALESCE(top_msg.message_date, d.top_message_date, c.date)", "0")
+	visibleReadInbox := "GREATEST(COALESCE(d.read_inbox_max_id, 0), m.read_inbox_max_id)"
+	visibleUnreadCount := channelDialogVisibleUnreadCountSQL(visibleReadInbox, visibleTopID)
+	rows, err := s.db.Query(ctx, `
+SELECT c.id,
+       `+visibleTopID+`,
+       `+visibleTopDate+`,
+       COALESCE(d.folder_id, 0),
+       `+visibleReadInbox+`,
+       LEAST(GREATEST(c.top_message_id, 0), GREATEST(COALESCE(d.read_outbox_max_id, 0), m.read_outbox_max_id, CASE WHEN c.read_inbox_top1_user_id = m.user_id THEN c.read_inbox_top2 ELSE c.read_inbox_top1 END)),
+       `+visibleUnreadCount+`,
+       COALESCE(d.pinned, false),
+       COALESCE(d.pinned_order, 0),
+       COALESCE(d.unread_mark, m.unread_mark),
+       COALESCE(d.unread_mentions_count, 0),
+       COALESCE(d.unread_reactions_count, 0),
+       COALESCE(d.view_forum_as_messages, false),
+       COALESCE(d.has_scheduled, false),
+       d.default_send_as_peer_type,
+       d.default_send_as_peer_id,
+       m.history_clear_anchor_id,
+       m.history_clear_anchor_date,
+		top_unread.message_id IS NOT NULL,
+		COALESCE(top_unread.unread, false),
+		m.user_id,
+		m.inviter_user_id,
+		m.role,
+		m.status,
+		m.joined_at,
+		m.left_at,
+		m.admin_rights::text,
+		m.banned_rights::text,
+		m.rank,
+		m.available_min_id,
+		m.available_min_pts,
+		m.read_inbox_max_id,
+		m.read_outbox_max_id,
+		m.unread_mark,
+		m.slowmode_last_send_date
+FROM channel_members m
+JOIN channels c ON c.id = m.channel_id AND NOT c.deleted
+LEFT JOIN channel_messages top_msg ON top_msg.channel_id = m.channel_id AND top_msg.id = c.top_message_id AND NOT top_msg.deleted
+LEFT JOIN channel_dialogs d ON d.user_id = m.user_id AND d.channel_id = m.channel_id
+LEFT JOIN channel_unread_mentions top_unread
+       ON top_unread.user_id = m.user_id
+      AND top_unread.channel_id = m.channel_id
+      AND top_unread.message_id = `+visibleTopID+`
+WHERE m.user_id = $1
+  AND m.channel_id = ANY($2::bigint[])
+  AND m.status = 'active'`, viewerUserID, channelIDs)
+	if err != nil {
+		return nil, fmt.Errorf("batch get channel dialogs: %w", err)
+	}
+	defer rows.Close()
+	itemsByID := make(map[int64]channelDialogListItem, len(channelIDs))
+	for rows.Next() {
+		channelID, dialog, defaultSendAs, topMentioned, topMediaUnread, err := scanChannelDialogProjectionRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		itemsByID[channelID] = channelDialogListItem{
+			dialog:             dialog,
+			defaultSendAs:      defaultSendAs,
+			topMentioned:       topMentioned,
+			topMediaUnread:     topMediaUnread,
+			topUnreadProjected: true,
+			listCacheable:      true,
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return itemsByID, nil
 }
 
 func projectChannelDialogHistoryClearMessages(dialogs []domain.Dialog, messages []domain.ChannelMessage) {
@@ -1325,6 +1971,106 @@ func scanChannelDialogRow(row rowScanner, userID int64) (domain.Channel, domain.
 	return ch, dialog, defaultSendAs, nil
 }
 
+type channelDialogProjectionValues struct {
+	channelID                                                 int64
+	topID, topDate, folderID, readInbox, readOutbox           int
+	unreadCount, pinnedOrder, unreadMentions, unreadReactions int
+	historyClearAnchorID, historyClearAnchorDate              int
+	pinned, unreadMark, viewForumAsMessages, hasScheduled     bool
+	defaultSendAsType                                         sql.NullString
+	defaultSendAsID                                           sql.NullInt64
+	topMentioned, topMediaUnread                              bool
+	memberUserID, memberInviterUserID                         int64
+	memberRole, memberStatus                                  string
+	memberJoinedAt, memberLeftAt                              int
+	memberAdminRights, memberBannedRights, memberRank         string
+	memberAvailableMinID, memberAvailableMinPts               int
+	memberReadInboxMaxID, memberReadOutboxMaxID               int
+	memberUnreadMark                                          bool
+	memberSlowmodeLastSendDate                                int
+}
+
+func (v *channelDialogProjectionValues) scanDestinations() []any {
+	return []any{
+		&v.channelID,
+		&v.topID, &v.topDate,
+		&v.folderID, &v.readInbox, &v.readOutbox, &v.unreadCount, &v.pinned, &v.pinnedOrder, &v.unreadMark, &v.unreadMentions, &v.unreadReactions, &v.viewForumAsMessages, &v.hasScheduled,
+		&v.defaultSendAsType, &v.defaultSendAsID,
+		&v.historyClearAnchorID, &v.historyClearAnchorDate,
+		&v.topMentioned, &v.topMediaUnread,
+		&v.memberUserID, &v.memberInviterUserID,
+		&v.memberRole, &v.memberStatus,
+		&v.memberJoinedAt, &v.memberLeftAt,
+		&v.memberAdminRights, &v.memberBannedRights, &v.memberRank,
+		&v.memberAvailableMinID, &v.memberAvailableMinPts,
+		&v.memberReadInboxMaxID, &v.memberReadOutboxMaxID,
+		&v.memberUnreadMark, &v.memberSlowmodeLastSendDate,
+	}
+}
+
+func (v *channelDialogProjectionValues) result() (int64, domain.Dialog, *domain.Peer, bool, bool) {
+	dialog := domain.Dialog{
+		Peer:                      domain.Peer{Type: domain.PeerTypeChannel, ID: v.channelID},
+		FolderID:                  v.folderID,
+		TopMessage:                v.topID,
+		TopMessageDate:            v.topDate,
+		HistoryClearAnchorID:      v.historyClearAnchorID,
+		HistoryClearAnchorDate:    v.historyClearAnchorDate,
+		ReadInboxMaxID:            v.readInbox,
+		ReadOutboxMaxID:           v.readOutbox,
+		UnreadCount:               v.unreadCount,
+		UnreadMentions:            v.unreadMentions,
+		UnreadReactions:           v.unreadReactions,
+		Pinned:                    v.pinned,
+		PinnedOrder:               v.pinnedOrder,
+		UnreadMark:                v.unreadMark,
+		ViewForumAsMessages:       v.viewForumAsMessages,
+		HasScheduled:              v.hasScheduled,
+		TopMessageMentioned:       v.topMentioned,
+		TopMessageMediaUnread:     v.topMediaUnread,
+		TopMessageUnreadProjected: true,
+	}
+	var defaultSendAs *domain.Peer
+	if v.defaultSendAsType.Valid && v.defaultSendAsID.Valid && v.defaultSendAsID.Int64 != 0 {
+		defaultSendAs = &domain.Peer{Type: domain.PeerType(v.defaultSendAsType.String), ID: v.defaultSendAsID.Int64}
+	}
+	member := domain.ChannelMember{
+		ChannelID:              v.channelID,
+		UserID:                 v.memberUserID,
+		InviterUserID:          v.memberInviterUserID,
+		Role:                   domain.ChannelMemberRole(v.memberRole),
+		Status:                 domain.ChannelMemberStatus(v.memberStatus),
+		JoinedAt:               v.memberJoinedAt,
+		LeftAt:                 v.memberLeftAt,
+		Rank:                   v.memberRank,
+		AvailableMinID:         v.memberAvailableMinID,
+		AvailableMinPts:        v.memberAvailableMinPts,
+		HistoryClearAnchorID:   v.historyClearAnchorID,
+		HistoryClearAnchorDate: v.historyClearAnchorDate,
+		ReadInboxMaxID:         v.memberReadInboxMaxID,
+		ReadOutboxMaxID:        v.memberReadOutboxMaxID,
+		UnreadMark:             v.memberUnreadMark,
+		SlowmodeLastSendDate:   v.memberSlowmodeLastSendDate,
+	}
+	_ = json.Unmarshal([]byte(v.memberAdminRights), &member.AdminRights)
+	_ = json.Unmarshal([]byte(v.memberBannedRights), &member.BannedRights)
+	dialog.ChannelMember = &member
+	return v.channelID, dialog, defaultSendAs, v.topMentioned, v.topMediaUnread
+}
+
+// scanChannelDialogProjectionRow scans only owner-varying channel dialog
+// state. Shared channel metadata is hydrated separately through ChannelRowCache
+// so a page containing the same channel for many online owners does not decode
+// and transfer the wide channels row repeatedly.
+func scanChannelDialogProjectionRow(row rowScanner) (int64, domain.Dialog, *domain.Peer, bool, bool, error) {
+	var values channelDialogProjectionValues
+	if err := row.Scan(values.scanDestinations()...); err != nil {
+		return 0, domain.Dialog{}, nil, false, false, err
+	}
+	channelID, dialog, defaultSendAs, topMentioned, topMediaUnread := values.result()
+	return channelID, dialog, defaultSendAs, topMentioned, topMediaUnread, nil
+}
+
 func channelDialogToDialog(dialog domain.ChannelDialog, channelPts int) domain.Dialog {
 	return domain.Dialog{
 		Peer:                   domain.Peer{Type: domain.PeerTypeChannel, ID: dialog.ChannelID},
@@ -1343,6 +2089,7 @@ func channelDialogToDialog(dialog domain.ChannelDialog, channelPts int) domain.D
 		UnreadMark:             dialog.UnreadMark,
 		ViewForumAsMessages:    dialog.ViewForumAsMessages,
 		HasScheduled:           dialog.HasScheduled,
+		DefaultSendAs:          clonePeer(dialog.DefaultSendAs),
 		Pts:                    channelPts,
 	}
 }
@@ -1366,7 +2113,16 @@ func channelDialogFromDialog(userID int64, dialog domain.Dialog) domain.ChannelD
 		UnreadMark:             dialog.UnreadMark,
 		ViewForumAsMessages:    dialog.ViewForumAsMessages,
 		HasScheduled:           dialog.HasScheduled,
+		DefaultSendAs:          clonePeer(dialog.DefaultSendAs),
 	}
+}
+
+func clonePeer(peer *domain.Peer) *domain.Peer {
+	if peer == nil {
+		return nil
+	}
+	cloned := *peer
+	return &cloned
 }
 
 func channelDialogMatchesFilter(dialog domain.Dialog, channel domain.Channel, filter domain.DialogFilter) bool {

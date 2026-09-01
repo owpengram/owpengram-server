@@ -39,22 +39,15 @@ func TestAuthIdentitySelectorRetriesUncommittedFirstBindSnapshotPostgres(t *test
 	if err := advanceConn.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&advancePID); err != nil {
 		t.Fatal(err)
 	}
-	barrier := newAuthStoreQueryBarrier(advanceConn, "auth_identity_hint", "")
 	msgID := authKeySessionLayerTestMsgID(time.Now().UTC(), 1)
 	type advanceResult struct {
 		value   store.AuthKeySessionLayer
 		applied bool
 		err     error
 	}
-	result := make(chan advanceResult, 1)
-	go func() {
-		value, applied, err := NewAuthKeyStore(barrier).AdvanceSessionLayer(ctx, temp, 8703, 227, msgID)
-		result <- advanceResult{value: value, applied: applied, err: err}
-	}()
-	<-barrier.observed
-
-	// The selector already read "unbound". Stage a committed binding behind
-	// its statement snapshot while retaining P/raw row locks in the outer tx.
+	// Stage the first binding but do not commit it. Save holds the permanent
+	// identity gate and raw row, so the selector sees the old unbound hint and
+	// then waits on the raw row inside the server-side advance function.
 	bindTx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +56,11 @@ func TestAuthIdentitySelectorRetriesUncommittedFirstBindSnapshotPostgres(t *test
 	if err := NewTempAuthKeyBindingStore(bindTx).Save(ctx, binding); err != nil {
 		t.Fatalf("stage first bind: %v", err)
 	}
-	close(barrier.release)
+	result := make(chan advanceResult, 1)
+	go func() {
+		value, applied, err := NewAuthKeyStore(advanceConn).AdvanceSessionLayer(ctx, temp, 8703, 227, msgID)
+		result <- advanceResult{value: value, applied: applied, err: err}
+	}()
 	waitForPostgresBackendLockWait(t, ctx, pool, advancePID)
 	if err := bindTx.Commit(ctx); err != nil {
 		t.Fatalf("commit first bind: %v", err)
@@ -166,11 +163,22 @@ func TestAuthIdentitySelectorSerializesWithPermanentRevocationAndDeletePostgres(
 			if err := <-opResult; err != nil {
 				t.Fatalf("%s error = %v", op, err)
 			}
+			assertRevokeTestNoAuthorization(t, ctx, auths, perm)
+			if op == "revoke" {
+				// Remote authorization revocation deliberately preserves protocol
+				// keys and their binding so reconnect reaches the RPC authorization
+				// gate and receives AUTH_KEY_UNREGISTERED rather than transport -404.
+				assertRevokeTestPresentAuthKey(t, ctx, keys, temp)
+				assertRevokeTestPresentAuthKey(t, ctx, keys, perm)
+				if _, found, err := bindings.GetByTemp(ctx, temp); err != nil || !found {
+					t.Fatalf("binding after revoke found=%v err=%v, want present", found, err)
+				}
+				return
+			}
 			assertTempIdentityAuthKeyMissing(t, ctx, keys, temp)
 			assertTempIdentityAuthKeyMissing(t, ctx, keys, perm)
-			assertRevokeTestNoAuthorization(t, ctx, auths, perm)
 			if _, found, err := bindings.GetByTemp(ctx, temp); err != nil || found {
-				t.Fatalf("binding after %s found=%v err=%v", op, found, err)
+				t.Fatalf("binding after delete found=%v err=%v, want absent", found, err)
 			}
 		})
 	}

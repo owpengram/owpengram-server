@@ -229,21 +229,21 @@ func domainOutgoingReplyMarkupForSender(markup tg.ReplyMarkupClass, senderIsBot 
 	}
 }
 
-func domainReplyKeyboardButton(button tg.KeyboardButtonClass) (domain.MarkupButton, error) {
-	style, icon, err := domainMarkupButtonStyle(button)
+func domainReplyKeyboardButton(button tg.KeyboardButton) (domain.MarkupButton, error) {
+	style, icon, err := domainMarkupButtonStyle(&button)
 	if err != nil {
 		return domain.MarkupButton{}, err
 	}
-	base := domain.MarkupButton{Style: style, IconCustomEmojiID: icon}
-	switch b := button.(type) {
-	case *tg.KeyboardButton:
-		base.Type, base.Text = domain.MarkupButtonText, b.Text
-	case *tg.KeyboardButtonRequestPhone:
-		base.Type, base.Text = domain.MarkupButtonRequestPhone, b.Text
-	case *tg.KeyboardButtonRequestGeoLocation:
-		base.Type, base.Text = domain.MarkupButtonRequestLocation, b.Text
-	case *tg.KeyboardButtonRequestPoll:
-		base.Type, base.Text = domain.MarkupButtonRequestPoll, b.Text
+	base := domain.MarkupButton{Text: button.Text, Style: style, IconCustomEmojiID: icon}
+	switch b := button.Type.(type) {
+	case *tg.ButtonTypeDefault:
+		base.Type = domain.MarkupButtonText
+	case *tg.ButtonTypeRequestPhone:
+		base.Type = domain.MarkupButtonRequestPhone
+	case *tg.ButtonTypeRequestGeoLocation:
+		base.Type = domain.MarkupButtonRequestLocation
+	case *tg.ButtonTypeRequestPoll:
+		base.Type = domain.MarkupButtonRequestPoll
 		if quiz, ok := b.GetQuiz(); ok {
 			if quiz {
 				base.PollType = "quiz"
@@ -251,12 +251,12 @@ func domainReplyKeyboardButton(button tg.KeyboardButtonClass) (domain.MarkupButt
 				base.PollType = "regular"
 			}
 		}
-	case *tg.KeyboardButtonRequestPeer:
-		base.Type, base.Text = domain.MarkupButtonRequestPeer, b.Text
+	case *tg.ButtonTypeRequestPeer:
+		base.Type = domain.MarkupButtonRequestPeer
 		base.ButtonID, base.MaxQuantity = b.ButtonID, b.MaxQuantity
 		base.RequestPeerType, base.RequestPeerFilter = domainRequestPeerFilter(b.PeerType)
-	case *tg.KeyboardButtonSimpleWebView:
-		base.Type, base.Text, base.URL = domain.MarkupButtonSimpleWebView, b.Text, b.URL
+	case *tg.ButtonTypeSimpleWebView:
+		base.Type, base.URL = domain.MarkupButtonSimpleWebView, b.URL
 	default:
 		return domain.MarkupButton{}, domain.ErrButtonTypeInvalid
 	}
@@ -281,27 +281,27 @@ func domainInlineMarkup(inline *tg.ReplyInlineMarkup) (*domain.MessageReplyMarku
 	return out, nil
 }
 
-func domainMarkupButton(btn tg.KeyboardButtonClass, buttonID int) (domain.MarkupButton, error) {
-	style, icon, err := domainMarkupButtonStyle(btn)
+func domainMarkupButton(btn tg.KeyboardInlineButton, buttonID int) (domain.MarkupButton, error) {
+	style, icon, err := domainMarkupButtonStyle(&btn)
 	if err != nil {
 		return domain.MarkupButton{}, err
 	}
-	switch b := btn.(type) {
-	case *tg.KeyboardButtonCallback:
+	switch b := btn.Type.(type) {
+	case *tg.InlineButtonTypeCallback:
 		return domain.MarkupButton{
 			Type:              domain.MarkupButtonCallback,
-			Text:              b.Text,
+			Text:              btn.Text,
 			Style:             style,
 			IconCustomEmojiID: icon,
 			Data:              append([]byte(nil), b.Data...),
 			RequiresPassword:  b.RequiresPassword,
 		}, nil
-	case *tg.KeyboardButtonURL:
+	case *tg.InlineButtonTypeURL:
 		return domain.MarkupButton{
-			Type: domain.MarkupButtonURL, Text: b.Text, URL: b.URL,
+			Type: domain.MarkupButtonURL, Text: btn.Text, URL: b.URL,
 			Style: style, IconCustomEmojiID: icon,
 		}, nil
-	case *tg.InputKeyboardButtonURLAuth:
+	case *tg.InputInlineButtonTypeURLAuth:
 		botUserID := int64(0)
 		switch bot := b.Bot.(type) {
 		case nil, *tg.InputUserEmpty, *tg.InputUserSelf:
@@ -311,33 +311,35 @@ func domainMarkupButton(btn tg.KeyboardButtonClass, buttonID int) (domain.Markup
 			return domain.MarkupButton{}, domain.ErrButtonInvalid
 		}
 		return domain.MarkupButton{
-			Type: domain.MarkupButtonLoginURL, Text: b.Text, URL: b.URL,
+			Type: domain.MarkupButtonLoginURL, Text: btn.Text, URL: b.URL,
 			ForwardText: b.FwdText, ButtonID: buttonID, LoginBotUserID: botUserID,
 			RequestWriteAccess: b.RequestWriteAccess, Style: style, IconCustomEmojiID: icon,
 		}, nil
-	case *tg.KeyboardButtonURLAuth:
+	case *tg.InlineButtonTypeURLAuth:
 		return domain.MarkupButton{
-			Type: domain.MarkupButtonLoginURL, Text: b.Text, URL: b.URL,
+			Type: domain.MarkupButtonLoginURL, Text: btn.Text, URL: b.URL,
 			ForwardText: b.FwdText, ButtonID: b.ButtonID,
 			Style: style, IconCustomEmojiID: icon,
 		}, nil
-	case *tg.KeyboardButtonWebView:
-		return domain.MarkupButton{Type: domain.MarkupButtonWebView, Text: b.Text, URL: b.URL, Style: style, IconCustomEmojiID: icon}, nil
-	case *tg.KeyboardButtonSwitchInline:
+	case *tg.InlineButtonTypeWebView:
+		return domain.MarkupButton{Type: domain.MarkupButtonWebView, Text: btn.Text, URL: b.URL, Style: style, IconCustomEmojiID: icon}, nil
+	case *tg.InlineButtonTypeSwitchInline:
 		peerTypes, err := preparedInlinePeerTypesFromTG(b.PeerTypes)
 		if err != nil {
 			return domain.MarkupButton{}, domain.ErrButtonInvalid
 		}
-		return domain.MarkupButton{Type: domain.MarkupButtonSwitchInline, Text: b.Text, Query: b.Query, SamePeer: b.SamePeer, PeerTypes: peerTypes, Style: style, IconCustomEmojiID: icon}, nil
-	case *tg.KeyboardButtonCopy:
-		return domain.MarkupButton{Type: domain.MarkupButtonCopy, Text: b.Text, CopyText: b.CopyText, Style: style, IconCustomEmojiID: icon}, nil
+		return domain.MarkupButton{Type: domain.MarkupButtonSwitchInline, Text: btn.Text, Query: b.Query, SamePeer: b.SamePeer, PeerTypes: peerTypes, Style: style, IconCustomEmojiID: icon}, nil
+	case *tg.InlineButtonTypeCopy:
+		return domain.MarkupButton{Type: domain.MarkupButtonCopy, Text: btn.Text, CopyText: b.CopyText, Style: style, IconCustomEmojiID: icon}, nil
 	default:
 		// webview/game/url_auth/request_*/switch_inline/buy 等 P3 未实现按钮类型。
 		return domain.MarkupButton{}, domain.ErrButtonTypeInvalid
 	}
 }
 
-func domainMarkupButtonStyle(btn tg.KeyboardButtonClass) (domain.MarkupButtonStyle, int64, error) {
+func domainMarkupButtonStyle(btn interface {
+	GetStyle() (tg.KeyboardButtonStyle, bool)
+}) (domain.MarkupButtonStyle, int64, error) {
 	style, ok := btn.GetStyle()
 	if !ok {
 		return "", 0, nil
@@ -388,7 +390,7 @@ func tgReplyMarkup(m *domain.MessageReplyMarkup) tg.ReplyMarkupClass {
 	case domain.MessageReplyMarkupKeyboard:
 		rows := make([]tg.KeyboardButtonRow, 0, len(m.Keyboard))
 		for _, row := range m.Keyboard {
-			buttons := make([]tg.KeyboardButtonClass, 0, len(row))
+			buttons := make([]tg.KeyboardButton, 0, len(row))
 			for _, btn := range row {
 				buttons = append(buttons, tgReplyKeyboardButton(btn))
 			}
@@ -415,93 +417,77 @@ func tgReplyMarkup(m *domain.MessageReplyMarkup) tg.ReplyMarkupClass {
 	default:
 		return nil
 	}
-	rows := make([]tg.KeyboardButtonRow, 0, len(m.Inline))
+	rows := make([]tg.KeyboardInlineButtonRow, 0, len(m.Inline))
 	for _, row := range m.Inline {
-		buttons := make([]tg.KeyboardButtonClass, 0, len(row))
+		buttons := make([]tg.KeyboardInlineButton, 0, len(row))
 		for _, btn := range row {
 			buttons = append(buttons, tgMarkupButton(btn))
 		}
-		rows = append(rows, tg.KeyboardButtonRow{Buttons: buttons})
+		rows = append(rows, tg.KeyboardInlineButtonRow{Buttons: buttons})
 	}
 	return &tg.ReplyInlineMarkup{Rows: rows}
 }
 
-func tgMarkupButton(btn domain.MarkupButton) tg.KeyboardButtonClass {
+func tgMarkupButton(btn domain.MarkupButton) tg.KeyboardInlineButton {
+	out := tg.KeyboardInlineButton{Text: btn.Text}
 	switch btn.Type {
 	case domain.MarkupButtonURL:
-		out := &tg.KeyboardButtonURL{Text: btn.Text, URL: btn.URL}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = &tg.InlineButtonTypeURL{URL: btn.URL}
 	case domain.MarkupButtonLoginURL:
-		out := &tg.KeyboardButtonURLAuth{Text: btn.Text, URL: btn.URL, ButtonID: btn.ButtonID}
+		buttonType := &tg.InlineButtonTypeURLAuth{URL: btn.URL, ButtonID: btn.ButtonID}
 		if btn.ForwardText != "" {
-			out.SetFwdText(btn.ForwardText)
+			buttonType.SetFwdText(btn.ForwardText)
 		}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = buttonType
 	case domain.MarkupButtonWebView:
-		out := &tg.KeyboardButtonWebView{Text: btn.Text, URL: btn.URL}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = &tg.InlineButtonTypeWebView{URL: btn.URL}
 	case domain.MarkupButtonSwitchInline:
-		out := &tg.KeyboardButtonSwitchInline{Text: btn.Text, Query: btn.Query, SamePeer: btn.SamePeer}
+		buttonType := &tg.InlineButtonTypeSwitchInline{Query: btn.Query, SamePeer: btn.SamePeer}
 		if len(btn.PeerTypes) > 0 {
-			out.SetPeerTypes(tgPreparedInlinePeerTypes(btn.PeerTypes))
+			buttonType.SetPeerTypes(tgPreparedInlinePeerTypes(btn.PeerTypes))
 		}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = buttonType
 	case domain.MarkupButtonCopy:
-		out := &tg.KeyboardButtonCopy{Text: btn.Text, CopyText: btn.CopyText}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = &tg.InlineButtonTypeCopy{CopyText: btn.CopyText}
+	case domain.MarkupButtonBuy:
+		out.Type = &tg.InlineButtonTypeBuy{}
 	default: // callback
-		out := &tg.KeyboardButtonCallback{Text: btn.Text, Data: btn.Data}
+		buttonType := &tg.InlineButtonTypeCallback{Data: btn.Data}
 		if btn.RequiresPassword {
-			out.SetRequiresPassword(true)
+			buttonType.SetRequiresPassword(true)
 		}
-		if style, ok := tgMarkupButtonStyle(btn); ok {
-			out.SetStyle(style)
-		}
-		return out
+		out.Type = buttonType
 	}
+	if style, ok := tgMarkupButtonStyle(btn); ok {
+		out.SetStyle(style)
+	}
+	return out
 }
 
-func tgReplyKeyboardButton(btn domain.MarkupButton) tg.KeyboardButtonClass {
-	var out tg.KeyboardButtonClass
+func tgReplyKeyboardButton(btn domain.MarkupButton) tg.KeyboardButton {
+	out := tg.KeyboardButton{Text: btn.Text}
 	switch btn.Type {
 	case domain.MarkupButtonRequestPhone:
-		out = &tg.KeyboardButtonRequestPhone{Text: btn.Text}
+		out.Type = &tg.ButtonTypeRequestPhone{}
 	case domain.MarkupButtonRequestLocation:
-		out = &tg.KeyboardButtonRequestGeoLocation{Text: btn.Text}
+		out.Type = &tg.ButtonTypeRequestGeoLocation{}
 	case domain.MarkupButtonRequestPoll:
-		button := &tg.KeyboardButtonRequestPoll{Text: btn.Text}
+		button := &tg.ButtonTypeRequestPoll{}
 		if btn.PollType == "quiz" {
 			button.SetQuiz(true)
 		} else if btn.PollType == "regular" {
 			button.SetQuiz(false)
 		}
-		out = button
+		out.Type = button
 	case domain.MarkupButtonRequestPeer:
-		out = &tg.KeyboardButtonRequestPeer{Text: btn.Text, ButtonID: btn.ButtonID, PeerType: tgRequestPeerTypeWithFilter(btn.RequestPeerType, btn.RequestPeerFilter), MaxQuantity: btn.MaxQuantity}
+		out.Type = &tg.ButtonTypeRequestPeer{ButtonID: btn.ButtonID, PeerType: tgRequestPeerTypeWithFilter(btn.RequestPeerType, btn.RequestPeerFilter), MaxQuantity: btn.MaxQuantity}
 	case domain.MarkupButtonSimpleWebView:
-		out = &tg.KeyboardButtonSimpleWebView{Text: btn.Text, URL: btn.URL}
+		out.Type = &tg.ButtonTypeSimpleWebView{URL: btn.URL}
 	default:
-		out = &tg.KeyboardButton{Text: btn.Text}
+		out.Type = &tg.ButtonTypeDefault{}
 	}
 	if style, ok := tgMarkupButtonStyle(btn); ok {
-		if setter, ok := out.(interface{ SetStyle(tg.KeyboardButtonStyle) }); ok {
-			setter.SetStyle(style)
-		}
+		out.SetStyle(style)
 	}
 	return out
 }

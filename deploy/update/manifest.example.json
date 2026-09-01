@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "desktop": {
+    "win64": {
+      "stable": {
+        "build": 7000007,
+        "version": "7.0.7",
+        "file": "tx64upd7000007",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size": 0,
+        "disabled": true
+      }
+    }
+  },
+  "apps": {
+    "android": {
+      "stable": {
+        "id": 2026080701,
+        "version": "12.9.1",
+        "url": "https://updates.example.test/apps/telesrv-12.9.1.apk",
+        "url_by_source": {
+          "com.android.vending": "https://play.google.com/store/apps/details?id=your.application.id"
+        },
+        "can_not_skip": false,
+        "notes": {
+          "en": "A new version is available.",
+          "ru": "Доступна новая версия приложения."
+        },
+        "disabled": true
+      }
+    },
+    "ios": {
+      "stable": {
+        "id": 2026080702,
+        "version": "12.9.1",
+        "url": "https://apps.apple.com/app/id0000000000",
+        "can_not_skip": false,
+        "notes": {
+          "en": "A new version is available in the App Store.",
+          "ru": "В App Store доступна новая версия приложения."
+        },
+        "disabled": true
+      }
+    }
+  }
+}

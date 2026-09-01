@@ -2,8 +2,8 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"sort"
 	"telesrv/internal/domain"
 )
 
@@ -39,13 +39,18 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		date = nowUnix()
 	}
 	requested := uniqueChannelUserIDs(userIDs, 0)
+	sort.Slice(requested, func(i, j int) bool { return requested[i] < requested[j] })
 	inviteOne := len(requested) == 1
 	canRestoreKicked := canBanChannelUsers(inviter)
 	invitedIDs := make([]int64, 0, len(requested))
 	members := make([]domain.ChannelMember, 0, len(requested))
 	restoredKicked := 0
+	existingMembers, err := channelMembersForUpdateBatchTx(ctx, tx, channelID, requested)
+	if err != nil {
+		return domain.CreateChannelResult{}, err
+	}
 	for _, userID := range requested {
-		if existing, err := s.getChannelMember(ctx, tx, channelID, userID); err == nil {
+		if existing, ok := existingMembers[userID]; ok {
 			if existing.Status == domain.ChannelMemberActive {
 				if inviteOne {
 					return domain.CreateChannelResult{}, domain.ErrUserAlreadyParticipant
@@ -63,8 +68,6 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 					restoredKicked++
 				}
 			}
-		} else if !errors.Is(err, domain.ErrChannelPrivate) {
-			return domain.CreateChannelResult{}, err
 		}
 		member := domain.ChannelMember{
 			ChannelID:       channelID,
@@ -77,22 +80,19 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 			AvailableMinPts: channelInitialAvailableMinPts(channel),
 			ReadInboxMaxID:  channel.TopMessageID,
 		}
-		if err := upsertChannelMemberTx(ctx, tx, channel, member); err != nil {
-			return domain.CreateChannelResult{}, err
-		}
-		if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
-			ChannelID:   channelID,
-			UserID:      inviterUserID,
-			Date:        date,
-			Type:        domain.ChannelAdminLogParticipantInvite,
-			Participant: &member,
-		}); err != nil {
-			return domain.CreateChannelResult{}, err
-		}
 		members = append(members, member)
 		invitedIDs = append(invitedIDs, userID)
 	}
 	if len(members) > 0 {
+		if err := enableChannelMembershipBatchTx(ctx, tx); err != nil {
+			return domain.CreateChannelResult{}, err
+		}
+		if err := upsertChannelMembersBatchTx(ctx, tx, channel, members); err != nil {
+			return domain.CreateChannelResult{}, err
+		}
+		if err := insertChannelInviteAdminLogsBatchTx(ctx, tx, channelID, inviterUserID, date, members); err != nil {
+			return domain.CreateChannelResult{}, err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE channels SET participants_count = participants_count + $2, kicked_count = GREATEST(kicked_count - $3, 0), updated_at = now() WHERE id = $1`, channelID, len(members), restoredKicked); err != nil {
 			return domain.CreateChannelResult{}, fmt.Errorf("update channel participants: %w", err)
 		}
@@ -112,21 +112,24 @@ func (s *ChannelStore) InviteToChannel(ctx context.Context, channelID, inviterUs
 		channel.TopMessageID = msg.ID
 		channel.Pts = event.Pts
 	}
-	for _, member := range members {
-		if err := upsertChannelDialogTx(ctx, tx, member.UserID, channel, msg, member.ReadInboxMaxID, member.ReadOutboxMaxID); err != nil {
-			return domain.CreateChannelResult{}, err
-		}
-		// 被重新拉入群也是重进:按新 available_min_id 重算未读 reaction 计数清幽灵角标。
-		if err := refreshChannelUnreadReactionsCountTx(ctx, tx, member.UserID, channel.ID); err != nil {
-			return domain.CreateChannelResult{}, err
-		}
+	if err := upsertChannelDialogsBatchTx(ctx, tx, channel, msg, members); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
+	// 被重新拉入群也是重进:按新 available_min_id 集合重算未读 reaction 计数清幽灵角标。
+	if err := refreshChannelUnreadReactionsCountsBatchTx(ctx, tx, channel.ID, invitedIDs); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
+	if err := enqueueWelcomeMessageDeliveriesTx(ctx, tx, channel.ID, members); err != nil {
+		return domain.CreateChannelResult{}, err
+	}
+	if err := bumpChannelMembershipReadModelsBatchTx(ctx, tx, channel.ID, invitedIDs); err != nil {
+		return domain.CreateChannelResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return domain.CreateChannelResult{}, fmt.Errorf("commit invite channel: %w", err)
 	}
 	committed = true
-	recipients, _ := s.ListActiveChannelMemberIDs(ctx, inviterUserID, channelID, 0)
-	return domain.CreateChannelResult{Channel: channel, Members: members, Message: msg, Event: event, Recipients: recipients}, nil
+	return domain.CreateChannelResult{Channel: channel, Members: members, Message: msg, Event: event}, nil
 }
 
 func canInviteToChannel(channel domain.Channel, member domain.ChannelMember) bool {

@@ -1,0 +1,42 @@
+.git
+.github
+.codex-tmp
+.gocache
+.tdesktop-e2e
+.vscode
+.idea
+
+# Local builds, caches, and runtime state.
+bin
+dist
+logs
+tmp
+coverage.*
+*.exe
+*.test
+*.out
+**/node_modules
+**/__pycache__
+**/*.pyc
+
+# Deployment credentials stay out of the build context. The explicitly
+# published test RSA fixture below is the only private-key exception.
+.env
+.env.*
+**/.env
+**/.env.*
+codex.local
+secrets
+**/secrets
+*.pem
+*.key
+
+# Runtime data is excluded except for the tracked language-pack seed.
+data/*
+!data/langpack/
+!data/langpack/**
+
+# Deployment-local state and overrides.
+deploy/docker/.env
+deploy/docker/backups
+deploy/docker/overrides

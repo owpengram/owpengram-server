@@ -502,7 +502,7 @@ func (s *ChannelStore) SetChannelEmojiStatusAdmin(ctx context.Context, channelID
 // which requires an acting admin member and broadcasts to the channel's
 // timeline. Mirrors SetChannelColorAdmin/SetChannelEmojiStatusAdmin's shape.
 func (s *ChannelStore) SetChannelPhotoAdmin(ctx context.Context, channelID int64, photo domain.Photo) (domain.Channel, error) {
-	if channelID == 0 {
+	if channelID == 0 || photo.ID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	channel, err := s.channelByID(ctx, s.db, channelID)
@@ -513,9 +513,14 @@ func (s *ChannelStore) SetChannelPhotoAdmin(ctx context.Context, channelID int64
 	if stripped == nil {
 		stripped = []byte{}
 	}
-	if _, err := s.db.Exec(ctx, `UPDATE channels SET photo_id = $2, photo_dc_id = $3, photo_stripped = $4, updated_at = now() WHERE id = $1`,
-		channelID, photo.ID, photo.DCID, stripped); err != nil {
+	result, err := s.db.Exec(ctx, `UPDATE channels
+SET photo_id = $2, photo_dc_id = $3, photo_stripped = $4, updated_at = now()
+WHERE id = $1 AND NOT deleted`, channelID, photo.ID, photo.DCID, stripped)
+	if err != nil {
 		return domain.Channel{}, fmt.Errorf("set channel photo admin: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return domain.Channel{}, domain.ErrChannelInvalid
 	}
 	if s.rowCache != nil {
 		s.rowCache.delete(channelID)

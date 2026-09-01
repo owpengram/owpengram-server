@@ -18,6 +18,7 @@ type DialogStore interface {
 	GetDraft(ctx context.Context, userID int64, peer domain.Peer, topMessageID int) (domain.DialogDraft, bool, error)
 	DeleteDraft(ctx context.Context, userID int64, peer domain.Peer, topMessageID int) (bool, error)
 	ListDrafts(ctx context.Context, userID int64, limit int) ([]domain.DialogDraft, error)
+	ListDraftsByPeers(ctx context.Context, userID int64, peers []domain.Peer) ([]domain.DialogDraft, error)
 	ClearDrafts(ctx context.Context, userID int64, limit int) ([]domain.DialogDraft, error)
 	MarkRead(ctx context.Context, userID int64, peer domain.Peer, maxID int) (domain.ReadHistoryResult, error)
 	// SetPinned 置顶/取消置顶一条会话；order 在会话当前 folder 内分配，

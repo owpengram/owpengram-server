@@ -21,6 +21,15 @@ type ContactList struct {
 	Hash     int64
 }
 
+// ContactProjectionBatch is a viewer-owned contact read model for fan-out
+// projection. Contacts[viewerID][targetUserID] is the same row GetMany(viewer)
+// would return; PersonalPhotos carries that viewer's personal photo overrides
+// for the same target set.
+type ContactProjectionBatch struct {
+	Contacts       map[int64]map[int64]Contact
+	PersonalPhotos map[int64]map[int64]ProfilePhotoRef
+}
+
 // CloseFriendsEditResult describes a full close-friends list replacement.
 type CloseFriendsEditResult struct {
 	AddedUserIDs   []int64

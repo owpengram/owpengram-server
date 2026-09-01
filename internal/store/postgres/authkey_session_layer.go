@@ -66,6 +66,26 @@ func (s *AuthKeyStore) AdvanceSessionLayer(
 	if layer <= 0 || !validMessageID {
 		return store.AuthKeySessionLayer{}, false, store.ErrAuthKeySessionLayerInvalid
 	}
+	current, advanced, err := s.tryAdvanceSessionLayerSameLayer(
+		ctx, authKeyIDToInt64(rawAuthKeyID), sessionID, layer, msgID, expiresAt,
+	)
+	if err != nil {
+		return store.AuthKeySessionLayer{}, false, err
+	}
+	if advanced {
+		return current, true, nil
+	}
+	return s.advanceSessionLayerFull(ctx, rawAuthKeyID, sessionID, layer, msgID, expiresAt)
+}
+
+func (s *AuthKeyStore) advanceSessionLayerFull(
+	ctx context.Context,
+	rawAuthKeyID [8]byte,
+	sessionID int64,
+	layer int,
+	msgID int64,
+	expiresAt time.Time,
+) (store.AuthKeySessionLayer, bool, error) {
 	var (
 		current store.AuthKeySessionLayer
 		applied bool
@@ -83,6 +103,81 @@ func (s *AuthKeyStore) AdvanceSessionLayer(
 	return current, applied, nil
 }
 
+// tryAdvanceSessionLayerSameLayer is the common invokeWithLayer path once an
+// exact session has established its profile generation. It keeps the durable
+// msg_id high-water mark exact while avoiding the identity gate, observation
+// allocation and shared-default rewrites that are only needed when the Layer
+// itself changes. The identity CTE admits only a structurally valid raw/bound
+// key; every miss falls through to the full locked state machine.
+func (s *AuthKeyStore) tryAdvanceSessionLayerSameLayer(
+	ctx context.Context,
+	rawID int64,
+	sessionID int64,
+	layer int,
+	msgID int64,
+	expiresAt time.Time,
+) (store.AuthKeySessionLayer, bool, error) {
+	var current store.AuthKeySessionLayer
+	err := s.db.QueryRow(ctx, `
+WITH identity AS MATERIALIZED (
+  SELECT raw.auth_key_id,
+         defaults.layer AS default_layer,
+         defaults.layer_observation_id AS default_observation_id
+  FROM auth_keys AS raw
+  LEFT JOIN temp_auth_key_bindings AS binding
+    ON binding.temp_auth_key_id = raw.auth_key_id
+  JOIN auth_keys AS defaults
+    ON defaults.auth_key_id = COALESCE(binding.perm_auth_key_id, raw.auth_key_id)
+  WHERE raw.auth_key_id = $1
+    AND (
+      binding.temp_auth_key_id IS NULL
+      OR (raw.expires_at > 0 AND defaults.expires_at = 0)
+    )
+), advanced AS (
+  UPDATE auth_key_session_layers AS evidence
+  SET msg_id = $4,
+      expires_at = $5
+  FROM identity
+  WHERE evidence.raw_auth_key_id = $1
+    AND evidence.session_id = $2
+    AND evidence.layer = $3
+    AND evidence.msg_id < $4
+    AND evidence.expires_at > now()
+    AND $3 > 0
+    AND $4 > 0
+    AND $4 % 4 = 0
+    AND ($4 & 4294967295) <> 0
+    AND $5 > now()
+    AND $5 - interval '301 seconds' <= now() + interval '30 seconds'
+  RETURNING evidence.layer,
+            evidence.msg_id,
+            evidence.observation_id,
+            evidence.expires_at
+)
+SELECT advanced.layer,
+       advanced.msg_id,
+       advanced.observation_id,
+       advanced.expires_at,
+       identity.default_layer = advanced.layer
+         AND identity.default_observation_id = advanced.observation_id
+FROM advanced
+CROSS JOIN identity
+`, rawID, sessionID, layer, msgID, expiresAt).Scan(
+		&current.Layer,
+		&current.MessageID,
+		&current.ObservationID,
+		&current.ExpiresAt,
+		&current.SharedDefault,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.AuthKeySessionLayer{}, false, nil
+	}
+	if err != nil {
+		return store.AuthKeySessionLayer{}, false, fmt.Errorf("advance same-Layer auth key session watermark: %w", err)
+	}
+	return current, true, nil
+}
+
 func advanceSessionLayerTx(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -92,109 +187,48 @@ func advanceSessionLayerTx(
 	msgID int64,
 	expiresAt time.Time,
 ) (store.AuthKeySessionLayer, bool, error) {
-	_, permID, _, err := lockRawAuthKeyInIdentityOrder(ctx, tx, rawID)
-	if err != nil {
-		return store.AuthKeySessionLayer{}, false, err
-	}
 	var (
+		status  string
 		current store.AuthKeySessionLayer
-		now     time.Time
+		applied bool
 	)
-	err = tx.QueryRow(ctx, `
-SELECT layer, msg_id, observation_id, expires_at, now()
-FROM auth_key_session_layers
-WHERE raw_auth_key_id = $1 AND session_id = $2
-FOR UPDATE
-`, rawID, sessionID).Scan(
+	err := tx.QueryRow(ctx, `
+SELECT advance_status,
+       current_layer,
+       current_msg_id,
+       current_observation_id,
+       current_expires_at,
+       shared_default,
+       applied
+FROM public.telesrv_advance_auth_session_layer($1, $2, $3, $4, $5)
+`, rawID, sessionID, layer, msgID, expiresAt).Scan(
+		&status,
 		&current.Layer,
 		&current.MessageID,
 		&current.ObservationID,
 		&current.ExpiresAt,
-		&now,
+		&current.SharedDefault,
+		&applied,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
-			return store.AuthKeySessionLayer{}, false, fmt.Errorf("read session layer database time: %w", err)
-		}
-		current = store.AuthKeySessionLayer{}
-	} else if err != nil {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("lock auth key session layer: %w", err)
+	if err != nil {
+		return store.AuthKeySessionLayer{}, false, fmt.Errorf("advance auth key session layer: %w", err)
 	}
-	if _, fresh := store.AuthKeySessionLayerEvidenceFresh(now, msgID); !fresh {
+	switch status {
+	case "ok":
+		return current, applied, nil
+	case "identity_changed":
+		return store.AuthKeySessionLayer{}, false, errAuthIdentityChanged
+	case "auth_key_not_found":
+		return store.AuthKeySessionLayer{}, false, store.ErrAuthKeyNotFound
+	case "binding_invalid":
+		return store.AuthKeySessionLayer{}, false, store.ErrAuthKeyBindingInvalid
+	case "evidence_invalid":
 		return store.AuthKeySessionLayer{}, false, store.ErrAuthKeySessionLayerInvalid
+	case "conflict":
+		return current, false, store.ErrAuthKeySessionLayerConflict
+	default:
+		return store.AuthKeySessionLayer{}, false, fmt.Errorf("advance auth key session layer: unknown database status %q", status)
 	}
-	if current.MessageID != 0 && now.Before(current.ExpiresAt) {
-		switch {
-		case msgID < current.MessageID:
-			if err := tx.QueryRow(ctx, `
-SELECT layer = $2 AND layer_observation_id = $3
-FROM auth_keys WHERE auth_key_id = $1
-`, permID, current.Layer, current.ObservationID).Scan(&current.SharedDefault); err != nil {
-				return store.AuthKeySessionLayer{}, false, fmt.Errorf("compare older session layer with shared default: %w", err)
-			}
-			return current, false, nil
-		case msgID == current.MessageID:
-			if layer != current.Layer {
-				return current, false, store.ErrAuthKeySessionLayerConflict
-			}
-			if err := tx.QueryRow(ctx, `
-SELECT layer = $2 AND layer_observation_id = $3
-FROM auth_keys WHERE auth_key_id = $1
-`, permID, current.Layer, current.ObservationID).Scan(&current.SharedDefault); err != nil {
-				return store.AuthKeySessionLayer{}, false, fmt.Errorf("compare duplicate session layer with shared default: %w", err)
-			}
-			return current, false, nil
-		}
-	}
-
-	var observationID int64
-	if err := tx.QueryRow(ctx, `SELECT nextval('auth_key_layer_observation_seq')`).Scan(&observationID); err != nil {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("allocate auth key layer observation: %w", err)
-	}
-	err = tx.QueryRow(ctx, `
-INSERT INTO auth_key_session_layers (
-  raw_auth_key_id, session_id, layer, msg_id, observation_id, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (raw_auth_key_id, session_id) DO UPDATE SET
-  layer = EXCLUDED.layer,
-  msg_id = EXCLUDED.msg_id,
-  observation_id = EXCLUDED.observation_id,
-  expires_at = EXCLUDED.expires_at
-RETURNING layer, msg_id, observation_id, expires_at
-`, rawID, sessionID, layer, msgID, observationID, expiresAt).Scan(
-		&current.Layer,
-		&current.MessageID,
-		&current.ObservationID,
-		&current.ExpiresAt,
-	)
-	if err != nil {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("upsert auth key session layer: %w", err)
-	}
-	keyIDs := []int64{rawID}
-	if permID != rawID {
-		keyIDs = append(keyIDs, permID)
-	}
-	tag, err := tx.Exec(ctx, `
-UPDATE auth_keys
-SET layer = $2, layer_observation_id = $3
-WHERE auth_key_id = ANY($1::bigint[])
-  AND layer_observation_id < $3
-`, keyIDs, layer, observationID)
-	if err != nil {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("publish auth key session layer defaults: %w", err)
-	}
-	if tag.RowsAffected() != int64(len(keyIDs)) {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("publish auth key session layer defaults: updated %d of %d locked keys", tag.RowsAffected(), len(keyIDs))
-	}
-	if _, err := tx.Exec(ctx, `
-UPDATE authorizations
-SET layer = $2
-WHERE auth_key_id = ANY($1::bigint[])
-`, keyIDs, layer); err != nil {
-		return store.AuthKeySessionLayer{}, false, fmt.Errorf("mirror auth key session layer defaults: %w", err)
-	}
-	current.SharedDefault = true
-	return current, true, nil
 }
 
 func (s *AuthKeyStore) DeleteSessionLayer(

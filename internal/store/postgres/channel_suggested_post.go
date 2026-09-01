@@ -13,6 +13,12 @@ import (
 
 const suggestedPostSettlementAge = 24 * 60 * 60
 
+// A claim is durable queue metadata, not a business transition. It prevents
+// two dispatcher instances that selected the same due key from processing it
+// concurrently. A crashed worker only delays that key; it does not block any
+// sibling aggregate, and the bounded failure backoff may shorten the lease.
+const suggestedPostLifecycleClaimSeconds = 5 * 60
+
 type persistedSuggestedPostApproval struct {
 	monoforumID, parentID, actorID, payerID                                                       int64
 	messageID, scheduleDate, approvalServiceID, publishedMessageID, settlementDue, finalServiceID int
@@ -62,8 +68,21 @@ func (s *ChannelStore) ToggleSuggestedPostApproval(ctx context.Context, req doma
 	if parent.Deleted || !parent.Broadcast || parent.LinkedMonoforumID != mono.ID {
 		return domain.ToggleSuggestedPostApprovalResult{}, domain.ErrSuggestedPostInvalid
 	}
+	// All lifecycle/toggle paths lock an existing approval before its original
+	// message. A first command has no row to lock, so it rechecks after taking
+	// the message lock; this preserves single creation without a gap lock.
+	existing, found, err := loadSuggestedPostApprovalTx(ctx, tx, mono.ID, req.MessageID, true)
+	if err != nil {
+		return domain.ToggleSuggestedPostApprovalResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM channel_messages WHERE channel_id=$1 AND id=$2 FOR UPDATE`, mono.ID, req.MessageID); err != nil {
 		return domain.ToggleSuggestedPostApprovalResult{}, err
+	}
+	if !found {
+		existing, found, err = loadSuggestedPostApprovalTx(ctx, tx, mono.ID, req.MessageID, true)
+		if err != nil {
+			return domain.ToggleSuggestedPostApprovalResult{}, err
+		}
 	}
 	original, err := s.getChannelMessage(ctx, tx, mono.ID, req.MessageID)
 	if err != nil {
@@ -92,10 +111,6 @@ func (s *ChannelStore) ToggleSuggestedPostApproval(ctx context.Context, req doma
 		return domain.ToggleSuggestedPostApprovalResult{}, domain.ErrSuggestedPostApprovalForbidden
 	}
 
-	existing, found, err := loadSuggestedPostApprovalTx(ctx, tx, mono.ID, original.ID, true)
-	if err != nil {
-		return domain.ToggleSuggestedPostApprovalResult{}, err
-	}
 	if found && existing.state != domain.SuggestedPostStateBalanceLow {
 		result, err := s.loadSuggestedPostResultTx(ctx, tx, existing, true)
 		if err != nil {
@@ -300,10 +315,21 @@ func upsertSuggestedPostApprovalTx(ctx context.Context, tx pgx.Tx, row persisted
 	if row.price != nil {
 		kind, amount, nanos = string(row.price.Kind), row.price.Amount, row.price.Nanos
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO suggested_post_approvals(monoforum_id,suggestion_message_id,parent_channel_id,actor_user_id,payer_user_id,state,price_kind,price_amount,price_nanos,schedule_date,approval_service_message_id,published_message_id,settlement_due,final_service_message_id,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
-ON CONFLICT(monoforum_id,suggestion_message_id) DO UPDATE SET actor_user_id=EXCLUDED.actor_user_id,state=EXCLUDED.state,price_kind=EXCLUDED.price_kind,price_amount=EXCLUDED.price_amount,price_nanos=EXCLUDED.price_nanos,schedule_date=EXCLUDED.schedule_date,approval_service_message_id=EXCLUDED.approval_service_message_id,published_message_id=EXCLUDED.published_message_id,settlement_due=EXCLUDED.settlement_due,final_service_message_id=EXCLUDED.final_service_message_id,updated_at=EXCLUDED.updated_at`,
-		row.monoforumID, row.messageID, row.parentID, row.actorID, row.payerID, string(row.state), kind, amount, nanos, row.scheduleDate, row.approvalServiceID, row.publishedMessageID, row.settlementDue, row.finalServiceID, date)
+	nextAttemptAt := 0
+	switch row.state {
+	case domain.SuggestedPostStateScheduled:
+		nextAttemptAt = row.scheduleDate
+	case domain.SuggestedPostStatePublished:
+		nextAttemptAt = row.settlementDue
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO suggested_post_approvals(monoforum_id,suggestion_message_id,parent_channel_id,actor_user_id,payer_user_id,state,price_kind,price_amount,price_nanos,schedule_date,approval_service_message_id,published_message_id,settlement_due,final_service_message_id,next_attempt_at,created_at,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)
+ON CONFLICT(monoforum_id,suggestion_message_id) DO UPDATE SET actor_user_id=EXCLUDED.actor_user_id,state=EXCLUDED.state,price_kind=EXCLUDED.price_kind,price_amount=EXCLUDED.price_amount,price_nanos=EXCLUDED.price_nanos,schedule_date=EXCLUDED.schedule_date,approval_service_message_id=EXCLUDED.approval_service_message_id,published_message_id=EXCLUDED.published_message_id,settlement_due=EXCLUDED.settlement_due,final_service_message_id=EXCLUDED.final_service_message_id,lifecycle_attempts=0,next_attempt_at=EXCLUDED.next_attempt_at,last_lifecycle_error='',updated_at=EXCLUDED.updated_at`,
+		row.monoforumID, row.messageID, row.parentID, row.actorID, row.payerID, string(row.state), kind, amount, nanos, row.scheduleDate, row.approvalServiceID, row.publishedMessageID, row.settlementDue, row.finalServiceID, nextAttemptAt, date)
+	if err == nil {
+		_, err = tx.Exec(ctx, `DELETE FROM suggested_post_lifecycle_wakeups
+WHERE monoforum_id=$1 AND suggestion_message_id=$2`, row.monoforumID, row.messageID)
+	}
 	return err
 }
 
@@ -393,17 +419,29 @@ func (s *ChannelStore) ProcessSuggestedPostLifecycle(ctx context.Context, req do
 		req.Limit = 100
 	}
 	rows, err := s.db.Query(ctx, `
+WITH timed AS MATERIALIZED (
+    SELECT monoforum_id,suggestion_message_id,next_attempt_at AS due_at
+    FROM suggested_post_approvals
+    WHERE state IN ('scheduled','published') AND next_attempt_at <= $1
+    ORDER BY next_attempt_at,monoforum_id,suggestion_message_id
+    LIMIT $2
+), woken AS MATERIALIZED (
+    SELECT w.monoforum_id,w.suggestion_message_id,w.created_at AS due_at
+    FROM suggested_post_lifecycle_wakeups w
+    JOIN suggested_post_approvals a
+      ON a.monoforum_id=w.monoforum_id AND a.suggestion_message_id=w.suggestion_message_id
+    WHERE a.state IN ('scheduled','published')
+    ORDER BY w.created_at,w.monoforum_id,w.suggestion_message_id
+    LIMIT $2
+), due AS (
+    SELECT * FROM timed
+    UNION ALL
+    SELECT * FROM woken
+)
 SELECT monoforum_id,suggestion_message_id
-FROM suggested_post_approvals a
-WHERE (a.state='scheduled' AND a.schedule_date <= $1)
-	   OR (a.state='scheduled' AND EXISTS (
-	        SELECT 1 FROM channel_messages sm
-	        WHERE sm.channel_id=a.monoforum_id AND sm.id=a.suggestion_message_id AND sm.deleted))
-	   OR (a.state='published' AND (a.settlement_due <= $1 OR EXISTS (
-        SELECT 1 FROM channel_messages m
-        WHERE m.channel_id=a.parent_channel_id AND m.id=a.published_message_id AND m.deleted)))
-ORDER BY CASE WHEN a.state='scheduled' THEN a.schedule_date ELSE a.settlement_due END,
-         a.monoforum_id,a.suggestion_message_id
+FROM due
+GROUP BY monoforum_id,suggestion_message_id
+ORDER BY MIN(due_at),monoforum_id,suggestion_message_id
 LIMIT $2`, req.Now, req.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list due suggested posts: %w", err)
@@ -427,16 +465,76 @@ LIMIT $2`, req.Now, req.Limit)
 	}
 	rows.Close()
 	out := make([]domain.ToggleSuggestedPostApprovalResult, 0, len(keys))
+	var failures []error
 	for _, k := range keys {
-		result, changed, err := s.processSuggestedPostLifecycleOne(ctx, k.mono, k.message, req.Now)
+		claimed, err := s.claimSuggestedPostLifecycle(ctx, k.mono, k.message, req.Now)
 		if err != nil {
-			return out, err
+			failures = append(failures, fmt.Errorf("claim suggested post lifecycle %d/%d: %w", k.mono, k.message, err))
+			continue
 		}
+		if !claimed {
+			continue
+		}
+		result, changed, err := s.processSuggestedPostLifecycleOne(ctx, k.mono, k.message, req.Now)
 		if changed {
+			// A post-commit reload can fail after the durable transition already
+			// succeeded. Preserve that result so its committed updates still reach
+			// the fanout layer; only pre-commit failures need retry metadata.
 			out = append(out, result)
 		}
+		if err != nil {
+			failures = append(failures, fmt.Errorf("suggested post lifecycle %d/%d: %w", k.mono, k.message, err))
+			if !changed {
+				if recordErr := s.recordSuggestedPostLifecycleFailure(ctx, k.mono, k.message, req.Now, err); recordErr != nil {
+					failures = append(failures, fmt.Errorf("record suggested post lifecycle failure %d/%d: %w", k.mono, k.message, recordErr))
+				}
+			}
+			continue
+		}
 	}
-	return out, nil
+	return out, errors.Join(failures...)
+}
+
+func (s *ChannelStore) claimSuggestedPostLifecycle(ctx context.Context, monoforumID int64, messageID, now int) (bool, error) {
+	if monoforumID <= 0 || messageID <= 0 || now <= 0 {
+		return false, domain.ErrSuggestedPostInvalid
+	}
+	var claimed bool
+	err := s.db.QueryRow(ctx, `WITH claimed AS (
+    UPDATE suggested_post_approvals a
+    SET next_attempt_at=$3+$4,
+        updated_at=GREATEST(a.updated_at,$3)
+    WHERE a.monoforum_id=$1 AND a.suggestion_message_id=$2
+      AND a.state IN ('scheduled','published')
+      AND (a.next_attempt_at <= $3 OR EXISTS (
+          SELECT 1 FROM suggested_post_lifecycle_wakeups w
+          WHERE w.monoforum_id=a.monoforum_id AND w.suggestion_message_id=a.suggestion_message_id))
+    RETURNING a.monoforum_id,a.suggestion_message_id
+), cleared AS (
+    DELETE FROM suggested_post_lifecycle_wakeups w
+    USING claimed c
+    WHERE w.monoforum_id=c.monoforum_id AND w.suggestion_message_id=c.suggestion_message_id
+)
+SELECT EXISTS(SELECT 1 FROM claimed)`, monoforumID, messageID, now, suggestedPostLifecycleClaimSeconds).Scan(&claimed)
+	return claimed, err
+}
+
+func (s *ChannelStore) recordSuggestedPostLifecycleFailure(ctx context.Context, monoforumID int64, messageID, now int, cause error) error {
+	if monoforumID <= 0 || messageID <= 0 || now <= 0 || cause == nil {
+		return domain.ErrSuggestedPostInvalid
+	}
+	lastError := []rune(strings.TrimSpace(cause.Error()))
+	if len(lastError) > 512 {
+		lastError = lastError[:512]
+	}
+	_, err := s.db.Exec(ctx, `UPDATE suggested_post_approvals
+SET lifecycle_attempts=LEAST(lifecycle_attempts+1,1000000),
+    next_attempt_at=$3+LEAST(300,5*(LEAST(lifecycle_attempts,59)+1)),
+    last_lifecycle_error=$4,
+    updated_at=GREATEST(updated_at,$3)
+WHERE monoforum_id=$1 AND suggestion_message_id=$2 AND state IN ('scheduled','published')`,
+		monoforumID, messageID, now, string(lastError))
+	return err
 }
 
 func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, monoID int64, messageID, now int) (domain.ToggleSuggestedPostApprovalResult, bool, error) {
@@ -476,7 +574,10 @@ func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, mon
 	if err != nil {
 		return domain.ToggleSuggestedPostApprovalResult{}, false, err
 	}
-	original, err := s.getChannelMessage(ctx, tx, row.monoforumID, row.messageID)
+	// Serialize a scheduled publish with deletion of the original suggestion.
+	// The delete trigger only reads the approval row and writes a wakeup, so
+	// taking approval -> message locks here does not introduce a reverse edge.
+	original, err := getSuggestedPostMessageForShare(ctx, tx, row.monoforumID, row.messageID)
 	if err != nil {
 		return domain.ToggleSuggestedPostApprovalResult{}, false, err
 	}
@@ -506,6 +607,15 @@ func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, mon
 		changed = true
 	}
 	if !changed {
+		nextAttemptAt := row.scheduleDate
+		if row.state == domain.SuggestedPostStatePublished {
+			nextAttemptAt = row.settlementDue
+		}
+		if _, err := tx.Exec(ctx, `UPDATE suggested_post_approvals
+SET lifecycle_attempts=0,next_attempt_at=$3,last_lifecycle_error='',updated_at=GREATEST(updated_at,$4)
+WHERE monoforum_id=$1 AND suggestion_message_id=$2`, row.monoforumID, row.messageID, nextAttemptAt, now); err != nil {
+			return result, false, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return result, false, err
 		}
@@ -519,15 +629,31 @@ func (s *ChannelStore) processSuggestedPostLifecycleOne(ctx context.Context, mon
 		return result, false, err
 	}
 	committed = true
-	result.Monoforum, err = getChannelByID(ctx, s.db, row.monoforumID)
+	reloadedMonoforum, err := getChannelByID(ctx, s.db, row.monoforumID)
 	if err != nil {
 		return result, true, fmt.Errorf("reload lifecycle monoforum after commit: %w", err)
 	}
-	result.Parent, err = getChannelByID(ctx, s.db, row.parentID)
+	result.Monoforum = reloadedMonoforum
+	reloadedParent, err := getChannelByID(ctx, s.db, row.parentID)
 	if err != nil {
 		return result, true, fmt.Errorf("reload lifecycle parent after commit: %w", err)
 	}
+	result.Parent = reloadedParent
 	return result, true, nil
+}
+
+func getSuggestedPostMessageForShare(ctx context.Context, tx pgx.Tx, channelID int64, messageID int) (domain.ChannelMessage, error) {
+	if channelID <= 0 || messageID <= 0 {
+		return domain.ChannelMessage{}, domain.ErrMessageIDInvalid
+	}
+	msg, err := scanChannelMessage(tx.QueryRow(ctx, `SELECT `+channelMessageColumns+`
+FROM channel_messages
+WHERE channel_id=$1 AND id=$2
+FOR SHARE`, channelID, messageID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ChannelMessage{}, domain.ErrMessageIDInvalid
+	}
+	return msg, err
 }
 
 func (r persistedSuggestedPostApproval) savedPeer() domain.Peer {

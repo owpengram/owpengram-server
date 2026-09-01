@@ -6,8 +6,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"telesrv/internal/domain"
 	"time"
+
+	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // UserStore 是 store.UserStore 的内存实现。ID 与 PG identity 使用同一业务起点。
@@ -18,11 +20,11 @@ type UserStore struct {
 	usernameRegistry *CollectibleUsernameStore
 }
 
-// NewUserStore 创建内存 UserStore。内置系统账号（777000 / BotFather / Stickers / ChatBot）
+// NewUserStore 创建内存 UserStore。内置系统账号
 // 预置进表，与 postgres 的迁移种子保持双 store 行为一致。
 func NewUserStore() *UserStore {
 	s := &UserStore{byID: make(map[int64]domain.User), nextID: domain.UserIDSequenceBase}
-	for _, id := range []int64{domain.OfficialSystemUserID, domain.BotFatherUserID, domain.StickersBotUserID, domain.ChatBotUserID, domain.GifBotUserID} {
+	for _, id := range domain.SystemUserIDs() {
 		if u, ok := domain.SystemUserByID(id); ok {
 			s.byID[u.ID] = u
 		}
@@ -449,6 +451,24 @@ func (s *UserStore) UpdateLastSeen(_ context.Context, userID int64, lastSeenAt i
 	if lastSeenAt > u.LastSeenAt {
 		u.LastSeenAt = lastSeenAt
 		s.byID[userID] = u
+	}
+	return nil
+}
+
+func (s *UserStore) UpdateLastSeenBatch(ctx context.Context, updates []store.UserLastSeenUpdate) error {
+	latest := make(map[int64]int, len(updates))
+	for _, update := range updates {
+		if update.UserID == 0 || update.LastSeenAt <= 0 {
+			continue
+		}
+		if current := latest[update.UserID]; update.LastSeenAt > current {
+			latest[update.UserID] = update.LastSeenAt
+		}
+	}
+	for userID, lastSeenAt := range latest {
+		if err := s.UpdateLastSeen(ctx, userID, lastSeenAt); err != nil {
+			return err
+		}
 	}
 	return nil
 }

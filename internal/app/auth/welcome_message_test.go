@@ -151,7 +151,7 @@ func TestTwoFactorSignInDefersWelcomeMessageUntilPasswordCompletes(t *testing.T)
 		t.Fatalf("welcome message fired before password check completed: %+v", pending.Messages[0])
 	}
 
-	if err := svc.CompletePasswordSignIn(ctx, key); err != nil {
+	if err := svc.CompletePasswordSignIn(ctx, key, u.ID); err != nil {
 		t.Fatalf("CompletePasswordSignIn: %v", err)
 	}
 

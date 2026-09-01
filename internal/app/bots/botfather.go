@@ -50,7 +50,8 @@ const (
 	maxTelegramLoginCommandsPerMessage = 32
 )
 
-const botFatherHelpText = `I can help you create and manage ` + branding.ProductName + ` bots.
+func botFatherHelpText() string {
+	return `I can help you create and manage ` + branding.ProductName + ` bots.
 
 You can control me by sending these commands:
 
@@ -73,6 +74,7 @@ You can control me by sending these commands:
 /done - finish the active Telegram Login configuration
 /cancel - cancel the current operation
 /help - show this message`
+}
 
 // botReply 是内置 service bot 的一条回复。ReplyMarkup 为可选 inline keyboard
 // 快照（@verifybot 的按钮式对话使用）；落库前经 domain.ValidateReplyMarkup 校验。
@@ -80,6 +82,7 @@ type botReply struct {
 	Text        string
 	Entities    []domain.MessageEntity
 	ReplyMarkup *domain.MessageReplyMarkup
+	Media       *domain.MessageMedia
 }
 
 // HandlesBot 报告该收件人是否为内置应答 bot（messages.BotResponder 实现）。
@@ -105,7 +108,7 @@ func (s *Service) HandlesBot(botUserID int64) bool {
 // OnPrivateMessage 处理投递给内置 bot 的私聊消息（messages.BotResponder 实现）。
 // msg 是 bot 视角的收件 box 行。回复异步生成（不占用户 sendMessage 的 RPC
 // goroutine——官方 bot 回复本就异步到达），失败只记日志，绝不影响用户消息本身。
-func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message) {
+func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message, session domain.ClientSessionMetadata) {
 	if s == nil || s.messages == nil || !s.HandlesBot(botUserID) {
 		return
 	}
@@ -163,7 +166,7 @@ func (s *Service) serviceBotRecipientBlocked(ctx context.Context, botUserID, use
 }
 
 func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, userID int64, reply botReply) (domain.SendPrivateTextResult, bool) {
-	if s == nil || s.messages == nil || reply.Text == "" {
+	if s == nil || s.messages == nil || (reply.Text == "" && reply.Media.IsZero()) {
 		return domain.SendPrivateTextResult{}, false
 	}
 	markup := reply.ReplyMarkup
@@ -183,6 +186,7 @@ func (s *Service) sendServiceBotReplyResult(ctx context.Context, botUserID, user
 		RandomID:         s.botReplyRandomID(),
 		Message:          reply.Text,
 		Entities:         serviceBotReplyEntities(reply.Text, reply.Entities),
+		Media:            reply.Media,
 		ReplyMarkup:      markup,
 		Date:             int(s.now().Unix()),
 		RecipientBlocked: s.serviceBotRecipientBlocked(ctx, botUserID, userID),
@@ -323,7 +327,7 @@ func (s *Service) handleBotFatherCommand(ctx context.Context, userID int64, cmd 
 	switch cmd {
 	case "start", "help":
 		_ = s.bots.DeleteBotChatState(ctx, domain.BotFatherUserID, userID)
-		return botReply{Text: botFatherHelpText}
+		return botReply{Text: botFatherHelpText()}
 	case "cancel":
 		state, found, err := s.bots.GetBotChatState(ctx, domain.BotFatherUserID, userID)
 		if err != nil {

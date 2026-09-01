@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/gotd/log/logzap"
 	"github.com/iamxvbaba/td/bin"
@@ -43,8 +45,9 @@ func TestKeyExchange(t *testing.T) {
 	}
 
 	keys := memory.NewAuthKeyStore()
+	logCore, observedLogs := observer.New(zap.DebugLevel)
 	srv := New(Options{
-		Logger:   zaptest.NewLogger(t),
+		Logger:   zap.New(logCore),
 		DC:       dc,
 		RSAKey:   rsaKey,
 		AuthKeys: keys,
@@ -97,6 +100,10 @@ func TestKeyExchange(t *testing.T) {
 	}
 	if saved.ServerSalt != res.ServerSalt {
 		t.Fatalf("server salt mismatch: server=%d client=%d", saved.ServerSalt, res.ServerSalt)
+	}
+	completed := observedLogs.FilterMessage("Key exchange completed").All()
+	if len(completed) != 1 || completed[0].Level != zap.DebugLevel {
+		t.Fatalf("successful key exchange logs = %+v, want one Debug entry", completed)
 	}
 
 	cancel()

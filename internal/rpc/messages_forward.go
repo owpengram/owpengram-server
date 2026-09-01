@@ -392,7 +392,11 @@ func (r *Router) forwardMessagesToMonoforum(
 	if len(absentIndexes) == 0 {
 		results := make([]tg.UpdatesClass, 0, len(replays))
 		for _, replay := range replays {
-			results = append(results, r.monoforumSendUpdates(ctx, userID, mono, savedPeer, replay.channel))
+			updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, savedPeer, replay.channel)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, updates)
 		}
 		return combineSendUpdates(results), nil
 	}
@@ -436,7 +440,11 @@ func (r *Router) forwardMessagesToMonoforum(
 	results := make([]tg.UpdatesClass, 0, len(req.ID))
 	for i, source := range sources {
 		if replays[i].found {
-			results = append(results, r.monoforumSendUpdates(ctx, userID, mono, savedPeer, replays[i].channel))
+			updates, err := r.monoforumSendUpdatesStrict(ctx, userID, mono, savedPeer, replays[i].channel)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, updates)
 			continue
 		}
 		forward := source.forward

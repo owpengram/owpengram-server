@@ -1,6 +1,7 @@
 package secretchat
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -11,39 +12,44 @@ import (
 	"telesrv/internal/store"
 )
 
-// idAllocRetries 是 chat_id 撞键自愈的有界重试次数。
-const idAllocRetries = 4
-
 // Service 实现密聊握手状态机 + qts 消息投递。所有返回的 domain.SecretChat 都是当时快照。
-// 访问校验（self/bot/拉黑/隐私）在 rpc 层先行；本层做 DH 校验、id/access_hash 分配、
+// 访问校验（self/bot/拉黑/隐私）在 rpc 层先行；本层做 DH 校验、chat_id wire 不变量、access_hash 分配、
 // 状态机迁移与 qts 队列写入。绑定维度是设备级 perm auth_key（int64）。
 type Service struct {
 	store store.SecretChatStore
 	queue store.EncryptedQueueStore
-	ids   store.SecretChatIDAllocator
 }
 
 // NewService 创建密聊服务。
-func NewService(st store.SecretChatStore, queue store.EncryptedQueueStore, ids store.SecretChatIDAllocator) *Service {
-	return &Service{store: st, queue: queue, ids: ids}
+func NewService(st store.SecretChatStore, queue store.EncryptedQueueStore) *Service {
+	return &Service{store: st, queue: queue}
 }
 
-// RequestEncryption 受理 requestEncryption：校验 g_a → 幂等去重 → 分配 chat_id + 双
+// RequestEncryption 受理 requestEncryption：校验 g_a → 校验 random_id/chat_id 全局唯一性 → 分配双
 // access_hash → 盲存 g_a → 落 requested 态。返回的密聊由 rpc 层投影为 admin 视角
 // encryptedChatWaiting（同步响应）与 participant 视角 encryptedChatRequested（推送）。
 func (s *Service) RequestEncryption(ctx context.Context, req domain.SecretChatRequest) (domain.SecretChat, error) {
 	if req.AdminUserID == 0 || req.ParticipantUserID == 0 || req.AdminAuthKeyID == 0 {
 		return domain.SecretChat{}, ErrGAInvalid
 	}
+	if req.RandomID == 0 {
+		return domain.SecretChat{}, domain.ErrSecretChatRandomIDDuplicate
+	}
 	ga, err := validateDHParam(req.GA)
 	if err != nil {
 		return domain.SecretChat{}, err
 	}
-	// 幂等：同发起设备 + random_id 重发返回既有 chat（DISCARDED 视为新请求）。
-	if existing, ok, err := s.store.GetByAdminRandom(ctx, req.AdminAuthKeyID, req.RandomID); err != nil {
+	// Telegram wire 契约：requestEncryption.random_id 同时就是 chat_id。TDLib 会先以
+	// random_id 创建本地 SecretChatActor，并在消费响应时强校验 response.id 相等；禁止
+	// 用服务端序列替换。全局主键碰撞只允许相同意图的网络重放，其余显式 duplicate。
+	chatID := int(req.RandomID)
+	if existing, ok, err := s.store.GetSecretChat(ctx, chatID); err != nil {
 		return domain.SecretChat{}, err
-	} else if ok && !existing.Terminal() {
-		return existing, nil
+	} else if ok {
+		if sameSecretChatRequest(existing, req, ga) && !existing.Terminal() {
+			return existing, nil
+		}
+		return domain.SecretChat{}, domain.ErrSecretChatRandomIDDuplicate
 	}
 	adminAH, err := randomAccessHash()
 	if err != nil {
@@ -54,6 +60,7 @@ func (s *Service) RequestEncryption(ctx context.Context, req domain.SecretChatRe
 		return domain.SecretChat{}, err
 	}
 	chat := domain.SecretChat{
+		ID:                    chatID,
 		AdminAccessHash:       adminAH,
 		ParticipantAccessHash: participantAH,
 		AdminUserID:           req.AdminUserID,
@@ -64,46 +71,27 @@ func (s *Service) RequestEncryption(ctx context.Context, req domain.SecretChatRe
 		RandomID:              req.RandomID,
 		Date:                  req.Date,
 	}
-	for attempt := 0; ; attempt++ {
-		chatID, err := s.nextChatID(ctx, attempt)
-		if err != nil {
-			return domain.SecretChat{}, err
-		}
-		chat.ID = chatID
-		err = s.store.CreateSecretChat(ctx, chat)
-		if err == nil {
-			return chat, nil
-		}
-		if errors.Is(err, domain.ErrSecretChatIDConflict) && attempt < idAllocRetries {
-			continue
-		}
+	if err := s.store.CreateSecretChat(ctx, chat); err == nil {
+		return chat, nil
+	} else if !errors.Is(err, domain.ErrSecretChatRandomIDDuplicate) {
 		return domain.SecretChat{}, err
 	}
+	// 并发相同请求可能在预查后由另一 goroutine 插入；只在重新读取后仍证明
+	// 是完全相同意图时收敛为幂等成功。
+	existing, ok, getErr := s.store.GetSecretChat(ctx, chatID)
+	if getErr != nil {
+		return domain.SecretChat{}, getErr
+	}
+	if ok && sameSecretChatRequest(existing, req, ga) && !existing.Terminal() {
+		return existing, nil
+	}
+	return domain.SecretChat{}, domain.ErrSecretChatRandomIDDuplicate
 }
 
-// nextChatID 分配下一个 chat_id；撞键后用 AtLeast(MaxSecretChatID) 顶起计数器自愈。
-// 校验 int32 正区间上界（EncryptedChat.ID 是 int32 量级）。
-func (s *Service) nextChatID(ctx context.Context, attempt int) (int, error) {
-	var (
-		id  int
-		err error
-	)
-	if attempt == 0 {
-		id, err = s.ids.NextSecretChatID(ctx)
-	} else {
-		floor, ferr := s.store.MaxSecretChatID(ctx)
-		if ferr != nil {
-			return 0, ferr
-		}
-		id, err = s.ids.NextSecretChatIDAtLeast(ctx, floor)
-	}
-	if err != nil {
-		return 0, err
-	}
-	if id <= 0 || id > 0x7fffffff {
-		return 0, fmt.Errorf("secretchat: chat id out of int32 range: %d", id)
-	}
-	return id, nil
+func sameSecretChatRequest(chat domain.SecretChat, req domain.SecretChatRequest, normalizedGA []byte) bool {
+	return chat.ID == int(req.RandomID) && chat.RandomID == req.RandomID &&
+		chat.AdminUserID == req.AdminUserID && chat.AdminAuthKeyID == req.AdminAuthKeyID &&
+		chat.ParticipantUserID == req.ParticipantUserID && bytes.Equal(chat.GA, normalizedGA)
 }
 
 // AcceptEncryption 受理 acceptEncryption：定位 + participant 视角 access_hash 校验 →
@@ -132,15 +120,24 @@ func (s *Service) AcceptEncryption(ctx context.Context, chatID int, viewerUserID
 	return s.store.AcceptSecretChat(ctx, chatID, participantAuthKeyID, gbPadded, keyFingerprint)
 }
 
-// DiscardEncryption 受理 discardEncryption：定位 + 参与者校验 → 迁移到 discarded。
+// DiscardEncryption 受理 discardEncryption：定位 + 参与者/绑定设备校验 → 迁移到 discarded。
 // already=true 表示已是终态（幂等成功）。返回的密聊由 rpc 层投影为对端
 // encryptedChatDiscarded 推送。
-func (s *Service) DiscardEncryption(ctx context.Context, chatID int, viewerUserID int64, deleteHistory bool) (domain.SecretChat, bool, error) {
+func (s *Service) DiscardEncryption(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID int64, deleteHistory bool) (domain.SecretChat, bool, error) {
 	chat, ok, err := s.store.GetSecretChat(ctx, chatID)
 	if err != nil {
 		return domain.SecretChat{}, false, err
 	}
-	if !ok || !chat.HasParticipant(viewerUserID) {
+	if !ok || !chat.HasParticipant(viewerUserID) || viewerAuthKeyID == 0 {
+		return domain.SecretChat{}, false, domain.ErrSecretChatNotFound
+	}
+	// Admin 从 request 起即绑定；participant 在 accept 前尚无绑定，任一收到账号级邀请的
+	// participant 设备都可拒绝。accept 一旦完成，双方所有操作都必须来自各自绑定设备。
+	boundAuthKeyID := chat.AuthKeyOf(viewerUserID)
+	if boundAuthKeyID != 0 && boundAuthKeyID != viewerAuthKeyID {
+		return domain.SecretChat{}, false, domain.ErrSecretChatNotFound
+	}
+	if boundAuthKeyID == 0 && viewerUserID != chat.ParticipantUserID {
 		return domain.SecretChat{}, false, domain.ErrSecretChatNotFound
 	}
 	return s.store.DiscardSecretChat(ctx, chatID, deleteHistory)
@@ -180,16 +177,17 @@ func (s *Service) DiscardForAuthKey(ctx context.Context, authKeyID int64) ([]dom
 	return discarded, nil
 }
 
-// SendEncrypted 受理 sendEncrypted*：定位 + 发送方视角 access_hash 校验 + 态须 normal →
+// SendEncrypted 受理 sendEncrypted*：定位 + 发送方绑定设备/access_hash 校验 + 态须 normal →
 // 给【对端绑定设备】分配 qts 并把不透明 bytes 写入投递队列（幂等：同 chat+random_id 返既有
 // qts/date）。返回密聊快照 + 已落库消息（携 qts/date，rpc 层据此推 updateNewEncryptedMessage
 // 并回 SentEncryptedMessage{date}）。盲中継：不解密 bytes。
-func (s *Service) SendEncrypted(ctx context.Context, chatID int, viewerUserID, accessHash int64, delivery domain.SecretMessageDelivery) (domain.SecretChat, domain.SecretChatMessage, error) {
+func (s *Service) SendEncrypted(ctx context.Context, chatID int, viewerUserID, viewerAuthKeyID, accessHash int64, delivery domain.SecretMessageDelivery) (domain.SecretChat, domain.SecretChatMessage, error) {
 	chat, ok, err := s.store.GetSecretChat(ctx, chatID)
 	if err != nil {
 		return domain.SecretChat{}, domain.SecretChatMessage{}, err
 	}
-	if !ok || !chat.HasParticipant(viewerUserID) || chat.AccessHashFor(viewerUserID) != accessHash {
+	if !ok || !chat.HasParticipant(viewerUserID) || viewerAuthKeyID == 0 ||
+		chat.AuthKeyOf(viewerUserID) != viewerAuthKeyID || chat.AccessHashFor(viewerUserID) != accessHash {
 		return domain.SecretChat{}, domain.SecretChatMessage{}, domain.ErrSecretChatNotFound
 	}
 	if chat.State != domain.SecretChatStateNormal {

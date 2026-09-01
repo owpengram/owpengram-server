@@ -119,7 +119,7 @@ func tgMessage(m domain.Message) tg.MessageClass {
 	if markup := tgReplyMarkup(m.ReplyMarkup); markup != nil {
 		msg.SetReplyMarkup(markup)
 	}
-	if rich := mustTGRichMessage(m.RichMessage); rich != nil {
+	if rich := optionalTGRichMessage("private_message", m.ID, m.RichMessage); rich != nil {
 		msg.SetRichMessage(*rich)
 	}
 	if m.TTLPeriod > 0 {

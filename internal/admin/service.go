@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -207,10 +209,15 @@ type UsersService interface {
 // AccountService carries the login-email factor (account_passwords table),
 // a separate concern from UsersService's users-table fields.
 type AccountService interface {
+	// ValidLoginEmail reports whether email is an acceptable login/signup
+	// email address.
+	ValidLoginEmail(email string) bool
 	// SetLoginEmail force-sets a user's login/signup email, no OTP required.
 	SetLoginEmail(ctx context.Context, userID int64, email string) error
 	// ClearLoginEmail removes the login email factor entirely.
 	ClearLoginEmail(ctx context.Context, userID int64) error
+	// LoginEmail returns a user's current login/signup email, if any.
+	LoginEmail(ctx context.Context, userID int64) (string, bool, error)
 }
 
 // BroadcastService creates and lists system broadcast campaigns (a message
@@ -290,6 +297,11 @@ type StickerSetsService interface {
 	// ValidateStickerMaterialUpload is a pure check (no store writes) so a dry-run
 	// preview can validate an uploaded file's shape without materializing it.
 	ValidateStickerMaterialUpload(fileName string, data []byte) (mimeType string, ok bool)
+	// ValidateAdminCreateStickerSet and ValidateAdminAddStickerToSet are pure
+	// checks (no store writes), used by a dry-run preview before the
+	// corresponding Admin* call actually mutates the pack.
+	ValidateAdminCreateStickerSet(ctx context.Context, title, shortName, emoji string, kind domain.StickerSetKind) error
+	ValidateAdminAddStickerToSet(ctx context.Context, setID int64, emoji string) error
 	AdminUploadStickerMaterial(ctx context.Context, fileName string, data []byte) (domain.Document, error)
 	AdminCreateStickerSet(ctx context.Context, req domain.CreateStickerSetRequest) (domain.StickerSet, []domain.Document, error)
 	AdminAddStickerToSet(ctx context.Context, setID int64, item domain.StickerSetItemInput) (domain.StickerSet, []domain.Document, error)
@@ -695,9 +707,10 @@ type RemoveStickerFromSetRequest struct {
 
 type CreateGifCatalogEntryRequest struct {
 	CommandMeta
-	Title    string `json:"title"`
-	FileName string `json:"file_name"`
-	Data     []byte `json:"-"`
+	Title         string `json:"title"`
+	FileName      string `json:"file_name"`
+	Data          []byte `json:"-"`
+	ContentSHA256 string `json:"content_sha256,omitempty"`
 }
 
 type SetGifCatalogEnabledRequest struct {
@@ -937,8 +950,9 @@ type TransferCollectibleUsernameRequest struct {
 // permanently when Burn is set.
 type RevokeCollectibleUsernameRequest struct {
 	CommandMeta
-	Username string `json:"username"`
-	Burn     bool   `json:"burn"`
+	Username            string `json:"username"`
+	ExpectedOwnerUserID int64  `json:"expected_owner_user_id,string,omitempty"`
+	Burn                bool   `json:"burn"`
 }
 
 // DeleteCollectibleUsernameRequest erases a collectible asset entirely. Unlike a
@@ -1365,11 +1379,14 @@ func (s *Service) SetProfile(ctx context.Context, req SetProfileRequest) (Comman
 	if req.UserID <= 0 {
 		return CommandResult{}, fmt.Errorf("user_id is required")
 	}
+	if domain.IsSystemUserID(req.UserID) {
+		return CommandResult{}, fmt.Errorf("system user profile cannot be changed")
+	}
 	if s == nil || s.users == nil {
 		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
 	}
-	firstName := strings.TrimSpace(req.FirstName)
-	lastName := strings.TrimSpace(req.LastName)
+	req.FirstName = strings.TrimSpace(req.FirstName)
+	req.LastName = strings.TrimSpace(req.LastName)
 	return s.runCommand(ctx, req.CommandMeta, ActionSetProfile, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		u, found, err := s.users.AdminUser(ctx, req.UserID)
 		if err != nil {
@@ -1379,18 +1396,21 @@ func (s *Service) SetProfile(ctx context.Context, req SetProfileRequest) (Comman
 			return CommandResult{}, domain.ErrUserNotFound
 		}
 		details := map[string]any{
-			"previous_first_name": u.FirstName, "previous_last_name": u.LastName,
-			"new_first_name": firstName, "new_last_name": lastName,
+			"previous_first_name": u.FirstName,
+			"previous_last_name":  u.LastName,
+			"new_first_name":      req.FirstName,
+			"new_last_name":       req.LastName,
+			"would_change":        u.FirstName != req.FirstName || u.LastName != req.LastName,
 		}
 		if req.DryRun {
-			return CommandResult{Message: "dry-run completed", Details: details}, nil
+			return CommandResult{Message: "profile update validated", Details: details}, nil
 		}
 		updated, err := s.users.UpdateProfile(ctx, req.UserID, domain.UserProfileUpdate{
-			FirstName: firstName, HasFirstName: true,
-			LastName: lastName, HasLastName: true,
+			FirstName: req.FirstName, HasFirstName: true,
+			LastName: req.LastName, HasLastName: true,
 		})
 		if err != nil {
-			return CommandResult{}, err
+			return CommandResult{Details: details}, err
 		}
 		if err := s.notifyUserChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
@@ -1409,7 +1429,10 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 	if s == nil || s.users == nil {
 		return CommandResult{}, fmt.Errorf("admin user dependency is not configured")
 	}
-	phone := strings.TrimSpace(req.Phone)
+	req.Phone = domain.NormalizePhone(req.Phone)
+	if !domain.ValidPhone(req.Phone) {
+		return CommandResult{}, domain.ErrPhoneNumberInvalid
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetPhone, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
 		u, found, err := s.users.AdminUser(ctx, req.UserID)
 		if err != nil {
@@ -1418,15 +1441,22 @@ func (s *Service) SetPhone(ctx context.Context, req SetPhoneRequest) (CommandRes
 		if !found {
 			return CommandResult{}, domain.ErrUserNotFound
 		}
-		details := map[string]any{"previous_phone": u.Phone, "new_phone": phone}
+		if u.Bot || domain.IsSystemUserID(u.ID) {
+			return CommandResult{}, domain.ErrPhoneChangeForbidden
+		}
+		details := map[string]any{
+			"previous_phone": u.Phone,
+			"new_phone":      req.Phone,
+			"would_change":   u.Phone != req.Phone,
+		}
 		if req.DryRun {
-			return CommandResult{Message: "dry-run completed", Details: details}, nil
+			return CommandResult{Message: "phone update validated", Details: details}, nil
 		}
-		updated, err := s.users.SetPhone(ctx, req.UserID, phone)
+		updated, err := s.users.SetPhone(ctx, req.UserID, req.Phone)
 		if err != nil {
-			return CommandResult{}, err
+			return CommandResult{Details: details}, err
 		}
-		details["updated_phone"] = updated.Phone
+		details["changed"] = u.Phone != updated.Phone
 		if err := s.notifyUserChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
 		}
@@ -1442,26 +1472,46 @@ func (s *Service) SetLoginEmail(ctx context.Context, req SetLoginEmailRequest) (
 	if req.UserID <= 0 {
 		return CommandResult{}, fmt.Errorf("user_id is required")
 	}
-	if s == nil || s.account == nil {
-		return CommandResult{}, fmt.Errorf("admin account dependency is not configured")
+	if s == nil || s.users == nil || s.account == nil {
+		return CommandResult{}, fmt.Errorf("admin account dependencies are not configured")
 	}
-	email := strings.TrimSpace(req.Email)
+	req.Email = strings.TrimSpace(req.Email)
+	if req.Email != "" && !s.account.ValidLoginEmail(req.Email) {
+		return CommandResult{}, domain.ErrEmailInvalid
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetLoginEmail, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
-		details := map[string]any{"new_login_email": email}
-		if req.DryRun {
-			return CommandResult{Message: "dry-run completed", Details: details}, nil
-		}
-		var err error
-		if email == "" {
-			err = s.account.ClearLoginEmail(ctx, req.UserID)
-		} else {
-			err = s.account.SetLoginEmail(ctx, req.UserID, email)
-		}
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
 		if err != nil {
 			return CommandResult{}, err
 		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		if u.Bot || domain.IsSystemUserID(u.ID) {
+			return CommandResult{}, domain.ErrEmailInvalid
+		}
+		previous, _, err := s.account.LoginEmail(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		details := map[string]any{
+			"previous_login_email": previous,
+			"new_login_email":      req.Email,
+			"would_change":         !strings.EqualFold(previous, req.Email),
+		}
+		if req.DryRun {
+			return CommandResult{Message: "login email update validated", Details: details}, nil
+		}
+		if req.Email == "" {
+			err = s.account.ClearLoginEmail(ctx, req.UserID)
+		} else {
+			err = s.account.SetLoginEmail(ctx, req.UserID, req.Email)
+		}
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
 		message := "login email updated"
-		if email == "" {
+		if req.Email == "" {
 			message = "login email cleared"
 		}
 		return CommandResult{Message: message, Details: details}, nil
@@ -1475,31 +1525,37 @@ func (s *Service) SetAccountAvatar(ctx context.Context, req SetAccountAvatarRequ
 	if req.UserID <= 0 {
 		return CommandResult{}, fmt.Errorf("user_id is required")
 	}
-	if s == nil || s.photos == nil {
-		return CommandResult{}, fmt.Errorf("admin photos dependency is not configured")
+	if domain.IsSystemUserID(req.UserID) {
+		return CommandResult{}, fmt.Errorf("system user avatar cannot be changed")
+	}
+	if s == nil || s.users == nil || s.photos == nil {
+		return CommandResult{}, fmt.Errorf("admin avatar dependencies are not configured")
 	}
 	if len(req.Data) == 0 || len(req.Data) > MaxAccountAvatarBytes || !s.photos.ValidateAvatarUpload(req.Data) {
 		return CommandResult{}, domain.ErrPhotoInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetAccountAvatar, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
-		details := map[string]any{"file_name": req.FileName, "bytes": len(req.Data)}
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{"file_name": req.FileName, "bytes": len(req.Data), "bot": u.Bot}
 		if req.DryRun {
-			return CommandResult{Message: "avatar validated", Details: details}, nil
+			return CommandResult{Message: "avatar update validated", Details: details}, nil
 		}
 		photo, err := s.photos.CreateAvatarFromBytes(ctx, req.Data, req.UserID)
 		if err != nil {
 			return CommandResult{Details: details}, err
 		}
-		if _, _, err := s.photos.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, req.UserID, domain.ProfilePhotoKindProfile, photo.ID, int(time.Now().Unix())); err != nil {
+		if _, _, err := s.photos.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, req.UserID, domain.ProfilePhotoKindProfile, photo.ID, int(s.now().Unix())); err != nil {
 			return CommandResult{Details: details}, err
 		}
-		details["photo_id"] = photo.ID
-		if s.users != nil {
-			if u, found, uerr := s.users.AdminUser(ctx, req.UserID); uerr == nil && found {
-				if nerr := s.notifyUserChanged(ctx, u); nerr != nil {
-					details["notify_error"] = nerr.Error()
-				}
-			}
+		details["photo_id"] = strconv.FormatInt(photo.ID, 10)
+		if err := s.notifyUserChanged(ctx, u); err != nil {
+			details["notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "avatar updated", Details: details}, nil
 	})
@@ -1514,20 +1570,28 @@ func (s *Service) SetChannelAvatar(ctx context.Context, req SetChannelAvatarRequ
 	if req.ChannelID <= 0 {
 		return CommandResult{}, fmt.Errorf("channel_id is required")
 	}
-	if s == nil || s.photos == nil {
-		return CommandResult{}, fmt.Errorf("admin photos dependency is not configured")
-	}
-	if s.channels == nil {
-		return CommandResult{}, fmt.Errorf("admin channel dependency is not configured")
+	if s == nil || s.channels == nil || s.photos == nil {
+		return CommandResult{}, fmt.Errorf("admin channel avatar dependencies are not configured")
 	}
 	if len(req.Data) == 0 || len(req.Data) > MaxAccountAvatarBytes || !s.photos.ValidateAvatarUpload(req.Data) {
 		return CommandResult{}, domain.ErrPhotoInvalid
 	}
 	target := domain.Peer{Type: domain.PeerTypeChannel, ID: req.ChannelID}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetChannelAvatar, 0, target, req, func() (CommandResult, error) {
-		details := map[string]any{"file_name": req.FileName, "bytes": len(req.Data)}
+		channel, err := s.channels.GetChannelByID(ctx, req.ChannelID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if channel.Deleted || channel.Monoforum || (!channel.Broadcast && !channel.Megagroup) {
+			return CommandResult{}, domain.ErrChannelInvalid
+		}
+		details := map[string]any{
+			"file_name":         req.FileName,
+			"bytes":             len(req.Data),
+			"previous_photo_id": strconv.FormatInt(channel.PhotoID, 10),
+		}
 		if req.DryRun {
-			return CommandResult{Message: "avatar validated", Details: details}, nil
+			return CommandResult{Message: "channel avatar update validated", Details: details}, nil
 		}
 		photo, err := s.photos.CreateAvatarFromBytes(ctx, req.Data, 0)
 		if err != nil {
@@ -1537,7 +1601,7 @@ func (s *Service) SetChannelAvatar(ctx context.Context, req SetChannelAvatarRequ
 		if err != nil {
 			return CommandResult{Details: details}, err
 		}
-		details["photo_id"] = photo.ID
+		details["photo_id"] = strconv.FormatInt(photo.ID, 10)
 		if err := s.notifyChannelChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
 		}
@@ -1562,38 +1626,10 @@ func (s *Service) ChannelAvatar(ctx context.Context, channelID int64) ([]byte, s
 		return nil, "", false, nil
 	}
 	photo, found, err := s.photos.GetPhoto(ctx, channel.PhotoID)
-	if err != nil {
-		return nil, "", false, err
+	if err != nil || !found {
+		return nil, "", found, err
 	}
-	if !found {
-		return nil, "", false, nil
-	}
-	size, inline, ok := bestAccountPhotoSize(photo.Sizes)
-	if !ok {
-		return nil, "", false, nil
-	}
-	data := inline
-	if len(data) == 0 {
-		chunk, found, err := s.photos.GetFile(ctx, domain.FileDownloadRequest{
-			LocationKey: fmt.Sprintf("photo:%d:%s", photo.ID, size.Type),
-			Limit:       MaxAccountAvatarBytes + 1,
-		})
-		if err != nil {
-			return nil, "", false, err
-		}
-		if !found || chunk.Total <= 0 || chunk.Total > MaxAccountAvatarBytes || int64(len(chunk.Bytes)) != chunk.Total {
-			return nil, "", false, nil
-		}
-		data = chunk.Bytes
-	}
-	if len(data) == 0 || len(data) > MaxAccountAvatarBytes {
-		return nil, "", false, nil
-	}
-	detected := http.DetectContentType(data)
-	if !safeAccountImageType(detected) {
-		return nil, "", false, nil
-	}
-	return data, detected, true, nil
+	return s.avatarBytes(ctx, photo)
 }
 
 // SetUserColor force-sets or clears a user's name/profile color.
@@ -1970,6 +2006,9 @@ func (s *Service) RevokeCollectibleUsername(ctx context.Context, req RevokeColle
 	if !domain.ValidCollectibleUsername(req.Username) {
 		return CommandResult{}, codedError(CodeUsernameInvalid, domain.ErrUsernameInvalid)
 	}
+	if req.ExpectedOwnerUserID < 0 {
+		return CommandResult{}, fmt.Errorf("expected_owner_user_id must not be negative")
+	}
 	return s.runCommand(ctx, req.CommandMeta, ActionRevokeCollectibleUsername, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"username": req.Username, "burn": req.Burn}
 		asset, err := s.usernames.Collectible(ctx, req.Username)
@@ -1984,6 +2023,9 @@ func (s *Service) RevokeCollectibleUsername(ctx context.Context, req RevokeColle
 			return CommandResult{Details: details}, codedError(CodeCollectibleBurned, domain.ErrCollectibleUsernameBurned)
 		}
 		if !req.Burn && !asset.Owned() {
+			return CommandResult{Details: details}, codedError(CodeCollectibleNotOwned, domain.ErrCollectibleUsernameNotOwned)
+		}
+		if req.ExpectedOwnerUserID > 0 && asset.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: req.ExpectedOwnerUserID}) {
 			return CommandResult{Details: details}, codedError(CodeCollectibleNotOwned, domain.ErrCollectibleUsernameNotOwned)
 		}
 		if req.DryRun {
@@ -2362,7 +2404,17 @@ func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest)
 	if s == nil || s.auth == nil || s.revoker == nil {
 		return CommandResult{}, fmt.Errorf("admin auth dependencies are not configured")
 	}
-	if (req.Hash == 0 && req.KeepHash == 0 && !req.RevokeAll) || (req.Hash != 0 && (req.KeepHash != 0 || req.RevokeAll)) {
+	modeCount := 0
+	if req.Hash != 0 {
+		modeCount++
+	}
+	if req.KeepHash != 0 {
+		modeCount++
+	}
+	if req.RevokeAll {
+		modeCount++
+	}
+	if modeCount != 1 {
 		return CommandResult{}, fmt.Errorf("choose one revoke mode")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionRevokeSessions, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
@@ -2377,7 +2429,7 @@ func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest)
 		details := map[string]any{
 			"target_hashes": authorizationHashes(targets),
 			"target_count":  len(targets),
-			"keep_hash":     keep.Hash,
+			"keep_hash":     authorizationHashString(keep.Hash),
 		}
 		if req.DryRun {
 			return CommandResult{Message: "dry-run completed", Details: details}, nil
@@ -2388,9 +2440,10 @@ func (s *Service) RevokeSessions(ctx context.Context, req RevokeSessionsRequest)
 			if err != nil {
 				return CommandResult{}, err
 			}
-			if found {
-				revoked = append(revoked, deleted)
+			if !found {
+				return CommandResult{}, fmt.Errorf("authorization hash not found")
 			}
+			revoked = append(revoked, deleted)
 		} else {
 			deleted, err := s.auth.ResetAuthorizations(ctx, req.UserID, keep.AuthKeyID)
 			if err != nil {
@@ -2544,12 +2597,13 @@ func (s *Service) AccountAvatar(ctx context.Context, userID int64) ([]byte, stri
 		return nil, "", false, nil
 	}
 	photo, found, err := s.photos.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, userID, domain.ProfilePhotoKindProfile)
-	if err != nil {
-		return nil, "", false, err
+	if err != nil || !found {
+		return nil, "", found, err
 	}
-	if !found {
-		return nil, "", false, nil
-	}
+	return s.avatarBytes(ctx, photo)
+}
+
+func (s *Service) avatarBytes(ctx context.Context, photo domain.Photo) ([]byte, string, bool, error) {
 	size, inline, ok := bestAccountPhotoSize(photo.Sizes)
 	if !ok {
 		return nil, "", false, nil
@@ -2560,10 +2614,10 @@ func (s *Service) AccountAvatar(ctx context.Context, userID int64) ([]byte, stri
 			LocationKey: fmt.Sprintf("photo:%d:%s", photo.ID, size.Type),
 			Limit:       MaxAccountAvatarBytes + 1,
 		})
-		if err != nil {
-			return nil, "", false, err
+		if err != nil || !found {
+			return nil, "", found, err
 		}
-		if !found || chunk.Total <= 0 || chunk.Total > MaxAccountAvatarBytes || int64(len(chunk.Bytes)) != chunk.Total {
+		if chunk.Total <= 0 || chunk.Total > MaxAccountAvatarBytes || int64(len(chunk.Bytes)) != chunk.Total {
 			return nil, "", false, nil
 		}
 		data = chunk.Bytes
@@ -2571,11 +2625,11 @@ func (s *Service) AccountAvatar(ctx context.Context, userID int64) ([]byte, stri
 	if len(data) == 0 || len(data) > MaxAccountAvatarBytes {
 		return nil, "", false, nil
 	}
-	detected := http.DetectContentType(data)
-	if !safeAccountImageType(detected) {
+	mimeType := http.DetectContentType(data)
+	if !safeAccountImageType(mimeType) {
 		return nil, "", false, nil
 	}
-	return data, detected, true, nil
+	return data, mimeType, true, nil
 }
 
 func bestAccountPhotoSize(sizes []domain.PhotoSize) (domain.PhotoSize, []byte, bool) {
@@ -2659,7 +2713,7 @@ func (s *Service) SetStickerSetArchived(ctx context.Context, req SetStickerSetAr
 
 func (s *Service) SetStickerSetSortOrder(ctx context.Context, req SetStickerSetSortOrderRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil || req.SetID <= 0 || req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
-		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetStickerSetSortOrder, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "sort_order": req.SortOrder}
@@ -2674,7 +2728,7 @@ func (s *Service) SetStickerSetSortOrder(ctx context.Context, req SetStickerSetS
 
 func (s *Service) RenameStickerSet(ctx context.Context, req RenameStickerSetRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil || req.SetID <= 0 || strings.TrimSpace(req.Title) == "" {
-		return CommandResult{}, fmt.Errorf("valid sticker set, title and service are required")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionRenameStickerSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "title": req.Title}
@@ -2692,7 +2746,7 @@ func (s *Service) RenameStickerSet(ctx context.Context, req RenameStickerSetRequ
 
 func (s *Service) DeleteStickerSet(ctx context.Context, req DeleteStickerSetRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil || req.SetID <= 0 {
-		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionDeleteStickerSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10)}
@@ -2710,7 +2764,7 @@ func (s *Service) DeleteStickerSet(ctx context.Context, req DeleteStickerSetRequ
 
 func (s *Service) CreateStickerSet(ctx context.Context, req CreateStickerSetRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil {
-		return CommandResult{}, fmt.Errorf("sticker sets service is not configured")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.ShortName) == "" || strings.TrimSpace(req.Emoji) == "" {
 		return CommandResult{}, domain.ErrStickerSetFileInvalid
@@ -2727,6 +2781,9 @@ func (s *Service) CreateStickerSet(ctx context.Context, req CreateStickerSetRequ
 		details := map[string]any{
 			"title": req.Title, "short_name": req.ShortName, "kind": string(kind),
 			"file_name": req.FileName, "mime_type": mimeType, "bytes": len(req.Data),
+		}
+		if err := s.stickerSets.ValidateAdminCreateStickerSet(ctx, req.Title, req.ShortName, req.Emoji, kind); err != nil {
+			return CommandResult{Details: details}, err
 		}
 		if req.DryRun {
 			return CommandResult{Message: "sticker pack validated", Details: details}, nil
@@ -2757,7 +2814,7 @@ func (s *Service) CreateStickerSet(ctx context.Context, req CreateStickerSetRequ
 
 func (s *Service) AddStickerToSet(ctx context.Context, req AddStickerToSetRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil || req.SetID <= 0 {
-		return CommandResult{}, fmt.Errorf("valid sticker set and service are required")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	if strings.TrimSpace(req.Emoji) == "" {
 		return CommandResult{}, domain.ErrStickerSetEmojiInvalid
@@ -2770,6 +2827,12 @@ func (s *Service) AddStickerToSet(ctx context.Context, req AddStickerToSetReques
 		details := map[string]any{
 			"set_id": strconv.FormatInt(req.SetID, 10), "emoji": req.Emoji,
 			"file_name": req.FileName, "mime_type": mimeType, "bytes": len(req.Data),
+		}
+		// Validate the target and item before materializing a loose
+		// document/blob. Keeping this inside runCommand preserves replay of a
+		// previously completed command even if the pack has since changed.
+		if err := s.stickerSets.ValidateAdminAddStickerToSet(ctx, req.SetID, req.Emoji); err != nil {
+			return CommandResult{Details: details}, err
 		}
 		if req.DryRun {
 			return CommandResult{Message: "sticker upload validated", Details: details}, nil
@@ -2795,7 +2858,7 @@ func (s *Service) AddStickerToSet(ctx context.Context, req AddStickerToSetReques
 
 func (s *Service) RemoveStickerFromSet(ctx context.Context, req RemoveStickerFromSetRequest) (CommandResult, error) {
 	if s == nil || s.stickerSets == nil || req.SetID <= 0 || req.DocumentID <= 0 {
-		return CommandResult{}, fmt.Errorf("valid sticker set, document and service are required")
+		return CommandResult{}, domain.ErrStickerSetInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionRemoveStickerFromSet, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"set_id": strconv.FormatInt(req.SetID, 10), "document_id": strconv.FormatInt(req.DocumentID, 10)}
@@ -2811,9 +2874,18 @@ func (s *Service) RemoveStickerFromSet(ctx context.Context, req RemoveStickerFro
 	})
 }
 
+// GifCatalog returns every GIF catalog entry for the admin console's
+// management view.
+func (s *Service) GifCatalog(ctx context.Context) ([]domain.GifCatalogEntry, error) {
+	if s == nil || s.gifCatalog == nil {
+		return nil, domain.ErrGifCatalogUnavailable
+	}
+	return s.gifCatalog.AdminListGifCatalog(ctx)
+}
+
 func (s *Service) CreateGifCatalogEntry(ctx context.Context, req CreateGifCatalogEntryRequest) (CommandResult, error) {
 	if s == nil || s.gifCatalog == nil {
-		return CommandResult{}, fmt.Errorf("gif catalog service is not configured")
+		return CommandResult{}, domain.ErrGifCatalogUnavailable
 	}
 	if strings.TrimSpace(req.Title) == "" {
 		return CommandResult{}, domain.ErrGifCatalogEntryInvalid
@@ -2822,9 +2894,18 @@ func (s *Service) CreateGifCatalogEntry(ctx context.Context, req CreateGifCatalo
 	if !ok {
 		return CommandResult{}, domain.ErrGifCatalogFileInvalid
 	}
+	digest := sha256.Sum256(req.Data)
+	req.ContentSHA256 = hex.EncodeToString(digest[:])
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateGifCatalogEntry, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{
 			"title": req.Title, "file_name": req.FileName, "mime_type": mimeType, "bytes": len(req.Data),
+		}
+		entries, err := s.gifCatalog.AdminListGifCatalog(ctx)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		if len(entries) >= domain.MaxGifCatalogEntries {
+			return CommandResult{Details: details}, domain.ErrGifCatalogFull
 		}
 		if req.DryRun {
 			return CommandResult{Message: "gif catalog entry validated", Details: details}, nil
@@ -2845,7 +2926,7 @@ func (s *Service) CreateGifCatalogEntry(ctx context.Context, req CreateGifCatalo
 
 func (s *Service) SetGifCatalogEnabled(ctx context.Context, req SetGifCatalogEnabledRequest) (CommandResult, error) {
 	if s == nil || s.gifCatalog == nil || req.ID <= 0 {
-		return CommandResult{}, fmt.Errorf("valid gif catalog entry and service are required")
+		return CommandResult{}, domain.ErrGifCatalogEntryInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetGifCatalogEnabled, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"id": strconv.FormatInt(req.ID, 10), "enabled": req.Enabled}
@@ -2860,7 +2941,7 @@ func (s *Service) SetGifCatalogEnabled(ctx context.Context, req SetGifCatalogEna
 
 func (s *Service) SetGifCatalogSortOrder(ctx context.Context, req SetGifCatalogSortOrderRequest) (CommandResult, error) {
 	if s == nil || s.gifCatalog == nil || req.ID <= 0 || req.SortOrder < math.MinInt32 || req.SortOrder > math.MaxInt32 {
-		return CommandResult{}, fmt.Errorf("valid gif catalog entry and service are required")
+		return CommandResult{}, domain.ErrGifCatalogEntryInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionSetGifCatalogSortOrder, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"id": strconv.FormatInt(req.ID, 10), "sort_order": req.SortOrder}
@@ -2938,7 +3019,7 @@ func (s *Service) DeleteUncategorizedGifs(ctx context.Context, req DeleteUncateg
 
 func (s *Service) DeleteGifCatalogEntry(ctx context.Context, req DeleteGifCatalogEntryRequest) (CommandResult, error) {
 	if s == nil || s.gifCatalog == nil || req.ID <= 0 {
-		return CommandResult{}, fmt.Errorf("valid gif catalog entry and service are required")
+		return CommandResult{}, domain.ErrGifCatalogEntryInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionDeleteGifCatalogEntry, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{"id": strconv.FormatInt(req.ID, 10)}
@@ -3201,7 +3282,7 @@ func revokeTargets(items []domain.Authorization, req RevokeSessionsRequest) ([]d
 				return []domain.Authorization{a}, domain.Authorization{}, nil
 			}
 		}
-		return nil, domain.Authorization{}, nil
+		return nil, domain.Authorization{}, fmt.Errorf("authorization hash not found")
 	}
 	var keep domain.Authorization
 	if req.KeepHash != 0 {
@@ -3227,13 +3308,24 @@ func revokeTargets(items []domain.Authorization, req RevokeSessionsRequest) ([]d
 	return targets, keep, nil
 }
 
-func authorizationHashes(items []domain.Authorization) []int64 {
-	out := make([]int64, 0, len(items))
+func authorizationHashes(items []domain.Authorization) []string {
+	hashes := make([]int64, 0, len(items))
 	for _, a := range items {
-		out = append(out, a.Hash)
+		hashes = append(hashes, a.Hash)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	sort.Slice(hashes, func(i, j int) bool { return hashes[i] < hashes[j] })
+	out := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		out = append(out, authorizationHashString(hash))
+	}
 	return out
+}
+
+func authorizationHashString(hash int64) string {
+	if hash == 0 {
+		return ""
+	}
+	return strconv.FormatInt(hash, 10)
 }
 
 func normalizeIDs(ids []int) ([]int, error) {

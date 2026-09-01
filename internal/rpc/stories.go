@@ -12,6 +12,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
+	"go.uber.org/zap"
 
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/compat/tdesktop"
@@ -2800,10 +2801,15 @@ func (r *Router) onStoriesSendReaction(ctx context.Context, req *tg.StoriesSendR
 			if err != nil {
 				return nil, internalErr()
 			}
-			if updates := r.BuildOutboxUpdates(ctx, []OutboxUpdateRequest{{
+			updates, buildErr := r.BuildOutboxUpdates(ctx, []OutboxUpdateRequest{{
 				TargetUserID: ownerUserID,
 				Event:        event,
-			}}); len(updates) == 1 && updates[0] != nil {
+			}})
+			if buildErr != nil {
+				r.log.Error("build story reaction outbox update",
+					zap.Int64("viewer_user_id", ownerUserID),
+					zap.Error(buildErr))
+			} else if len(updates) == 1 && updates[0] != nil {
 				r.pushUserUpdatesIfNoReliableDispatch(ctx, ownerUserID, updates[0])
 			}
 		}

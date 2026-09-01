@@ -48,6 +48,22 @@ type UserStore interface {
 	UpdatePersonalChannel(ctx context.Context, userID int64, channelID int64) (domain.User, error)
 }
 
+// UserLastSeenUpdate is one monotonic durable presence watermark. Writers must
+// apply the maximum timestamp for duplicate user IDs and must never move the
+// stored value backwards.
+type UserLastSeenUpdate struct {
+	UserID     int64
+	LastSeenAt int
+}
+
+// UserLastSeenBatchStore is the optional production write boundary used by
+// lifecycle presence batching. It deliberately remains separate from
+// UserStore so narrow test stores and read-only projections do not acquire a
+// fake batch capability accidentally.
+type UserLastSeenBatchStore interface {
+	UpdateLastSeenBatch(ctx context.Context, updates []UserLastSeenUpdate) error
+}
+
 // UserEmojiStatusEventStore is the aggregate write boundary used by the
 // account RPC in durable deployments. The user snapshot, pts event and online
 // dispatch row must commit or roll back together.

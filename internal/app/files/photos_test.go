@@ -549,7 +549,7 @@ func TestCreateAvatarVideoMarkupFallsBackToVideoFirstFrame(t *testing.T) {
 	assertAvatarImageSize(t, svc, photo.ID, "a", 160, 160, "image/jpeg")
 }
 
-func TestCreateAvatarVideoMarkupRejectsSyntheticPreviewAndFallsBackToVideo(t *testing.T) {
+func TestCreateAvatarVideoMarkupRejectsDegeneratePreviewAndFallsBackToVideo(t *testing.T) {
 	ctx := context.Background()
 	media := newFakeMediaStore()
 	blobs, err := NewLocalFS(t.TempDir())
@@ -562,7 +562,7 @@ func TestCreateAvatarVideoMarkupRejectsSyntheticPreviewAndFallsBackToVideo(t *te
 		MimeType: "application/x-tgsticker",
 		Thumbs: []domain.PhotoSize{{
 			Kind: domain.PhotoSizeKindCached, Type: "m", W: 1, H: 1,
-			Bytes: append([]byte(nil), seedSyntheticTGStickerPreviewThumbPNG...),
+			Bytes: testJPEG(t, 1, 1),
 		}},
 	}); err != nil {
 		t.Fatalf("PutDocument: %v", err)
@@ -581,14 +581,14 @@ func TestCreateAvatarVideoMarkupRejectsSyntheticPreviewAndFallsBackToVideo(t *te
 		t.Fatalf("CreateAvatarVideoMarkupFromUpload: %v", err)
 	}
 	if thumbnailer.calls != 1 {
-		t.Fatalf("thumbnailer calls = %d, want synthetic preview rejected and video fallback used", thumbnailer.calls)
+		t.Fatalf("thumbnailer calls = %d, want degenerate preview rejected and video fallback used", thumbnailer.calls)
 	}
 	chunk, found, err := svc.GetFile(ctx, domain.FileDownloadRequest{LocationKey: fmt.Sprintf("photo:%d:c", photo.ID), Limit: 1 << 20})
 	if err != nil || !found {
 		t.Fatalf("avatar c blob found=%v err=%v", found, err)
 	}
 	if !bytes.Equal(chunk.Bytes, frame) {
-		t.Fatal("avatar still did not use extracted video frame after rejecting synthetic preview")
+		t.Fatal("avatar still did not use extracted video frame after rejecting degenerate preview")
 	}
 }
 

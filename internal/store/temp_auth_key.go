@@ -14,6 +14,10 @@ var ErrTempAuthKeyAlreadyBound = errors.New("temporary auth key already bound")
 // TempAuthKeyBindingStore 持久化 auth.bindTempAuthKey 的 temp→perm 绑定。
 type TempAuthKeyBindingStore interface {
 	Save(ctx context.Context, binding domain.TempAuthKeyBinding) error
+	// SaveWithState performs the same write and returns the exact Layer tuple
+	// committed under the identity/key locks. Callers must use this result rather
+	// than issuing a post-commit confirmation read.
+	SaveWithState(ctx context.Context, binding domain.TempAuthKeyBinding) (domain.TempAuthKeyBindingResult, error)
 	GetByTemp(ctx context.Context, tempAuthKeyID [8]byte) (domain.TempAuthKeyBinding, bool, error)
 	// DeleteExpired 以 auth_keys 的握手协议 expiry 为唯一事实源，回收早于
 	// expiredBefore（unix 秒）的 temporary key，单次最多 limit 条并返回 key 数。

@@ -237,9 +237,11 @@ func (s *Server) handleEncrypted(ctx context.Context, tc transport.Conn, cs *con
 		// BeginActivation has installed current in claimsByAuth, which is the shared
 		// linearization domain with auth-key revocation. A delete that completed before
 		// the claim is visible here as !found; a delete after this read must observe and
-		// fence the claim. This final check intentionally covers every activation path:
+		// fence the claim. Revalidate deliberately does not refresh last_used_at: the
+		// physical connection's initial Get already established the activity lease. This
+		// final check intentionally covers every activation path:
 		// first correct-salt frame, retained bad-salt provisional and session transfer.
-		fresh, found, getErr := s.authKeys.Get(ctx, current.authKeyID)
+		fresh, found, getErr := s.authKeys.Revalidate(ctx, current.authKeyID)
 		if getErr != nil {
 			return current, fmt.Errorf("revalidate activation auth key: %w", getErr)
 		}
@@ -784,6 +786,10 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	}
 	dur := s.clock.Now().Sub(start)
 	s.metrics.RPCHandled(effectiveMethod, dur, dispatchErr)
+	dbSnapshot := dbStats.Snapshot()
+	if databaseMetrics, ok := s.metrics.(RPCDatabaseMetrics); ok {
+		databaseMetrics.RPCDatabase(effectiveMethod, dbSnapshot.Queries, dbSnapshot.Duration, dbSnapshot.Errors)
+	}
 	// 刷新本连接由 invokeWithLayer 证明并冻结的 exact-session layer。ok=false
 	// 表示仍无协议证据；设备/授权元数据和其它 session 都不具备回填资格。
 	if layer, ok := s.rpc.NegotiatedLayer(c.authKeyID, c.sessionID); ok {
@@ -807,7 +813,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 	if userID := c.UserID(); userID != 0 {
 		fields = append(fields, zap.Int64("user_id", userID))
 	}
-	fields = dbtrace.AppendZapFields(fields, "", dbStats.Snapshot())
+	fields = dbtrace.AppendZapFields(fields, "", dbSnapshot)
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		// A running request owns its terminal response until Dispatch returns. If
@@ -855,7 +861,7 @@ func (s *Server) handleRPC(ctx context.Context, c *Conn, msgID int64, method str
 		}, nil)
 	}
 
-	s.log.Info("RPC handled", fields...)
+	s.log.Debug("RPC handled", fields...)
 	return s.publishRPCResult(c, msgID, effectiveMethod, owner, result, postresponse.Take(ctx))
 }
 
@@ -973,18 +979,11 @@ func (s *Server) publishRPCResult(
 	// Until enqueue transfers ownership, every exit must return the retained-byte
 	// charge. A successful transfer clears the reservation and makes this a no-op.
 	defer reserved.release()
-	priority, visible := prepareEncoded(encoded)
+	priority, _ := prepareEncoded(encoded)
 	if owner != nil && !owner.HandOff() {
 		return ErrRPCResultFlightInvalid
 	}
 
-	resultLogLevel := zap.DebugLevel
-	if visible {
-		// Keep ordinary small RPCs at debug, but make convergence and bulk/gzip
-		// delivery visible in the default service logs. These are the
-		// responses whose queueing and write latency diagnose startup Updating.
-		resultLogLevel = zap.InfoLevel
-	}
 	egressStarted := time.Now()
 	terminal := func(deliveryErr error) {
 		latency := time.Since(egressStarted)
@@ -996,7 +995,7 @@ func (s *Server) publishRPCResult(
 			encoded.markReplayable()
 			c.fenceUndeliveredRPCResult()
 			s.completeRPCResult(c, reqMsgID, encoded, true)
-			if checked := s.log.Check(resultLogLevel, "RPC result delivery fenced for replay"); checked != nil {
+			if checked := s.log.Check(zap.InfoLevel, "RPC result delivery fenced for replay"); checked != nil {
 				checked.Write(
 					zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
 					zap.Int64("delivered_req_msg_id", deliveredReqMsgID),
@@ -1008,7 +1007,7 @@ func (s *Server) publishRPCResult(
 		}
 		encoded.markDelivered()
 		s.completeRPCResult(c, reqMsgID, encoded, true)
-		if checked := s.log.Check(resultLogLevel, "RPC result delivered"); checked != nil {
+		if checked := s.log.Check(zap.DebugLevel, "RPC result delivered"); checked != nil {
 			checked.Write(
 				zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
 				zap.Int64("delivered_req_msg_id", deliveredReqMsgID),
@@ -1024,7 +1023,7 @@ func (s *Server) publishRPCResult(
 		terminal(err)
 		return err
 	}
-	if checked := s.log.Check(resultLogLevel, "RPC result admitted"); checked != nil {
+	if checked := s.log.Check(zap.DebugLevel, "RPC result admitted"); checked != nil {
 		checked.Write(
 			zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
 			zap.Int("wire_bytes", len(encoded.body)), zap.Int("inner_bytes", encoded.uncompressedBytes),
@@ -1365,7 +1364,12 @@ func (s *Server) completeRPCResult(c *Conn, reqMsgID int64, encoded *encodedOutb
 
 // sendPong 回复 mt.PingRequest / mt.PingDelayDisconnectRequest。
 func (s *Server) sendPong(ctx context.Context, c *Conn, reqMsgID, pingID int64) error {
-	return c.SendAsync(ctx, proto.MessageServerResponse, &mt.Pong{MsgID: reqMsgID, PingID: pingID})
+	// Telegram iOS keeps the account in its connection-context "updating" state
+	// until the initial actualization ping receives its matching pong. A pong is
+	// therefore a request-correlated transport barrier, not disposable keepalive
+	// noise: if it cannot be written, reconnect instead of silently stranding the
+	// client on an otherwise healthy session.
+	return c.SendRequiredControl(ctx, proto.MessageServerResponse, &mt.Pong{MsgID: reqMsgID, PingID: pingID})
 }
 
 // sendFutureSalts 回复 MTProto get_future_salts。
@@ -1388,7 +1392,10 @@ func (s *Server) sendFutureSalts(ctx context.Context, c *Conn, reqMsgID int64, n
 			Salt:       c.salt,
 		})
 	}
-	return c.SendAsync(ctx, proto.MessageServerResponse, &mt.FutureSalts{
+	// future_salts completes the client's time/salt synchronization task. If it
+	// cannot be written, fail the connection so the client reconnects instead of
+	// remaining connected in a permanent service-task state.
+	return c.SendRequiredControl(ctx, proto.MessageServerResponse, &mt.FutureSalts{
 		ReqMsgID: reqMsgID,
 		Now:      now,
 		Salts:    salts,
@@ -1401,7 +1408,7 @@ func (s *Server) sendFutureSalts(ctx context.Context, c *Conn, reqMsgID int64, n
 // （Android 收到后才调 getDifference）随之丢失。
 func (s *Server) sendNewSessionCreated(ctx context.Context, c *Conn, firstMsgID int64) error {
 	// This notification changes the client's request map and update recovery
-	// state. Unlike best-effort ack/pong traffic, it must be written successfully
+	// state. Unlike best-effort ack traffic, it must be written successfully
 	// before the corresponding RPC batch starts executing.
 	return c.SendRequiredControl(ctx, proto.MessageFromServer, &mt.NewSessionCreated{
 		FirstMsgID: firstMsgID,
@@ -1425,7 +1432,9 @@ func (s *Server) sendAck(ctx context.Context, c *Conn, ids ...int64) error {
 
 // sendMsgsStateInfo 回复 msgs_state_req/msg_resend_req。
 func (s *Server) sendMsgsStateInfo(ctx context.Context, c *Conn, reqMsgID int64, info []byte) error {
-	return c.SendAsync(ctx, proto.MessageServerResponse, &mt.MsgsStateInfo{ReqMsgID: reqMsgID, Info: info})
+	// msgs_state_info terminates the client's resend service. Do not acknowledge
+	// the request locally and then silently discard its answer from a full queue.
+	return c.SendRequiredControl(ctx, proto.MessageServerResponse, &mt.MsgsStateInfo{ReqMsgID: reqMsgID, Info: info})
 }
 
 func (s *Server) sendDestroySession(ctx context.Context, c *Conn, sessionID int64) error {

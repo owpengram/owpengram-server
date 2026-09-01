@@ -16,6 +16,116 @@ func (s staticCounterSource) Current(context.Context, int64) (int, error) {
 	return s.value, nil
 }
 
+func (s staticCounterSource) CurrentBatch(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	out := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		out[userID] = s.value
+	}
+	return out, nil
+}
+
+type recordingCounterSource struct {
+	mu           sync.Mutex
+	values       map[int64]int
+	currentCalls int
+	batchCalls   int
+	batchUsers   [][]int64
+}
+
+func (s *recordingCounterSource) Current(_ context.Context, userID int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.currentCalls++
+	return s.values[userID], nil
+}
+
+func (s *recordingCounterSource) CurrentBatch(_ context.Context, userIDs []int64) (map[int64]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchCalls++
+	s.batchUsers = append(s.batchUsers, append([]int64(nil), userIDs...))
+	out := make(map[int64]int, len(userIDs))
+	for _, userID := range userIDs {
+		out[userID] = s.values[userID]
+	}
+	return out, nil
+}
+
+func TestRedisBoxAllocatorBatchPipelinesDistinctUsersAndColdRecovery(t *testing.T) {
+	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TELESRV_TEST_REDIS_ADDR to run redis integration test")
+	}
+	ctx := context.Background()
+	c, err := Open(ctx, addr, "", 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	base := time.Now().UnixNano()
+	userIDs := []int64{base, base + 1, base, base + 2}
+	unique := []int64{base, base + 1, base + 2}
+	for _, userID := range unique {
+		userID := userID
+		t.Cleanup(func() { _ = c.Del(ctx, boxIDKey(userID)).Err() })
+	}
+	source := &recordingCounterSource{values: map[int64]int{
+		base: 100, base + 1: 200, base + 2: 300,
+	}}
+	boxes := NewBoxIDAllocator(c, source)
+
+	first, err := boxes.NextBoxIDs(ctx, userIDs)
+	if err != nil {
+		t.Fatalf("NextBoxIDs first: %v", err)
+	}
+	for i, userID := range unique {
+		want := (i+1)*100 + 1
+		if first[userID] != want {
+			t.Fatalf("first box[%d]=%d want=%d", userID, first[userID], want)
+		}
+	}
+	second, err := boxes.NextBoxIDs(ctx, unique)
+	if err != nil {
+		t.Fatalf("NextBoxIDs second: %v", err)
+	}
+	for i, userID := range unique {
+		want := (i+1)*100 + 2
+		if second[userID] != want {
+			t.Fatalf("second box[%d]=%d want=%d", userID, second[userID], want)
+		}
+	}
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	if source.currentCalls != 0 || source.batchCalls != 1 || len(source.batchUsers) != 1 || len(source.batchUsers[0]) != len(unique) {
+		t.Fatalf("source calls current=%d batch=%d users=%v", source.currentCalls, source.batchCalls, source.batchUsers)
+	}
+}
+
+func TestRedisBoxAllocatorBatchValidatesWholeRequestBeforeMutation(t *testing.T) {
+	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
+	if addr == "" {
+		t.Skip("set TELESRV_TEST_REDIS_ADDR to run redis integration test")
+	}
+	ctx := context.Background()
+	c, err := Open(ctx, addr, "", 0)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	userID := time.Now().UnixNano()
+	key := boxIDKey(userID)
+	t.Cleanup(func() { _ = c.Del(ctx, key).Err() })
+	boxes := NewBoxIDAllocator(c, staticCounterSource{value: 100})
+	if _, err := boxes.NextBoxIDs(ctx, []int64{userID, 0}); err == nil {
+		t.Fatal("NextBoxIDs accepted an invalid user id")
+	}
+	if exists, err := c.Exists(ctx, key).Result(); err != nil || exists != 0 {
+		t.Fatalf("validated prefix mutated redis: exists=%d err=%v", exists, err)
+	}
+}
+
 func TestRedisBoxAllocatorRecoverFromCounterSource(t *testing.T) {
 	addr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
 	if addr == "" {

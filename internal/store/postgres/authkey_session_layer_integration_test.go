@@ -37,9 +37,10 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	firstMsgID := authKeySessionLayerTestMsgID(now, 1)
-	newerMsgID := authKeySessionLayerTestMsgID(now, 2)
-	concurrentLowMsgID := authKeySessionLayerTestMsgID(now, 3)
-	concurrentHighMsgID := authKeySessionLayerTestMsgID(now, 4)
+	sameLayerMsgID := authKeySessionLayerTestMsgID(now, 2)
+	newerMsgID := authKeySessionLayerTestMsgID(now, 3)
+	concurrentLowMsgID := authKeySessionLayerTestMsgID(now, 4)
+	concurrentHighMsgID := authKeySessionLayerTestMsgID(now, 5)
 	for _, invalidMsgID := range []int64{
 		authKeySessionLayerTestMsgID(now.Add(-302*time.Second), 1),
 		authKeySessionLayerTestMsgID(now.Add(31*time.Second), 1),
@@ -70,6 +71,24 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 		got, found, err := NewAuthKeyStore(pool).Get(ctx, id)
 		if err != nil || !found || got.Layer != 220 || got.LayerObservationID != first.ObservationID {
 			t.Fatalf("bound default %x = (%+v,%v,%v)", id, got, found, err)
+		}
+	}
+	futureSameLayerMsgID := authKeySessionLayerTestMsgID(now.Add(31*time.Second), 1)
+	if _, _, err := NewAuthKeyStore(pool).AdvanceSessionLayer(ctx, temp, sessionID, 220, futureSameLayerMsgID); !errors.Is(err, store.ErrAuthKeySessionLayerInvalid) {
+		t.Fatalf("future same-Layer fast advance err = %v", err)
+	}
+	if got, found, err := NewAuthKeyStore(pool).GetSessionLayer(ctx, temp, sessionID); err != nil || !found || got.MessageID != firstMsgID || got.ObservationID != first.ObservationID {
+		t.Fatalf("rejected future same-Layer advance changed row = (%+v,%v,%v)", got, found, err)
+	}
+	sameLayer, applied, err := NewAuthKeyStore(pool).AdvanceSessionLayer(ctx, temp, sessionID, 220, sameLayerMsgID)
+	if err != nil || !applied || !sameLayer.SharedDefault || sameLayer.MessageID != sameLayerMsgID ||
+		sameLayer.ObservationID != first.ObservationID {
+		t.Fatalf("same-Layer high-water advance = (%+v,%v,%v)", sameLayer, applied, err)
+	}
+	for _, id := range [][8]byte{temp, perm} {
+		got, found, err := NewAuthKeyStore(pool).Get(ctx, id)
+		if err != nil || !found || got.Layer != 220 || got.LayerObservationID != first.ObservationID {
+			t.Fatalf("same-Layer default rewrite %x = (%+v,%v,%v)", id, got, found, err)
 		}
 	}
 
@@ -122,6 +141,27 @@ func TestAuthKeySessionLayerTransactionAndRestartPostgres(t *testing.T) {
 		got, found, err := restarted.Get(ctx, id)
 		if err != nil || !found || got.Layer != 227 || got.LayerObservationID != current.ObservationID {
 			t.Fatalf("transactional shared default %x = (%+v,%v,%v)", id, got, found, err)
+		}
+	}
+
+	// Expiry ends the old row's ordering authority. A still-fresh selector with
+	// a lower msg_id may replace it and must publish one new shared observation.
+	if _, err := pool.Exec(ctx, `
+UPDATE auth_key_session_layers
+SET expires_at = now() - interval '1 second'
+WHERE raw_auth_key_id = $1 AND session_id = $2
+`, authKeyIDToInt64(temp), sessionID); err != nil {
+		t.Fatalf("expire session Layer row: %v", err)
+	}
+	replacement, applied, err := restarted.AdvanceSessionLayer(ctx, temp, sessionID, 225, firstMsgID)
+	if err != nil || !applied || replacement.Layer != 225 || replacement.MessageID != firstMsgID ||
+		!replacement.SharedDefault || replacement.ObservationID <= current.ObservationID {
+		t.Fatalf("expired-row replacement = (%+v,%v,%v)", replacement, applied, err)
+	}
+	for _, id := range [][8]byte{temp, perm} {
+		got, found, err := restarted.Get(ctx, id)
+		if err != nil || !found || got.Layer != 225 || got.LayerObservationID != replacement.ObservationID {
+			t.Fatalf("replacement shared default %x = (%+v,%v,%v)", id, got, found, err)
 		}
 	}
 }

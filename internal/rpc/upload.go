@@ -88,7 +88,10 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 	if r.deps.Files == nil {
 		return nil, notImplementedErr()
 	}
-	key, ok := fileLocationKey(req.Location)
+	key, ok, err := r.authorizedFileLocationKey(ctx, req.Location)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, locationInvalidErr()
 	}
@@ -108,6 +111,33 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 		}, nil
 	}
 	return nil, locationInvalidErr()
+}
+
+// authorizedFileLocationKey applies the authorization/capability checks which cannot be
+// expressed by a plain location-key conversion. Secret-chat blobs are addressed internally by
+// id, but the wire capability is the pair (id, access_hash); accepting id alone would let any
+// authenticated caller who learned or guessed an id download ciphertext which was never
+// delivered to that caller.
+func (r *Router) authorizedFileLocationKey(ctx context.Context, location tg.InputFileLocationClass) (string, bool, error) {
+	loc, encrypted := location.(*tg.InputEncryptedFileLocation)
+	if !encrypted {
+		key, ok := fileLocationKey(location)
+		return key, ok, nil
+	}
+	if loc.ID == 0 || loc.AccessHash == 0 || r.deps.SecretChats == nil {
+		return "", false, nil
+	}
+	if _, err := r.secretChatRequireUser(ctx); err != nil {
+		return "", false, err
+	}
+	ref, found, err := r.deps.SecretChats.GetEncryptedFile(ctx, loc.ID, loc.AccessHash)
+	if err != nil {
+		return "", false, internalErr()
+	}
+	if !found || ref.ID != loc.ID || ref.AccessHash != loc.AccessHash {
+		return "", false, nil
+	}
+	return fmt.Sprintf("enc:%d", loc.ID), true, nil
 }
 
 // onUploadGetGroupCallStream 处理 RTMP 直播观众拉流：按 time_ms/scale 取一段打包好的
@@ -221,13 +251,6 @@ func fileLocationKey(location tg.InputFileLocationClass) (string, bool) {
 			size = "c"
 		}
 		return fmt.Sprintf("photo:%d:%s", photoID, size), true
-	case *tg.InputEncryptedFileLocation:
-		// 密聊文件（P2）：盲 blob，location_key "enc:<id>"。access_hash 不强校验
-		// （沿用现有媒体 dev 姿态，依赖不可枚举 id）。
-		if loc.ID == 0 {
-			return "", false
-		}
-		return fmt.Sprintf("enc:%d", loc.ID), true
 	default:
 		// InputStickerSetThumb / secure / takeout 等本阶段不生成对应资源。
 		return "", false

@@ -721,6 +721,11 @@ func TestDeliveryHookRunsOnceAfterReplayNotFailedWrite(t *testing.T) {
 	failing := &failAfterTransport{}
 	failing.failAt.Store(1)
 	oldConn := newOutboundTestConn(t, failing, newOutboundTrackedBudget(1<<20))
+	// Production attaches the logical outbox before the outbound actor starts.
+	// Keep that invariant here so a failed physical write can retire the Conn
+	// without relying on the construction-only late-adoption bridge to recreate
+	// an already-retired session.
+	s.conns.adoptLogicalSession(oldConn)
 	const reqMsgID = int64(9101)
 	claim, err := s.rpcResults.Acquire(oldConn.authKeyID, oldConn.sessionID, reqMsgID)
 	if err != nil || claim.state != rpcResultAcquireOwner {

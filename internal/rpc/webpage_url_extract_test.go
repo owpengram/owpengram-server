@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/iamxvbaba/td/tg"
@@ -81,6 +82,13 @@ func TestFirstPreviewableURL(t *testing.T) {
 		got, ok := firstPreviewableURL("https://github.com/golang/go", nil)
 		if !ok || got != "https://github.com/golang/go" {
 			t.Fatalf("bare url got (%q,%v)", got, ok)
+		}
+	})
+
+	t.Run("raw-text-naked-domain-url", func(t *testing.T) {
+		got, ok := firstPreviewableURL("check github.com/@alice", nil)
+		if !ok || got != "https://github.com/@alice" {
+			t.Fatalf("naked domain fallback got (%q,%v), want https://github.com/@alice", got, ok)
 		}
 	})
 
@@ -168,6 +176,61 @@ func TestAugmentAutoEntitiesURL(t *testing.T) {
 			t.Errorf("length = %d, want %d (trailing 。 excluded)", e.Length, utf16CodeUnitLen("https://example.com"))
 		}
 	})
+	t.Run("at-path-segment-is-url-only", func(t *testing.T) {
+		message := "https://github.com/@11"
+		got := testAugmentAutoEntities(message, nil)
+		if len(got) != 1 {
+			t.Fatalf("entities = %d, want one URL entity: %#v", len(got), got)
+		}
+		e := urlEntity(t, got[0])
+		if e.Offset != 0 || e.Length != utf16CodeUnitLen(message) {
+			t.Fatalf("offset/length = %d/%d, want 0/%d", e.Offset, e.Length, utf16CodeUnitLen(message))
+		}
+	})
+	t.Run("bare-domain-at-path-segment-is-url-only", func(t *testing.T) {
+		message := "github.com/@alice"
+		got := testAugmentAutoEntities(message, nil)
+		if len(got) != 1 {
+			t.Fatalf("entities = %d, want one URL entity: %#v", len(got), got)
+		}
+		e := urlEntity(t, got[0])
+		if e.Offset != 0 || e.Length != utf16CodeUnitLen(message) {
+			t.Fatalf("offset/length = %d/%d, want 0/%d", e.Offset, e.Length, utf16CodeUnitLen(message))
+		}
+	})
+	t.Run("bare-domain-query-fragment-at-is-url-only", func(t *testing.T) {
+		message := "github.com/path?u=@alice#@bob"
+		got := testAugmentAutoEntities(message, nil)
+		if len(got) != 1 {
+			t.Fatalf("entities = %d, want one URL entity: %#v", len(got), got)
+		}
+		e := urlEntity(t, got[0])
+		if e.Offset != 0 || e.Length != utf16CodeUnitLen(message) {
+			t.Fatalf("offset/length = %d/%d, want 0/%d", e.Offset, e.Length, utf16CodeUnitLen(message))
+		}
+	})
+	t.Run("bare-domain-without-path", func(t *testing.T) {
+		got := testAugmentAutoEntities("see github.com now", nil)
+		if len(got) != 1 {
+			t.Fatalf("entities = %d, want one bare-domain URL entity: %#v", len(got), got)
+		}
+		e := urlEntity(t, got[0])
+		if e.Offset != 4 || e.Length != utf16CodeUnitLen("github.com") {
+			t.Fatalf("offset/length = %d/%d, want 4/%d", e.Offset, e.Length, utf16CodeUnitLen("github.com"))
+		}
+	})
+	t.Run("email-domain-not-url", func(t *testing.T) {
+		for _, e := range testAugmentAutoEntities("mail bob@example.com please", nil) {
+			if _, ok := e.(*tg.MessageEntityURL); ok {
+				t.Fatalf("email domain must not yield URL entity: %#v", e)
+			}
+		}
+	})
+	t.Run("unknown-tld-not-url", func(t *testing.T) {
+		if got := testAugmentAutoEntities("see foo.invalidtldzz now", nil); len(got) != 0 {
+			t.Fatalf("unknown TLD should not be URL, got %#v", got)
+		}
+	})
 	t.Run("no-url-no-entities", func(t *testing.T) {
 		if got := testAugmentAutoEntities("plain text", nil); len(got) != 0 {
 			t.Fatalf("entities = %d, want 0", len(got))
@@ -209,6 +272,26 @@ func TestAugmentAutoEntitiesURL(t *testing.T) {
 			t.Fatalf("entities = %d, want configured host-base and legacy link", len(got))
 		}
 	})
+}
+
+func TestExtractMentionUsernamesSkipsURLSpans(t *testing.T) {
+	got := extractMentionUsernames("https://github.com/@11 hi @alice https://example.com/@bob?x=@carol github.com/@dave github.com/path?u=@erin#@frank", 10, nil)
+	want := []string{"alice"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractMentionUsernames = %#v, want %#v", got, want)
+	}
+}
+
+func TestExtractMentionUsernamesSkipsClientURLSpans(t *testing.T) {
+	message := "github.com/@alice hi @bob"
+	blocked := mentionScanBlockedSpansFromTGEntities(message, []tg.MessageEntityClass{
+		&tg.MessageEntityURL{Offset: 0, Length: utf16CodeUnitLen("github.com/@alice")},
+	})
+	got := extractMentionUsernames(message, 10, blocked)
+	want := []string{"bob"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("extractMentionUsernames = %#v, want %#v", got, want)
+	}
 }
 
 // BenchmarkAugmentAutoEntities 量化发送热路径:纯文本(无触发字符)应零分配走快路径短路;

@@ -9,6 +9,14 @@ import (
 	"telesrv/internal/domain"
 )
 
+func (s *PasswordStore) HasBusinessAutomation(_ context.Context, userID int64) (bool, error) {
+	s.mu.RLock()
+	profile, hasProfile := s.businessProfiles[userID]
+	bot, hasBot := s.connectedBusinessBots[userID]
+	s.mu.RUnlock()
+	return hasProfile && (profile.Greeting != nil || profile.Away != nil) || hasBot && bot.BotUserID != 0, nil
+}
+
 func (s *PasswordStore) GetBusinessProfile(_ context.Context, userID int64) (domain.BusinessProfile, bool, error) {
 	s.mu.RLock()
 	profile, ok := s.businessProfiles[userID]

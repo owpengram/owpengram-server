@@ -28,6 +28,16 @@ func (m *captureRPCMetrics) OutboxDelivered(time.Duration) {}
 
 func (m *captureRPCMetrics) OutboxFailed(error) {}
 
+func (m *captureRPCMetrics) PresenceLastSeenBatch(int, time.Duration, error) {}
+
+func (m *captureRPCMetrics) PresenceLastSeenSubmitted() {}
+
+func (m *captureRPCMetrics) PresenceLastSeenPending(int) {}
+
+func (m *captureRPCMetrics) PresenceLastSeenOverflow() {}
+
+func (m *captureRPCMetrics) PresenceLastSeenDrainDropped(int) {}
+
 type rateLimitCall struct {
 	key    string
 	cost   int

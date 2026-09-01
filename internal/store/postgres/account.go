@@ -232,7 +232,9 @@ func (s *PasswordStore) GetAccountSettings(ctx context.Context, userID int64) (d
 	row := s.db.QueryRow(ctx, `
 SELECT archive_and_mute_new_noncontact_peers, keep_archived_unmuted, keep_archived_folders,
        hide_read_marks, new_noncontact_peers_require_premium, display_gifts_button,
-       noncontact_peers_paid_stars, account_ttl_days, sensitive_content_enabled, contact_signup_silent
+       noncontact_peers_paid_stars, disallow_unlimited_stargifts, disallow_limited_stargifts,
+       disallow_unique_stargifts, disallow_premium_gifts, disallow_stargifts_from_channels,
+       account_ttl_days, sensitive_content_enabled, contact_signup_silent
 FROM account_settings
 WHERE user_id = $1`, userID)
 	settings := domain.DefaultAccountSettings()
@@ -240,7 +242,11 @@ WHERE user_id = $1`, userID)
 	if err := row.Scan(
 		&gp.ArchiveAndMuteNewNoncontactPeers, &gp.KeepArchivedUnmuted, &gp.KeepArchivedFolders,
 		&gp.HideReadMarks, &gp.NewNoncontactPeersRequirePremium, &gp.DisplayGiftsButton,
-		&gp.NoncontactPeersPaidStars, &settings.AccountTTLDays, &settings.SensitiveContentEnabled, &settings.ContactSignUpSilent,
+		&gp.NoncontactPeersPaidStars,
+		&gp.DisallowedGifts.UnlimitedStargifts, &gp.DisallowedGifts.LimitedStargifts,
+		&gp.DisallowedGifts.UniqueStargifts, &gp.DisallowedGifts.PremiumGifts,
+		&gp.DisallowedGifts.StargiftsFromChannel,
+		&settings.AccountTTLDays, &settings.SensitiveContentEnabled, &settings.ContactSignUpSilent,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return domain.AccountSettings{}, false, nil
@@ -258,7 +264,9 @@ func (s *PasswordStore) GetAccountSettingsBatch(ctx context.Context, userIDs []i
 	rows, err := s.db.Query(ctx, `
 SELECT user_id, archive_and_mute_new_noncontact_peers, keep_archived_unmuted, keep_archived_folders,
        hide_read_marks, new_noncontact_peers_require_premium, display_gifts_button,
-       noncontact_peers_paid_stars, account_ttl_days, sensitive_content_enabled, contact_signup_silent
+       noncontact_peers_paid_stars, disallow_unlimited_stargifts, disallow_limited_stargifts,
+       disallow_unique_stargifts, disallow_premium_gifts, disallow_stargifts_from_channels,
+       account_ttl_days, sensitive_content_enabled, contact_signup_silent
 FROM account_settings
 WHERE user_id = ANY($1::bigint[])`, userIDs)
 	if err != nil {
@@ -273,7 +281,11 @@ WHERE user_id = ANY($1::bigint[])`, userIDs)
 			&userID,
 			&gp.ArchiveAndMuteNewNoncontactPeers, &gp.KeepArchivedUnmuted, &gp.KeepArchivedFolders,
 			&gp.HideReadMarks, &gp.NewNoncontactPeersRequirePremium, &gp.DisplayGiftsButton,
-			&gp.NoncontactPeersPaidStars, &settings.AccountTTLDays, &settings.SensitiveContentEnabled, &settings.ContactSignUpSilent,
+			&gp.NoncontactPeersPaidStars,
+			&gp.DisallowedGifts.UnlimitedStargifts, &gp.DisallowedGifts.LimitedStargifts,
+			&gp.DisallowedGifts.UniqueStargifts, &gp.DisallowedGifts.PremiumGifts,
+			&gp.DisallowedGifts.StargiftsFromChannel,
+			&settings.AccountTTLDays, &settings.SensitiveContentEnabled, &settings.ContactSignUpSilent,
 		); err != nil {
 			return nil, fmt.Errorf("scan account settings batch: %w", err)
 		}
@@ -291,8 +303,10 @@ func (s *PasswordStore) SaveAccountSettings(ctx context.Context, userID int64, s
 INSERT INTO account_settings (
     user_id, archive_and_mute_new_noncontact_peers, keep_archived_unmuted, keep_archived_folders,
     hide_read_marks, new_noncontact_peers_require_premium, display_gifts_button,
-    noncontact_peers_paid_stars, account_ttl_days, sensitive_content_enabled, contact_signup_silent
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    noncontact_peers_paid_stars, disallow_unlimited_stargifts, disallow_limited_stargifts,
+    disallow_unique_stargifts, disallow_premium_gifts, disallow_stargifts_from_channels,
+    account_ttl_days, sensitive_content_enabled, contact_signup_silent
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 ON CONFLICT (user_id) DO UPDATE SET
     archive_and_mute_new_noncontact_peers = EXCLUDED.archive_and_mute_new_noncontact_peers,
     keep_archived_unmuted = EXCLUDED.keep_archived_unmuted,
@@ -301,6 +315,11 @@ ON CONFLICT (user_id) DO UPDATE SET
     new_noncontact_peers_require_premium = EXCLUDED.new_noncontact_peers_require_premium,
     display_gifts_button = EXCLUDED.display_gifts_button,
     noncontact_peers_paid_stars = EXCLUDED.noncontact_peers_paid_stars,
+    disallow_unlimited_stargifts = EXCLUDED.disallow_unlimited_stargifts,
+    disallow_limited_stargifts = EXCLUDED.disallow_limited_stargifts,
+    disallow_unique_stargifts = EXCLUDED.disallow_unique_stargifts,
+    disallow_premium_gifts = EXCLUDED.disallow_premium_gifts,
+    disallow_stargifts_from_channels = EXCLUDED.disallow_stargifts_from_channels,
     account_ttl_days = EXCLUDED.account_ttl_days,
     sensitive_content_enabled = EXCLUDED.sensitive_content_enabled,
     contact_signup_silent = EXCLUDED.contact_signup_silent,
@@ -308,7 +327,11 @@ ON CONFLICT (user_id) DO UPDATE SET
 		userID,
 		gp.ArchiveAndMuteNewNoncontactPeers, gp.KeepArchivedUnmuted, gp.KeepArchivedFolders,
 		gp.HideReadMarks, gp.NewNoncontactPeersRequirePremium, gp.DisplayGiftsButton,
-		gp.NoncontactPeersPaidStars, settings.NormalizedTTLDays(), settings.SensitiveContentEnabled, settings.ContactSignUpSilent,
+		gp.NoncontactPeersPaidStars,
+		gp.DisallowedGifts.UnlimitedStargifts, gp.DisallowedGifts.LimitedStargifts,
+		gp.DisallowedGifts.UniqueStargifts, gp.DisallowedGifts.PremiumGifts,
+		gp.DisallowedGifts.StargiftsFromChannel,
+		settings.NormalizedTTLDays(), settings.SensitiveContentEnabled, settings.ContactSignUpSilent,
 	); err != nil {
 		return fmt.Errorf("save account settings: %w", err)
 	}

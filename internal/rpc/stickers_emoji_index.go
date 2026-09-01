@@ -21,6 +21,12 @@ const (
 	emojiStickerIndexTTL = 5 * time.Minute
 	// maxStickersPerEmoji 限制单个 emoji 返回的贴纸数。
 	maxStickersPerEmoji = 100
+	// maxGreetingStickers 限制官方客户端 greeting 类别的启动预取集合。普通 👋
+	// 搜索仍保留完整结果；特殊 👋⭐ 类别只取不同贴纸集的代表项，避免客户端每次
+	// 启动在几十个普通 wave pack 之间随机命中并逐步下载整个目录。
+	maxGreetingStickers = 12
+	// greetingStickerCategoryKey 是去掉 variation selector 后的官方 greeting 标记。
+	greetingStickerCategoryKey = "👋⭐"
 )
 
 // emojiStickerIndex 是 emoji→贴纸文档 id 的 TTL 缓存索引。
@@ -76,7 +82,8 @@ func normalizeStickerEmoticon(e string) string {
 // normalizeStickerSearchEmoticon 解析官方客户端通过 messages.getStickers
 // 传递的特殊贴纸类别标记。TDesktop、DrKLO Android 与 Telegram-iOS 都使用
 // wave+star 获取 greeting、double-star 获取 premium preview、folder+star 获取
-// premium/cloud catalog；它们不是普通复合 emoji，需先映射到 seed pack 的基础键。
+// premium/cloud catalog；它们不是普通复合 emoji。greeting 在索引中维护独立的
+// 有界代表集合，另外两个类别仍映射到 seed pack 的基础键。
 //
 // 只匹配这三个完整标记，不能把任意复合 emoji 拆分成单个 emoji，否则会改变普通
 // sticker search 的精确匹配语义。先去掉 variation selector，可同时接纳三端的
@@ -84,8 +91,8 @@ func normalizeStickerEmoticon(e string) string {
 func normalizeStickerSearchEmoticon(e string) string {
 	e = normalizeStickerEmoticon(e)
 	switch e {
-	case "👋⭐":
-		return "👋"
+	case greetingStickerCategoryKey:
+		return greetingStickerCategoryKey
 	case "⭐⭐":
 		return "⭐"
 	case "📂⭐":
@@ -99,11 +106,16 @@ func (r *Router) onMessagesGetStickers(ctx context.Context, req *tg.MessagesGetS
 	if req == nil || r.deps.Files == nil || r.emojiStickers == nil {
 		return &tg.MessagesStickers{Hash: 0, Stickers: []tg.DocumentClass{}}, nil
 	}
-	docIDs := r.emojiStickers.lookup(normalizeStickerSearchEmoticon(req.Emoticon), func() map[string][]int64 {
+	searchKey := normalizeStickerSearchEmoticon(req.Emoticon)
+	docIDs := r.emojiStickers.lookup(searchKey, func() map[string][]int64 {
 		return r.buildEmojiStickerIndex(ctx)
 	})
-	if len(docIDs) > maxStickersPerEmoji {
-		docIDs = docIDs[:maxStickersPerEmoji]
+	limit := maxStickersPerEmoji
+	if searchKey == greetingStickerCategoryKey {
+		limit = maxGreetingStickers
+	}
+	if len(docIDs) > limit {
+		docIDs = docIDs[:limit]
 	}
 	catalogHash := int64(tdesktopCountHash(docIDs))
 	if req.Hash != 0 && req.Hash == catalogHash {
@@ -144,6 +156,7 @@ func (r *Router) buildEmojiStickerIndex(ctx context.Context) map[string][]int64 
 		if s.Archived {
 			continue
 		}
+		greetingAdded := false
 		for _, pack := range s.Packs {
 			key := normalizeStickerEmoticon(pack.Emoticon)
 			if key == "" {
@@ -163,6 +176,28 @@ func (r *Router) buildEmojiStickerIndex(ctx context.Context) map[string][]int64 
 				}
 				dedup[id] = struct{}{}
 				byEmoji[key] = append(byEmoji[key], id)
+			}
+			// greeting 是客户端启动预取目录，不等同于普通 👋 搜索。每个贴纸集
+			// 只放一个代表项，随后在响应边界再限制总数；这样既保留多样性，也
+			// 不会把所有普通 wave sticker 暴露为启动资源候选。
+			if key == "👋" && !greetingAdded {
+				greetingSeen := seen[greetingStickerCategoryKey]
+				if greetingSeen == nil {
+					greetingSeen = make(map[int64]struct{})
+					seen[greetingStickerCategoryKey] = greetingSeen
+				}
+				for _, id := range pack.DocumentIDs {
+					if id == 0 {
+						continue
+					}
+					if _, ok := greetingSeen[id]; ok {
+						continue
+					}
+					greetingSeen[id] = struct{}{}
+					byEmoji[greetingStickerCategoryKey] = append(byEmoji[greetingStickerCategoryKey], id)
+					greetingAdded = true
+					break
+				}
 			}
 		}
 	}

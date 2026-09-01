@@ -65,6 +65,9 @@ const (
 	MarkupButtonSimpleWebView   MarkupButtonType = "simple_webview"
 	MarkupButtonSwitchInline    MarkupButtonType = "switch_inline"
 	MarkupButtonCopy            MarkupButtonType = "copy"
+	// MarkupButtonBuy is keyboardButtonBuy. It is valid only on an inline
+	// keyboard attached to invoice media.
+	MarkupButtonBuy MarkupButtonType = "buy"
 )
 
 // MarkupButtonStyle is the protocol-neutral semantic button color. Telegram
@@ -373,6 +376,11 @@ func validateMarkupButton(b MarkupButton, replyKeyboard bool) error {
 		}
 	case MarkupButtonCopy:
 		if b.CopyText == "" || utf8.RuneCountInString(b.CopyText) > 256 {
+			return ErrButtonInvalid
+		}
+	case MarkupButtonBuy:
+		if len(b.Data) != 0 || b.URL != "" || b.Query != "" || b.CopyText != "" ||
+			b.RequiresPassword || b.LoginBotUserID != 0 || b.ButtonID != 0 {
 			return ErrButtonInvalid
 		}
 	default:

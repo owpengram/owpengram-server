@@ -44,39 +44,53 @@ WHERE m.owner_user_id = $1::bigint
     )
   )
   AND (
-    $14::text = ''
-    OR (m.saved_peer_type = $14::text AND m.saved_peer_id = $15::bigint)
+    NOT $14::boolean
+    OR m.media #>> '{service_action,kind}' = 'phone_call'
   )
   AND (
-    cardinality($16::text[]) = 0
+    NOT $15::boolean
+    OR (
+      NOT m.outgoing
+      AND m.media #>> '{service_action,kind}' = 'phone_call'
+      AND m.media #>> '{service_action,call,reason}' = 'missed'
+    )
+  )
+  AND (
+    $16::text = ''
+    OR (m.saved_peer_type = $16::text AND m.saved_peer_id = $17::bigint)
+  )
+  AND (
+    cardinality($18::text[]) = 0
     OR EXISTS (
       SELECT 1
       FROM saved_message_reaction_tags tag
       WHERE tag.user_id = m.owner_user_id
         AND tag.message_box_id = m.box_id
         AND (tag.reaction_type || ':' || tag.reaction_value)
-            = ANY($16::text[])
+            = ANY($18::text[])
     )
   )
 `
 
 type CountMessagesByUserParams struct {
-	OwnerUserID       int64
-	HasPeer           bool
-	PeerType          string
-	PeerID            int64
-	RestrictPeerIds   bool
-	PeerIds           []int64
-	Query             string
-	MinDate           int32
-	MaxDate           int32
-	MaxID             int32
-	MinID             int32
-	PinnedOnly        bool
-	MusicOnly         bool
-	SavedPeerType     string
-	SavedPeerID       int64
-	SavedReactionKeys []string
+	OwnerUserID          int64
+	HasPeer              bool
+	PeerType             string
+	PeerID               int64
+	RestrictPeerIds      bool
+	PeerIds              []int64
+	Query                string
+	MinDate              int32
+	MaxDate              int32
+	MaxID                int32
+	MinID                int32
+	PinnedOnly           bool
+	MusicOnly            bool
+	PhoneCallsOnly       bool
+	MissedPhoneCallsOnly bool
+	SavedPeerType        string
+	SavedPeerID          int64
+	SavedReactionKeys    []string
 }
 
 // ListMessagesByUser total CTE 的独立化:相同 base 过滤(不含分页 anchor),
@@ -96,6 +110,8 @@ func (q *Queries) CountMessagesByUser(ctx context.Context, arg CountMessagesByUs
 		arg.MinID,
 		arg.PinnedOnly,
 		arg.MusicOnly,
+		arg.PhoneCallsOnly,
+		arg.MissedPhoneCallsOnly,
 		arg.SavedPeerType,
 		arg.SavedPeerID,
 		arg.SavedReactionKeys,
@@ -2338,50 +2354,64 @@ WHERE m.owner_user_id = $1::bigint
     )
   )
   AND (
-    $14::text = ''
-    OR (m.saved_peer_type = $14::text AND m.saved_peer_id = $15::bigint)
+    NOT $14::boolean
+    OR m.media #>> '{service_action,kind}' = 'phone_call'
   )
   AND (
-    cardinality($16::text[]) = 0
+    NOT $15::boolean
+    OR (
+      NOT m.outgoing
+      AND m.media #>> '{service_action,kind}' = 'phone_call'
+      AND m.media #>> '{service_action,call,reason}' = 'missed'
+    )
+  )
+  AND (
+    $16::text = ''
+    OR (m.saved_peer_type = $16::text AND m.saved_peer_id = $17::bigint)
+  )
+  AND (
+    cardinality($18::text[]) = 0
     OR EXISTS (
       SELECT 1
       FROM saved_message_reaction_tags tag
       WHERE tag.user_id = m.owner_user_id
         AND tag.message_box_id = m.box_id
         AND (tag.reaction_type || ':' || tag.reaction_value)
-            = ANY($16::text[])
+            = ANY($18::text[])
     )
   )
   AND (
-    ($17::int > 0 AND m.message_date < $17::int)
-    OR ($17::int <= 0 AND ($18::int <= 0 OR m.box_id < $18::int))
+    ($19::int > 0 AND m.message_date < $19::int)
+    OR ($19::int <= 0 AND ($20::int <= 0 OR m.box_id < $20::int))
   )
 ORDER BY m.box_id DESC
-OFFSET GREATEST($19::int, 0)
-LIMIT $20::int
+OFFSET GREATEST($21::int, 0)
+LIMIT $22::int
 `
 
 type ListMessagesBackwardParams struct {
-	OwnerUserID       int64
-	HasPeer           bool
-	PeerType          string
-	PeerID            int64
-	RestrictPeerIds   bool
-	PeerIds           []int64
-	Query             string
-	MinDate           int32
-	MaxDate           int32
-	MaxID             int32
-	MinID             int32
-	PinnedOnly        bool
-	MusicOnly         bool
-	SavedPeerType     string
-	SavedPeerID       int64
-	SavedReactionKeys []string
-	OffsetDate        int32
-	OffsetID          int32
-	RowOffset         int32
-	LimitCount        int32
+	OwnerUserID          int64
+	HasPeer              bool
+	PeerType             string
+	PeerID               int64
+	RestrictPeerIds      bool
+	PeerIds              []int64
+	Query                string
+	MinDate              int32
+	MaxDate              int32
+	MaxID                int32
+	MinID                int32
+	PinnedOnly           bool
+	MusicOnly            bool
+	PhoneCallsOnly       bool
+	MissedPhoneCallsOnly bool
+	SavedPeerType        string
+	SavedPeerID          int64
+	SavedReactionKeys    []string
+	OffsetDate           int32
+	OffsetID             int32
+	RowOffset            int32
+	LimitCount           int32
 }
 
 type ListMessagesBackwardRow struct {
@@ -2480,6 +2510,8 @@ func (q *Queries) ListMessagesBackward(ctx context.Context, arg ListMessagesBack
 		arg.MinID,
 		arg.PinnedOnly,
 		arg.MusicOnly,
+		arg.PhoneCallsOnly,
+		arg.MissedPhoneCallsOnly,
 		arg.SavedPeerType,
 		arg.SavedPeerID,
 		arg.SavedReactionKeys,
@@ -2703,25 +2735,37 @@ base AS NOT MATERIALIZED (
       )
     )
     AND (
-      $18::text = ''
-      OR (m.saved_peer_type = $18::text AND m.saved_peer_id = $19::bigint)
+      NOT $18::boolean
+      OR m.media #>> '{service_action,kind}' = 'phone_call'
     )
     AND (
-      cardinality($20::text[]) = 0
+      NOT $19::boolean
+      OR (
+        NOT m.outgoing
+        AND m.media #>> '{service_action,kind}' = 'phone_call'
+        AND m.media #>> '{service_action,call,reason}' = 'missed'
+      )
+    )
+    AND (
+      $20::text = ''
+      OR (m.saved_peer_type = $20::text AND m.saved_peer_id = $21::bigint)
+    )
+    AND (
+      cardinality($22::text[]) = 0
       OR EXISTS (
         SELECT 1
         FROM saved_message_reaction_tags tag
         WHERE tag.user_id = m.owner_user_id
           AND tag.message_box_id = m.box_id
           AND (tag.reaction_type || ':' || tag.reaction_value)
-              = ANY($20::text[])
+              = ANY($22::text[])
       )
     )
 ),
 total AS (
   SELECT count(*)::int AS total_count
   FROM base
-  WHERE $21::boolean
+  WHERE $23::boolean
 ),
 backward AS (
   SELECT b.box_id, b.private_message_id, b.owner_user_id, b.peer_type, b.peer_id, b.from_user_id, b.message_date, b.ttl_period, b.expires_at, b.edit_date, b.hide_edited, b.outgoing, b.body, b.entities_json, b.silent, b.noforwards, b.reply_to_msg_id, b.reply_to_peer_type, b.reply_to_peer_id, b.reply_to_top_id, b.reply_to_story_id, b.quote_text, b.quote_entities_json, b.quote_offset, b.fwd_from_peer_type, b.fwd_from_peer_id, b.fwd_from_name, b.fwd_date, b.fwd_saved_from_peer_type, b.fwd_saved_from_peer_id, b.fwd_saved_from_msg_id, b.saved_peer_type, b.saved_peer_id, b.pts, b.media_json, b.media_unread, b.reaction_unread, b.pinned, b.via_bot_id, b.grouped_id, b.effect, b.reply_markup_json, b.rich_message_json, b.peer_user_id, b.peer_access_hash, b.peer_phone, b.peer_first_name, b.peer_last_name, b.peer_username, b.peer_country_code, b.peer_verified, b.peer_support, b.peer_is_bot, b.peer_bot_info_version, b.peer_premium_until, b.peer_emoji_status_document_id, b.peer_emoji_status_until, b.peer_last_seen_at, b.from_user_user_id, b.from_user_access_hash, b.from_user_phone, b.from_user_first_name, b.from_user_last_name, b.from_user_username, b.from_user_country_code, b.from_user_verified, b.from_user_support, b.from_user_is_bot, b.from_user_bot_info_version, b.from_user_premium_until, b.from_user_emoji_status_document_id, b.from_user_emoji_status_until, b.from_user_last_seen_at
@@ -2868,27 +2912,29 @@ ORDER BY box_id DESC
 `
 
 type ListMessagesByUserParams struct {
-	OwnerUserID       int64
-	OffsetID          int32
-	OffsetDate        int32
-	AddOffset         int32
-	LimitCount        int32
-	HasPeer           bool
-	PeerType          string
-	PeerID            int64
-	RestrictPeerIds   bool
-	PeerIds           []int64
-	Query             string
-	MinDate           int32
-	MaxDate           int32
-	MaxID             int32
-	MinID             int32
-	PinnedOnly        bool
-	MusicOnly         bool
-	SavedPeerType     string
-	SavedPeerID       int64
-	SavedReactionKeys []string
-	NeedTotalCount    bool
+	OwnerUserID          int64
+	OffsetID             int32
+	OffsetDate           int32
+	AddOffset            int32
+	LimitCount           int32
+	HasPeer              bool
+	PeerType             string
+	PeerID               int64
+	RestrictPeerIds      bool
+	PeerIds              []int64
+	Query                string
+	MinDate              int32
+	MaxDate              int32
+	MaxID                int32
+	MinID                int32
+	PinnedOnly           bool
+	MusicOnly            bool
+	PhoneCallsOnly       bool
+	MissedPhoneCallsOnly bool
+	SavedPeerType        string
+	SavedPeerID          int64
+	SavedReactionKeys    []string
+	NeedTotalCount       bool
 }
 
 type ListMessagesByUserRow struct {
@@ -2987,6 +3033,8 @@ func (q *Queries) ListMessagesByUser(ctx context.Context, arg ListMessagesByUser
 		arg.MinID,
 		arg.PinnedOnly,
 		arg.MusicOnly,
+		arg.PhoneCallsOnly,
+		arg.MissedPhoneCallsOnly,
 		arg.SavedPeerType,
 		arg.SavedPeerID,
 		arg.SavedReactionKeys,

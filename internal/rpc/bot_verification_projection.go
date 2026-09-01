@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/iamxvbaba/td/tg"
@@ -103,7 +104,7 @@ func (r *Router) applyBotVerificationIconsToPeerObjects(ctx context.Context, use
 		peers = append(peers, peer)
 	}
 	for _, item := range users {
-		if u, ok := item.(*tg.User); ok && u != nil {
+		if u, ok := item.(*tg.User); ok && u != nil && !u.Deleted {
 			addPeer(domain.Peer{Type: domain.PeerTypeUser, ID: u.ID})
 		}
 	}
@@ -119,9 +120,13 @@ func (r *Router) applyBotVerificationIconsToPeerObjects(ctx context.Context, use
 	if len(byPeer) == 0 {
 		return
 	}
+	applyBotVerificationIconsFromMap(users, chats, byPeer)
+}
+
+func applyBotVerificationIconsFromMap(users []tg.UserClass, chats []tg.ChatClass, byPeer map[domain.Peer]domain.CustomVerification) {
 	for _, item := range users {
 		u, ok := item.(*tg.User)
-		if !ok || u == nil {
+		if !ok || u == nil || u.Deleted {
 			continue
 		}
 		mark, ok := byPeer[domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}]
@@ -152,18 +157,29 @@ func (r *Router) botVerificationMap(ctx context.Context, peers []domain.Peer) ma
 	if r.deps.BotVerifications == nil || len(peers) == 0 {
 		return nil
 	}
+	_, verifications := r.peerIdentityMaps(ctx, peers, false, true)
+	return verifications
+}
+
+func (r *Router) loadBotVerificationMap(ctx context.Context, peers []domain.Peer) (map[domain.Peer]domain.CustomVerification, error) {
 	if len(peers) == 1 {
 		mark, err := r.deps.BotVerifications.PeerVerification(ctx, peers[0])
-		if err != nil || mark.IconDocumentID <= 0 {
-			return nil
+		if err != nil {
+			if errors.Is(err, domain.ErrCustomVerificationNotFound) {
+				return map[domain.Peer]domain.CustomVerification{}, nil
+			}
+			return nil, err
 		}
-		return map[domain.Peer]domain.CustomVerification{peers[0]: mark}
+		if mark.IconDocumentID <= 0 {
+			return map[domain.Peer]domain.CustomVerification{}, nil
+		}
+		return map[domain.Peer]domain.CustomVerification{peers[0]: mark}, nil
 	}
 	byPeer, err := r.deps.BotVerifications.PeerVerificationBatch(ctx, peers)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return byPeer
+	return byPeer, nil
 }
 
 // peerBotVerificationIcon resolves just the icon for one peer, for the update
@@ -189,7 +205,7 @@ func applyBotVerificationIconToUsers(users []tg.UserClass, userID, icon int64) {
 		return
 	}
 	for _, item := range users {
-		if u, ok := item.(*tg.User); ok && u != nil && u.ID == userID {
+		if u, ok := item.(*tg.User); ok && u != nil && !u.Deleted && u.ID == userID {
 			u.SetBotVerificationIcon(icon)
 		}
 	}

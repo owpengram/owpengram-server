@@ -19,13 +19,18 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 	if len(events) == 0 {
 		return events
 	}
-	if cache == nil {
-		cache = newViewerPeerCache(r)
+	return r.enrichPreparedUpdateEventsWithPeerCache(ctx, viewerUserID, r.prepareUpdateEventsForViewer(ctx, viewerUserID, events), cache)
+}
+
+func (r *Router) enrichUpdateEventsWithPeerCacheStrict(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) ([]domain.UpdateEvent, error) {
+	if len(events) == 0 {
+		return events, nil
 	}
+	return r.enrichPreparedUpdateEventsWithPeerCacheStrict(ctx, viewerUserID, r.prepareUpdateEventsForViewer(ctx, viewerUserID, events), cache)
+}
+
+func (r *Router) prepareUpdateEventsForViewer(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent) []domain.UpdateEvent {
 	out := append([]domain.UpdateEvent(nil), events...)
-	refs := make([]updateEventPeerRefs, len(out))
-	allUserIDs := make(map[int64]struct{})
-	allChannelIDs := make(map[int64]struct{})
 	for i := range out {
 		if out[i].Type == domain.UpdateEventChannelState {
 			if service, ok := r.deps.Channels.(ChannelAuthoritativeProjectionService); ok {
@@ -51,6 +56,31 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 		if out[i].Type == domain.UpdateEventDraftMessage {
 			out[i] = r.enrichDraftMessageEvent(ctx, viewerUserID, out[i])
 		}
+	}
+	return out
+}
+
+func (r *Router) enrichPreparedUpdateEventsWithPeerCache(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) []domain.UpdateEvent {
+	out, _ := r.enrichPreparedUpdateEvents(ctx, viewerUserID, events, cache, false)
+	return out
+}
+
+func (r *Router) enrichPreparedUpdateEventsWithPeerCacheStrict(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache) ([]domain.UpdateEvent, error) {
+	return r.enrichPreparedUpdateEvents(ctx, viewerUserID, events, cache, true)
+}
+
+func (r *Router) enrichPreparedUpdateEvents(ctx context.Context, viewerUserID int64, events []domain.UpdateEvent, cache *viewerPeerCache, strictUsers bool) ([]domain.UpdateEvent, error) {
+	if len(events) == 0 {
+		return events, nil
+	}
+	if cache == nil {
+		cache = newViewerPeerCache(r)
+	}
+	out := append([]domain.UpdateEvent(nil), events...)
+	refs := make([]updateEventPeerRefs, len(out))
+	allUserIDs := make(map[int64]struct{})
+	allChannelIDs := make(map[int64]struct{})
+	for i := range out {
 		userIDs := make(map[int64]struct{})
 		channelIDs := make(map[int64]struct{})
 		addDomainPeerRef(out[i].Peer, 0, userIDs, channelIDs)
@@ -71,6 +101,17 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 		if out[i].BotCallbackQuery != nil && out[i].BotCallbackQuery.UserID != 0 {
 			userIDs[out[i].BotCallbackQuery.UserID] = struct{}{}
 		}
+		collectDialogDraftPeerRefs(out[i].Draft, userIDs, channelIDs)
+		if strictUsers {
+			// Durable envelopes may contain raw base users that older event
+			// constructors did not expose through payload refs. Their IDs are
+			// expected, but their account-scoped fields must never survive.
+			for _, user := range out[i].Users {
+				if user.ID != 0 {
+					userIDs[user.ID] = struct{}{}
+				}
+			}
+		}
 		removeKnownChannelRefs(channelIDs, out[i].Channels)
 		refs[i] = updateEventPeerRefs{userIDs: userIDs, channelIDs: channelIDs}
 		for id := range userIDs {
@@ -80,13 +121,39 @@ func (r *Router) enrichUpdateEventsWithPeerCache(ctx context.Context, viewerUser
 			allChannelIDs[id] = struct{}{}
 		}
 	}
-	cache.usersForIDs(ctx, viewerUserID, mapKeys(allUserIDs))
+	if strictUsers {
+		if _, err := cache.usersForIDsStrict(ctx, viewerUserID, mapKeys(allUserIDs)); err != nil {
+			return nil, err
+		}
+	} else {
+		cache.usersForIDs(ctx, viewerUserID, mapKeys(allUserIDs))
+	}
 	cache.channelsForIDs(ctx, viewerUserID, mapKeys(allChannelIDs))
 	for i := range out {
-		out[i].Users = r.withUsersPresence(mergeDomainUsers(out[i].Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(refs[i].userIDs))...))
+		if strictUsers {
+			users, err := cache.usersForIDsStrict(ctx, viewerUserID, mapKeys(refs[i].userIDs))
+			if err != nil {
+				return nil, err
+			}
+			out[i].Users = users
+		} else {
+			out[i].Users = r.withUsersPresence(mergeDomainUsers(out[i].Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(refs[i].userIDs))...))
+		}
 		out[i].Channels = mergeDomainChannels(out[i].Channels, cache.channelsForIDs(ctx, viewerUserID, mapKeys(refs[i].channelIDs))...)
 	}
-	return out
+	return out, nil
+}
+
+func collectDialogDraftPeerRefs(draft *domain.DialogDraft, userIDs, channelIDs map[int64]struct{}) {
+	if draft == nil {
+		return
+	}
+	addDomainPeerRef(draft.Peer, 0, userIDs, channelIDs)
+	for _, entity := range draft.Entities {
+		if entity.UserID != 0 {
+			userIDs[entity.UserID] = struct{}{}
+		}
+	}
 }
 
 func collectEphemeralMessagePeerRefs(message domain.EphemeralMessage, userIDs, channelIDs map[int64]struct{}) {
@@ -156,6 +223,15 @@ func (r *Router) enrichDraftMessageEvent(ctx context.Context, viewerUserID int64
 }
 
 func (r *Router) enrichChannelDifference(ctx context.Context, viewerUserID int64, diff domain.ChannelDifference) domain.ChannelDifference {
+	out, _ := r.enrichChannelDifferenceUsers(ctx, viewerUserID, diff, false)
+	return out
+}
+
+func (r *Router) enrichChannelDifferenceStrict(ctx context.Context, viewerUserID int64, diff domain.ChannelDifference) (domain.ChannelDifference, error) {
+	return r.enrichChannelDifferenceUsers(ctx, viewerUserID, diff, true)
+}
+
+func (r *Router) enrichChannelDifferenceUsers(ctx context.Context, viewerUserID int64, diff domain.ChannelDifference, strictUsers bool) (domain.ChannelDifference, error) {
 	userIDs := make(map[int64]struct{})
 	channelIDs := make(map[int64]struct{})
 	for _, event := range diff.Events {
@@ -167,11 +243,26 @@ func (r *Router) enrichChannelDifference(ctx context.Context, viewerUserID int64
 	for _, event := range diff.OtherUpdates {
 		collectChannelUpdatePeerRefs(event, diff.Channel.ID, userIDs, channelIDs)
 	}
+	if strictUsers {
+		for _, user := range diff.Users {
+			if user.ID != 0 {
+				userIDs[user.ID] = struct{}{}
+			}
+		}
+	}
 	removeKnownChannelRefs(channelIDs, diff.Channels)
 	cache := newViewerPeerCache(r)
-	diff.Users = r.withUsersPresence(mergeDomainUsers(diff.Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(userIDs))...))
+	if strictUsers {
+		users, err := cache.usersForIDsStrict(ctx, viewerUserID, mapKeys(userIDs))
+		if err != nil {
+			return domain.ChannelDifference{}, err
+		}
+		diff.Users = users
+	} else {
+		diff.Users = r.withUsersPresence(mergeDomainUsers(diff.Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(userIDs))...))
+	}
 	diff.Channels = mergeDomainChannels(diff.Channels, cache.channelsForIDs(ctx, viewerUserID, mapKeys(channelIDs))...)
-	return diff
+	return diff, nil
 }
 
 func (r *Router) enrichChannelHistory(ctx context.Context, viewerUserID int64, history domain.ChannelHistory) domain.ChannelHistory {
@@ -215,8 +306,27 @@ func (r *Router) enrichMessageList(ctx context.Context, viewerUserID int64, list
 		collectMessagePeerRefs(msg, 0, userIDs, channelIDs)
 	}
 	cache := newViewerPeerCache(r)
+	if r.messageUsersAreViewerProjected() {
+		cache.primeUsers(viewerUserID, list.Users)
+	}
 	list.Users = r.withUsersPresence(mergeDomainUsers(list.Users, cache.usersForIDs(ctx, viewerUserID, mapKeys(userIDs))...))
 	return list
+}
+
+type viewerProjectedMessageUsers interface {
+	ProjectsMessageUsersForViewer() bool
+}
+
+func (r *Router) messageUsersAreViewerProjected() bool {
+	projected, ok := r.deps.Messages.(viewerProjectedMessageUsers)
+	return ok && projected.ProjectsMessageUsersForViewer()
+}
+
+func (r *Router) preloadedMessageUsers(list domain.MessageList) []domain.User {
+	if !r.messageUsersAreViewerProjected() {
+		return nil
+	}
+	return list.Users
 }
 
 func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs, channelIDs map[int64]struct{}) {
@@ -224,12 +334,15 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	addDomainPeerRef(msg.Peer, currentChannelID, userIDs, channelIDs)
 	if msg.Forward != nil {
 		addDomainPeerRef(msg.Forward.From, currentChannelID, userIDs, channelIDs)
+		addDomainPeerRef(msg.Forward.SavedFrom, currentChannelID, userIDs, channelIDs)
 	}
 	if msg.ViaBotID != 0 {
 		userIDs[msg.ViaBotID] = struct{}{}
 	}
+	collectMessageEntityUserRefs(msg.Entities, userIDs)
 	if msg.ReplyTo != nil {
 		addDomainPeerRef(msg.ReplyTo.Peer, currentChannelID, userIDs, channelIDs)
+		collectMessageEntityUserRefs(msg.ReplyTo.QuoteEntities, userIDs)
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
@@ -304,21 +417,33 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 	if msg.SendAs != nil {
 		addDomainPeerRef(*msg.SendAs, currentChannelID, userIDs, channelIDs)
 	}
+	addDomainPeerRef(msg.SavedPeer, currentChannelID, userIDs, channelIDs)
 	if msg.Forward != nil {
 		addDomainPeerRef(msg.Forward.From, currentChannelID, userIDs, channelIDs)
+		addDomainPeerRef(msg.Forward.SavedFrom, currentChannelID, userIDs, channelIDs)
 	}
 	if msg.ViaBotID != 0 {
 		userIDs[msg.ViaBotID] = struct{}{}
 	}
+	collectMessageEntityUserRefs(msg.Entities, userIDs)
 	if msg.ReplyTo != nil {
 		addDomainPeerRef(msg.ReplyTo.Peer, currentChannelID, userIDs, channelIDs)
+		collectMessageEntityUserRefs(msg.ReplyTo.QuoteEntities, userIDs)
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
 	}
 	collectPollMediaUserRefs(msg.Media, userIDs)
 	collectTodoMediaUserRefs(msg.Media, userIDs)
+	if msg.Replies != nil {
+		for _, peer := range msg.Replies.RecentRepliers {
+			addDomainPeerRef(peer, currentChannelID, userIDs, channelIDs)
+		}
+	}
 	if msg.Action != nil {
+		if msg.Action.InviterUserID != 0 {
+			userIDs[msg.Action.InviterUserID] = struct{}{}
+		}
 		for _, id := range msg.Action.UserIDs {
 			if id != 0 {
 				userIDs[id] = struct{}{}
@@ -330,6 +455,14 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 			if reaction.UserID != 0 {
 				userIDs[reaction.UserID] = struct{}{}
 			}
+		}
+	}
+}
+
+func collectMessageEntityUserRefs(entities []domain.MessageEntity, userIDs map[int64]struct{}) {
+	for _, entity := range entities {
+		if entity.UserID != 0 {
+			userIDs[entity.UserID] = struct{}{}
 		}
 	}
 }

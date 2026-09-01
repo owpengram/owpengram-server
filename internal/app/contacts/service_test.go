@@ -169,6 +169,36 @@ func TestImportContactsBatchesPhonesAndDedupesUpserts(t *testing.T) {
 	}
 }
 
+func TestImportContactsResolvesNationalTrunkVariantToCanonicalUser(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	contactsStore := memory.NewContactStore()
+	owner, err := users.Create(ctx, domain.User{Phone: "15551234567", FirstName: "Owner"})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	target, err := users.Create(ctx, domain.User{Phone: "989981679461", FirstName: "Iran"})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	svc := NewService(contactsStore, users)
+
+	res, err := svc.ImportContacts(ctx, owner.ID, []domain.ContactInput{{
+		ClientID:  98,
+		Phone:     "+98 0998 167 9461",
+		FirstName: "Saved",
+	}})
+	if err != nil {
+		t.Fatalf("ImportContacts: %v", err)
+	}
+	if len(res.Imported) != 1 || res.Imported[0].UserID != target.ID {
+		t.Fatalf("imported = %+v, want target %d", res.Imported, target.ID)
+	}
+	if len(res.Contacts) != 1 || res.Contacts[0].Phone != "989981679461" {
+		t.Fatalf("contacts = %+v, want one canonical contact", res.Contacts)
+	}
+}
+
 func TestAddContactWithoutPhoneDoesNotBackfillTargetPhone(t *testing.T) {
 	ctx := context.Background()
 	users := memory.NewUserStore()

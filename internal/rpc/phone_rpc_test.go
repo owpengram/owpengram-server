@@ -63,6 +63,24 @@ func (s *phoneCaptureSessions) PushToUserExceptAuthKeySession(_ context.Context,
 	return 1, nil
 }
 
+func (s *phoneCaptureSessions) PushToUserAuthKey(_ context.Context, userID int64, businessAuthKeyID [8]byte, _ proto.MessageType, msg tg.UpdatesClass) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.log = append(s.log, phonePushRecord{userID: userID, rawAuthKeyID: businessAuthKeyID, msg: msg})
+	return 1, s.pushErr
+}
+
+func (s *phoneCaptureSessions) PushToUserAuthKeyTransient(ctx context.Context, userID int64, businessAuthKeyID [8]byte, t proto.MessageType, msg tg.UpdatesClass, _ time.Duration) (int, error) {
+	return s.PushToUserAuthKey(ctx, userID, businessAuthKeyID, t, msg)
+}
+
+func (s *phoneCaptureSessions) PushToUserExceptBusinessAuthKey(_ context.Context, userID int64, excludeBusinessAuthKeyID [8]byte, _ proto.MessageType, msg tg.UpdatesClass, _ time.Duration) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.log = append(s.log, phonePushRecord{userID: userID, rawAuthKeyID: excludeBusinessAuthKeyID, msg: msg})
+	return 1, s.pushErr
+}
+
 func (s *phoneCaptureSessions) records() []phonePushRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -575,6 +593,18 @@ func TestPhoneUserFullCallFlags(t *testing.T) {
 
 func TestMessagesGetDhConfig(t *testing.T) {
 	f := newPhoneFixture(t, stubPrivacy{})
+
+	// Version 1 was the pre-server-ready placeholder.  A private-DC client may
+	// still have that version cached with parameters from a different profile;
+	// treating it as current lets the two secret-chat endpoints derive different
+	// auth keys while acceptEncryption itself appears to succeed.
+	legacy, err := f.router.onMessagesGetDhConfig(f.callerCtx(), &tg.MessagesGetDhConfigRequest{Version: 1, RandomLength: 256})
+	if err != nil {
+		t.Fatalf("getDhConfig legacy version: %v", err)
+	}
+	if _, ok := legacy.(*tg.MessagesDhConfig); !ok {
+		t.Fatalf("legacy version result = %T, want full MessagesDhConfig", legacy)
+	}
 
 	res, err := f.router.onMessagesGetDhConfig(f.callerCtx(), &tg.MessagesGetDhConfigRequest{Version: 0, RandomLength: 256})
 	if err != nil {

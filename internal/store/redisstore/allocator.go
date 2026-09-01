@@ -15,6 +15,12 @@ type BoxIDAllocator struct {
 	counter counterAllocator
 }
 
+var _ store.DistributedBoxIDAllocator = (*BoxIDAllocator)(nil)
+
+// DistributedBoxIDAllocation marks Redis INCR reservations as safe for the
+// cross-process private-send microbatch path.
+func (*BoxIDAllocator) DistributedBoxIDAllocation() {}
+
 // ChannelIDAllocator 用 Redis INCR 分配全局 channel/supergroup id。
 type ChannelIDAllocator struct {
 	counter counterAllocator
@@ -22,11 +28,6 @@ type ChannelIDAllocator struct {
 
 // ChannelMessageIDAllocator 用 Redis INCR 分配 channel 维度 message id。
 type ChannelMessageIDAllocator struct {
-	counter counterAllocator
-}
-
-// SecretChatIDAllocator 用 Redis INCR 分配全局 secret chat id（int32 量级）。
-type SecretChatIDAllocator struct {
 	counter counterAllocator
 }
 
@@ -113,26 +114,12 @@ func NewChannelMessageIDAllocator(c *redis.Client, source store.CounterSource) *
 	}}
 }
 
-// NewSecretChatIDAllocator 创建 Redis-backed secret chat id allocator。
-func NewSecretChatIDAllocator(c *redis.Client, source store.CounterSource) *SecretChatIDAllocator {
-	return &SecretChatIDAllocator{counter: counterAllocator{
-		c:      c,
-		source: source,
-		key:    secretChatIDKey,
-		name:   "secret_chat_id",
-	}}
-}
-
 func boxIDKey(userID int64) string {
 	return fmt.Sprintf("counter:box_id:{%d}", userID)
 }
 
 func channelIDKey(_ int64) string {
 	return "counter:channel_id"
-}
-
-func secretChatIDKey(_ int64) string {
-	return "counter:secret_chat_id"
 }
 
 func channelMessageIDKey(channelID int64) string {
@@ -142,6 +129,91 @@ func channelMessageIDKey(channelID int64) string {
 func (a *BoxIDAllocator) NextBoxID(ctx context.Context, userID int64) (int, error) {
 	v, err := a.counter.next(ctx, userID)
 	return int(v), err
+}
+
+// NextBoxIDs allocates every distinct owner in one Redis pipeline. Cold
+// counters use one durable batch read and one recovery pipeline; the batch API
+// never degrades into per-user network calls.
+func (a *BoxIDAllocator) NextBoxIDs(ctx context.Context, userIDs []int64) (map[int64]int, error) {
+	if a == nil || a.counter.c == nil {
+		return nil, fmt.Errorf("redis box_id counter: nil client")
+	}
+	unique := make([]int64, 0, len(userIDs))
+	keys := make([]string, 0, len(userIDs))
+	seen := make(map[int64]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		if userID <= 0 {
+			return nil, fmt.Errorf("redis box_id counter: invalid user id %d", userID)
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		key, err := a.counter.validatedKey(userID)
+		if err != nil {
+			return nil, err
+		}
+		unique = append(unique, userID)
+		keys = append(keys, key)
+	}
+	if len(unique) == 0 {
+		return map[int64]int{}, nil
+	}
+
+	commands := make([]*redis.Cmd, len(unique))
+	if _, err := a.counter.c.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, key := range keys {
+			commands[i] = counterNextScript.Eval(ctx, pipe, []string{key})
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("redis batch next box_id counters: %w", err)
+	}
+
+	out := make(map[int64]int, len(unique))
+	missingUsers := make([]int64, 0, len(unique))
+	missingKeys := make([]string, 0, len(unique))
+	for i, command := range commands {
+		value, err := command.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("redis batch next box_id counter for %d: %w", unique[i], err)
+		}
+		if value == missingCounterSentinel {
+			missingUsers = append(missingUsers, unique[i])
+			missingKeys = append(missingKeys, keys[i])
+			continue
+		}
+		out[unique[i]] = int(value)
+	}
+	if len(missingUsers) == 0 {
+		return out, nil
+	}
+
+	recovered, err := a.counter.recoveredBatch(ctx, missingUsers)
+	if err != nil {
+		return nil, err
+	}
+	recoveryCommands := make([]*redis.Cmd, len(missingUsers))
+	if _, err := a.counter.c.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, key := range missingKeys {
+			floor, ok := recovered[missingUsers[i]]
+			if !ok {
+				return fmt.Errorf("durable source omitted user %d", missingUsers[i])
+			}
+			recoveryCommands[i] = counterRecoverNextScript.Eval(ctx, pipe, []string{key}, floor)
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("redis batch recover-next box_id counters: %w", err)
+	}
+	for i, command := range recoveryCommands {
+		value, err := command.Int64()
+		if err != nil {
+			return nil, fmt.Errorf("redis batch recover-next box_id counter for %d: %w", missingUsers[i], err)
+		}
+		out[missingUsers[i]] = int(value)
+	}
+	return out, nil
 }
 
 func (a *BoxIDAllocator) CurrentBoxID(ctx context.Context, userID int64) (int, error) {
@@ -182,29 +254,6 @@ func (a *ChannelIDAllocator) NextChannelIDAtLeast(ctx context.Context, floor int
 
 func (a *ChannelIDAllocator) CurrentChannelID(ctx context.Context) (int64, error) {
 	return a.counter.current(ctx, 1)
-}
-
-func (a *SecretChatIDAllocator) NextSecretChatID(ctx context.Context) (int, error) {
-	v, err := a.counter.next(ctx, 1)
-	return int(v), err
-}
-
-// NextSecretChatIDAtLeast 把计数器至少顶到 floor 后再分配下一个 id（撞 chat_id
-// 主键自愈：Redis 快照回退或外部写库后计数器落后于 secret_chats 表最大 id）。
-func (a *SecretChatIDAllocator) NextSecretChatIDAtLeast(ctx context.Context, floor int) (int, error) {
-	if a.counter.c == nil {
-		return 0, fmt.Errorf("redis secret_chat_id counter: nil client")
-	}
-	v, err := counterNextAtLeastScript.Run(ctx, a.counter.c, []string{secretChatIDKey(1)}, floor).Int64()
-	if err != nil {
-		return 0, fmt.Errorf("redis next-at-least secret_chat_id counter: %w", err)
-	}
-	return int(v), nil
-}
-
-func (a *SecretChatIDAllocator) CurrentSecretChatID(ctx context.Context) (int, error) {
-	v, err := a.counter.current(ctx, 1)
-	return int(v), err
 }
 
 func (a *ChannelMessageIDAllocator) NextChannelMessageID(ctx context.Context, channelID int64) (int, error) {
@@ -281,6 +330,17 @@ func (a counterAllocator) recovered(ctx context.Context, userID int64) (int, err
 		if err != nil {
 			return 0, fmt.Errorf("recover %s counter: %w", a.name, err)
 		}
+	}
+	return recovered, nil
+}
+
+func (a counterAllocator) recoveredBatch(ctx context.Context, userIDs []int64) (map[int64]int, error) {
+	if a.source == nil {
+		return nil, fmt.Errorf("recover %s counters: missing durable source", a.name)
+	}
+	recovered, err := a.source.CurrentBatch(ctx, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("recover %s counters: %w", a.name, err)
 	}
 	return recovered, nil
 }

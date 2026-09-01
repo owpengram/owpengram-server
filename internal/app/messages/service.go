@@ -11,17 +11,22 @@ import (
 
 // Service 提供消息历史、搜索与已读业务。
 type Service struct {
-	messages     store.MessageStore
-	dialogs      store.DialogStore
-	contacts     store.ContactStore
-	photos       userprojection.ProfilePhotoProvider
-	privacy      userprojection.PrivacyEvaluator
-	freezes      userprojection.AccountFreezeProvider
-	versions     store.ReadModelVersionStore
-	projector    *userprojection.Projector
-	botResponder BotResponder
-	sendGate     SendPermissionChecker
-	business     *businessAutomationConfig
+	messages  store.MessageStore
+	dialogs   store.DialogStore
+	contacts  store.ContactStore
+	photos    userprojection.ProfilePhotoProvider
+	privacy   userprojection.PrivacyEvaluator
+	freezes   userprojection.AccountFreezeProvider
+	versions  store.ReadModelVersionStore
+	projector *userprojection.Projector
+	// viewerProjectionComplete is true only when every viewer-scoped user
+	// overlay used by the shared RPC Users service is configured here too.
+	// A partially configured service may still project the dependencies it has,
+	// but RPC must not trust that partial envelope as authoritative.
+	viewerProjectionComplete bool
+	botResponder             BotResponder
+	sendGate                 SendPermissionChecker
+	business                 *businessAutomationConfig
 
 	privateMediaCountCache *privateMediaCountReadModelCache
 }
@@ -37,7 +42,7 @@ type BotResponder interface {
 	// HandlesBot 报告 botUserID 是否为该 responder 负责的内置 bot。
 	HandlesBot(botUserID int64) bool
 	// OnPrivateMessage 处理一条投递给内置 bot 的消息；msg 为 bot 视角收件 box 行。
-	OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message)
+	OnPrivateMessage(ctx context.Context, botUserID int64, msg domain.Message, session domain.ClientSessionMetadata)
 }
 
 // Option adjusts optional message service dependencies.
@@ -92,7 +97,16 @@ func NewService(messages store.MessageStore, dialogs store.DialogStore, opts ...
 		userprojection.WithPrivacyEvaluator(s.privacy),
 		userprojection.WithAccountFreezeProvider(s.freezes),
 	)
+	s.viewerProjectionComplete = s.contacts != nil && s.photos != nil && s.privacy != nil && s.freezes != nil
 	return s
+}
+
+// ProjectsMessageUsersForViewer reports that history/search results returned by
+// this service have already passed through the viewer-specific user projection
+// boundary. RPC may reuse that envelope and resolve only nested message refs;
+// raw stores and test doubles do not implicitly gain this trust marker.
+func (s *Service) ProjectsMessageUsersForViewer() bool {
+	return s != nil && s.viewerProjectionComplete
 }
 
 // SendPrivateText 发送一条私聊文本消息。
@@ -140,7 +154,7 @@ func (s *Service) SendPrivateText(ctx context.Context, userID int64, req domain.
 	// 兜错，不回传失败。bot 自己发出的消息不触发（SenderUserID 不会是内置 bot
 	// 的对话对象集合里关心的方向——hook 只看收件人）。
 	if err == nil && !res.Duplicate && req.BusinessAutomationKind == "" && s.botResponder != nil && s.botResponder.HandlesBot(req.RecipientUserID) {
-		s.botResponder.OnPrivateMessage(ctx, req.RecipientUserID, res.RecipientMessage)
+		s.botResponder.OnPrivateMessage(ctx, req.RecipientUserID, res.RecipientMessage, req.OriginClientSession)
 	}
 	return res, err
 }
@@ -349,7 +363,11 @@ func (s *Service) SearchPrivateMedia(ctx context.Context, userID, peerID int64, 
 	if s == nil || s.messages == nil || userID == 0 || peerID == 0 {
 		return domain.MessageList{}, nil
 	}
-	return s.messages.SearchPrivateMedia(ctx, userID, peerID, req)
+	list, err := s.messages.SearchPrivateMedia(ctx, userID, peerID, req)
+	if err != nil {
+		return domain.MessageList{}, err
+	}
+	return s.projectMessageUsers(ctx, userID, list)
 }
 
 // CountPrivateMediaCategories 返回某私聊会话按基础媒体类别聚合的精确计数。

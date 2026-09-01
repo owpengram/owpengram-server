@@ -138,6 +138,47 @@ func TestLogicalSessionOwnsExactResultAcrossPhysicalReconnect(t *testing.T) {
 	}
 }
 
+func TestLateCompletionAdoptionDoesNotClearOfflineRetention(t *testing.T) {
+	manager := NewSessionManager(zap.NewNop())
+	budget := newOutboundTrackedBudget(1024)
+	key := sessionKey{authKeyID: [8]byte{1, 3, 5, 7}, sessionID: 421}
+	c := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	manager.attachLogicalSession(c, budget)
+	offlineAt := time.Unix(1_800_000_000, 0)
+	manager.mu.Lock()
+	manager.markLogicalSessionOfflineLocked(key, offlineAt)
+	manager.mu.Unlock()
+
+	manager.adoptLogicalSession(c)
+	snapshot := manager.runtimeSnapshot()
+	if snapshot.logical != 1 || snapshot.offlineLogical != 1 {
+		t.Fatalf("late completion snapshot = logical:%d offline:%d, want 1/1", snapshot.logical, snapshot.offlineLogical)
+	}
+	manager.sweepLogicalSessions(offlineAt.Add(logicalSessionOfflineTTL + time.Second))
+	snapshot = manager.runtimeSnapshot()
+	if snapshot.logical != 0 || snapshot.offlineLogical != 0 {
+		t.Fatalf("post-TTL snapshot = logical:%d offline:%d, want 0/0", snapshot.logical, snapshot.offlineLogical)
+	}
+}
+
+func TestRetiredLateCompletionCannotRecreateDestroyedLogicalSession(t *testing.T) {
+	manager := NewSessionManager(zap.NewNop())
+	budget := newOutboundTrackedBudget(1024)
+	key := sessionKey{authKeyID: [8]byte{2, 4, 6, 8}, sessionID: 422}
+	c := &Conn{authKeyID: key.authKeyID, sessionID: key.sessionID}
+	manager.attachLogicalSession(c, budget)
+	c.retire()
+	manager.mu.Lock()
+	state := manager.destroyLogicalSessionLocked(key)
+	manager.mu.Unlock()
+	manager.releaseLogicalSession(key, state)
+
+	manager.adoptLogicalSession(c)
+	if snapshot := manager.runtimeSnapshot(); snapshot.logical != 0 {
+		t.Fatalf("retired late completion recreated %d logical sessions", snapshot.logical)
+	}
+}
+
 func TestLogicalSessionACKReleasesPayloadAndReceipt(t *testing.T) {
 	manager := NewSessionManager(zap.NewNop())
 	budget := newOutboundTrackedBudget(1024)

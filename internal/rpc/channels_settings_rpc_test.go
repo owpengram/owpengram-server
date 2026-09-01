@@ -121,11 +121,15 @@ func TestChannelInputAccessHashIsValidatedRPC(t *testing.T) {
 	if got := len(mixedChats.(*tg.MessagesChats).Chats); got != 2 {
 		t.Fatalf("get channels mixed access_hash chats = %d, want two good refs", got)
 	}
-	if _, err := r.dialogFilterFromRequest(WithUserID(ctx, owner.ID), owner.ID, &tg.MessagesGetDialogsRequest{
+	dialogFilter, err := r.dialogFilterFromRequest(WithUserID(ctx, owner.ID), owner.ID, &tg.MessagesGetDialogsRequest{
 		OffsetPeer: &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: badHash},
 		Limit:      20,
-	}); err == nil || !strings.Contains(err.Error(), "CHANNEL_PRIVATE") {
-		t.Fatalf("get dialogs offset bad access_hash err = %v, want CHANNEL_PRIVATE", err)
+	})
+	if err != nil {
+		t.Fatalf("get dialogs cursor with stale access_hash: %v", err)
+	}
+	if !dialogFilter.HasOffsetPeer || dialogFilter.OffsetPeer != (domain.Peer{Type: domain.PeerTypeChannel, ID: channel.ID}) {
+		t.Fatalf("get dialogs cursor = %+v, want channel id without content authorization", dialogFilter)
 	}
 	if _, err := r.onMessagesSaveDraft(WithUserID(ctx, owner.ID), &tg.MessagesSaveDraftRequest{
 		Peer:    &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: badHash},
@@ -525,13 +529,14 @@ func TestChannelsCreateChannelUnsupportedOptionsReturnExplicitErrors(t *testing.
 	}
 }
 
-func TestChannelsGetFullChannelCanSetUsernameOnlyForCreator(t *testing.T) {
+func TestChannelsGetFullChannelProjectsManagementAndStatsCapabilities(t *testing.T) {
 	ctx := context.Background()
 	userStore := memory.NewUserStore()
 	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 56, Phone: "15550002211", FirstName: "Owner"})
 	member, _ := userStore.Create(ctx, domain.User{AccessHash: 57, Phone: "15550002212", FirstName: "Member"})
+	admin, _ := userStore.Create(ctx, domain.User{AccessHash: 58, Phone: "15550002213", FirstName: "Admin"})
 	channelStore := memory.NewChannelStore()
-	r := New(Config{}, Deps{
+	r := New(Config{DC: 2}, Deps{
 		Users:    appusers.NewService(userStore),
 		Channels: appchannels.NewService(channelStore),
 	}, zaptest.NewLogger(t), clock.System)
@@ -572,23 +577,56 @@ func TestChannelsGetFullChannelCanSetUsernameOnlyForCreator(t *testing.T) {
 				t.Fatalf("owner get full channel: %v", err)
 			}
 			ownerChannelFull := ownerFull.FullChat.(*tg.ChannelFull)
-			if !ownerChannelFull.CanSetUsername || !ownerChannelFull.CanDeleteChannel {
-				t.Fatalf("owner full flags can_set_username=%v can_delete_channel=%v, want both true", ownerChannelFull.CanSetUsername, ownerChannelFull.CanDeleteChannel)
+			if !ownerChannelFull.CanSetUsername || !ownerChannelFull.CanDeleteChannel || !ownerChannelFull.CanViewStats {
+				t.Fatalf("owner full flags can_set_username=%v can_delete_channel=%v can_view_stats=%v, want all true", ownerChannelFull.CanSetUsername, ownerChannelFull.CanDeleteChannel, ownerChannelFull.CanViewStats)
+			}
+			if statsDC, ok := ownerChannelFull.GetStatsDC(); !ok || statsDC != 2 {
+				t.Fatalf("owner full stats_dc=(%d,%v), want (2,true)", statsDC, ok)
+			}
+			cachedOwnerFull, err := r.onChannelsGetFullChannel(WithUserID(ctx, owner.ID), input)
+			if err != nil {
+				t.Fatalf("owner get cached full channel: %v", err)
+			}
+			cachedOwnerChannelFull := cachedOwnerFull.FullChat.(*tg.ChannelFull)
+			if statsDC, ok := cachedOwnerChannelFull.GetStatsDC(); !cachedOwnerChannelFull.CanViewStats || !ok || statsDC != 2 {
+				t.Fatalf("cached owner full can_view_stats=%v stats_dc=(%d,%v), want true and (2,true)", cachedOwnerChannelFull.CanViewStats, statsDC, ok)
 			}
 
 			if _, err := r.onChannelsInviteToChannel(WithUserID(ctx, owner.ID), &tg.ChannelsInviteToChannelRequest{
 				Channel: input,
-				Users:   []tg.InputUserClass{&tg.InputUser{UserID: member.ID, AccessHash: member.AccessHash}},
+				Users: []tg.InputUserClass{
+					&tg.InputUser{UserID: member.ID, AccessHash: member.AccessHash},
+					&tg.InputUser{UserID: admin.ID, AccessHash: admin.AccessHash},
+				},
 			}); err != nil {
-				t.Fatalf("invite member: %v", err)
+				t.Fatalf("invite members: %v", err)
 			}
 			memberFull, err := r.onChannelsGetFullChannel(WithUserID(ctx, member.ID), input)
 			if err != nil {
 				t.Fatalf("member get full channel: %v", err)
 			}
 			memberChannelFull := memberFull.FullChat.(*tg.ChannelFull)
-			if memberChannelFull.CanSetUsername || memberChannelFull.CanDeleteChannel {
-				t.Fatalf("member full flags can_set_username=%v can_delete_channel=%v, want both false", memberChannelFull.CanSetUsername, memberChannelFull.CanDeleteChannel)
+			if memberChannelFull.CanSetUsername || memberChannelFull.CanDeleteChannel || memberChannelFull.CanViewStats {
+				t.Fatalf("member full flags can_set_username=%v can_delete_channel=%v can_view_stats=%v, want all false", memberChannelFull.CanSetUsername, memberChannelFull.CanDeleteChannel, memberChannelFull.CanViewStats)
+			}
+			if statsDC, ok := memberChannelFull.GetStatsDC(); ok {
+				t.Fatalf("member full stats_dc=(%d,true), want absent", statsDC)
+			}
+
+			if _, err := r.onChannelsEditAdmin(WithUserID(ctx, owner.ID), &tg.ChannelsEditAdminRequest{
+				Channel:     input,
+				UserID:      &tg.InputUser{UserID: admin.ID, AccessHash: admin.AccessHash},
+				AdminRights: tg.ChatAdminRights{ChangeInfo: true},
+			}); err != nil {
+				t.Fatalf("promote admin: %v", err)
+			}
+			adminFull, err := r.onChannelsGetFullChannel(WithUserID(ctx, admin.ID), input)
+			if err != nil {
+				t.Fatalf("admin get full channel: %v", err)
+			}
+			adminChannelFull := adminFull.FullChat.(*tg.ChannelFull)
+			if statsDC, ok := adminChannelFull.GetStatsDC(); !adminChannelFull.CanViewStats || !ok || statsDC != 2 {
+				t.Fatalf("admin full can_view_stats=%v stats_dc=(%d,%v), want true and (2,true)", adminChannelFull.CanViewStats, statsDC, ok)
 			}
 		})
 	}

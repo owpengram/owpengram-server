@@ -12,8 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/iamxvbaba/td/exchange"
+	"github.com/iamxvbaba/td/mtproto"
+	"github.com/iamxvbaba/td/proto"
 	"github.com/iamxvbaba/td/telegram"
 	"github.com/iamxvbaba/td/telegram/dcs"
 	"github.com/iamxvbaba/td/tg"
@@ -24,6 +28,40 @@ type clientHooks struct {
 	Update          telegram.UpdateHandler
 	ConnectionState func(telegram.ConnectionState)
 	Dead            func(error)
+	Device          *telegram.DeviceConfig
+}
+
+// loadMessageIDSource keeps the load generator on the same MTProto message-id
+// rules as a production client even when the host clock lands exactly on an
+// integral second. The underlying gotd generator can emit a client id whose
+// lower 32 bits are zero in that narrow window; Telegram explicitly forbids
+// that value as replay protection. Retrying also fences any encoded duplicate
+// caused by a very low-resolution clock without weakening the DUT validator.
+type loadMessageIDSource struct {
+	mu     sync.Mutex
+	source mtproto.MessageIDSource
+	last   int64
+}
+
+func newLoadMessageIDSource(now func() time.Time) *loadMessageIDSource {
+	return &loadMessageIDSource{source: proto.NewMessageIDGen(now)}
+}
+
+func (s *loadMessageIDSource) New(messageType proto.MessageType) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for {
+		messageID := s.source.New(messageType)
+		if messageID <= s.last {
+			continue
+		}
+		if messageType == proto.MessageFromClient && uint32(messageID) == 0 {
+			continue
+		}
+		s.last = messageID
+		return messageID
+	}
 }
 
 func newClient(endpoint Endpoint, publicKey *rsa.PublicKey, storage telegram.SessionStorage, hooks clientHooks) (*telegram.Client, error) {
@@ -44,6 +82,10 @@ func newClient(endpoint Endpoint, publicKey *rsa.PublicKey, storage telegram.Ses
 	if updateHandler == nil {
 		updateHandler = telegram.UpdateHandlerFunc(func(context.Context, tg.UpdatesClass) error { return nil })
 	}
+	device := telegram.DeviceTDesktopWindows()
+	if hooks.Device != nil {
+		device = *hooks.Device
+	}
 	return telegram.NewClient(endpoint.APIID, endpoint.APIHash, telegram.Options{
 		PublicKeys: []exchange.PublicKey{{RSA: publicKey}},
 		DC:         endpoint.DC,
@@ -55,7 +97,8 @@ func newClient(endpoint Endpoint, publicKey *rsa.PublicKey, storage telegram.Ses
 		UpdateHandler:     updateHandler,
 		EnablePFS:         endpoint.PFS,
 		TempKeyTTL:        endpoint.TempKeyTTL,
-		Device:            telegram.DeviceTDesktopWindows(),
+		Device:            device,
+		MessageID:         newLoadMessageIDSource(time.Now),
 		OnConnectionState: hooks.ConnectionState,
 		OnDead:            hooks.Dead,
 	}), nil

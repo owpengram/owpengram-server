@@ -249,8 +249,9 @@ func TestChannelFanoutDispatcherInvokesPrefetch(t *testing.T) {
 
 	var gotViewers []int64
 	job := fanoutTestJob([]int64{2001, 2002}, 5, 99, nil)
-	job.prefetch = func(_ context.Context, viewers []int64) {
+	job.prefetch = func(_ context.Context, viewers []int64) bool {
 		gotViewers = append([]int64(nil), viewers...)
+		return true
 	}
 	// deps.Channels=nil → channelFanoutRecipients 返回 explicit recipients=[2001 2002]；origin=5 兜底追加。
 	r.channelFanout.Enqueue(context.Background(), job)
@@ -263,6 +264,36 @@ func TestChannelFanoutDispatcherInvokesPrefetch(t *testing.T) {
 		if !want[v] {
 			t.Fatalf("prefetch viewers = %v, unexpected %d (want recipients+origin)", gotViewers, v)
 		}
+	}
+}
+
+func TestChannelFanoutJobPrefetchFailureSendsRecoveryNudge(t *testing.T) {
+	sessions := &captureSessions{}
+	r := New(Config{}, Deps{Sessions: sessions}, zaptest.NewLogger(t), clock.System)
+	built := make(map[int64]bool)
+	job := fanoutTestJob([]int64{20}, 10, 0, built)
+	job.pts = 7
+	job.prefetch = func(context.Context, []int64) bool { return false }
+
+	r.runChannelFanoutJob(context.Background(), job)
+
+	if len(built) != 0 {
+		t.Fatalf("build called after prefetch failure: %v", built)
+	}
+	if got := sessions.pushedUserIDs(); len(got) != 2 || got[0] != 20 || got[1] != 10 {
+		t.Fatalf("pushes after prefetch failure = %v, want recovery nudge to recipient 20 and origin 10", got)
+	}
+	updates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok || len(updates.Updates) != 1 {
+		t.Fatalf("recovery payload = %#v, want one UpdateChannelTooLong", sessions.lastUserPush())
+	}
+	nudge, ok := updates.Updates[0].(*tg.UpdateChannelTooLong)
+	if !ok {
+		t.Fatalf("recovery update = %T, want UpdateChannelTooLong", updates.Updates[0])
+	}
+	pts, present := nudge.GetPts()
+	if !present || nudge.ChannelID != 1001 || pts != 7 {
+		t.Fatalf("recovery nudge = %+v pts_present=%v, want channel=1001 pts=7", nudge, present)
 	}
 }
 
@@ -326,6 +357,16 @@ type prefetchRecordingUsersService struct {
 	gotViewers    []int64
 	gotOwnerIDs   []int64
 	forViewerCall int
+	byIDsCalls    int
+	omitViewer    int64
+	omitOwner     int64
+}
+
+func (s *prefetchRecordingUsersService) ByIDs(ctx context.Context, viewerUserID int64, userIDs []int64) ([]domain.User, error) {
+	s.mu.Lock()
+	s.byIDsCalls++
+	s.mu.Unlock()
+	return s.mapUsersService.ByIDs(ctx, viewerUserID, userIDs)
 }
 
 func (s *prefetchRecordingUsersService) ByIDsForViewers(_ context.Context, viewerUserIDs, userIDs []int64) (map[int64][]domain.User, error) {
@@ -336,9 +377,44 @@ func (s *prefetchRecordingUsersService) ByIDsForViewers(_ context.Context, viewe
 	s.mu.Unlock()
 	out := make(map[int64][]domain.User, len(viewerUserIDs))
 	for _, v := range viewerUserIDs {
-		out[v] = nil
+		if v == s.omitViewer {
+			continue
+		}
+		for _, id := range userIDs {
+			if id == s.omitOwner {
+				continue
+			}
+			user, ok := s.mapUsersService.users[id]
+			if !ok {
+				user = domain.User{ID: id}
+			}
+			out[v] = append(out[v], user)
+		}
 	}
 	return out, nil
+}
+
+func (s *prefetchRecordingUsersService) snapshot() (forViewerCall int, viewers, ownerIDs []int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.forViewerCall, append([]int64(nil), s.gotViewers...), append([]int64(nil), s.gotOwnerIDs...)
+}
+
+func TestPrefetchChannelFanoutUsersRejectsMissingViewersAndOwners(t *testing.T) {
+	users := &prefetchRecordingUsersService{omitViewer: 3002, mapUsersService: mapUsersService{users: map[int64]domain.User{
+		2001: {ID: 2001, FirstName: "must not scalar load"},
+		2002: {ID: 2002, FirstName: "must not scalar load"},
+	}}}
+	r := New(Config{}, Deps{Users: users}, zaptest.NewLogger(t), clock.System)
+	cache := newViewerPeerCache(r)
+	if r.prefetchChannelFanoutUsers(context.Background(), cache, []int64{3001, 3002}, []int64{2001, 2002}) {
+		t.Fatal("prefetch accepted a response that omitted an entire viewer")
+	}
+	users.omitViewer = 0
+	users.omitOwner = 2002
+	if r.prefetchChannelFanoutUsers(context.Background(), cache, []int64{3001}, []int64{2001, 2002}) {
+		t.Fatal("prefetch accepted a response that omitted an owner")
+	}
 }
 
 // TestChannelEditMessageFanoutInvokesPrefetch：enqueueChannelEditMessageFanout 在逐 viewer build
@@ -353,19 +429,20 @@ func TestChannelEditMessageFanoutInvokesPrefetch(t *testing.T) {
 	res := editFanoutTestResult(5, 6)
 	r.enqueueChannelEditMessageFanout(context.Background(), 5, res)
 
-	if users.forViewerCall != 1 {
-		t.Fatalf("ByIDsForViewers called %d times, want 1 (prefetch must run once before per-viewer build)", users.forViewerCall)
+	forViewerCall, viewers, ownerIDs := users.snapshot()
+	if forViewerCall != 1 {
+		t.Fatalf("ByIDsForViewers called %d times, want 1 (prefetch must run once before per-viewer build)", forViewerCall)
 	}
-	gotViewers := ownerIDSet(users.gotViewers)
+	gotViewers := ownerIDSet(viewers)
 	for _, want := range []int64{3001, 3002, 5} {
 		if !gotViewers[want] {
-			t.Fatalf("prefetch viewers %v missing %d (recipients+origin)", users.gotViewers, want)
+			t.Fatalf("prefetch viewers %v missing %d (recipients+origin)", viewers, want)
 		}
 	}
-	gotOwners := ownerIDSet(users.gotOwnerIDs)
+	gotOwners := ownerIDSet(ownerIDs)
 	for _, want := range []int64{2001, 2002, 2003, 2004} {
 		if !gotOwners[want] {
-			t.Fatalf("prefetch owner ids %v missing %d (must equal channelEditMessageFanoutOwnerIDs)", users.gotOwnerIDs, want)
+			t.Fatalf("prefetch owner ids %v missing %d (must equal channelEditMessageFanoutOwnerIDs)", ownerIDs, want)
 		}
 	}
 	if registry.batchCalls != 1 || registry.peerCalls != 0 {

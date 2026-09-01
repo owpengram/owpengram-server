@@ -1,0 +1,11 @@
+DROP TRIGGER IF EXISTS channel_message_reactions_dialog_top_projection_changed ON channel_message_reactions;
+DROP FUNCTION IF EXISTS telesrv_notify_channel_top_reactions_read_model();
+
+DROP TRIGGER IF EXISTS channel_messages_dialog_top_projection_changed ON channel_messages;
+DROP FUNCTION IF EXISTS telesrv_notify_channel_top_message_read_model();
+
+DROP TRIGGER IF EXISTS private_message_reactions_dialog_top_projection_changed ON private_message_reactions;
+DROP FUNCTION IF EXISTS telesrv_notify_private_top_reactions_read_model();
+
+DROP TRIGGER IF EXISTS message_boxes_dialog_top_projection_changed ON message_boxes;
+DROP FUNCTION IF EXISTS telesrv_notify_private_top_message_read_model();

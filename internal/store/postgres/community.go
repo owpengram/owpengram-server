@@ -18,19 +18,30 @@ import (
 )
 
 type CommunityStore struct {
-	db     sqlcgen.DBTX
-	ids    store.ChannelIDAllocator
-	msgIDs store.ChannelMessageIDAllocator
+	db           sqlcgen.DBTX
+	ids          store.ChannelIDAllocator
+	msgIDs       store.ChannelMessageIDAllocator
+	catalogCache *CommunityCatalogCache
 }
 
-func NewCommunityStore(db sqlcgen.DBTX, ids store.ChannelIDAllocator, msgIDs store.ChannelMessageIDAllocator) *CommunityStore {
+type CommunityStoreOption func(*CommunityStore)
+
+func WithCommunityCatalogCache(cache *CommunityCatalogCache) CommunityStoreOption {
+	return func(s *CommunityStore) { s.catalogCache = cache }
+}
+
+func NewCommunityStore(db sqlcgen.DBTX, ids store.ChannelIDAllocator, msgIDs store.ChannelMessageIDAllocator, opts ...CommunityStoreOption) *CommunityStore {
 	if ids == nil {
 		ids = pgChannelIDAllocator{db: db}
 	}
 	if msgIDs == nil {
 		msgIDs = pgChannelMessageIDAllocator{db: db}
 	}
-	return &CommunityStore{db: db, ids: ids, msgIDs: msgIDs}
+	s := &CommunityStore{db: db, ids: ids, msgIDs: msgIDs}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *CommunityStore) appendCommunityServiceMessageTx(ctx context.Context, tx pgx.Tx, peer domain.Peer, actorUserID int64, date int, communityID int64) (*domain.SendChannelMessageResult, error) {
@@ -320,6 +331,18 @@ func (s *CommunityStore) GetCommunities(ctx context.Context, viewerUserID int64,
 }
 
 func (s *CommunityStore) ListJoinedCommunities(ctx context.Context, viewerUserID int64) ([]domain.CommunityView, error) {
+	if viewerUserID == 0 {
+		return nil, nil
+	}
+	if s.catalogCache != nil {
+		active, err := s.catalogCache.hasActive(ctx, s.db)
+		if err != nil {
+			return nil, fmt.Errorf("check community catalog: %w", err)
+		}
+		if !active {
+			return nil, nil
+		}
+	}
 	rows, err := s.db.Query(ctx, `
 SELECT DISTINCT c.id
 FROM communities c
@@ -865,6 +888,9 @@ func (s *CommunityStore) banCommunityParticipantFromChannelTx(ctx context.Contex
 	}
 	event := transientChannelParticipantEvent(channel.ID, actorUserID, previous, member, date)
 	if err := clearChannelMentionsForUserTx(ctx, tx, channelID, participantUserID); err != nil {
+		return domain.EditChannelBannedResult{}, false, err
+	}
+	if err := deleteWelcomeMessageDeliveriesTx(ctx, tx, channelID, []int64{participantUserID}); err != nil {
 		return domain.EditChannelBannedResult{}, false, err
 	}
 	var serviceMessage domain.ChannelMessage

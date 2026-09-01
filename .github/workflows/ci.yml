@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-test:
+    name: Go tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Test
+        run: go test ./... -count=1
+
+  admin-web:
+    name: Admin web build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/telesrv-admin/web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cmd/telesrv-admin/web
+        run: npm ci
+
+      - name: Build
+        working-directory: cmd/telesrv-admin/web
+        run: npm run build
+
+  grammystore:
+    name: Grammy store bot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: cmd/bots/grammystore/package-lock.json
+
+      - name: Install dependencies
+        working-directory: cmd/bots/grammystore
+        run: npm ci
+
+      - name: Check syntax
+        working-directory: cmd/bots/grammystore
+        run: npm run check
+
+      - name: Test
+        working-directory: cmd/bots/grammystore
+        run: npm test
+
+  docker-smoke:
+    name: Docker main topology smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Generate isolated environment
+        run: ./scripts/new-docker-env.sh --advertise-ip 127.0.0.1
+
+      - name: Validate deployment inputs
+        run: |
+          docker compose version
+          sh -n scripts/new-docker-env.sh
+          bash -n scripts/start-docker.sh
+          sh -n deploy/docker/docker-entrypoint.sh
+          compose=(docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml)
+          bridge=("${compose[@]}" -f deploy/docker/compose.bridge-network.yaml)
+          "${compose[@]}" config --quiet
+          "${compose[@]}" config --format json | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"]; assert s["server"].get("network_mode") == "host"; assert s["admin"].get("network_mode") == "host"; assert len(s["server"].get("ports", [])) == 0; assert len(s["admin"].get("ports", [])) == 0; assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12999"'
+          "${bridge[@]}" config --quiet
+          "${bridge[@]}" config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); s=c["services"]; assert s["server"].get("network_mode") != "host"; assert s["admin"].get("network_mode") != "host"; assert len(s["server"].get("ports", [])) == 69; assert len(s["admin"].get("ports", [])) == 1; assert "admin_host_access" in s["admin"]["networks"]; assert not c["networks"]["admin_host_access"].get("internal", False); assert str(s["server"]["environment"]["TELESRV_TURN_RELAY_MAX_PORT"]) == "12563"'
+
+      - name: Validate PowerShell launchers
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/new-docker-env.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/start-docker.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      - name: Build application images
+        run: |
+          compose=(docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml)
+          "${compose[@]}" build --pull server admin
+
+      - name: Start and wait for readiness
+        run: docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml up -d --no-build --wait --wait-timeout 600
+
+      - name: Verify runtime and media listeners
+        run: |
+          compose=(docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml)
+          for service in server admin; do
+            container_id="$("${compose[@]}" ps --quiet "$service")"
+            test -n "$container_id"
+            test "$(docker inspect --format '{{.Config.User}}' "$container_id")" = "10001:10001"
+            test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$container_id")" = "true"
+            test "$(docker inspect --format '{{json .HostConfig.CapDrop}}' "$container_id")" = '["ALL"]'
+            test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$container_id")" = "1024"
+            test "$(docker inspect --format '{{json .HostConfig.SecurityOpt}}' "$container_id")" = '["no-new-privileges:true"]'
+            test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$container_id")" = "host"
+          done
+          curl --fail --silent --show-error http://127.0.0.1:2401/healthz | grep -qx ok
+          curl --fail --silent --show-error http://127.0.0.1:2600/ >/dev/null
+          timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2400'
+          python3 - <<'PY'
+          import os
+          import socket
+          import struct
+
+          transaction_id = os.urandom(12)
+          request = struct.pack("!HHI12s", 0x0001, 0, 0x2112A442, transaction_id)
+          with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+              client.settimeout(5)
+              client.sendto(request, ("127.0.0.1", 12400))
+              response, _ = client.recvfrom(2048)
+          message_type, _, cookie = struct.unpack("!HHI", response[:8])
+          assert message_type == 0x0101, hex(message_type)
+          assert cookie == 0x2112A442, hex(cookie)
+          assert response[8:20] == transaction_id
+          PY
+          server_logs="$("${compose[@]}" logs --no-color server)"
+          case "$server_logs" in *"sfu listening"*) ;; *) echo "Embedded SFU did not become ready" >&2; exit 1 ;; esac
+          case "$server_logs" in *"turn listening"*) ;; *) echo "Embedded TURN did not become ready" >&2; exit 1 ;; esac
+          case "$server_logs" in *"live stream rtmp ingest listening"*) ;; *) echo "RTMP listener did not become ready" >&2; exit 1 ;; esac
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml logs --no-color --tail 200
+
+      - name: Remove isolated stack
+        if: always()
+        run: docker compose -p telesrv-main-ci --project-directory deploy/docker --env-file deploy/docker/.env -f deploy/docker/compose.yaml down --volumes --remove-orphans

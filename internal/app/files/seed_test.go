@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -463,8 +464,8 @@ func TestSeedMediaRepairsPartialReactionBlobs(t *testing.T) {
 	svc := NewService(media, blobs, 2)
 	if stats, err := svc.SeedMedia(context.Background(), seedDir, 0); err != nil {
 		t.Fatalf("initial seed: %v", err)
-	} else if stats.Reactions != 1 || stats.Blobs != 3 {
-		t.Fatalf("initial stats = %+v, want one reaction and three blobs", stats)
+	} else if stats.Reactions != 1 || stats.Blobs != 2 {
+		t.Fatalf("initial stats = %+v, want one reaction and two document blobs", stats)
 	}
 	chunk, ok, err := svc.GetFile(context.Background(), domain.FileDownloadRequest{LocationKey: "doc:2222222", Offset: 0, Limit: 4})
 	if err != nil || !ok {
@@ -486,7 +487,7 @@ func TestSeedMediaRepairsPartialReactionBlobs(t *testing.T) {
 		t.Fatalf("repair seed: %v", err)
 	}
 	if stats.Reactions != 1 || stats.Blobs != 2 || stats.Skipped {
-		t.Fatalf("repair stats = %+v, want two missing/revalidated main blobs without rewriting intact preview", stats)
+		t.Fatalf("repair stats = %+v, want two revalidated main document blobs", stats)
 	}
 	if _, ok, _ := media.GetFileBlob(context.Background(), "doc:2222222"); !ok {
 		t.Fatal("missing reaction blob was not repaired")
@@ -496,10 +497,10 @@ func TestSeedMediaRepairsPartialReactionBlobs(t *testing.T) {
 	}
 }
 
-func TestSeedCustomEmojiTGSWithoutThumbGetsSyntheticPreview(t *testing.T) {
+func TestSeedStatusPackTGSWithoutExportedThumbUsesBundledPreview(t *testing.T) {
 	ctx := context.Background()
 	seedDir := t.TempDir()
-	const sourceID int64 = 4444444
+	const sourceID int64 = 5247133031235329609
 	writeStatusPackWithoutThumbSeed(t, seedDir, sourceID, 17)
 
 	media := newFakeMediaStore()
@@ -513,7 +514,7 @@ func TestSeedCustomEmojiTGSWithoutThumbGetsSyntheticPreview(t *testing.T) {
 		t.Fatalf("seed media: %v", err)
 	}
 	if stats.StickerSets != 1 || stats.Documents != 1 || stats.Blobs != 2 || stats.Skipped {
-		t.Fatalf("stats = %+v, want one set, one doc, main blob plus synthetic preview", stats)
+		t.Fatalf("stats = %+v, want one set, one doc, main blob plus bundled preview", stats)
 	}
 
 	set, ok, err := media.GetStickerSetByShortName(ctx, "StatusPack")
@@ -529,21 +530,52 @@ func TestSeedCustomEmojiTGSWithoutThumbGetsSyntheticPreview(t *testing.T) {
 	}
 	thumb, ok := findCachedThumb(doc.Thumbs)
 	if !ok {
-		t.Fatalf("document thumbs = %+v, want synthetic cached preview", doc.Thumbs)
+		t.Fatalf("document thumbs = %+v, want bundled cached preview", doc.Thumbs)
 	}
-	if thumb.Type != seedSyntheticDocumentThumbType || thumb.W != 1 || thumb.H != 1 || len(thumb.Bytes) == 0 {
-		t.Fatalf("synthetic thumb = %+v, want 1x1 cached %q thumb", thumb, seedSyntheticDocumentThumbType)
+	want, ok := seedBundledDocumentPreview(sourceID)
+	if !ok {
+		t.Fatal("bundled StatusPack preview missing")
+	}
+	if thumb.Type != seedBundledDocumentThumbType || thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, want) {
+		t.Fatalf("bundled thumb = %+v, want visible 128x128 cached %q preview", thumb, seedBundledDocumentThumbType)
 	}
 	blob, ok, err := media.GetFileBlob(ctx, fmt.Sprintf("doc:%d:%s", doc.ID, thumb.Type))
 	if err != nil || !ok {
-		t.Fatalf("synthetic thumb blob ok=%v err=%v", ok, err)
+		t.Fatalf("bundled thumb blob ok=%v err=%v", ok, err)
 	}
 	if blob.MimeType != "image/png" {
-		t.Fatalf("synthetic thumb blob mime = %q, want image/png", blob.MimeType)
+		t.Fatalf("bundled thumb blob mime = %q, want image/png", blob.MimeType)
 	}
 }
 
-func TestSeedMediaRepairsCustomEmojiTGSWithoutThumb(t *testing.T) {
+func TestBundledStatusPackPreviewsAreVisibleTransparentPNGs(t *testing.T) {
+	if len(seedBundledDocumentPreviews) != 11 {
+		t.Fatalf("bundled StatusPack previews = %d, want 11", len(seedBundledDocumentPreviews))
+	}
+	for documentID, data := range seedBundledDocumentPreviews {
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("decode bundled preview %d: %v", documentID, err)
+		}
+		if bounds := img.Bounds(); bounds.Dx() != 128 || bounds.Dy() != 128 {
+			t.Fatalf("bundled preview %d bounds = %v, want 128x128", documentID, bounds)
+		}
+		visible := false
+		transparent := false
+		for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+			for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+				_, _, _, alpha := img.At(x, y).RGBA()
+				visible = visible || alpha != 0
+				transparent = transparent || alpha != 0xffff
+			}
+		}
+		if !visible || !transparent {
+			t.Fatalf("bundled preview %d visible=%v transparent=%v", documentID, visible, transparent)
+		}
+	}
+}
+
+func TestSeedMediaDoesNotInventPreviewForUnknownTGS(t *testing.T) {
 	ctx := context.Background()
 	seedDir := t.TempDir()
 	const sourceID int64 = 5555555
@@ -586,15 +618,15 @@ func TestSeedMediaRepairsCustomEmojiTGSWithoutThumb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repair seed: %v", err)
 	}
-	if stats.StickerSets != 1 || stats.Documents != 1 || stats.Blobs != 2 || stats.Skipped {
-		t.Fatalf("repair stats = %+v, want forced reimport", stats)
+	if stats.StickerSets != 1 || stats.Documents != 1 || stats.Blobs != 1 || stats.Skipped {
+		t.Fatalf("reimport stats = %+v, want main document blob only", stats)
 	}
 	doc, ok, err := media.GetDocument(ctx, sourceID)
 	if err != nil || !ok {
 		t.Fatalf("repaired document ok=%v err=%v", ok, err)
 	}
-	if _, ok := findCachedThumb(doc.Thumbs); !ok {
-		t.Fatalf("repaired document thumbs = %+v, want synthetic cached preview", doc.Thumbs)
+	if len(doc.Thumbs) != 0 {
+		t.Fatalf("document thumbs = %+v, want no invented preview for unknown TGS", doc.Thumbs)
 	}
 }
 
@@ -614,8 +646,8 @@ func TestSeedMediaSkipsUnchangedEffectsDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
-	if first.Effects != 1 || first.Documents != 1 || first.Blobs != 2 {
-		t.Fatalf("first stats = %+v, want one imported effect document with main plus synthetic preview blobs", first)
+	if first.Effects != 1 || first.Documents != 1 || first.Blobs != 1 {
+		t.Fatalf("first stats = %+v, want one imported effect document with its main blob", first)
 	}
 
 	second, err := svc.SeedMedia(ctx, seedDir, 0)
@@ -665,7 +697,7 @@ func TestSeedEffectsDoesNotDowngradeSharedStickerPreview(t *testing.T) {
 	if !ok {
 		t.Fatalf("shared document thumbs = %+v, want real cached preview", doc.Thumbs)
 	}
-	if thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, realThumb) || seedSyntheticTGStickerPreviewThumb(thumb) {
+	if thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, realThumb) {
 		t.Fatalf("shared preview = %+v, want original 128x128 catalog thumbnail", thumb)
 	}
 	blob, ok, err := media.GetFileBlob(ctx, fmt.Sprintf("doc:%d:m", sourceID))
@@ -689,55 +721,6 @@ func TestSeedEffectsDoesNotDowngradeSharedStickerPreview(t *testing.T) {
 	}
 	if second.Documents != 0 || second.Blobs != 0 {
 		t.Fatalf("second stats = %+v, want shared rich preview to satisfy effects readiness", second)
-	}
-}
-
-func TestSeedMediaMigratesSyntheticStickerPreviewToExportedThumbnail(t *testing.T) {
-	ctx := context.Background()
-	seedDir := t.TempDir()
-	const sourceID int64 = 8888888
-	realThumb := writeStatusPackWithThumbSeed(t, seedDir, sourceID, 31)
-
-	media := newFakeMediaStore()
-	if err := media.PutDocument(ctx, domain.Document{
-		ID:       sourceID,
-		MimeType: "application/x-tgsticker",
-		Thumbs: []domain.PhotoSize{{
-			Kind: domain.PhotoSizeKindCached, Type: seedSyntheticDocumentThumbType,
-			W: 1, H: 1, Bytes: append([]byte(nil), seedSyntheticTGStickerPreviewThumbPNG...),
-		}},
-	}); err != nil {
-		t.Fatalf("put stale document: %v", err)
-	}
-	if err := media.PutStickerSet(ctx, domain.StickerSet{
-		ID: 773947703670341676, AccessHash: 1, ShortName: "StatusPack", Title: "Status Pack",
-		Hash: 31, Kind: domain.StickerSetKindEmoji, Emojis: true, DocumentIDs: []int64{sourceID},
-	}); err != nil {
-		t.Fatalf("put stale sticker set: %v", err)
-	}
-
-	blobs, err := NewLocalFS(t.TempDir())
-	if err != nil {
-		t.Fatalf("local fs: %v", err)
-	}
-	svc := NewService(media, blobs, 2)
-	stats, err := svc.SeedMedia(ctx, seedDir, 0)
-	if err != nil {
-		t.Fatalf("migration seed: %v", err)
-	}
-	if stats.StickerSets != 1 || stats.Documents != 1 {
-		t.Fatalf("migration stats = %+v, want forced sticker document rebuild", stats)
-	}
-	doc, ok, err := media.GetDocument(ctx, sourceID)
-	if err != nil || !ok {
-		t.Fatalf("migrated document ok=%v err=%v", ok, err)
-	}
-	thumb, ok := findCachedThumb(doc.Thumbs)
-	if !ok || thumb.W != 128 || thumb.H != 128 || !bytes.Equal(thumb.Bytes, realThumb) {
-		t.Fatalf("migrated thumbs = %+v, want exported 128x128 preview", doc.Thumbs)
-	}
-	if state, ok, err := media.GetSeedState(ctx, seedStickerPreviewStateKey); err != nil || !ok || state == "" {
-		t.Fatalf("preview migration state = %q ok=%v err=%v", state, ok, err)
 	}
 }
 
@@ -841,7 +824,7 @@ func TestSeedMediaFromRealExport(t *testing.T) {
 			t.Fatalf("sample sticker thumb mime = %q, want %q", blob.MimeType, want)
 		}
 		if !hasPathThumb(doc.Thumbs) {
-			t.Logf("sample sticker document has no exported PhotoPathSize placeholder; synthetic cached preview is present: %+v", doc.Thumbs)
+			t.Logf("sample sticker document has no exported PhotoPathSize placeholder; cached preview is present: %+v", doc.Thumbs)
 		}
 	}
 }

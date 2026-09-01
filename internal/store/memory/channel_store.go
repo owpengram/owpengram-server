@@ -63,20 +63,23 @@ func (w channelReadWatermark) advance(userID int64, maxID int) channelReadWaterm
 
 // ChannelStore is an in-memory channel/supergroup store for tests and local development.
 type ChannelStore struct {
-	mu         sync.RWMutex
-	nextID     int64
-	nextHash   int64
-	channels   map[int64]domain.Channel
-	members    map[int64]map[int64]domain.ChannelMember
-	dialogs    map[int64]map[int64]domain.ChannelDialog
-	topics     map[int64]map[int]domain.ChannelForumTopic
-	messages   map[int64][]domain.ChannelMessage
-	reactions  map[int64]map[int]map[int64][]domain.ChannelMessagePeerReaction
-	top        map[int64]map[string]domain.TopMessageReaction
-	recent     map[int64]map[string]domain.RecentMessageReaction
-	mentions   map[int64]map[int64]map[int]memoryMention
-	msgViews   map[int64]map[int]int
-	msgViewers map[int64]map[int]map[int64]struct{}
+	mu        sync.RWMutex
+	nextID    int64
+	nextHash  int64
+	channels  map[int64]domain.Channel
+	members   map[int64]map[int64]domain.ChannelMember
+	dialogs   map[int64]map[int64]domain.ChannelDialog
+	topics    map[int64]map[int]domain.ChannelForumTopic
+	messages  map[int64][]domain.ChannelMessage
+	reactions map[int64]map[int]map[int64][]domain.ChannelMessagePeerReaction
+	top       map[int64]map[string]domain.TopMessageReaction
+	recent    map[int64]map[string]domain.RecentMessageReaction
+	mentions  map[int64]map[int64]map[int]memoryMention
+	msgViews  map[int64]map[int]int
+	// msgViewers stores the first durable view time for each unique viewer.
+	// Keeping the timestamp (instead of only a set membership bit) lets stats
+	// produce real event-time graphs while preserving idempotent view counts.
+	msgViewers map[int64]map[int]map[int64]int
 	events     map[int64][]domain.ChannelUpdateEvent
 	retention  map[int64]domain.ChannelUpdateRetentionCheckpoint
 	// historyClearDates is the no-PTS recovery timestamp for a future
@@ -136,7 +139,7 @@ func NewChannelStore() *ChannelStore {
 		recent:                 make(map[int64]map[string]domain.RecentMessageReaction),
 		mentions:               make(map[int64]map[int64]map[int]memoryMention),
 		msgViews:               make(map[int64]map[int]int),
-		msgViewers:             make(map[int64]map[int]map[int64]struct{}),
+		msgViewers:             make(map[int64]map[int]map[int64]int),
 		events:                 make(map[int64][]domain.ChannelUpdateEvent),
 		retention:              make(map[int64]domain.ChannelUpdateRetentionCheckpoint),
 		historyClearDates:      make(map[int64]map[int64]int),

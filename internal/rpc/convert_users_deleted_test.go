@@ -2,12 +2,18 @@ package rpc
 
 import (
 	"context"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/iamxvbaba/td/clock"
+	"github.com/iamxvbaba/td/tg"
 	"go.uber.org/zap/zaptest"
 
+	appstories "telesrv/internal/app/stories"
+	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
+	"telesrv/internal/store/memory"
 )
 
 func TestDeletedUserTLProjectionContainsOnlyTombstoneIdentity(t *testing.T) {
@@ -52,5 +58,110 @@ func TestHistoryHydrationReplacesStaleUserWithDeletedTombstone(t *testing.T) {
 	}
 	if got := tgUser(list.Users[0]); !got.Deleted || got.ID != deleted.ID {
 		t.Fatalf("history TL user = %+v", got)
+	}
+}
+
+func TestDeletedUserReadModelOverlaysRemainMinimal(t *testing.T) {
+	ctx := context.Background()
+	viewerID := int64(7)
+	deletedID := int64(42)
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: deletedID}
+	now := int(time.Now().Unix())
+
+	storyStore := memory.NewStoryStore()
+	if _, err := storyStore.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
+		Owner: peer, ID: 1, Date: now, ExpireDate: now + 3600, Public: true,
+	}}); err != nil {
+		t.Fatalf("upsert retained story: %v", err)
+	}
+	stories := &countingStoriesService{StoriesService: appstories.NewService(storyStore)}
+	usernames := newFakeUsernameRegistry()
+	usernames.byPeer[peer] = []domain.Username{{Username: "retained_collectible", Active: true, CollectibleID: 9}}
+	verifications := newFakeBotVerifications()
+	verifications.marks[peer] = domain.CustomVerification{
+		VerifierBotID: 9001, Peer: peer, IconDocumentID: 9002, Description: "retained mark",
+	}
+	r := New(Config{}, Deps{
+		Stories: stories, Usernames: usernames, BotVerifications: verifications,
+	}, zaptest.NewLogger(t), clock.System)
+
+	users := []tg.UserClass{tgUser(domain.User{ID: deletedID, Deleted: true, DeletedAt: int64(now)})}
+	r.applyPeerReadModels(ctx, viewerID, users, nil)
+	u := users[0].(*tg.User)
+	_, usernamesSet := u.GetUsernames()
+	_, storiesSet := u.GetStoriesMaxID()
+	_, verificationSet := u.GetBotVerificationIcon()
+	if !u.Deleted || u.ID != deletedID || usernamesSet || storiesSet || u.GetStoriesHidden() || verificationSet {
+		t.Fatalf("deleted user gained retained read-model overlays: %+v", u)
+	}
+	if stories.projectionCalls != 0 || usernames.peerCalls != 0 || usernames.batchCalls != 0 || verifications.peerCalls != 0 || verifications.batchCalls != 0 {
+		t.Fatalf("deleted user triggered overlay reads: stories=%d usernames=(%d,%d) verifications=(%d,%d)",
+			stories.projectionCalls, usernames.peerCalls, usernames.batchCalls, verifications.peerCalls, verifications.batchCalls)
+	}
+}
+
+func TestGetFullDeletedUserReturnsOnlyTombstone(t *testing.T) {
+	ctx := context.Background()
+	viewer := domain.User{ID: 7, FirstName: "Viewer"}
+	deleted := domain.User{
+		ID: 42, AccessHash: 99, Phone: "secret", FirstName: "Alice", LastName: "Private",
+		Username: "released", About: "retained about", PhotoID: 123, Deleted: true,
+	}
+	peer := domain.Peer{Type: domain.PeerTypeUser, ID: deleted.ID}
+	now := int(time.Now().Unix())
+
+	storyStore := memory.NewStoryStore()
+	if _, err := storyStore.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
+		Owner: peer, ID: 1, Date: now, ExpireDate: now + 3600, Public: true,
+	}}); err != nil {
+		t.Fatalf("upsert retained story: %v", err)
+	}
+	stories := &countingStoriesService{StoriesService: appstories.NewService(storyStore)}
+	usernames := newFakeUsernameRegistry()
+	usernames.byPeer[peer] = []domain.Username{{Username: "retained_collectible", Active: true, CollectibleID: 9}}
+	verifications := newFakeBotVerifications()
+	verifications.marks[peer] = domain.CustomVerification{
+		VerifierBotID: 9001, Peer: peer, IconDocumentID: 9002, Description: "retained mark",
+	}
+	r := New(Config{}, Deps{
+		Users: mapUsersService{users: map[int64]domain.User{
+			viewer.ID:  viewer,
+			deleted.ID: deleted,
+		}},
+		Stories: stories, Usernames: usernames, BotVerifications: verifications,
+	}, zaptest.NewLogger(t), clock.System)
+
+	got, err := r.onUsersGetFullUser(WithUserID(ctx, viewer.ID), &tg.InputUser{
+		UserID: deleted.ID, AccessHash: deleted.AccessHash,
+	})
+	if err != nil {
+		t.Fatalf("get full deleted user: %v", err)
+	}
+	wantFull := tg.UserFull{
+		ID:             deleted.ID,
+		Settings:       tg.PeerSettings{},
+		NotifySettings: *tdesktop.NotifySettings(),
+	}
+	if !reflect.DeepEqual(got.FullUser, wantFull) {
+		t.Fatalf("full deleted user = %+v, want minimal %+v", got.FullUser, wantFull)
+	}
+	if len(got.Users) != 1 {
+		t.Fatalf("users = %+v, want one tombstone", got.Users)
+	}
+	u, ok := got.Users[0].(*tg.User)
+	if !ok || !reflect.DeepEqual(u, &tg.User{ID: deleted.ID, Deleted: true}) {
+		t.Fatalf("deleted user envelope = %+v", got.Users[0])
+	}
+	if len(got.Chats) != 0 {
+		t.Fatalf("deleted user chats = %+v, want none", got.Chats)
+	}
+	if stories.projectionCalls != 0 || usernames.peerCalls != 0 || usernames.batchCalls != 0 || verifications.peerCalls != 0 || verifications.batchCalls != 0 {
+		t.Fatalf("deleted getFullUser triggered retained read-model reads: stories=%d usernames=(%d,%d) verifications=(%d,%d)",
+			stories.projectionCalls, usernames.peerCalls, usernames.batchCalls, verifications.peerCalls, verifications.batchCalls)
+	}
+	wire := &tg.UsersUserFull{}
+	tlRoundTrip(t, got, wire)
+	if !reflect.DeepEqual(wire.FullUser, wantFull) || len(wire.Users) != 1 {
+		t.Fatalf("wire deleted user full = %+v", wire)
 	}
 }

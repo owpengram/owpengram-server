@@ -6,6 +6,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/seed/appearance"
 )
 
@@ -78,6 +79,9 @@ func TestAppConfigIncludesStoryStealthPeriods(t *testing.T) {
 	}
 	if strings["rich_message_posting"] != "enabled" {
 		t.Fatalf("AppConfig[rich_message_posting] = %q, want enabled", strings["rich_message_posting"])
+	}
+	if values["ephemeral_welcome_messages_max"] != float64(domain.MaxWelcomeMessagesPerPeer) {
+		t.Fatalf("AppConfig[ephemeral_welcome_messages_max] = %v, want %d", values["ephemeral_welcome_messages_max"], domain.MaxWelcomeMessagesPerPeer)
 	}
 	if !boolSeen["stars_purchase_blocked"] || bools["stars_purchase_blocked"] ||
 		!boolSeen["giveaway_gifts_purchase_available"] || !bools["giveaway_gifts_purchase_available"] {

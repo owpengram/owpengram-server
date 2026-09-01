@@ -97,6 +97,14 @@ func TestStoryStoreReadMaxHiddenAndPeerMaxIDsPostgres(t *testing.T) {
 	if len(projections) != 1 || projections[0].Peer != ownerPeer || projections[0].Recent.MaxID != 2 || !projections[0].Hidden {
 		t.Fatalf("story peer projections = %+v, want max id 2 hidden owner", projections)
 	}
+	expirations, err := store.ActiveStoryPeerExpirations(ctx, []domain.Peer{ownerPeer}, 1700000202)
+	if err != nil || expirations[ownerPeer] != 1700001000 {
+		t.Fatalf("active story peer expirations = %+v, %v; want owner=1700001000", expirations, err)
+	}
+	hiddenPeers, err := store.ListHiddenStoryPeers(ctx, viewer.ID)
+	if err != nil || len(hiddenPeers) != 1 || hiddenPeers[0] != ownerPeer {
+		t.Fatalf("hidden story peer snapshot = %+v, %v; want owner", hiddenPeers, err)
+	}
 	list, err = store.ListActiveStories(ctx, viewer.ID, false, 1700000202, 100)
 	if err != nil {
 		t.Fatalf("list visible after hidden: %v", err)
@@ -120,6 +128,14 @@ func TestStoryStoreReadMaxHiddenAndPeerMaxIDsPostgres(t *testing.T) {
 	}
 	if hiddenStates[ownerPeer] {
 		t.Fatalf("hidden states after clear = %+v, want owner visible", hiddenStates)
+	}
+	hiddenPeers, err = store.ListHiddenStoryPeers(ctx, viewer.ID)
+	if err != nil || len(hiddenPeers) != 0 {
+		t.Fatalf("hidden story peer snapshot after clear = %+v, %v; want empty", hiddenPeers, err)
+	}
+	expirations, err = store.ActiveStoryPeerExpirations(ctx, []domain.Peer{ownerPeer}, 1700001000)
+	if err != nil || len(expirations) != 0 {
+		t.Fatalf("active story peer expirations at boundary = %+v, %v; want empty", expirations, err)
 	}
 }
 

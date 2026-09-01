@@ -20,6 +20,8 @@ type DialogStore struct {
 	q  *sqlcgen.Queries
 }
 
+const dialogListSnapshotLimit = 10000
+
 // NewDialogStore 基于 pgx 连接池（或事务）创建 DialogStore。
 func NewDialogStore(db sqlcgen.DBTX) *DialogStore {
 	return &DialogStore{db: db, q: sqlcgen.New(db)}
@@ -33,12 +35,19 @@ func (s *DialogStore) enrichDialogTopMessages(ctx context.Context, userID int64,
 }
 
 func (s *DialogStore) ListByUser(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogList, error) {
+	return s.listByUser(ctx, userID, filter, 500)
+}
+
+func (s *DialogStore) listByUser(ctx context.Context, userID int64, filter domain.DialogFilter, maxLimit int) (domain.DialogList, error) {
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	if limit > 500 {
-		limit = 500
+	if maxLimit <= 0 {
+		maxLimit = 500
+	}
+	if limit > maxLimit {
+		limit = maxLimit
 	}
 	offsetPeerID := int64(0)
 	if filter.HasOffsetPeer {
@@ -246,6 +255,195 @@ func (s *DialogStore) ListByUser(ctx context.Context, userID int64, filter domai
 		return domain.DialogList{}, err
 	}
 	return out, nil
+}
+
+// ListDialogSnapshotHeaders returns the complete bounded private-dialog owner
+// index without hydrating peer users or top-message payloads. Page payloads are
+// resolved later through the versioned per-peer read model.
+func (s *DialogStore) ListDialogSnapshotHeaders(ctx context.Context, userID int64, filter domain.DialogFilter) (domain.DialogList, error) {
+	folderParams := dialogFolderQueryParams(filter.Folder)
+	rows, err := s.q.ListDialogSummaryByUser(ctx, sqlcgen.ListDialogSummaryByUserParams{
+		UserID:                 userID,
+		HasFolderID:            filter.HasFolderID,
+		FolderID:               pgInt32NonNegative(filter.FolderID),
+		FolderExcludeArchived:  folderParams.excludeArchived,
+		FolderExcludeRead:      folderParams.excludeRead,
+		FolderExcludePeerTypes: folderParams.excludeTypes,
+		FolderExcludePeerIds:   folderParams.excludeIDs,
+		FolderIncludePeerTypes: folderParams.includeTypes,
+		FolderIncludePeerIds:   folderParams.includeIDs,
+		FolderPinnedPeerTypes:  folderParams.pinnedTypes,
+		FolderPinnedPeerIds:    folderParams.pinnedIDs,
+		FolderContacts:         folderParams.contacts,
+		FolderNonContacts:      folderParams.nonContacts,
+		PinnedOnly:             filter.PinnedOnly,
+		ExcludePinned:          filter.ExcludePinned,
+	})
+	if err != nil {
+		return domain.DialogList{}, fmt.Errorf("list dialog snapshot headers: %w", err)
+	}
+	if len(rows) > dialogListSnapshotLimit {
+		return domain.DialogList{}, fmt.Errorf("private dialog snapshot exceeds %d entries", dialogListSnapshotLimit)
+	}
+	dialogs := make([]domain.Dialog, 0, len(rows))
+	peerTypes := make([]string, 0, len(rows))
+	peerIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		peerTypes = append(peerTypes, row.PeerType)
+		peerIDs = append(peerIDs, row.PeerID)
+		dialogs = append(dialogs, domain.Dialog{
+			Peer:                  domain.Peer{Type: domain.PeerType(row.PeerType), ID: row.PeerID},
+			FolderID:              int(row.FolderID),
+			TopMessage:            int(row.TopMessageID),
+			TopMessageDate:        int(row.TopMessageDate),
+			ReadInboxMaxID:        int(row.ReadInboxMaxID),
+			ReadOutboxMaxID:       int(row.ReadOutboxMaxID),
+			UnreadCount:           int(row.UnreadCount),
+			UnreadMentions:        int(row.UnreadMentionsCount),
+			UnreadReactions:       int(row.UnreadReactionsCount),
+			TTLPeriod:             int(row.TtlPeriod),
+			ThemeEmoticon:         row.ThemeEmoticon,
+			HasScheduled:          row.HasScheduled,
+			Pinned:                row.Pinned,
+			PinnedOrder:           int(row.PinnedOrder),
+			UnreadMark:            row.UnreadMark,
+			PeerSettingsBarHidden: row.HiddenPeerSettingsBar,
+		})
+	}
+	var dependencyHash int64
+	if len(peerIDs) > 0 {
+		if err := s.db.QueryRow(ctx, `
+WITH requested AS (
+    SELECT peer_type, peer_id
+    FROM unnest($2::text[], $3::bigint[]) AS peer(peer_type, peer_id)
+)
+SELECT COALESCE(bit_xor(v.hash), 0)::bigint
+FROM requested peer
+JOIN read_model_versions v
+  ON v.model = 'dialog_light'
+ AND v.owner_user_id = $1
+ AND v.peer_type = peer.peer_type
+ AND v.peer_id = peer.peer_id`, userID, peerTypes, peerIDs).Scan(&dependencyHash); err != nil {
+			return domain.DialogList{}, fmt.Errorf("read private dialog snapshot dependency hash: %w", err)
+		}
+	}
+	return domain.DialogList{
+		Dialogs: dialogs,
+		Count:   len(dialogs),
+		Hash:    mixDialogListDependencyHash(dialogListHash(dialogs), dependencyHash),
+	}, nil
+}
+
+// ListAllBuiltinDialogSnapshotHeaders loads one owner base across main and
+// archive folders. Pinned/exclude-pinned/folder variants are derived by the app
+// layer from this immutable base instead of repeating the owner scan.
+func (s *DialogStore) ListAllBuiltinDialogSnapshotHeaders(ctx context.Context, userID int64) (domain.DialogList, error) {
+	if userID == 0 {
+		return domain.DialogList{}, nil
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT d.peer_type,
+       d.peer_id,
+       d.folder_id,
+       d.top_message_id,
+       d.top_message_date,
+       d.read_inbox_max_id,
+       d.read_outbox_max_id,
+       d.unread_count,
+       d.unread_mentions_count,
+       d.unread_reactions_count,
+       d.ttl_period,
+       d.theme_emoticon,
+       d.has_scheduled,
+       d.pinned,
+       d.pinned_order,
+       d.unread_mark,
+       d.hidden_peer_settings_bar
+FROM dialogs AS d
+WHERE d.user_id = $1
+  AND d.folder_id IN (0, 1)
+ORDER BY d.pinned DESC,
+         CASE WHEN d.pinned THEN COALESCE(d.pinned_order, 0) ELSE 0 END DESC,
+         d.top_message_date DESC,
+         d.top_message_id DESC,
+         d.peer_id DESC
+LIMIT $2`, userID, dialogListSnapshotLimit+1)
+	if err != nil {
+		return domain.DialogList{}, fmt.Errorf("list all built-in private dialog snapshot headers: %w", err)
+	}
+	defer rows.Close()
+	dialogs := make([]domain.Dialog, 0, 128)
+	for rows.Next() {
+		var dialog domain.Dialog
+		var peerType string
+		if err := rows.Scan(
+			&peerType,
+			&dialog.Peer.ID,
+			&dialog.FolderID,
+			&dialog.TopMessage,
+			&dialog.TopMessageDate,
+			&dialog.ReadInboxMaxID,
+			&dialog.ReadOutboxMaxID,
+			&dialog.UnreadCount,
+			&dialog.UnreadMentions,
+			&dialog.UnreadReactions,
+			&dialog.TTLPeriod,
+			&dialog.ThemeEmoticon,
+			&dialog.HasScheduled,
+			&dialog.Pinned,
+			&dialog.PinnedOrder,
+			&dialog.UnreadMark,
+			&dialog.PeerSettingsBarHidden,
+		); err != nil {
+			return domain.DialogList{}, fmt.Errorf("scan all built-in private dialog snapshot headers: %w", err)
+		}
+		dialog.Peer.Type = domain.PeerType(peerType)
+		dialogs = append(dialogs, dialog)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.DialogList{}, fmt.Errorf("list all built-in private dialog snapshot header rows: %w", err)
+	}
+	if len(dialogs) > dialogListSnapshotLimit {
+		return domain.DialogList{}, fmt.Errorf("private dialog snapshot exceeds %d entries", dialogListSnapshotLimit)
+	}
+	return domain.DialogList{Dialogs: dialogs, Count: len(dialogs)}, nil
+}
+
+// ListPrivateDialogPeerIDs is the narrow presence-fanout read model. Presence
+// needs only private peer IDs; routing it through GetDialogs would hydrate
+// channels, top messages, drafts and viewer projections and can even omit
+// private peers when the first page is channel-heavy.
+func (s *DialogStore) ListPrivateDialogPeerIDs(ctx context.Context, userID int64, limit int) ([]int64, error) {
+	if userID == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 4096 {
+		limit = 4096
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT peer_id
+FROM dialogs
+WHERE user_id = $1
+  AND peer_type = 'user'
+  AND peer_id <> $1
+ORDER BY top_message_date DESC, top_message_id DESC, peer_id DESC
+LIMIT $2`, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list private dialog peer ids: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, minInt(limit, 128))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (s *DialogStore) ListByPeers(ctx context.Context, userID int64, peers []domain.Peer) (domain.DialogList, error) {
@@ -632,6 +830,35 @@ func (s *DialogStore) ListUnreadMarked(ctx context.Context, userID int64) ([]dom
 		out = append(out, domain.Peer{Type: domain.PeerType(row.PeerType), ID: row.PeerID})
 	}
 	return out, nil
+}
+
+func (s *DialogStore) ListDraftsByPeers(ctx context.Context, userID int64, peers []domain.Peer) ([]domain.DialogDraft, error) {
+	peerTypes := make([]string, 0, len(peers))
+	peerIDs := make([]int64, 0, len(peers))
+	seen := make(map[domain.Peer]struct{}, len(peers))
+	for _, peer := range peers {
+		if peer.ID == 0 {
+			continue
+		}
+		if _, ok := seen[peer]; ok {
+			continue
+		}
+		seen[peer] = struct{}{}
+		peerTypes = append(peerTypes, string(peer.Type))
+		peerIDs = append(peerIDs, peer.ID)
+	}
+	if len(peerIDs) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q.ListDialogDraftsByPeers(ctx, sqlcgen.ListDialogDraftsByPeersParams{
+		UserID:    userID,
+		PeerTypes: peerTypes,
+		PeerIds:   peerIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list dialog drafts by peers: %w", err)
+	}
+	return decodeDialogDrafts(rows)
 }
 
 func (s *DialogStore) SetChatTheme(ctx context.Context, userID int64, peer domain.Peer, emoticon string) (bool, error) {
@@ -1049,4 +1276,27 @@ func dialogListHash(dialogs []domain.Dialog) int64 {
 		_, _ = h.Write([]byte(d.ThemeEmoticon))
 	}
 	return int64(h.Sum64())
+}
+
+// mixDialogListDependencyHash turns durable read-model version tokens into the
+// list hash without forcing the owner ordering scan to derive every mutable
+// dialog field. A token change is sufficient to reject an old client hash;
+// the page itself is then hydrated from the exact per-peer projection.
+func mixDialogListDependencyHash(base int64, dependencies ...int64) int64 {
+	if base == 0 && len(dependencies) == 0 {
+		return 0
+	}
+	h := fnv.New64a()
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(base))
+	_, _ = h.Write(buf[:])
+	for _, dependency := range dependencies {
+		binary.LittleEndian.PutUint64(buf[:], uint64(dependency))
+		_, _ = h.Write(buf[:])
+	}
+	sum := int64(h.Sum64() & 0x7fffffffffffffff)
+	if sum == 0 {
+		return 1
+	}
+	return sum
 }

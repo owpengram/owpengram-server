@@ -144,6 +144,53 @@ func TestModerationReadAPIDisablesBrowserCaching(t *testing.T) {
 	}
 }
 
+func TestAuthorizationRowJSONPreservesInt64AsDecimalStrings(t *testing.T) {
+	const maxInt64 = int64(9223372036854775807)
+	raw, err := json.Marshal(AuthorizationRow{AuthKeyID: maxInt64, Hash: maxInt64})
+	if err != nil {
+		t.Fatalf("marshal authorization row: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal authorization row: %v", err)
+	}
+	for _, field := range []string{"AuthKeyID", "Hash"} {
+		if got[field] != "9223372036854775807" {
+			t.Fatalf("authorization %s = %#v, want exact decimal string", field, got[field])
+		}
+	}
+}
+
+func TestRevokeSessionsBFFForwardsExactAuthorizationHash(t *testing.T) {
+	const authorizationHash = int64(2361577175213625973)
+	var got admin.RevokeSessionsRequest
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/accounts/revoke-sessions" || r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("upstream request path=%q authorization=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(admin.CommandResult{CommandID: got.CommandID, Status: "completed", DryRun: got.DryRun})
+	}))
+	defer upstream.Close()
+
+	srv := &server{cfg: uiConfig{AdminAPIURL: upstream.URL, AdminAPIToken: "secret"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/actions/revoke-sessions", strings.NewReader(`{
+		"reason":"precision regression","confirm":false,"user_id":1001,
+		"hash":"2361577175213625973"
+	}`))
+	req = req.WithContext(context.WithValue(req.Context(), actorKey{}, "operator"))
+	rec := httptest.NewRecorder()
+	srv.handleRevokeSessionsAPI(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got.Hash != authorizationHash || got.Actor != "operator" || !got.DryRun {
+		t.Fatalf("forwarded revoke request = %+v", got)
+	}
+}
+
 func TestMintCollectibleUsernameBFFForwardsActorAndTolerantScalars(t *testing.T) {
 	const maxInt64 = int64(9223372036854775807)
 	var got admin.MintCollectibleUsernameRequest

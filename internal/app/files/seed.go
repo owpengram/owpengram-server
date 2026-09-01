@@ -1,14 +1,10 @@
 package files
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -485,14 +481,13 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 		thumbs = append(thumbs, ps)
 	}
 	doc.Thumbs = thumbs
+	if data, ok := seedBundledDocumentPreview(doc.ID); ok {
+		doc.Thumbs = appendSeedBundledDocumentPreview(doc.Thumbs, data)
+	}
 	if existingFound {
 		doc.Thumbs = mergeSeedDocumentThumbs(existing.Thumbs, doc.Thumbs)
 	}
 	if err := s.ensureSeedCachedThumbBlobs(ctx, doc, stats); err != nil {
-		return domain.Document{}, err
-	}
-
-	if err := s.ensureTGStickerPreviewThumb(ctx, &doc, stats); err != nil {
 		return domain.Document{}, err
 	}
 
@@ -501,6 +496,27 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	}
 	stats.Documents++
 	return doc, nil
+}
+
+func appendSeedBundledDocumentPreview(thumbs []domain.PhotoSize, data []byte) []domain.PhotoSize {
+	for _, thumb := range thumbs {
+		if thumb.Type == seedBundledDocumentThumbType && seedPhotoSizePreviewTier(thumb) >= 4 {
+			return thumbs
+		}
+	}
+	out := thumbs[:0]
+	for _, thumb := range thumbs {
+		if thumb.Type != seedBundledDocumentThumbType {
+			out = append(out, thumb)
+		}
+	}
+	return append(out, domain.PhotoSize{
+		Kind:  domain.PhotoSizeKindCached,
+		Type:  seedBundledDocumentThumbType,
+		W:     128,
+		H:     128,
+		Bytes: append([]byte(nil), data...),
+	})
 }
 
 func (s *Service) prewarmSmallBlob(objectKey string, data []byte) {
@@ -520,10 +536,8 @@ var seedTrailingDigits = regexp.MustCompile(`(\d{6,})`)
 var seedThumbMarker = regexp.MustCompile(`_thumb\d+_`)
 
 const seedInlineCachedDocumentThumbMaxBytes = 32 * 1024
-const seedSyntheticDocumentThumbType = "m"
 
 var seedThumbType = regexp.MustCompile(`PhotoSize_type([a-z])`)
-var seedSyntheticTGStickerPreviewThumbPNG = makeSeedSyntheticTGStickerPreviewThumbPNG()
 
 func scanSeedDir(dir string) (seedDirIndex, error) {
 	idx := seedDirIndex{main: map[int64]string{}, thumb: map[int64]map[string]string{}}
@@ -758,23 +772,7 @@ func mergeSeedDocumentThumbs(existing, incoming []domain.PhotoSize) []domain.Pho
 		out = append(out, thumb)
 	}
 
-	hasRealPreview := false
-	for _, thumb := range out {
-		if !seedSyntheticTGStickerPreviewThumb(thumb) && seedPhotoSizePreviewTier(thumb) > 1 {
-			hasRealPreview = true
-			break
-		}
-	}
-	if !hasRealPreview {
-		return out
-	}
-	filtered := out[:0]
-	for _, thumb := range out {
-		if !seedSyntheticTGStickerPreviewThumb(thumb) {
-			filtered = append(filtered, thumb)
-		}
-	}
-	return filtered
+	return out
 }
 
 func seedDocumentThumbByType(thumbs []domain.PhotoSize, typ string) (domain.PhotoSize, bool) {
@@ -800,9 +798,6 @@ func seedPhotoSizeBetter(a, b domain.PhotoSize) bool {
 }
 
 func seedPhotoSizePreviewTier(thumb domain.PhotoSize) int {
-	if seedSyntheticTGStickerPreviewThumb(thumb) {
-		return 0
-	}
 	switch thumb.Kind {
 	case domain.PhotoSizeKindCached:
 		if len(thumb.Bytes) > 0 && thumb.W > 0 && thumb.H > 0 {
@@ -818,13 +813,6 @@ func seedPhotoSizePreviewTier(thumb domain.PhotoSize) int {
 		}
 	}
 	return 1
-}
-
-func seedSyntheticTGStickerPreviewThumb(thumb domain.PhotoSize) bool {
-	return thumb.Kind == domain.PhotoSizeKindCached &&
-		thumb.Type == seedSyntheticDocumentThumbType &&
-		thumb.W == 1 && thumb.H == 1 &&
-		bytes.Equal(thumb.Bytes, seedSyntheticTGStickerPreviewThumbPNG)
 }
 
 // ensureSeedCachedThumbBlobs keeps the RPC conversion invariant: document cached
@@ -866,43 +854,6 @@ func (s *Service) ensureSeedCachedThumbBlobs(ctx context.Context, doc domain.Doc
 	return nil
 }
 
-func (s *Service) ensureTGStickerPreviewThumb(ctx context.Context, doc *domain.Document, stats *SeedStats) error {
-	if !seedDocumentNeedsSyntheticTGStickerPreviewThumb(*doc) {
-		return nil
-	}
-	if s.blobs == nil {
-		return fmt.Errorf("blob backend not configured for synthetic sticker preview thumb")
-	}
-	data := seedSyntheticTGStickerPreviewThumbPNG
-	objectKey, err := s.blobs.Put(ctx, data)
-	if err != nil {
-		return err
-	}
-	if err := s.media.PutFileBlob(ctx, domain.FileBlob{
-		LocationKey: fmt.Sprintf("doc:%d:%s", doc.ID, seedSyntheticDocumentThumbType),
-		Backend:     domain.MediaBackend(s.blobs.Name()),
-		ObjectKey:   objectKey,
-		Size:        int64(len(data)),
-		MimeType:    "image/png",
-	}); err != nil {
-		return err
-	}
-	doc.Thumbs = append(doc.Thumbs, domain.PhotoSize{
-		Kind:  domain.PhotoSizeKindCached,
-		Type:  seedSyntheticDocumentThumbType,
-		W:     1,
-		H:     1,
-		Bytes: append([]byte(nil), data...),
-	})
-	s.prewarmSmallBlob(objectKey, data)
-	stats.Blobs++
-	return nil
-}
-
-func seedDocumentNeedsSyntheticTGStickerPreviewThumb(doc domain.Document) bool {
-	return doc.MimeType == "application/x-tgsticker" && len(doc.Thumbs) == 0
-}
-
 func seedDocumentHasAttribute(attrs []domain.DocumentAttribute, kind domain.DocumentAttributeKind) bool {
 	for _, attr := range attrs {
 		if attr.Kind == kind {
@@ -910,14 +861,6 @@ func seedDocumentHasAttribute(attrs []domain.DocumentAttribute, kind domain.Docu
 		}
 	}
 	return false
-}
-
-func makeSeedSyntheticTGStickerPreviewThumbPNG() []byte {
-	var buf bytes.Buffer
-	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
-	img.Set(0, 0, color.NRGBA{})
-	_ = png.Encode(&buf, img)
-	return buf.Bytes()
 }
 
 func seedThumbMimeType(data []byte) string {
@@ -980,9 +923,6 @@ func (s *Service) documentsNeedSeedRepair(ctx context.Context, ids []int64) (boo
 		return false, err
 	}
 	for _, doc := range docs {
-		if seedDocumentNeedsSyntheticTGStickerPreviewThumb(doc) {
-			return true, nil
-		}
 		for _, thumb := range doc.Thumbs {
 			if thumb.Kind == domain.PhotoSizeKindDefault && thumb.Size > 0 && thumb.Size <= seedInlineCachedDocumentThumbMaxBytes {
 				return true, nil

@@ -26,8 +26,9 @@ func TestAuthKeySessionLayerOrdersRestartEvidenceAndBindingDefaults(t *testing.T
 	}
 	now := time.Now().UTC()
 	firstMsgID := authKeySessionLayerTestMsgID(now, 1)
-	newerMsgID := authKeySessionLayerTestMsgID(now, 2)
-	otherMsgID := authKeySessionLayerTestMsgID(now, 3)
+	sameLayerMsgID := authKeySessionLayerTestMsgID(now, 2)
+	newerMsgID := authKeySessionLayerTestMsgID(now, 3)
+	otherMsgID := authKeySessionLayerTestMsgID(now, 4)
 
 	first, applied, err := keys.AdvanceSessionLayer(ctx, temp, 10, 220, firstMsgID)
 	if err != nil || !applied || !first.SharedDefault || first.ObservationID <= 0 {
@@ -46,6 +47,17 @@ func TestAuthKeySessionLayerOrdersRestartEvidenceAndBindingDefaults(t *testing.T
 		got, found, err := keys.Get(ctx, id)
 		if err != nil || !found || got.Layer != 220 || got.LayerObservationID != first.ObservationID {
 			t.Fatalf("bound default %x = (%+v,%v,%v)", id, got, found, err)
+		}
+	}
+	sameLayer, applied, err := keys.AdvanceSessionLayer(ctx, temp, 10, 220, sameLayerMsgID)
+	if err != nil || !applied || !sameLayer.SharedDefault || sameLayer.MessageID != sameLayerMsgID ||
+		sameLayer.ObservationID != first.ObservationID {
+		t.Fatalf("same-Layer high-water advance = (%+v,%v,%v)", sameLayer, applied, err)
+	}
+	for _, id := range [][8]byte{temp, perm} {
+		got, found, err := keys.Get(ctx, id)
+		if err != nil || !found || got.Layer != 220 || got.LayerObservationID != first.ObservationID {
+			t.Fatalf("same-Layer default rewrite %x = (%+v,%v,%v)", id, got, found, err)
 		}
 	}
 

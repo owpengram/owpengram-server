@@ -7,6 +7,11 @@ import (
 )
 
 const (
+	// InitialChannelPts is the empty message-box state used by official clients
+	// before the first real channel event. The first event therefore has PTS 2.
+	InitialChannelPts = 1
+	// FirstChannelEventPts is the PTS after the first single-count channel event.
+	FirstChannelEventPts = InitialChannelPts + 1
 	// MaxChannelDifferenceLimit limits a single updates.getChannelDifference page.
 	MaxChannelDifferenceLimit = 100
 	// MaxChannelDifferenceTooLongMessages limits the latest message snapshot returned by channelDifferenceTooLong.
@@ -188,23 +193,24 @@ const (
 
 // ChannelAdminRights is a domain-only representation of Telegram admin rights.
 type ChannelAdminRights struct {
-	ChangeInfo        bool
-	PostMessages      bool
-	EditMessages      bool
-	DeleteMessages    bool
-	PostStories       bool
-	EditStories       bool
-	DeleteStories     bool
-	BanUsers          bool
-	InviteUsers       bool
-	PinMessages       bool
-	AddAdmins         bool
-	ManageCall        bool
-	ManageChat        bool
-	ManageTopics      bool
-	Anonymous         bool
-	ManageRanks       bool
-	ManageLinkedPeers bool
+	ChangeInfo            bool
+	PostMessages          bool
+	EditMessages          bool
+	DeleteMessages        bool
+	PostStories           bool
+	EditStories           bool
+	DeleteStories         bool
+	BanUsers              bool
+	InviteUsers           bool
+	PinMessages           bool
+	AddAdmins             bool
+	ManageCall            bool
+	ManageChat            bool
+	ManageTopics          bool
+	Anonymous             bool
+	ManageRanks           bool
+	ManageLinkedPeers     bool
+	ManageWelcomeMessages bool
 	// ManageDirectMessages 对应 TL ChatAdminRights.manage_direct_messages(flags.17)。母广播频道的
 	// 管理员据此被客户端授予 monoforum(频道私信)容器的 MonoforumAdmin 身份;creator 走 amCreator 旁路。
 	ManageDirectMessages bool
@@ -213,22 +219,23 @@ type ChannelAdminRights struct {
 // CreatorChannelAdminRights returns the full rights set clients expect on creator projections.
 func CreatorChannelAdminRights() ChannelAdminRights {
 	return ChannelAdminRights{
-		ChangeInfo:        true,
-		PostMessages:      true,
-		EditMessages:      true,
-		DeleteMessages:    true,
-		PostStories:       true,
-		EditStories:       true,
-		DeleteStories:     true,
-		BanUsers:          true,
-		InviteUsers:       true,
-		PinMessages:       true,
-		AddAdmins:         true,
-		ManageCall:        true,
-		ManageChat:        true,
-		ManageTopics:      true,
-		ManageRanks:       true,
-		ManageLinkedPeers: true,
+		ChangeInfo:            true,
+		PostMessages:          true,
+		EditMessages:          true,
+		DeleteMessages:        true,
+		PostStories:           true,
+		EditStories:           true,
+		DeleteStories:         true,
+		BanUsers:              true,
+		InviteUsers:           true,
+		PinMessages:           true,
+		AddAdmins:             true,
+		ManageCall:            true,
+		ManageChat:            true,
+		ManageTopics:          true,
+		ManageRanks:           true,
+		ManageLinkedPeers:     true,
+		ManageWelcomeMessages: true,
 	}
 }
 
@@ -538,6 +545,14 @@ func (m ChannelMember) CanManageDirectMessages() bool {
 	return m.Status == ChannelMemberActive &&
 		(m.Role == ChannelRoleCreator ||
 			(m.Role == ChannelRoleAdmin && m.AdminRights.ManageDirectMessages))
+}
+
+// CanManageWelcomeMessages is the Layer 229 creator/admin capability. Active
+// membership is mandatory even if stale admin rights remain in persisted JSON.
+func (m ChannelMember) CanManageWelcomeMessages() bool {
+	return m.Status == ChannelMemberActive &&
+		(m.Role == ChannelRoleCreator ||
+			(m.Role == ChannelRoleAdmin && m.AdminRights.ManageWelcomeMessages))
 }
 
 // CanPostChannelMessages reports whether this active member may publish a post

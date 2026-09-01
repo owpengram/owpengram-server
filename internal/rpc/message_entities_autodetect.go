@@ -2,11 +2,10 @@ package rpc
 
 import (
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
 
+	"telesrv/internal/domain"
 	"telesrv/internal/links"
 )
 
@@ -30,9 +29,10 @@ import (
 // app-link。客户端实体保持在前(超过上限裁剪时优先保留),结果裁剪到实体上限。
 func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLinks links.AppLinkBuilder) []tg.MessageEntityClass {
 	// 快路径:绝大多数消息不含任何可自动识别的触发字符。单次 ContainsAny 扫描即短路返回,
-	// 跳过下面各检测器对全文的扫描与区间分配(纯文本发送零额外开销)。所有 http(s) 链接
-	// 都含 '/',故 "@#$/" 一并覆盖 url 检测;email/phone 未实现故不在触发集内。
-	if message == "" || !strings.ContainsAny(message, "@#$/") {
+	// 跳过下面各检测器对全文的扫描与区间分配(纯文本发送零额外开销)。裸域名 URL 只需
+	// 一个 '.' 即可触发（如 github.com），进入检测后仍会做 TLD/边界校验；email/phone
+	// 未实现故不在触发集内。
+	if message == "" || !strings.ContainsAny(message, "@#$/.") {
 		return entities
 	}
 	type interval struct{ start, end int }
@@ -89,17 +89,13 @@ func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLi
 		}
 	}
 
-	// 其余自动实体落在任何已占区间(客户端实体或 URL 跨度)内则丢弃;客户端实体优先保留(上限内)。
-	for _, c := range detectMentionEntities(message) {
-		accept(c)
+	// 其余自动实体由协议中立 detector 产生，RPC 边界只负责把 domain entity 投影为 TL。
+	// 这样服务端生成的系统消息可复用同一 UTF-16/URL 排除规则，而 tg 类型仍不越过 RPC。
+	spans := make([]domain.MessageEntitySpan, 0, len(occupied))
+	for _, interval := range occupied {
+		spans = append(spans, domain.MessageEntitySpan{Offset: interval.start, Length: interval.end - interval.start})
 	}
-	for _, c := range detectHashtagEntities(message) {
-		accept(c)
-	}
-	for _, c := range detectCashtagEntities(message) {
-		accept(c)
-	}
-	for _, c := range detectBotCommandEntities(message) {
+	for _, c := range tgMessageEntities(domain.DetectAutomaticMessageEntities(message, spans)) {
 		accept(c)
 	}
 
@@ -113,164 +109,4 @@ func augmentAutoEntities(message string, entities []tg.MessageEntityClass, appLi
 
 func (r *Router) augmentAutoEntities(message string, entities []tg.MessageEntityClass) []tg.MessageEntityClass {
 	return augmentAutoEntities(message, entities, r.appLinks)
-}
-
-// isWordRune 判定「单词字符」(用于实体前导边界:前一个字符是单词字符时不是新实体起点,
-// 借此排除 email 的 local@domain、路径里的 and/or 等)。
-func isWordRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-// isHashtagRune 是 hashtag 正文允许的字符(支持 unicode 字母/数字,如 #日本語)。
-func isHashtagRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-// prevRuneBefore 取字节位置 i 之前的一个完整 rune(供前导边界判定);i<=0 返回 ok=false
-// (字符串起点视为合法实体边界)。
-func prevRuneBefore(s string, i int) (rune, bool) {
-	if i <= 0 || i > len(s) {
-		return 0, false
-	}
-	r, size := utf8.DecodeLastRuneInString(s[:i])
-	if size == 0 {
-		return 0, false
-	}
-	return r, true
-}
-
-// detectMentionEntities 检测 @username(messageEntityMention,仅 offset/length 无 user_id)。
-// 规则:前导字符非单词字符且非 '@';username = [A-Za-z0-9_] 长 1..32;'@' 计入长度。
-// (设置 mentioned 标志是另一条独立链路 mentionedUserIDsFromMessage,基于 user_id,与本检测无关。)
-func detectMentionEntities(message string) []tg.MessageEntityClass {
-	var out []tg.MessageEntityClass
-	for i := 0; i < len(message); i++ {
-		if message[i] != '@' {
-			continue
-		}
-		if r, ok := prevRuneBefore(message, i); ok && (isWordRune(r) || r == '@') {
-			continue
-		}
-		j := i + 1
-		for j < len(message) && isUsernameByte(message[j]) {
-			j++
-		}
-		if n := j - i - 1; n < 1 || n > 32 {
-			continue
-		}
-		out = append(out, &tg.MessageEntityMention{
-			Offset: utf16CodeUnitLen(message[:i]),
-			Length: utf16CodeUnitLen(message[i:j]),
-		})
-		i = j - 1
-	}
-	return out
-}
-
-// detectBotCommandEntities 检测 /command 与 /command@botusername(messageEntityBotCommand)。
-// 规则:前导字符非单词字符且非 '/','@','<';command = [A-Za-z0-9_] 长 1..64;可选
-// '@' + [A-Za-z0-9_] 1..32 的 bot username 后缀。前导排除单词字符使日期 12/25、and/or、
-// url 路径不被误判为命令。
-func detectBotCommandEntities(message string) []tg.MessageEntityClass {
-	var out []tg.MessageEntityClass
-	for i := 0; i < len(message); i++ {
-		if message[i] != '/' {
-			continue
-		}
-		if r, ok := prevRuneBefore(message, i); ok && (isWordRune(r) || r == '/' || r == '@' || r == '<') {
-			continue
-		}
-		j := i + 1
-		for j < len(message) && isUsernameByte(message[j]) {
-			j++
-		}
-		if n := j - i - 1; n < 1 || n > 64 {
-			continue
-		}
-		end := j
-		if end < len(message) && message[end] == '@' {
-			k := end + 1
-			for k < len(message) && isUsernameByte(message[k]) {
-				k++
-			}
-			if bn := k - end - 1; bn >= 1 && bn <= 32 {
-				end = k
-			}
-		}
-		out = append(out, &tg.MessageEntityBotCommand{
-			Offset: utf16CodeUnitLen(message[:i]),
-			Length: utf16CodeUnitLen(message[i:end]),
-		})
-		i = end - 1
-	}
-	return out
-}
-
-// detectHashtagEntities 检测 #hashtag(messageEntityHashtag,支持 unicode 字母/数字)。
-// 规则:前导字符非单词字符且非 '#','@';正文 1..256 个 hashtag 字符且首字符非数字
-// (排除 #123 这类纯/前导数字串)。
-func detectHashtagEntities(message string) []tg.MessageEntityClass {
-	var out []tg.MessageEntityClass
-	// '#' 是 ASCII,绝不出现在多字节 UTF-8 序列内部,故按字节扫描触发字符(避免对每个
-	// 位置做 rune 解码);仅在边界判定与 body(支持 unicode 字母/数字)上才做 rune 解码。
-	for i := 0; i < len(message); i++ {
-		if message[i] != '#' {
-			continue
-		}
-		if r, ok := prevRuneBefore(message, i); ok && (isWordRune(r) || r == '#' || r == '@') {
-			continue
-		}
-		j := i + 1
-		var firstRune rune
-		runeCount := 0
-		for j < len(message) {
-			r, size := utf8.DecodeRuneInString(message[j:])
-			if size <= 0 || !isHashtagRune(r) {
-				break
-			}
-			if runeCount == 0 {
-				firstRune = r
-			}
-			runeCount++
-			j += size
-		}
-		if runeCount >= 1 && runeCount <= 256 && !unicode.IsDigit(firstRune) {
-			out = append(out, &tg.MessageEntityHashtag{
-				Offset: utf16CodeUnitLen(message[:i]),
-				Length: utf16CodeUnitLen(message[i:j]),
-			})
-			i = j - 1 // for 循环 i++ 后落到 j,跳过已消费的 hashtag body
-		}
-	}
-	return out
-}
-
-// detectCashtagEntities 检测 $TICKER(messageEntityCashtag)。规则:前导字符非单词字符
-// 且非 '$';正文 1..8 个大写字母,且其后紧邻字符非单词字符(排除 $USDfoo)。
-func detectCashtagEntities(message string) []tg.MessageEntityClass {
-	var out []tg.MessageEntityClass
-	for i := 0; i < len(message); i++ {
-		if message[i] != '$' {
-			continue
-		}
-		if r, ok := prevRuneBefore(message, i); ok && (isWordRune(r) || r == '$') {
-			continue
-		}
-		j := i + 1
-		for j < len(message) && message[j] >= 'A' && message[j] <= 'Z' {
-			j++
-		}
-		if n := j - i - 1; n < 1 || n > 8 {
-			continue
-		}
-		if r, size := utf8.DecodeRuneInString(message[j:]); size > 0 && isWordRune(r) {
-			continue
-		}
-		out = append(out, &tg.MessageEntityCashtag{
-			Offset: utf16CodeUnitLen(message[:i]),
-			Length: utf16CodeUnitLen(message[i:j]),
-		})
-		i = j - 1
-	}
-	return out
 }

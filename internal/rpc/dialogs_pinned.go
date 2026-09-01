@@ -9,11 +9,21 @@ import (
 )
 
 func (r *Router) pinnedDialogsList(ctx context.Context, userID int64, folderID int) (domain.DialogList, error) {
-	list, err := r.pinnedDialogsBaseList(ctx, userID, folderID)
+	key := fmt.Sprintf("%d:%d:%d", userID, folderID, LayerFrom(ctx))
+	value, err, _ := r.dialogsPinnedListSF.Do(key, func() (any, error) {
+		list, err := r.pinnedDialogsBaseList(ctx, userID, folderID)
+		if err != nil {
+			return domain.DialogList{}, err
+		}
+		return r.withCommunityDialogList(ctx, userID, domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: folderID}, list)
+	})
 	if err != nil {
 		return domain.DialogList{}, err
 	}
-	return r.withCommunityDialogList(ctx, userID, domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: folderID}, list)
+	if list, ok := value.(domain.DialogList); ok {
+		return list, nil
+	}
+	return domain.DialogList{}, nil
 }
 
 func (r *Router) pinnedDialogsBaseList(ctx context.Context, userID int64, folderID int) (domain.DialogList, error) {

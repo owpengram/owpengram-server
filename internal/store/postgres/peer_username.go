@@ -32,6 +32,10 @@ type peerUsernameOwner struct {
 	// active mirrors the registry flag. An inactive name stays occupied for
 	// uniqueness purposes but must not resolve to its holder.
 	active bool
+	// editable distinguishes the ordinary username slot from any future
+	// non-collectible reserved rows. Only an ordinary editable user slot may be
+	// displaced by the official product-username claim.
+	editable bool
 }
 
 func (o peerUsernameOwner) matches(peerType string, peerID int64) bool {
@@ -46,12 +50,12 @@ func getPeerUsernameOwner(ctx context.Context, db sqlcgen.DBTX, usernameLower st
 	if usernameLower == "" {
 		return peerUsernameOwner{}, false, nil
 	}
-	query := `SELECT peer_type, peer_id, collectible_id IS NOT NULL, active FROM peer_usernames WHERE username_lower = $1`
+	query := `SELECT peer_type, peer_id, collectible_id IS NOT NULL, active, editable FROM peer_usernames WHERE username_lower = $1`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
 	var owner peerUsernameOwner
-	err := db.QueryRow(ctx, query, usernameLower).Scan(&owner.peerType, &owner.peerID, &owner.collectible, &owner.active)
+	err := db.QueryRow(ctx, query, usernameLower).Scan(&owner.peerType, &owner.peerID, &owner.collectible, &owner.active, &owner.editable)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return peerUsernameOwner{}, false, nil

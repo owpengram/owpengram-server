@@ -22,6 +22,9 @@ type BotCallbackQuery struct {
 	ChatInstance  int64
 	Data          []byte
 	InlineMessage *BotInlineMessageID
+	// ClientSession is available only to an in-process service bot. It must not
+	// become part of a durable/public Bot API CallbackQuery payload.
+	ClientSession ClientSessionMetadata `json:"-"`
 }
 
 // BotAPIEphemeralPayload is a self-contained 24-hour Bot API queue snapshot.
