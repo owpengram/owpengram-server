@@ -584,9 +584,11 @@ export type AdminSession = {
   // comment. Used by Server Settings' Restart/Update flow to detect a
   // genuinely new admin process after asking it to bounce.
   boot_id?: string;
-  // The MTProto TL schema layer this server binary speaks -- shown in the
-  // sidebar footer above the build/commit line.
-  api_layer?: number;
+  // Every MTProto TL schema layer this server binary can admit and encode
+  // for (oldest first) -- the server is multi-layer, so this is the whole
+  // supported set, not just the newest one. Shown in the sidebar footer
+  // above the build/commit line.
+  api_layers?: number[];
   // This admin binary's own build -- shown under "Version" in the sidebar
   // footer so an operator can tell which build is actually running.
   build?: {

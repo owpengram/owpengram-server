@@ -265,6 +265,7 @@ a {
   letter-spacing: 0.04em;
 }
 
+.sidebar-api-layer,
 .sidebar-build {
   font-weight: 500;
   text-transform: none;

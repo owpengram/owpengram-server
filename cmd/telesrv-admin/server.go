@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tlprofile"
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
@@ -292,6 +293,22 @@ func (s *server) handleAPILogout(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// supportedTLLayers returns every MTProto TL schema layer this server binary
+// can admit and encode for, oldest first. Probes tlprofile.ResolveProfile
+// (the vendored td package's registry) rather than hardcoding a range here,
+// so this stays correct as new profiles get added upstream without a
+// second place to remember to update. tg.Layer is always the newest one and
+// is included by construction, since ResolveProfile(tg.Layer) must succeed.
+func supportedTLLayers() []int {
+	var layers []int
+	for n := 1; n <= tg.Layer; n++ {
+		if _, ok := tlprofile.ResolveProfile(n); ok {
+			layers = append(layers, n)
+		}
+	}
+	return layers
+}
+
 // handleSession is what the panel asks on load. It reports the permissions the
 // session carries, so the UI can hide a section the operator may not use rather
 // than letting them walk into a 403.
@@ -307,10 +324,12 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// tells "the old admin process died and a new one answered" apart
 		// from "the old one is just slow to respond".
 		"boot_id": bootID,
-		// api_layer is the MTProto TL schema layer this server binary speaks
-		// (tg.Layer), shown in the sidebar footer above the build/commit line
-		// so an operator can tell at a glance which protocol layer is live.
-		"api_layer": tg.Layer,
+		// api_layers is every MTProto TL schema layer this server binary can
+		// actually admit and encode for (see tlprofile.ResolveProfile in the
+		// vendored td package) -- the server is multi-layer (a client on an
+		// older supported layer still works, not just the newest one), so
+		// the sidebar shows the whole supported set, not just tg.Layer.
+		"api_layers": supportedTLLayers(),
 		// build is this admin binary's own commit -- shown under "Version"
 		// in the sidebar footer so an operator can tell at a glance which
 		// build is actually running, independent of the app version string.

@@ -386,6 +386,7 @@ LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.ed
 LEFT JOIN auth a ON a.user_id = u.id
 LEFT JOIN account_passwords ap ON ap.user_id = u.id
 WHERE NOT u.is_bot
+	AND NOT (u.id = ANY($8::bigint[]))
 	AND (
 		u.id = $1
 		OR u.phone LIKE $2
@@ -396,7 +397,7 @@ WHERE NOT u.is_bot
 	)
 	AND ($5::bigint = 0 OR (COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), u.id) < (to_timestamp(($5::double precision) / 1000000.0), $6::bigint))
 ORDER BY COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz) DESC, u.id DESC
-LIMIT $7`, id, phonePrefix, substring, term, beforeActiveUS, beforeID, limit+1)
+LIMIT $7`, id, phonePrefix, substring, term, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs())
 	if err != nil {
 		return nil, false, fmt.Errorf("search accounts: %w", err)
 	}
@@ -837,19 +838,20 @@ WITH auth AS (
 SELECT u.id, u.phone, u.username, u.first_name, u.last_name, u.created_at, u.updated_at,
 	COALESCE(r.frozen, false), COALESCE(r.reason, ''), u.verified, u.scam, u.fake,
 	COALESCE(EXTRACT(EPOCH FROM u.premium_expires_at), 0)::bigint,
-	auth.last_active_at, auth.device_count,
+	COALESCE(auth.last_active_at, u.created_at), COALESCE(auth.device_count, 0),
 	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
 	COALESCE(ap.login_email, ''),
 	`+accountCollectibleUsernamesColumn+` AS collectibles
 FROM users u
-JOIN auth ON auth.user_id = u.id
+LEFT JOIN auth ON auth.user_id = u.id
 LEFT JOIN account_restrictions r ON r.user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 LEFT JOIN account_passwords ap ON ap.user_id = u.id
 WHERE NOT u.is_bot
-	AND ($1::bigint = 0 OR (auth.last_active_at, u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
-ORDER BY auth.last_active_at DESC, u.id DESC
-LIMIT $3`, beforeActiveUS, beforeID, limit+1)
+	AND NOT (u.id = ANY($4::bigint[]))
+	AND ($1::bigint = 0 OR (COALESCE(auth.last_active_at, u.created_at), u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
+ORDER BY COALESCE(auth.last_active_at, u.created_at) DESC, u.id DESC
+LIMIT $3`, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs())
 	if err != nil {
 		return nil, false, fmt.Errorf("list accounts: %w", err)
 	}

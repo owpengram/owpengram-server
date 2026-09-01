@@ -24,6 +24,28 @@ import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AppLink } from "./AppLink";
 
+// Compresses a sorted (or unsorted) list of layer numbers into run-length
+// ranges for the compact sidebar label, e.g. [225,226,227,228,229] -> "225-229",
+// or [225,226,228] -> "225-226, 228" if the server ever supports a
+// non-contiguous set. The full list is still always shown in the tooltip.
+function formatLayerRanges(layers: number[]): string {
+  const sorted = [...layers].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i <= sorted.length; i++) {
+    const current = sorted[i];
+    if (current === prev + 1) {
+      prev = current;
+      continue;
+    }
+    parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = current;
+    prev = current;
+  }
+  return parts.join(", ");
+}
+
 export function BootScreen() {
   return (
     <div className="boot-screen">
@@ -41,7 +63,7 @@ export function BootScreen() {
 
 export function Shell({
   actor,
-  apiLayer,
+  apiLayers,
   build,
   route,
   navigate,
@@ -49,7 +71,7 @@ export function Shell({
   children
 }: {
   actor: string;
-  apiLayer?: number;
+  apiLayers?: number[];
   build?: { commit: string; short_commit: string; dirty: boolean; build_time: string };
   route: RouteState;
   navigate: Navigate;
@@ -223,8 +245,10 @@ export function Shell({
         </nav>
         <div className="sidebar-status">
           <span className="sidebar-label">{"Version: O7"}</span>
-          {typeof apiLayer === "number" && (
-            <span className="sidebar-label sidebar-api-layer">{`API layer: ${apiLayer}`}</span>
+          {apiLayers && apiLayers.length > 0 && (
+            <span className="sidebar-label sidebar-api-layer" title={`Layers: ${apiLayers.join(", ")}`}>
+              {`API layers: ${formatLayerRanges(apiLayers)}`}
+            </span>
           )}
           {build?.short_commit && (
             <span className="sidebar-label sidebar-build" title={build.commit + (build.dirty ? " (uncommitted changes)" : "")}>
