@@ -93,7 +93,50 @@ export function Shell({
       link.rel = "icon";
       document.head.appendChild(link);
     }
-    link.href = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+    const linkEl = link;
+    const src = identity?.iconExt && !brandIconFailed ? api.serverIconURL() : "/logo.png";
+    // Browsers render the favicon file as-is -- they don't apply the
+    // sidebar's CSS border-radius to it, so a square-cornered source image
+    // (the default logo, or whatever shape an operator's uploaded icon
+    // happens to be) shows up square in the tab strip. Bake the circular
+    // mask into the actual pixels instead, the same way an app icon export
+    // would, so the tab matches the round mark everywhere else in the UI.
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (cancelled) {
+        return;
+      }
+      const size = 64;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        linkEl.href = src;
+        return;
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(img, 0, 0, size, size);
+      ctx.restore();
+      linkEl.href = canvas.toDataURL("image/png");
+    };
+    img.onerror = () => {
+      // Cross-origin or load failure: fall back to the raw image rather
+      // than leaving the tab with no favicon at all.
+      if (!cancelled) {
+        linkEl.href = src;
+      }
+    };
+    img.src = src;
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity?.iconExt, brandIconFailed]);
   // Third-party verification is additionally hidden by default (not fully
