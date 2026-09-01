@@ -954,27 +954,31 @@ ORDER BY g.last_active_at DESC, g.device_model, g.system_version, g.platform, g.
 	return groups, hasMore, nil
 }
 
-// BroadcastRow is one system-broadcast campaign, with sent/failed counts
-// derived live from broadcast_recipients (never stored, so they can't drift).
+// BroadcastRow is one system-broadcast campaign. SentCount/FailedCount/
+// MaterializedCount are maintained incrementally by the delivery worker as
+// it closes out each recipient row (see internal/app/broadcast); for an
+// "all"-mode campaign still enumerating, TargetCount grows until
+// EnumerationDone.
 type BroadcastRow struct {
-	ID          int64
-	Message     string
-	TargetMode  string
-	TotalCount  int
-	SentCount   int
-	FailedCount int
-	CreatedBy   string
-	CreatedAt   time.Time
+	ID                int64
+	Message           string
+	TargetMode        string
+	TargetCount       int64
+	MaterializedCount int64
+	SentCount         int64
+	FailedCount       int64
+	EnumerationDone   bool
+	CreatedBy         string
+	CreatedAt         time.Time
 }
 
 const broadcastRowColumns = `
-	b.id, b.message, b.target_mode, b.total_count, b.created_by, b.created_at,
-	count(*) FILTER (WHERE r.status = 'sent')::int AS sent_count,
-	count(*) FILTER (WHERE r.status = 'failed')::int AS failed_count`
+	b.id, b.message, b.target_mode, b.target_count, b.materialized_count,
+	b.sent_count, b.failed_count, b.enumeration_done, b.created_by, b.created_at`
 
 func scanBroadcastRow(row interface{ Scan(...any) error }, item *BroadcastRow) error {
-	return row.Scan(&item.ID, &item.Message, &item.TargetMode, &item.TotalCount, &item.CreatedBy, &item.CreatedAt,
-		&item.SentCount, &item.FailedCount)
+	return row.Scan(&item.ID, &item.Message, &item.TargetMode, &item.TargetCount, &item.MaterializedCount,
+		&item.SentCount, &item.FailedCount, &item.EnumerationDone, &item.CreatedBy, &item.CreatedAt)
 }
 
 // ListBroadcasts pages campaigns newest-first.
@@ -985,9 +989,7 @@ func (s *readStore) ListBroadcasts(ctx context.Context, beforeID int64, limit in
 	rows, err := s.pool.Query(ctx, `
 SELECT `+broadcastRowColumns+`
 FROM broadcasts b
-LEFT JOIN broadcast_recipients r ON r.broadcast_id = b.id
 WHERE $1::bigint = 0 OR b.id < $1
-GROUP BY b.id
 ORDER BY b.id DESC
 LIMIT $2`, beforeID, limit+1)
 	if err != nil {

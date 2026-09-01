@@ -222,13 +222,18 @@ type AccountService interface {
 
 // BroadcastService creates and lists system broadcast campaigns (a message
 // from domain.OfficialSystemUserID to all or a hand-picked list of users).
-// Delivery itself happens out-of-band via a worker draining the durable
-// recipient outbox created here -- this interface only enqueues and reads
-// back, so CreateBroadcast never blocks on however many recipients there
-// are. Resolving "all users" into an explicit id list is the caller's job
-// (cmd/telesrv-admin's readstore, the same place every other account list
-// query already lives), not this service's -- it always receives an
-// already-resolved id list.
+// Both recipient enumeration and delivery happen out-of-band via a worker
+// draining the durable outbox created here -- this interface only enqueues
+// and reads back, so CreateBroadcast never blocks on however many
+// recipients there are.
+//
+// For domain.BroadcastTargetAll, recipientUserIDs must be empty: the
+// service snapshots the current max eligible user id itself and the worker
+// enumerates it incrementally, so a huge user base never has to cross the
+// admin HTTP boundary as an explicit id list. For
+// domain.BroadcastTargetSelected, recipientUserIDs is the operator-picked
+// list, already resolved by the caller (cmd/telesrv-admin's readstore
+// proxy, the same place every other account list query already lives).
 type BroadcastService interface {
 	Create(ctx context.Context, message string, targetMode domain.BroadcastTargetMode, recipientUserIDs []int64, createdBy string) (domain.Broadcast, error)
 	List(ctx context.Context, beforeID int64, limit int) ([]domain.Broadcast, bool, error)
@@ -900,11 +905,11 @@ type DeleteBotRequest struct {
 	BotUserID int64 `json:"bot_user_id"`
 }
 
-// CreateBroadcastRequest's UserIDs is always an already-resolved recipient
-// list -- for TargetMode "all" the caller (cmd/telesrv-admin's readstore
-// proxy) has already turned "every user" into an explicit id list before
-// this reaches the admin service, so CreateBroadcast never has to know how
-// to enumerate accounts itself.
+// CreateBroadcastRequest's UserIDs carries the operator-picked recipient
+// list for TargetMode "selected" only. For TargetMode "all", UserIDs must be
+// empty: the admin service snapshots the current eligible user set itself
+// and the broadcast worker enumerates it incrementally, so "every user"
+// never has to cross the admin HTTP boundary as an explicit id list.
 type CreateBroadcastRequest struct {
 	CommandMeta
 	Message    string  `json:"message"`
@@ -1770,11 +1775,11 @@ func (s *Service) DeleteBot(ctx context.Context, req DeleteBotRequest) (CommandR
 }
 
 // CreateBroadcast enqueues a system-broadcast (a message from
-// domain.OfficialSystemUserID) to an already-resolved recipient list.
-// Delivery happens out-of-band via the broadcast worker draining the durable
-// recipient rows this creates -- the command completes as soon as the
-// recipient snapshot is written, never waiting on however many sends that
-// implies.
+// domain.OfficialSystemUserID) to all users or an already-resolved
+// "selected" recipient list. Both recipient enumeration (for "all") and
+// delivery happen out-of-band via the broadcast worker -- the command
+// completes as soon as the campaign is snapshotted, never waiting on however
+// many sends that implies.
 func (s *Service) CreateBroadcast(ctx context.Context, req CreateBroadcastRequest) (CommandResult, error) {
 	if s == nil || s.broadcast == nil {
 		return CommandResult{}, fmt.Errorf("admin broadcast dependency is not configured")
@@ -1783,12 +1788,24 @@ func (s *Service) CreateBroadcast(ctx context.Context, req CreateBroadcastReques
 	if message == "" {
 		return CommandResult{}, domain.ErrBroadcastMessageEmpty
 	}
-	targetMode := domain.BroadcastTargetMode(req.TargetMode)
-	if targetMode != domain.BroadcastTargetAll && targetMode != domain.BroadcastTargetSelected {
-		return CommandResult{}, domain.ErrBroadcastInvalid
+	if len(message) > domain.MaxBroadcastMessageBytes {
+		return CommandResult{}, domain.ErrBroadcastMessageTooLong
 	}
-	if len(req.UserIDs) == 0 {
-		return CommandResult{}, domain.ErrBroadcastNoRecipients
+	targetMode := domain.BroadcastTargetMode(req.TargetMode)
+	switch targetMode {
+	case domain.BroadcastTargetAll:
+		if len(req.UserIDs) != 0 {
+			return CommandResult{}, domain.ErrBroadcastInvalid
+		}
+	case domain.BroadcastTargetSelected:
+		if len(req.UserIDs) == 0 {
+			return CommandResult{}, domain.ErrBroadcastNoRecipients
+		}
+		if len(req.UserIDs) > domain.MaxBroadcastSelectedRecipients {
+			return CommandResult{}, domain.ErrBroadcastInvalid
+		}
+	default:
+		return CommandResult{}, domain.ErrBroadcastInvalid
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateBroadcast, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		details := map[string]any{
@@ -1804,7 +1821,7 @@ func (s *Service) CreateBroadcast(ctx context.Context, req CreateBroadcastReques
 			return CommandResult{Details: details}, err
 		}
 		details["broadcast_id"] = created.ID
-		details["total_count"] = created.TotalCount
+		details["target_count"] = created.TargetCount
 		return CommandResult{Message: "broadcast created", Details: details}, nil
 	})
 }

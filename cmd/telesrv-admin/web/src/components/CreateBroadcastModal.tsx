@@ -8,9 +8,11 @@ import { MultiUserPicker } from "./EntityPicker";
 type TargetMode = "all" | "selected";
 
 // CreateBroadcastModal composes the message and target list, then hands off to
-// ActionButton for the usual dry-run/confirm flow. "All users" is resolved to an
-// explicit id list server-side (cmd/telesrv-admin/server.go), not here -- the
-// picker only ever deals with an actual, visible list of accounts.
+// ActionButton for the usual dry-run/confirm flow. "All users" is never
+// resolved into an id list at all -- the admin service snapshots the
+// current eligible user set itself and a background worker enumerates it
+// incrementally, so this only ever sends user_ids for "selected" mode,
+// where the picker deals with an actual, visible list of accounts.
 export function CreateBroadcastModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [message, setMessage] = useState("");
   const [targetMode, setTargetMode] = useState<TargetMode>("all");

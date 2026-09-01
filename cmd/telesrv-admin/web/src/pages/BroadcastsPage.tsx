@@ -68,7 +68,7 @@ export function BroadcastsPage() {
   }, []);
 
   const rows = data?.rows ?? [];
-  const inFlight = rows.filter((row) => row.SentCount + row.FailedCount < row.TotalCount).length;
+  const inFlight = rows.filter((row) => !row.EnumerationDone || row.SentCount + row.FailedCount < row.TargetCount).length;
   const canGoPrev = history.length > 0 && !busy;
   const canGoNext = Boolean(data?.has_more) && !busy;
 
@@ -110,7 +110,7 @@ export function BroadcastsPage() {
           <tbody>
             {rows.map((row) => {
               const delivered = row.SentCount + row.FailedCount;
-              const done = row.TotalCount > 0 && delivered >= row.TotalCount;
+              const done = row.EnumerationDone && row.TargetCount > 0 && delivered >= row.TargetCount;
               return (
                 <tr key={row.ID}>
                   <td className="mono">{row.ID}</td>
@@ -118,7 +118,7 @@ export function BroadcastsPage() {
                   <td>{row.TargetMode === "all" ? <Badge tone="warn">{"All users"}</Badge> : <Badge>{"Selected"}</Badge>}</td>
                   <td>{row.SentCount}</td>
                   <td>{row.FailedCount > 0 ? <Badge tone="danger">{row.FailedCount}</Badge> : row.FailedCount}</td>
-                  <td>{row.TotalCount}</td>
+                  <td>{row.TargetCount}</td>
                   <td>{row.CreatedBy || "-"}</td>
                   <td>
                     {formatDate(row.CreatedAt)}

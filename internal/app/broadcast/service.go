@@ -1,10 +1,35 @@
 // Package broadcast implements admin-triggered system message campaigns:
 // sending a message from the official system account (domain.OfficialSystemUserID,
-// 777000) to every user or a hand-picked list. Delivery is a durable outbox
-// (store.BroadcastStore's recipient rows) drained by a periodic Worker,
-// mirroring internal/app/verification's notification outbox -- the admin
-// action only snapshots the recipient list and returns, never sending
-// potentially thousands of messages inline within one HTTP request.
+// 777000) to every user or a hand-picked list.
+//
+// A "selected" campaign's recipient rows are all inserted at creation, since
+// that list is bounded by domain.MaxBroadcastSelectedRecipients. An "all"
+// campaign instead only snapshots the current max eligible user id at
+// creation, and store.BroadcastStore.MaterializeBroadcastRecipients walks
+// that range incrementally, a bounded batch per worker cycle -- so creating
+// a campaign for a large user base is a single cheap insert, not one giant
+// blocking transaction.
+//
+// Delivery is a lease-based claim cycle (store.BroadcastStore.
+// ClaimBroadcastRecipients/CompleteBroadcastRecipient/ReleaseBroadcastRecipient):
+// a worker leases a bounded batch of eligible rows for a fixed duration,
+// delivers each one, and closes it out. A lease that is never renewed simply
+// expires, so a worker crash mid-cycle cannot strand rows in 'processing'
+// forever, and a future multi-instance worker can run the same cycle
+// concurrently without two instances ever believing they hold the same
+// row's lease at once.
+//
+// Delivery itself goes through messageSender.SendPrivateText -- the same
+// store-layer send path internal/app/bots's sendServiceBotReplyResult calls
+// directly (bypassing the auth-checked app.messages.Service wrapper, which
+// requires SenderUserID == the authenticated caller) -- rather than
+// duplicating message/pts/dispatch-outbox creation here. SendPrivateText's
+// random_id dedup is what actually closes the small race a lease alone
+// leaves open: if a lease expires and gets reclaimed while the original
+// holder's send is still in flight, both attempts use the same
+// (broadcastID, userID)-derived random id (see stableBroadcastRandomID), so
+// the store resolves them to the very same message instead of sending
+// twice, no matter which claim ends up recording it.
 package broadcast
 
 import (
@@ -13,6 +38,8 @@ import (
 	"hash/fnv"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
@@ -21,10 +48,7 @@ import (
 )
 
 // messageSender is the narrow port this package needs from
-// store.MessageStore: sending a message with an arbitrary SenderUserID, the
-// way internal/app/bots's sendServiceBotReplyResult calls it directly at the
-// store layer rather than through the auth-checked app.messages.Service
-// wrapper (which requires SenderUserID == the authenticated caller).
+// store.MessageStore: sending a message with an arbitrary SenderUserID.
 type messageSender interface {
 	SendPrivateText(ctx context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error)
 }
@@ -69,22 +93,80 @@ func WithLogger(log *zap.Logger) Option {
 // Ready reports whether both the store and the sender are wired.
 func (s *Service) Ready() bool { return s != nil && s.store != nil && s.messages != nil }
 
-// Create validates and snapshots a new broadcast's recipient set, then
-// returns immediately: delivery happens asynchronously via RunSendCycle, so
-// this never blocks an admin HTTP request on however many recipients there
-// are.
-func (s *Service) Create(ctx context.Context, message string, targetMode domain.BroadcastTargetMode, recipientUserIDs []int64, createdBy string) (domain.Broadcast, error) {
+func normalizeRequest(message string, mode domain.BroadcastTargetMode, selectedUserIDs []int64) (string, []int64, error) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "", nil, domain.ErrBroadcastMessageEmpty
+	}
+	if !utf8.ValidString(message) || len(message) > domain.MaxBroadcastMessageBytes {
+		return "", nil, domain.ErrBroadcastMessageTooLong
+	}
+	switch mode {
+	case domain.BroadcastTargetAll:
+		if len(selectedUserIDs) != 0 {
+			return "", nil, domain.ErrBroadcastInvalid
+		}
+		return message, nil, nil
+	case domain.BroadcastTargetSelected:
+		if len(selectedUserIDs) == 0 {
+			return "", nil, domain.ErrBroadcastNoRecipients
+		}
+		if len(selectedUserIDs) > domain.MaxBroadcastSelectedRecipients {
+			return "", nil, domain.ErrBroadcastInvalid
+		}
+		seen := make(map[int64]struct{}, len(selectedUserIDs))
+		ids := make([]int64, 0, len(selectedUserIDs))
+		for _, userID := range selectedUserIDs {
+			if userID <= 0 || domain.IsSystemUserID(userID) {
+				return "", nil, domain.ErrBroadcastRecipientInvalid
+			}
+			if _, ok := seen[userID]; ok {
+				return "", nil, domain.ErrBroadcastRecipientInvalid
+			}
+			seen[userID] = struct{}{}
+			ids = append(ids, userID)
+		}
+		return message, ids, nil
+	default:
+		return "", nil, domain.ErrBroadcastInvalid
+	}
+}
+
+// Preview validates and counts a campaign's intended recipient set without
+// creating anything, so an admin UI can show "this will reach N users"
+// before committing.
+func (s *Service) Preview(ctx context.Context, message string, mode domain.BroadcastTargetMode, selectedUserIDs []int64) (int64, error) {
+	if s == nil || s.store == nil {
+		return 0, fmt.Errorf("broadcast store is not configured")
+	}
+	_, ids, err := normalizeRequest(message, mode, selectedUserIDs)
+	if err != nil {
+		return 0, err
+	}
+	return s.store.PreviewBroadcastRecipients(ctx, mode, ids)
+}
+
+// Create validates and snapshots a new broadcast, then returns immediately:
+// delivery (and, for "all" mode, recipient enumeration itself) happens
+// asynchronously via the Worker's RunCycle, so this never blocks an admin
+// HTTP request on however many recipients there are.
+//
+// Entities are derived automatically from the plain-text message (mentions,
+// hashtags, cashtags, bot commands -- see domain.DetectAutomaticMessageEntities),
+// not operator-composed: there is currently no admin UI for hand-authoring
+// bold/italic/link spans on a broadcast, so this only gets a broadcast the
+// same clickable-entity rendering any other plain-text message with an
+// @mention or #hashtag already gets.
+func (s *Service) Create(ctx context.Context, message string, mode domain.BroadcastTargetMode, selectedUserIDs []int64, createdBy string) (domain.Broadcast, error) {
 	if s == nil || s.store == nil {
 		return domain.Broadcast{}, fmt.Errorf("broadcast store is not configured")
 	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		return domain.Broadcast{}, domain.ErrBroadcastMessageEmpty
+	message, ids, err := normalizeRequest(message, mode, selectedUserIDs)
+	if err != nil {
+		return domain.Broadcast{}, err
 	}
-	if targetMode != domain.BroadcastTargetAll && targetMode != domain.BroadcastTargetSelected {
-		return domain.Broadcast{}, domain.ErrBroadcastInvalid
-	}
-	return s.store.CreateBroadcast(ctx, message, targetMode, recipientUserIDs, createdBy)
+	entities := domain.DetectAutomaticMessageEntities(message, nil)
+	return s.store.CreateBroadcast(ctx, message, entities, mode, ids, strings.TrimSpace(createdBy))
 }
 
 // List pages broadcasts newest-first.
@@ -103,51 +185,80 @@ func (s *Service) Get(ctx context.Context, id int64) (domain.Broadcast, bool, er
 	return s.store.BroadcastByID(ctx, id)
 }
 
-// RunSendCycle drains up to limit pending recipient rows, sending each from
-// domain.OfficialSystemUserID. One recipient's failure (blocked account,
-// deleted account, transient error) never blocks the rest of the batch.
-func (s *Service) RunSendCycle(ctx context.Context, limit int) (sent int, err error) {
-	if s == nil || !s.Ready() {
-		return 0, nil
+// CycleResult reports one worker cycle's outcome.
+type CycleResult struct {
+	Materialized int
+	Claimed      int
+	Sent         int
+	Failed       int
+}
+
+// RunCycle advances "all"-mode enumeration by up to materializeBatch rows,
+// then claims up to deliveryBatch eligible recipient rows under leaseToken
+// for lease, delivering each one via SendPrivateText. One recipient's
+// failure (blocked account, deleted account, transient error) never blocks
+// the rest of the batch.
+func (s *Service) RunCycle(ctx context.Context, leaseToken string, materializeBatch, deliveryBatch int, lease time.Duration) (CycleResult, error) {
+	var result CycleResult
+	if !s.Ready() {
+		return result, nil
 	}
-	pending, err := s.store.PendingBroadcastRecipients(ctx, limit)
+	materialized, err := s.store.MaterializeBroadcastRecipients(ctx, materializeBatch)
 	if err != nil {
-		return 0, err
+		return result, err
 	}
-	for _, recipient := range pending {
+	result.Materialized = materialized
+	claims, err := s.store.ClaimBroadcastRecipients(ctx, leaseToken, deliveryBatch, lease)
+	if err != nil {
+		return result, err
+	}
+	result.Claimed = len(claims)
+	for _, claim := range claims {
 		if err := ctx.Err(); err != nil {
-			return sent, err
+			return result, err
 		}
-		_, sendErr := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
-			SenderUserID:    domain.OfficialSystemUserID,
-			RecipientUserID: recipient.UserID,
-			// A stable id derived from (broadcast, recipient) makes reprocessing
-			// this exact row idempotent at the store layer's random_id dedup,
-			// instead of risking a duplicate message if this worker crashes
-			// between sending and marking the row delivered.
-			RandomID: stableBroadcastRandomID(recipient.BroadcastID, recipient.UserID),
-			Message:  recipient.Message,
-		})
-		if sendErr != nil {
-			if markErr := s.store.MarkBroadcastRecipientFailed(ctx, recipient.RecipientID, sendErr.Error()); markErr != nil {
-				s.log.Warn("mark broadcast recipient failed",
-					zap.Int64("recipient_id", recipient.RecipientID), zap.Error(markErr))
+		if err := s.deliverClaim(ctx, claim); err != nil {
+			result.Failed++
+			if releaseErr := s.store.ReleaseBroadcastRecipient(ctx, claim, err.Error()); releaseErr != nil {
+				s.log.Warn("release broadcast recipient failed",
+					zap.Int64("recipient_id", claim.RecipientID),
+					zap.Int64("broadcast_id", claim.BroadcastID),
+					zap.Error(releaseErr))
 			}
 			continue
 		}
-		if markErr := s.store.MarkBroadcastRecipientSent(ctx, recipient.RecipientID); markErr != nil {
-			s.log.Warn("mark broadcast recipient sent",
-				zap.Int64("recipient_id", recipient.RecipientID), zap.Error(markErr))
-			continue
-		}
-		sent++
+		result.Sent++
 	}
-	return sent, nil
+	return result, nil
+}
+
+func (s *Service) deliverClaim(ctx context.Context, claim store.BroadcastRecipientClaim) error {
+	send, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    domain.OfficialSystemUserID,
+		RecipientUserID: claim.UserID,
+		// A stable id derived from (broadcast, recipient) makes redelivering
+		// this exact row idempotent at the store layer's random_id dedup: if
+		// this claim's lease expires and gets reclaimed while a prior send is
+		// still in flight, both resolve to the same message instead of
+		// sending twice.
+		RandomID: stableBroadcastRandomID(claim.BroadcastID, claim.UserID),
+		Message:  claim.Message,
+		Entities: claim.Entities,
+	})
+	if err != nil {
+		return err
+	}
+	msg := send.RecipientMessage
+	if err := s.store.CompleteBroadcastRecipient(ctx, claim, msg.UID, msg.ID, msg.Pts); err != nil {
+		return err
+	}
+	return nil
 }
 
 // stableBroadcastRandomID derives a random_id from (broadcastID, userID) so
-// re-processing the same recipient row (after a crash, before it was marked
-// delivered) resolves to the same send instead of a duplicate message.
+// re-processing the same recipient row (after a lease is reclaimed, before
+// it was recorded delivered) resolves to the same send instead of a
+// duplicate message.
 func stableBroadcastRandomID(broadcastID, userID int64) int64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(strconv.FormatInt(broadcastID, 10) + ":" + strconv.FormatInt(userID, 10)))

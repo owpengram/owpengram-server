@@ -623,11 +623,19 @@ type Config struct {
 	BotVerificationRequestRateWindow time.Duration
 	// BroadcastWorkerInterval / BroadcastWorkerBatch drive the system-broadcast
 	// delivery worker (internal/app/broadcast): an admin-created broadcast is
-	// snapshotted into a durable per-recipient outbox immediately, and this
-	// worker drains it in batches, so sending to thousands of users never blocks
-	// the admin action itself.
+	// snapshotted immediately, and this worker both enumerates "all"-mode
+	// recipients incrementally and drains delivery in batches, so sending to
+	// thousands of users never blocks the admin action itself.
 	BroadcastWorkerInterval time.Duration
-	BroadcastWorkerBatch    int
+	// BroadcastWorkerBatch bounds one cycle's delivery claims.
+	BroadcastWorkerBatch int
+	// BroadcastWorkerMaterializeBatch bounds one cycle's "all"-mode recipient
+	// enumeration inserts.
+	BroadcastWorkerMaterializeBatch int
+	// BroadcastWorkerLease bounds how long a delivery worker holds a claimed
+	// recipient row before another cycle is allowed to reclaim it (e.g. after
+	// a crash mid-delivery).
+	BroadcastWorkerLease time.Duration
 
 	// HideThirdPartyVerification hides third-party bot verification instead of
 	// removing it: the admin panel drops its "Third-party marks" nav entry and
@@ -1073,6 +1081,8 @@ func Load() (Config, error) {
 		BotVerificationRequestRateWindow: envDurationOr("TELESRV_BOT_VERIFICATION_REQUEST_RATE_WINDOW", 24*time.Hour),
 		BroadcastWorkerInterval:          envDurationOr("TELESRV_BROADCAST_WORKER_INTERVAL", 3*time.Second),
 		BroadcastWorkerBatch:             envIntOr("TELESRV_BROADCAST_WORKER_BATCH", 50),
+		BroadcastWorkerMaterializeBatch:  envIntOr("TELESRV_BROADCAST_WORKER_MATERIALIZE_BATCH", 200),
+		BroadcastWorkerLease:             envDurationOr("TELESRV_BROADCAST_WORKER_LEASE", 30*time.Second),
 		HideThirdPartyVerification:       envBoolOr("TELESRV_HIDE_THIRD_PARTY_VERIFICATION", true),
 
 		GroupCallCheckTTL:        envDurationOr("TELESRV_GROUPCALL_CHECK_TTL", 45*time.Second),
@@ -1386,6 +1396,15 @@ func validateVerificationConfig(cfg Config) error {
 	}
 	if cfg.BroadcastWorkerInterval <= 0 {
 		return fmt.Errorf("TELESRV_BROADCAST_WORKER_INTERVAL must be positive")
+	}
+	if cfg.BroadcastWorkerLease <= 0 {
+		return fmt.Errorf("TELESRV_BROADCAST_WORKER_LEASE must be positive")
+	}
+	if cfg.BroadcastWorkerMaterializeBatch <= 0 || cfg.BroadcastWorkerMaterializeBatch > 1000 {
+		return fmt.Errorf("TELESRV_BROADCAST_WORKER_MATERIALIZE_BATCH must be 1..1000")
+	}
+	if cfg.BroadcastWorkerBatch <= 0 || cfg.BroadcastWorkerBatch > 500 {
+		return fmt.Errorf("TELESRV_BROADCAST_WORKER_BATCH must be 1..500")
 	}
 	if cfg.VerificationMaxActivePerUser < 0 || cfg.VerificationMaxActivePerUser > 50 {
 		return fmt.Errorf("TELESRV_VERIFICATION_MAX_ACTIVE_PER_USER must be 0..50")

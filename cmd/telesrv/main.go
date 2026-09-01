@@ -1705,8 +1705,12 @@ func run(logger *zap.Logger) error {
 	// all/selected users) are delivered from the same kind of durable outbox as
 	// applicant notifications above: an admin creating one for every user must
 	// not wait on however long sending to all of them takes.
-	go broadcastapp.NewWorker(broadcastService, logger.Named("broadcast").Named("delivery"),
-		cfg.BroadcastWorkerInterval, cfg.BroadcastWorkerBatch).Run(ctx)
+	go broadcastapp.NewWorker(broadcastService, broadcastapp.WorkerConfig{
+		Interval:         cfg.BroadcastWorkerInterval,
+		Lease:            cfg.BroadcastWorkerLease,
+		MaterializeBatch: cfg.BroadcastWorkerMaterializeBatch,
+		DeliveryBatch:    cfg.BroadcastWorkerBatch,
+	}, logger.Named("broadcast").Named("delivery")).Run(ctx)
 	moderationActionOptions := []moderationapp.ActionExecutorOption{
 		moderationapp.WithAccountDeletionNotifier(router),
 	}

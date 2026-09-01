@@ -584,6 +584,9 @@ export type AdminSession = {
   // comment. Used by Server Settings' Restart/Update flow to detect a
   // genuinely new admin process after asking it to bounce.
   boot_id?: string;
+  // The MTProto TL schema layer this server binary speaks -- shown in the
+  // sidebar footer above the build/commit line.
+  api_layer?: number;
   // This admin binary's own build -- shown under "Version" in the sidebar
   // footer so an operator can tell which build is actually running.
   build?: {
@@ -794,9 +797,11 @@ export type BroadcastRow = {
   ID: number;
   Message: string;
   TargetMode: string;
-  TotalCount: number;
+  TargetCount: number;
+  MaterializedCount: number;
   SentCount: number;
   FailedCount: number;
+  EnumerationDone: boolean;
   CreatedBy: string;
   CreatedAt: string;
 };

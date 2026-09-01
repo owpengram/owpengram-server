@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -12,6 +13,7 @@ import (
 type fakeSender struct {
 	sent    []domain.SendPrivateTextRequest
 	failFor map[int64]bool // fail every send to this recipient user id
+	nextID  int
 }
 
 func (f *fakeSender) SendPrivateText(_ context.Context, req domain.SendPrivateTextRequest) (domain.SendPrivateTextResult, error) {
@@ -19,14 +21,21 @@ func (f *fakeSender) SendPrivateText(_ context.Context, req domain.SendPrivateTe
 		return domain.SendPrivateTextResult{}, errors.New("simulated send failure")
 	}
 	f.sent = append(f.sent, req)
-	return domain.SendPrivateTextResult{}, nil
+	f.nextID++
+	return domain.SendPrivateTextResult{
+		RecipientMessage: domain.Message{
+			ID:  f.nextID,
+			UID: int64(f.nextID),
+			Pts: f.nextID,
+		},
+	}, nil
 }
 
 func TestCreateValidatesInput(t *testing.T) {
 	svc := NewService(memory.NewBroadcastStore(), WithMessageSender(&fakeSender{}))
 	ctx := context.Background()
 
-	if _, err := svc.Create(ctx, "  ", domain.BroadcastTargetAll, []int64{1}, "admin"); !errors.Is(err, domain.ErrBroadcastMessageEmpty) {
+	if _, err := svc.Create(ctx, "  ", domain.BroadcastTargetAll, nil, "admin"); !errors.Is(err, domain.ErrBroadcastMessageEmpty) {
 		t.Fatalf("empty message: err = %v, want ErrBroadcastMessageEmpty", err)
 	}
 	if _, err := svc.Create(ctx, "hi", domain.BroadcastTargetMode("bogus"), []int64{1}, "admin"); !errors.Is(err, domain.ErrBroadcastInvalid) {
@@ -35,21 +44,33 @@ func TestCreateValidatesInput(t *testing.T) {
 	if _, err := svc.Create(ctx, "hi", domain.BroadcastTargetSelected, nil, "admin"); !errors.Is(err, domain.ErrBroadcastNoRecipients) {
 		t.Fatalf("no recipients: err = %v, want ErrBroadcastNoRecipients", err)
 	}
+	tooMany := make([]int64, domain.MaxBroadcastSelectedRecipients+1)
+	for i := range tooMany {
+		tooMany[i] = int64(1000 + i)
+	}
+	if _, err := svc.Create(ctx, "hi", domain.BroadcastTargetSelected, tooMany, "admin"); !errors.Is(err, domain.ErrBroadcastInvalid) {
+		t.Fatalf("too many recipients: err = %v, want ErrBroadcastInvalid", err)
+	}
 
-	created, err := svc.Create(ctx, "  News! ", domain.BroadcastTargetSelected, []int64{10, 20, 20}, "admin")
+	// A duplicate id in the selected list is rejected outright, not silently
+	// collapsed: the caller's list should already be a set.
+	if _, err := svc.Create(ctx, "hi", domain.BroadcastTargetSelected, []int64{10, 20, 20}, "admin"); !errors.Is(err, domain.ErrBroadcastRecipientInvalid) {
+		t.Fatalf("duplicate recipient: err = %v, want ErrBroadcastRecipientInvalid", err)
+	}
+
+	created, err := svc.Create(ctx, "  News! ", domain.BroadcastTargetSelected, []int64{10, 20}, "admin")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if created.Message != "News!" {
 		t.Fatalf("Message = %q, want trimmed %q", created.Message, "News!")
 	}
-	// The duplicate recipient (20 twice) collapses to one row.
-	if created.TotalCount != 2 {
-		t.Fatalf("TotalCount = %d, want 2 (duplicate recipient collapsed)", created.TotalCount)
+	if created.TargetCount != 2 {
+		t.Fatalf("TargetCount = %d, want 2", created.TargetCount)
 	}
 }
 
-func TestRunSendCycleDeliversAndCounts(t *testing.T) {
+func TestRunCycleDeliversAndCounts(t *testing.T) {
 	store := memory.NewBroadcastStore()
 	sender := &fakeSender{}
 	svc := NewService(store, WithMessageSender(sender))
@@ -60,12 +81,12 @@ func TestRunSendCycleDeliversAndCounts(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	sent, err := svc.RunSendCycle(ctx, 10)
+	result, err := svc.RunCycle(ctx, "lease-1", 100, 10, 30*time.Second)
 	if err != nil {
-		t.Fatalf("RunSendCycle: %v", err)
+		t.Fatalf("RunCycle: %v", err)
 	}
-	if sent != 3 {
-		t.Fatalf("sent = %d, want 3", sent)
+	if result.Sent != 3 {
+		t.Fatalf("Sent = %d, want 3", result.Sent)
 	}
 	if len(sender.sent) != 3 {
 		t.Fatalf("sender received %d sends, want 3", len(sender.sent))
@@ -88,16 +109,16 @@ func TestRunSendCycleDeliversAndCounts(t *testing.T) {
 	}
 
 	// A second cycle finds nothing left pending.
-	sent, err = svc.RunSendCycle(ctx, 10)
+	result, err = svc.RunCycle(ctx, "lease-2", 100, 10, 30*time.Second)
 	if err != nil {
-		t.Fatalf("RunSendCycle (second): %v", err)
+		t.Fatalf("RunCycle (second): %v", err)
 	}
-	if sent != 0 {
-		t.Fatalf("second cycle sent = %d, want 0 (nothing pending)", sent)
+	if result.Claimed != 0 {
+		t.Fatalf("second cycle claimed = %d, want 0 (nothing pending)", result.Claimed)
 	}
 }
 
-func TestRunSendCycleRetriesThenTerminatesFailures(t *testing.T) {
+func TestRunCycleRetriesThenTerminatesFailures(t *testing.T) {
 	store := memory.NewBroadcastStore()
 	sender := &fakeSender{failFor: map[int64]bool{999: true}}
 	svc := NewService(store, WithMessageSender(sender))
@@ -110,22 +131,49 @@ func TestRunSendCycleRetriesThenTerminatesFailures(t *testing.T) {
 	// Run one cycle per attempt, up to the cap; the row must stay pending
 	// (retried) below the cap and become terminal at it.
 	for i := 0; i < domain.MaxBroadcastRecipientAttempts; i++ {
-		sent, err := svc.RunSendCycle(ctx, 10)
+		result, err := svc.RunCycle(ctx, "lease", 100, 10, 30*time.Second)
 		if err != nil {
-			t.Fatalf("RunSendCycle attempt %d: %v", i+1, err)
+			t.Fatalf("RunCycle attempt %d: %v", i+1, err)
 		}
-		if sent != 0 {
-			t.Fatalf("attempt %d: sent = %d, want 0 (always fails)", i+1, sent)
+		if result.Sent != 0 || result.Failed != 1 {
+			t.Fatalf("attempt %d: sent=%d failed=%d, want sent=0 failed=1 (always fails)", i+1, result.Sent, result.Failed)
 		}
 	}
 
-	// One more cycle: the row is now terminal ('failed'), so PendingBroadcastRecipients
-	// must not return it, and RunSendCycle finds nothing left to attempt.
-	pending, err := store.PendingBroadcastRecipients(ctx, 10)
+	// One more cycle: the row is now terminal ('failed'), so nothing is left
+	// to claim.
+	result, err := svc.RunCycle(ctx, "lease-final", 100, 10, 30*time.Second)
 	if err != nil {
-		t.Fatalf("PendingBroadcastRecipients: %v", err)
+		t.Fatalf("RunCycle (final): %v", err)
 	}
-	if len(pending) != 0 {
-		t.Fatalf("pending = %+v, want empty (recipient should be terminally failed)", pending)
+	if result.Claimed != 0 {
+		t.Fatalf("final cycle claimed = %d, want 0 (recipient should be terminally failed)", result.Claimed)
+	}
+}
+
+func TestCreateAllModeSnapshotsWithoutExplicitIDs(t *testing.T) {
+	store := memory.NewBroadcastStore()
+	store.SeedEligibleUsers([]int64{1, 2, 3})
+	sender := &fakeSender{}
+	svc := NewService(store, WithMessageSender(sender))
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, "hello all", domain.BroadcastTargetAll, nil, "admin")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.TargetMode != domain.BroadcastTargetAll {
+		t.Fatalf("TargetMode = %q, want all", created.TargetMode)
+	}
+
+	result, err := svc.RunCycle(ctx, "lease", 100, 100, 30*time.Second)
+	if err != nil {
+		t.Fatalf("RunCycle: %v", err)
+	}
+	if result.Materialized != 3 {
+		t.Fatalf("Materialized = %d, want 3", result.Materialized)
+	}
+	if result.Sent != 3 {
+		t.Fatalf("Sent = %d, want 3", result.Sent)
 	}
 }

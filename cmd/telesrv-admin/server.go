@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iamxvbaba/td/tg"
+
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
 	"telesrv/internal/hoststats"
@@ -303,6 +305,10 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// tells "the old admin process died and a new one answered" apart
 		// from "the old one is just slow to respond".
 		"boot_id": bootID,
+		// api_layer is the MTProto TL schema layer this server binary speaks
+		// (tg.Layer), shown in the sidebar footer above the build/commit line
+		// so an operator can tell at a glance which protocol layer is live.
+		"api_layer": tg.Layer,
 		// build is this admin binary's own commit -- shown under "Version"
 		// in the sidebar footer so an operator can tell at a glance which
 		// build is actually running, independent of the app version string.
@@ -936,10 +942,13 @@ type createBroadcastAPIRequest struct {
 	UserIDs    []int64 `json:"user_ids,omitempty"`
 }
 
-// handleCreateBroadcastAPI resolves "all users" into an explicit id list
-// before forwarding to the admin API: the admin service always receives an
-// already-resolved recipient list, never "every user" as a live concept it
-// would have to know how to enumerate itself.
+// handleCreateBroadcastAPI forwards a broadcast create straight to the admin
+// API. "all" mode is no longer pre-resolved into an explicit id list here:
+// the admin service snapshots the current eligible user set itself and the
+// broadcast worker enumerates it incrementally, so "every user" never has
+// to cross this boundary (or the one after it) as a potentially huge id
+// slice. Only "selected" mode carries UserIDs, already an operator-picked
+// list bounded by domain.MaxBroadcastSelectedRecipients.
 func (s *server) handleCreateBroadcastAPI(w http.ResponseWriter, r *http.Request) {
 	var body createBroadcastAPIRequest
 	if !decodeAction(w, r, &body) {
@@ -947,16 +956,7 @@ func (s *server) handleCreateBroadcastAPI(w http.ResponseWriter, r *http.Request
 	}
 	userIDs := body.UserIDs
 	if body.TargetMode == "all" {
-		if s.read == nil {
-			writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
-			return
-		}
-		all, err := s.read.ListAllAccountIDs(r.Context())
-		if err != nil {
-			writeAPIError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		userIDs = all
+		userIDs = nil
 	}
 	req := admin.CreateBroadcastRequest{
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "create-broadcast"),

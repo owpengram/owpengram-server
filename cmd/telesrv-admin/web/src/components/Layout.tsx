@@ -41,6 +41,7 @@ export function BootScreen() {
 
 export function Shell({
   actor,
+  apiLayer,
   build,
   route,
   navigate,
@@ -48,6 +49,7 @@ export function Shell({
   children
 }: {
   actor: string;
+  apiLayer?: number;
   build?: { commit: string; short_commit: string; dirty: boolean; build_time: string };
   route: RouteState;
   navigate: Navigate;
@@ -178,6 +180,9 @@ export function Shell({
         </nav>
         <div className="sidebar-status">
           <span className="sidebar-label">{"Version: O7"}</span>
+          {typeof apiLayer === "number" && (
+            <span className="sidebar-label sidebar-api-layer">{`API layer: ${apiLayer}`}</span>
+          )}
           {build?.short_commit && (
             <span className="sidebar-label sidebar-build" title={build.commit + (build.dirty ? " (uncommitted changes)" : "")}>
               {`Build: ${build.short_commit}${build.dirty ? "+" : ""}`}
