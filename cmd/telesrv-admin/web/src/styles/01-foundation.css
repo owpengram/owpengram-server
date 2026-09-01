@@ -256,6 +256,35 @@ a {
   font-size: 11px;
 }
 
+.sidebar-server-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar-server-action {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--sidebar-text);
+  background: transparent;
+  border-color: var(--sidebar-line);
+}
+
+.sidebar-server-action:hover:not(:disabled) {
+  background: var(--sidebar-line);
+}
+
+.sidebar-server-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-server-action-error {
+  padding: 0 4px;
+  color: var(--danger, #e5484d);
+  font-size: 11.5px;
+}
+
 .sidebar-label {
   padding: 0 8px;
   color: var(--sidebar-faint);

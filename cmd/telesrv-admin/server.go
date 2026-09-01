@@ -177,6 +177,7 @@ func (s *server) routes() http.Handler {
 	// in-process admin API), so it works even for actions (Restart/Update)
 	// that owpengram-server could never safely perform on itself.
 	mux.Handle("GET /api/server/identity", s.serverManage(s.handleServerIdentityAPI))
+	mux.Handle("GET /api/server/add-server-link", s.serverManage(s.handleAddServerLinkAPI))
 	mux.Handle("GET /api/server/icon", s.serverManage(s.handleServerIconAPI))
 	mux.Handle("POST /api/actions/set-server-identity", s.serverManage(s.handleSetServerIdentityAPI))
 	mux.Handle("POST /api/actions/set-welcome-message-templates", s.serverManage(s.handleSetWelcomeMessageTemplatesAPI))

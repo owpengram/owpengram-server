@@ -1,6 +1,7 @@
 import { Check, ChevronRight, Copy, Loader2, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { copyToClipboard } from "../clipboard";
 import { StaticLottie } from "../components/StaticLottie";
 import { Alert, Metric, PageFrame, QueryPanel } from "../components/ui";
 import type { EmojiListResponse, EmojiRow } from "../types";
@@ -43,7 +44,7 @@ function EmojiCard({ row }: { row: EmojiRow }) {
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(row.DocumentID);
+      await copyToClipboard(row.DocumentID);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     } catch {

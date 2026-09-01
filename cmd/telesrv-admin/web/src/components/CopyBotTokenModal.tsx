@@ -2,6 +2,7 @@ import { Check, Copy, X } from "lucide-react";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
+import { copyToClipboard } from "../clipboard";
 import { Alert } from "./ui";
 
 // CopyBotTokenModal writes a non-system bot's token straight to the
@@ -34,7 +35,7 @@ export function CopyBotTokenModal({ botID, onClose }: { botID: number; onClose: 
         setError(result.error || "No token returned.");
         return;
       }
-      await navigator.clipboard.writeText(token);
+      await copyToClipboard(token);
       setCopied(true);
     } catch (err) {
       setError(errorMessage(err));

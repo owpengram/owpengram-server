@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
+import { copyToClipboard } from "../clipboard";
 import type { CommandResult } from "../types";
 import { Alert, JsonBlock } from "./ui";
 
@@ -94,7 +95,7 @@ export function ActionButton({
     : result?.details;
 
   async function copySecret() {
-    await navigator.clipboard.writeText(secretValue);
+    await copyToClipboard(secretValue);
     setSecretCopied(true);
   }
 

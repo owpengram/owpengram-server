@@ -63,6 +63,33 @@
   gap: 8px;
 }
 
+.add-server-link-modal {
+  width: min(920px, 100%);
+  max-height: min(880px, calc(100vh - 48px));
+}
+
+.add-server-link-field {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.add-server-link-field textarea {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  word-break: break-all;
+  resize: vertical;
+}
+
+.add-server-link-hint {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 12.5px;
+}
+
 .command-body {
   display: grid;
   min-height: 0;

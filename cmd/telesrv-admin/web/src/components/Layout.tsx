@@ -10,18 +10,21 @@ import {
   Megaphone,
   MessageSquareText,
   Settings,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   Smile,
   Stamp,
   Users,
+  Zap,
 	Sticker
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import { permissionBotVerificationReview, permissionServerManage, permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
 import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
+import { AddServerLinkModal } from "./AddServerLinkModal";
 import { AppLink } from "./AppLink";
 
 // Compresses a sorted (or unsorted) list of layer numbers into run-length
@@ -85,6 +88,29 @@ export function Shell({
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
   const canManageServer = useCan(permissionServerManage);
+  const [addServerLinkOpen, setAddServerLinkOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
+
+  // "Connect" is the short-cut version of Share: instead of showing a link to
+  // copy elsewhere, it opens the owpg://addserver link (host+port only --
+  // see the Go handler's doc comment for why nothing else ever goes in it)
+  // right here in this browser, so if an OwpenGram client is registered for
+  // that scheme on this machine, it launches straight into "Add Server"
+  // pre-filled for the server this very admin panel manages, fetching the
+  // rest (name/description/key) straight from it.
+  async function connectThisServer() {
+    setConnecting(true);
+    setConnectError("");
+    try {
+      const result = await api.addServerLink();
+      window.location.href = result.link;
+    } catch (err) {
+      setConnectError(errorMessage(err));
+    } finally {
+      setConnecting(false);
+    }
+  }
   // Server identity (name/icon) is admin-editable per Server Settings ->
   // Server identity, and takes over the sidebar branding when set -- the
   // operator's own server should look like their server, not like the
@@ -256,6 +282,29 @@ export function Shell({
             </span>
           )}
         </div>
+        {canManageServer && (
+          <div className="sidebar-server-actions">
+            <button
+              className="btn ghost sidebar-server-action"
+              type="button"
+              title={"Connect this browser's client to this server"}
+              disabled={connecting}
+              onClick={() => void connectThisServer()}
+            >
+              <Zap size={15} /> {"Connect"}
+            </button>
+            <button
+              className="btn ghost sidebar-server-action"
+              type="button"
+              title={"Share server (get an add-server link)"}
+              onClick={() => setAddServerLinkOpen(true)}
+            >
+              <Share2 size={15} /> {"Share"}
+            </button>
+          </div>
+        )}
+        {connectError && <div className="sidebar-server-action-error">{connectError}</div>}
+        {addServerLinkOpen && <AddServerLinkModal onClose={() => setAddServerLinkOpen(false)} />}
       </aside>
       <div className="workspace">
         <header className="topbar">

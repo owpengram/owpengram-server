@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -139,6 +141,14 @@ type uiConfig struct {
 	// from (or by something that cd'd into) the repo root -- true both for a
 	// manual run and for how the TUI itself launches it.
 	RepoRoot string
+	// AdvertiseHost/ServerPort mirror config.AdvertiseIP and the port half
+	// of config.ListenAddr -- what the "Add Server" sidebar button needs to
+	// build an owpg://addserver link for this exact server (host+port only,
+	// see handleAddServerLinkAPI's doc comment for why nothing else belongs
+	// in that link), assuming both binaries share the same .env (same
+	// convention as the WelcomeMessage/LoginCode defaults above).
+	AdvertiseHost string
+	ServerPort    int
 }
 
 // loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
@@ -170,6 +180,15 @@ func loadConfig() (uiConfig, error) {
 		return uiConfig{}, fmt.Errorf("resolve repo root: %w", err)
 	}
 
+	_, serverPortStr, err := net.SplitHostPort(appCfg.ListenAddr)
+	if err != nil {
+		return uiConfig{}, fmt.Errorf("parse TELESRV_LISTEN %q: %w", appCfg.ListenAddr, err)
+	}
+	serverPort, err := strconv.Atoi(serverPortStr)
+	if err != nil {
+		return uiConfig{}, fmt.Errorf("parse TELESRV_LISTEN port %q: %w", serverPortStr, err)
+	}
+
 	return uiConfig{
 		Addr:                       appCfg.AdminUIAddr,
 		PostgresDSN:                appCfg.PostgresDSN,
@@ -186,6 +205,8 @@ func loadConfig() (uiConfig, error) {
 		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,
 		LoginCodeMessageDefault:    appCfg.LoginCodeMessageTemplate,
 		RepoRoot:                   repoRoot,
+		AdvertiseHost:              appCfg.AdvertiseIP,
+		ServerPort:                 serverPort,
 	}, nil
 }
 
