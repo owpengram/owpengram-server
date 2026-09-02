@@ -95,6 +95,10 @@ const (
 	// 继续保留，在线漏推由正常 difference 路径补偿。
 	defaultOutboxPoisonRetention = time.Minute
 	defaultOutboxPoisonInterval  = 15 * time.Second
+	// minMediaRetentionInterval floors the derived media-sweep cadence below
+	// so a very short (e.g. test-only) TELESRV_STORAGE_RETENTION_MAX_AGE
+	// can't spin the sweep query in a tight loop.
+	minMediaRetentionInterval = 15 * time.Second
 )
 
 // RetentionWorker 周期性回收存储中的死数据。
@@ -119,6 +123,7 @@ type RetentionWorker struct {
 	activeAuthKeys              ActiveRawAuthKeyProvider
 	activeAuthKeyHeartbeat      ActiveAuthKeyHeartbeatStore
 	orphanedMedia               OrphanedMediaRetentionStore
+	hardMedia                   HardMediaRetentionStore
 	logger                      *zap.Logger
 	retention                   time.Duration
 	botAPIRetention             time.Duration
@@ -128,6 +133,7 @@ type RetentionWorker struct {
 	outboxPoisonRetention       time.Duration
 	outboxPoisonInterval        time.Duration
 	orphanedMediaMaxAge         time.Duration
+	hardMediaMaxAge             time.Duration
 	interval                    time.Duration
 	batch                       int
 }
@@ -259,6 +265,15 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 		heartbeatC = heartbeatTicker.C
 		defer heartbeatTicker.Stop()
 	}
+	var (
+		mediaTicker *time.Ticker
+		mediaC      <-chan time.Time
+	)
+	if interval := w.mediaRetentionInterval(); interval > 0 {
+		mediaTicker = time.NewTicker(interval)
+		mediaC = mediaTicker.C
+		defer mediaTicker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -269,6 +284,8 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			w.runOutboxPoisonOnce(ctx)
 		case <-heartbeatC:
 			w.heartbeatActiveAuthKeys(ctx)
+		case <-mediaC:
+			w.runMediaRetentionOnce(ctx)
 		}
 	}
 }
@@ -276,6 +293,63 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 func (w *RetentionWorker) runOnce(ctx context.Context) {
 	w.runOutboxPoisonOnce(ctx)
 	w.runRetentionOnce(ctx)
+	w.runMediaRetentionOnce(ctx)
+}
+
+// mediaRetentionInterval derives how often the storage media sweep
+// (orphan/hard) runs, independent of the shared housekeeping w.interval.
+// A short TELESRV_STORAGE_RETENTION_MAX_AGE (e.g. 30m) configured under a
+// much longer TELESRV_RETENTION_INTERVAL (default 1h) would otherwise let
+// media sit for up to age+interval past its cutoff before actually being
+// swept -- capping the sweep cadence at the retention age itself bounds
+// that worst case to at most 2x the configured age instead.
+func (w *RetentionWorker) mediaRetentionInterval() time.Duration {
+	var maxAge time.Duration
+	if w.orphanedMedia != nil && w.orphanedMediaMaxAge > 0 {
+		maxAge = w.orphanedMediaMaxAge
+	}
+	if w.hardMedia != nil && w.hardMediaMaxAge > 0 && (maxAge == 0 || w.hardMediaMaxAge < maxAge) {
+		maxAge = w.hardMediaMaxAge
+	}
+	if maxAge <= 0 {
+		return 0
+	}
+	interval := w.interval
+	if interval <= 0 || maxAge < interval {
+		interval = maxAge
+	}
+	if interval < minMediaRetentionInterval {
+		interval = minMediaRetentionInterval
+	}
+	return interval
+}
+
+func (w *RetentionWorker) runMediaRetentionOnce(ctx context.Context) {
+	if w.orphanedMedia != nil && w.orphanedMediaMaxAge > 0 {
+		// Only ever touches documents/photos already marked orphaned (no live
+		// message/profile-photo/sticker-set reference remains) -- media still
+		// visible in a conversation is never a candidate, regardless of age.
+		mediaDeleted, err := w.orphanedMedia.DeleteOrphanedOlderThan(ctx, time.Now().Add(-w.orphanedMediaMaxAge), w.batch)
+		if err != nil {
+			w.logger.Warn("orphaned media storage retention sweep failed", zap.Error(err))
+		} else if mediaDeleted > 0 {
+			w.logger.Info("orphaned media storage retention sweep complete", zap.Int("deleted", mediaDeleted))
+		}
+	}
+	if w.hardMedia != nil && w.hardMediaMaxAge > 0 {
+		// "Hard" mode: purges blob bytes for documents/photos older than
+		// hardMediaMaxAge regardless of whether a live reference remains --
+		// the store is required to keep the document/photo metadata row
+		// intact, only removing file_blobs rows/bytes, so a message still
+		// renders its media placeholder (LOCATION_INVALID on download)
+		// instead of breaking outright.
+		hardDeleted, err := w.hardMedia.DeleteBlobBytesForMediaOlderThan(ctx, time.Now().Add(-w.hardMediaMaxAge), w.batch)
+		if err != nil {
+			w.logger.Warn("hard media storage retention sweep failed", zap.Error(err))
+		} else if hardDeleted > 0 {
+			w.logger.Info("hard media storage retention sweep complete", zap.Int("deleted", hardDeleted))
+		}
+	}
 }
 
 func (w *RetentionWorker) runOutboxPoisonOnce(ctx context.Context) {
@@ -412,17 +486,6 @@ func (w *RetentionWorker) runRetentionOnce(ctx context.Context) {
 			)
 		} else if channelDeleted > 0 {
 			w.logger.Info("expired channel_update_events contiguous-prefix cleanup complete", zap.Int("deleted", channelDeleted))
-		}
-	}
-	if w.orphanedMedia != nil && w.orphanedMediaMaxAge > 0 {
-		// Only ever touches documents/photos already marked orphaned (no live
-		// message/profile-photo/sticker-set reference remains) -- media still
-		// visible in a conversation is never a candidate, regardless of age.
-		mediaDeleted, err := w.orphanedMedia.DeleteOrphanedOlderThan(ctx, time.Now().Add(-w.orphanedMediaMaxAge), w.batch)
-		if err != nil {
-			w.logger.Warn("orphaned media storage retention sweep failed", zap.Error(err))
-		} else if mediaDeleted > 0 {
-			w.logger.Info("orphaned media storage retention sweep complete", zap.Int("deleted", mediaDeleted))
 		}
 	}
 }

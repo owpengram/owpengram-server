@@ -2612,11 +2612,25 @@ type AccountStorageRow struct {
 	FileCount int64 `json:"FileCount,string"`
 }
 
-// ListAccountStorageUsage pages the per-account storage breakdown, largest
-// user first. Offset-based (not keyset): storage administration on a
-// self-hosted deployment doesn't need to support arbitrarily deep pages
-// efficiently the way an infinite-scroll feed does.
-func (s *readStore) ListAccountStorageUsage(ctx context.Context, offset, limit int) ([]AccountStorageRow, bool, error) {
+// storageUsageSortColumns whitelists the columns ListAccountStorageUsage's
+// sortBy may map to -- never interpolate the caller's sort key directly into
+// SQL, since unlike a plain value it can't go through a query parameter.
+var storageUsageSortColumns = map[string]string{
+	"bytes":      "t.bytes",
+	"files":      "t.file_count",
+	"user_id":    "t.owner_user_id",
+	"username":   "lower(COALESCE(u.username, ''))",
+	"first_name": "lower(COALESCE(u.first_name, ''))",
+}
+
+// ListAccountStorageUsage pages the per-account storage breakdown. sortBy
+// selects one of storageUsageSortColumns (falls back to "bytes" for an
+// unknown/empty key); sortDesc reverses it. q, if non-empty, filters to
+// accounts whose id/username/first name match it. Offset-based (not
+// keyset): storage administration on a self-hosted deployment doesn't need
+// to support arbitrarily deep pages efficiently the way an infinite-scroll
+// feed does.
+func (s *readStore) ListAccountStorageUsage(ctx context.Context, q string, sortBy string, sortDesc bool, offset, limit int) ([]AccountStorageRow, bool, error) {
 	if limit <= 0 {
 		limit = storageUsageListDefaultLimit
 	}
@@ -2626,6 +2640,32 @@ func (s *readStore) ListAccountStorageUsage(ctx context.Context, offset, limit i
 	if offset < 0 {
 		offset = 0
 	}
+	column, ok := storageUsageSortColumns[sortBy]
+	if !ok {
+		column = storageUsageSortColumns["bytes"]
+	}
+	direction := "ASC"
+	if sortDesc {
+		direction = "DESC"
+	}
+	q = strings.TrimSpace(q)
+	var whereClause string
+	args := []any{}
+	argN := 1
+	if q != "" {
+		id := int64(-1)
+		if n, err := strconv.ParseInt(q, 10, 64); err == nil {
+			id = n
+		}
+		whereClause = fmt.Sprintf(`WHERE t.owner_user_id = $%d
+    OR lower(COALESCE(u.username, '')) LIKE $%d
+    OR lower(COALESCE(u.first_name, '')) LIKE $%d`, argN, argN+1, argN+2)
+		args = append(args, id, "%"+strings.ToLower(q)+"%", "%"+strings.ToLower(q)+"%")
+		argN += 3
+	}
+	offsetArg := argN
+	limitArg := argN + 1
+	args = append(args, offset, limit+1)
 	rows, err := s.pool.Query(ctx, `
 WITH totals AS (
     SELECT owner_user_id, SUM(size)::bigint AS bytes, COUNT(*)::bigint AS file_count
@@ -2636,9 +2676,10 @@ WITH totals AS (
 SELECT t.owner_user_id, COALESCE(u.username, ''), COALESCE(u.first_name, ''), t.bytes, t.file_count
 FROM totals t
 LEFT JOIN users u ON u.id = t.owner_user_id
-ORDER BY t.bytes DESC, t.owner_user_id
-OFFSET $1
-LIMIT $2`, offset, limit+1)
+`+whereClause+`
+ORDER BY `+column+` `+direction+`, t.owner_user_id
+OFFSET $`+strconv.Itoa(offsetArg)+`
+LIMIT $`+strconv.Itoa(limitArg), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list account storage usage: %w", err)
 	}

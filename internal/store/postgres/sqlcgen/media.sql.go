@@ -825,6 +825,50 @@ func (q *Queries) ListAvailableReactions(ctx context.Context) ([]AvailableReacti
 	return items, nil
 }
 
+const listDocumentIDsForHardRetentionOlderThan = `-- name: ListDocumentIDsForHardRetentionOlderThan :many
+SELECT d.id FROM documents d
+WHERE d.created_at < $1::timestamptz
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  )
+ORDER BY d.created_at ASC
+LIMIT $2::int
+`
+
+type ListDocumentIDsForHardRetentionOlderThanParams struct {
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// "Hard" retention mode: candidates are documents older than cutoff (by
+// upload/created_at, NOT orphaned_at -- a live reference does not exempt
+// them) that still own at least one file_blobs row. The EXISTS check is what
+// keeps this sweep from re-selecting the same document forever: once its
+// blob bytes are purged (DeleteFileBlobsForDocument removes the file_blobs
+// rows but deliberately leaves this documents row in place), it naturally
+// drops out of this query on the next pass.
+func (q *Queries) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, arg ListDocumentIDsForHardRetentionOlderThanParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listDocumentIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listFileBlobsByLocationPrefix = `-- name: ListFileBlobsByLocationPrefix :many
 SELECT location_key, backend, object_key, size
 FROM file_blobs
@@ -919,6 +963,45 @@ type ListOrphanedPhotoIDsOlderThanParams struct {
 
 func (q *Queries) ListOrphanedPhotoIDsOlderThan(ctx context.Context, arg ListOrphanedPhotoIDsOlderThanParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listOrphanedPhotoIDsOlderThan, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPhotoIDsForHardRetentionOlderThan = `-- name: ListPhotoIDsForHardRetentionOlderThan :many
+SELECT p.id FROM photos p
+WHERE p.created_at < $1::timestamptz
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT $2::int
+`
+
+type ListPhotoIDsForHardRetentionOlderThanParams struct {
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
+// candidate selection, for photos.
+func (q *Queries) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, arg ListPhotoIDsForHardRetentionOlderThanParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listPhotoIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}

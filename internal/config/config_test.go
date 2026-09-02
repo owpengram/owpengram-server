@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -462,6 +463,101 @@ func TestLoadRejectsInvalidStorageCapacityConfig(t *testing.T) {
 			t.Setenv(item.key, item.value)
 			if _, err := Load(); err == nil {
 				t.Fatalf("Load accepted invalid %s=%s", item.key, item.value)
+			}
+		})
+	}
+}
+
+func TestLoadMaxUploadFileBytesDefaultsToUnlimited(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageMaxUploadFileBytes != 0 {
+		t.Fatalf("expected default StorageMaxUploadFileBytes=0 (unlimited), got %d", cfg.StorageMaxUploadFileBytes)
+	}
+}
+
+func TestLoadAcceptsMaxUploadFileBytesAtProtocolCeiling(t *testing.T) {
+	disableDefaultConfigFile(t)
+	const ceiling = int64(524288) * 8000 // files.MaxUploadPartBytes * files.MaxUploadParts
+	t.Setenv("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES", fmt.Sprint(ceiling))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageMaxUploadFileBytes != ceiling {
+		t.Fatalf("expected StorageMaxUploadFileBytes=%d, got %d", ceiling, cfg.StorageMaxUploadFileBytes)
+	}
+}
+
+func TestLoadRejectsInvalidMaxUploadFileBytes(t *testing.T) {
+	const ceiling = int64(524288) * 8000
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{"negative", "-1"},
+		{"exceeds protocol ceiling", fmt.Sprint(ceiling + 1)},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES", item.value)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted invalid TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES=%s", item.value)
+			}
+		})
+	}
+}
+
+func TestLoadStorageRetentionModeDefaultsToOff(t *testing.T) {
+	disableDefaultConfigFile(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StorageRetentionMode != StorageRetentionModeOff {
+		t.Fatalf("expected default StorageRetentionMode=%q, got %q", StorageRetentionModeOff, cfg.StorageRetentionMode)
+	}
+}
+
+func TestLoadStorageRetentionModeOrphanAndHard(t *testing.T) {
+	for _, mode := range []string{StorageRetentionModeOrphan, StorageRetentionModeHard} {
+		t.Run(mode, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_STORAGE_RETENTION_MODE", mode)
+			t.Setenv("TELESRV_STORAGE_RETENTION_MAX_AGE", "48h")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.StorageRetentionMode != mode {
+				t.Fatalf("expected StorageRetentionMode=%q, got %q", mode, cfg.StorageRetentionMode)
+			}
+			if cfg.StorageRetentionMaxAge != 48*time.Hour {
+				t.Fatalf("expected StorageRetentionMaxAge=48h, got %v", cfg.StorageRetentionMaxAge)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidStorageRetentionMode(t *testing.T) {
+	disableDefaultConfigFile(t)
+	t.Setenv("TELESRV_STORAGE_RETENTION_MODE", "sometimes")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted an unknown TELESRV_STORAGE_RETENTION_MODE")
+	}
+}
+
+func TestLoadRejectsStorageRetentionModeWithoutMaxAge(t *testing.T) {
+	for _, mode := range []string{StorageRetentionModeOrphan, StorageRetentionModeHard} {
+		t.Run(mode, func(t *testing.T) {
+			disableDefaultConfigFile(t)
+			t.Setenv("TELESRV_STORAGE_RETENTION_MODE", mode)
+			t.Setenv("TELESRV_STORAGE_RETENTION_MAX_AGE", "0s")
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load accepted TELESRV_STORAGE_RETENTION_MODE=%s with zero max age", mode)
 			}
 		})
 	}

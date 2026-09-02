@@ -9,6 +9,11 @@ var (
 	ErrFilePartsInvalid    = errors.New("file parts invalid")
 	ErrFilePartTooBig      = errors.New("file part too big")
 	ErrUploadQuotaExceeded = errors.New("upload quota exceeded")
+	// ErrFileTooLarge is returned when a file's total assembled size (sum of
+	// all its parts, not any single part) exceeds the configured
+	// TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES ceiling. Distinct from
+	// ErrFilePartTooBig, which is a single oversized part.
+	ErrFileTooLarge    = errors.New("file too large")
 	ErrPhotoInvalid    = errors.New("photo invalid")
 	ErrDocumentInvalid = errors.New("document invalid")
 	// ErrStorageFull is returned when the configured low-space guard rejects a

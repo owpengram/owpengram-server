@@ -779,6 +779,27 @@ textarea:focus {
   font-weight: 800;
 }
 
+.sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sort-header:hover {
+  color: var(--text);
+}
+
+.sort-header-idle {
+  opacity: 0.45;
+}
+
 .data-table tbody tr:hover {
   background: var(--panel-subtle);
 }

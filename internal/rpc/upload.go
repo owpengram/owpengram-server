@@ -348,6 +348,8 @@ func fileSaveErr(err error) error {
 		return filePartsInvalidErr()
 	case errors.Is(err, domain.ErrFilePartTooBig):
 		return filePartTooBigErr()
+	case errors.Is(err, domain.ErrFileTooLarge):
+		return fileTooBigErr()
 	case errors.Is(err, domain.ErrUploadQuotaExceeded):
 		return floodWaitErr(60)
 	case errors.Is(err, domain.ErrStorageFull):

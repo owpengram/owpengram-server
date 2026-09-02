@@ -2498,7 +2498,14 @@ func (s *server) handleStorageAccountsAPI(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, "invalid limit")
 		return
 	}
-	rows, hasMore, err := s.read.ListAccountStorageUsage(r.Context(), offset, limit)
+	sortDesc := query.Get("order") != "asc"
+	rows, hasMore, err := s.read.ListAccountStorageUsage(
+		r.Context(),
+		query.Get("q"),
+		query.Get("sort"),
+		sortDesc,
+		offset,
+		limit)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

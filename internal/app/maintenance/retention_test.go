@@ -393,3 +393,67 @@ func TestRetentionWorkerSkipsOrphanDeleteWhenHeartbeatFails(t *testing.T) {
 		t.Fatalf("heartbeat failure signals = %+v", entries)
 	}
 }
+
+type fakeHardMediaRetention struct {
+	calls   int
+	cutoff  time.Time
+	limit   int
+	deleted int
+}
+
+func (f *fakeHardMediaRetention) DeleteBlobBytesForMediaOlderThan(_ context.Context, cutoff time.Time, limit int) (int, error) {
+	f.calls++
+	f.cutoff = cutoff
+	f.limit = limit
+	return f.deleted, nil
+}
+
+// TestRetentionWorkerMediaSweepIntervalNeverExceedsMaxAge guards the fix for
+// a real gotcha reported live: with a short storage retention age (e.g. 30m)
+// under the default 1h TELESRV_RETENTION_INTERVAL housekeeping cadence,
+// media eligible for hard/orphan deletion used to sit for up to age+interval
+// before the shared ticker actually got around to sweeping it (a 30m age
+// could take up to 1h30m to actually disappear). The sweep now runs on its
+// own ticker capped at the configured age, so it never lags by more than
+// roughly one age-window.
+func TestRetentionWorkerMediaSweepIntervalNeverExceedsMaxAge(t *testing.T) {
+	hard := &fakeHardMediaRetention{}
+	w := NewRetentionWorker(&fakeOutboxRetention{}, nil, zap.NewNop(), time.Hour, time.Hour, 50).
+		WithHardMediaRetention(hard, 30*time.Minute)
+
+	if got := w.mediaRetentionInterval(); got != 30*time.Minute {
+		t.Fatalf("media retention interval = %v, want min(interval=1h, maxAge=30m) = 30m", got)
+	}
+}
+
+func TestRetentionWorkerMediaSweepIntervalFloorsAtMinimum(t *testing.T) {
+	hard := &fakeHardMediaRetention{}
+	w := NewRetentionWorker(&fakeOutboxRetention{}, nil, zap.NewNop(), time.Hour, time.Hour, 50).
+		WithHardMediaRetention(hard, time.Second)
+
+	if got := w.mediaRetentionInterval(); got != minMediaRetentionInterval {
+		t.Fatalf("media retention interval = %v, want floor %v", got, minMediaRetentionInterval)
+	}
+}
+
+func TestRetentionWorkerMediaSweepIntervalZeroWhenNoModeConfigured(t *testing.T) {
+	w := NewRetentionWorker(&fakeOutboxRetention{}, nil, zap.NewNop(), time.Hour, time.Hour, 50)
+	if got := w.mediaRetentionInterval(); got != 0 {
+		t.Fatalf("media retention interval = %v, want 0 (no separate ticker) when retention is off", got)
+	}
+}
+
+// TestRetentionWorkerRunsHardMediaSweepOnStartup confirms runOnce (called
+// once immediately when Run starts, matching every other retention check)
+// still fires the media sweep too, not just the new dedicated ticker.
+func TestRetentionWorkerRunsHardMediaSweepOnStartup(t *testing.T) {
+	hard := &fakeHardMediaRetention{deleted: 4}
+	w := NewRetentionWorker(&fakeOutboxRetention{}, nil, zap.NewNop(), time.Hour, time.Hour, 50).
+		WithHardMediaRetention(hard, 30*time.Minute)
+
+	w.runOnce(context.Background())
+
+	if hard.calls != 1 {
+		t.Fatalf("hard media sweep calls = %d, want 1", hard.calls)
+	}
+}

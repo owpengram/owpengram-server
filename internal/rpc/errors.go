@@ -107,6 +107,15 @@ func locationInvalidErr() error      { return tgerr.New(400, "LOCATION_INVALID")
 func fileIDInvalidErr() error        { return tgerr.New(400, "FILE_ID_INVALID") }
 func documentInvalidErr() error      { return tgerr.New(400, "DOCUMENT_INVALID") }
 
+// fileTooBigErr surfaces TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES: the upload's
+// total assembled size (not any single part) exceeds the configured
+// per-file ceiling. FILE_TOO_BIG is not an official Telegram desktop-RPC
+// error string, but it's already this codebase's own convention for the
+// same concept on the Bot API surface (see internal/botapi/server.go) --
+// reused here for consistency rather than inventing a second name for the
+// same condition.
+func fileTooBigErr() error { return tgerr.New(400, "FILE_TOO_BIG") }
+
 // storageFullErr surfaces the low-disk-space upload guard. Deliberately not
 // a flood-wait: a full disk won't resolve itself in 60 seconds, and telling
 // the client to retry shortly would be misleading.

@@ -72,6 +72,10 @@ type Service struct {
 	stickerSetNegCache *stickerSetNegativeCache
 	uploadQuota        domain.UploadPartQuota
 	spaceGuard         SpaceGuard
+	// maxUploadFileBytes caps a single upload's total assembled size (sum of
+	// all parts). <=0 means unlimited (still bounded by the protocol's own
+	// MaxUploadPartBytes*MaxUploadParts ceiling). See WithMaxUploadFileBytes.
+	maxUploadFileBytes int64
 	mapTiles           *mapTileProxy
 	externalMedia      *externalMediaFetcher
 	webpage            *webpageFetcher
@@ -140,6 +144,15 @@ func WithSpaceGuard(guard SpaceGuard) Option {
 		if guard != nil {
 			s.spaceGuard = guard
 		}
+	}
+}
+
+// WithMaxUploadFileBytes caps a single uploaded file's total assembled size
+// (sum of all parts, not any one part) -- TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES.
+// <=0 leaves it unlimited (still bounded by MaxUploadPartBytes*MaxUploadParts).
+func WithMaxUploadFileBytes(maxBytes int64) Option {
+	return func(s *Service) {
+		s.maxUploadFileBytes = maxBytes
 	}
 }
 
@@ -752,6 +765,11 @@ func (s *Service) loadAndValidateUploadParts(ctx context.Context, ownerUserID, f
 		if total > DefaultUploadInFlightMaxBytes {
 			return nil, 0, domain.ErrFilePartsInvalid
 		}
+	}
+	// Checked against the total assembled size, not any single part --
+	// MaxUploadPartBytes above already bounds each part individually.
+	if s.maxUploadFileBytes > 0 && total > s.maxUploadFileBytes {
+		return nil, 0, domain.ErrFileTooLarge
 	}
 	return parts, total, nil
 }

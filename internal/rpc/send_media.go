@@ -1152,6 +1152,8 @@ func mediaUploadErr(err error) error {
 	switch {
 	case errors.Is(err, domain.ErrFilePartsInvalid):
 		return filePartsInvalidErr()
+	case errors.Is(err, domain.ErrFileTooLarge):
+		return fileTooBigErr()
 	case errors.Is(err, domain.ErrPhotoInvalid):
 		return photoInvalidErr()
 	case errors.Is(err, domain.ErrDocumentInvalid):

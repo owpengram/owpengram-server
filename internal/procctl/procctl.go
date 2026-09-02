@@ -637,14 +637,24 @@ func (m *Manager) readEnvFile() (map[string]string, error) {
 // WriteEnvValues rewrites .env from .env.example's exact text, substituting
 // each known key's value in place -- see save_env()'s docstring in
 // server-panel.py for why this (not a fresh key=value dump) is what
-// preserves comments/layout. Only keys present in values are touched; a
-// template-commented optional field is uncommented when given a non-empty
-// value and left as-is when given an empty one.
+// preserves comments/layout. Only keys present in values are set to a new
+// value; every other key keeps whatever is already in the current .env
+// (falling back to the template's own default only for a key .env never
+// set) -- previously this fell straight back to the template default for
+// any key not in this particular save's payload, silently wiping out every
+// other customized setting (e.g. TELESRV_ADMIN_UI_PASSWORD) on every save
+// that only touches one section's keys. A template-commented optional field
+// is uncommented when given a non-empty value and left as-is when given an
+// empty one.
 func (m *Manager) WriteEnvValues(values map[string]string) error {
 	tmplPath := filepath.Join(m.Root, ".env.example")
 	tmplData, err := os.ReadFile(tmplPath)
 	if err != nil {
 		return fmt.Errorf("read .env.example: %w", err)
+	}
+	existing, err := m.readEnvFile()
+	if err != nil {
+		return err
 	}
 	lines := strings.Split(string(tmplData), "\n")
 	// Split() on a trailing "\n" leaves one empty trailing element; drop it
@@ -657,21 +667,34 @@ func (m *Manager) WriteEnvValues(values map[string]string) error {
 	seen := map[string]bool{}
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
-		if a := activeFieldRe.FindStringSubmatch(line); a != nil {
-			if v, ok := values[a[1]]; ok && !seen[a[1]] {
+		if a := activeFieldRe.FindStringSubmatch(line); a != nil && !seen[a[1]] {
+			if v, ok := values[a[1]]; ok {
+				seen[a[1]] = true
+				out = append(out, a[1]+"="+v)
+				continue
+			}
+			if v, ok := existing[a[1]]; ok {
 				seen[a[1]] = true
 				out = append(out, a[1]+"="+v)
 				continue
 			}
 		}
-		if c := commentedFieldRe.FindStringSubmatch(line); c != nil {
-			if v, ok := values[c[1]]; ok && !seen[c[1]] {
+		if c := commentedFieldRe.FindStringSubmatch(line); c != nil && !seen[c[1]] {
+			if v, ok := values[c[1]]; ok {
 				seen[c[1]] = true
 				if v != "" {
 					out = append(out, c[1]+"="+v)
 				} else {
 					out = append(out, raw)
 				}
+				continue
+			}
+			// A previously-enabled optional field shows up in the current
+			// .env as an active line even though the template still has it
+			// commented out -- keep it enabled with its existing value.
+			if v, ok := existing[c[1]]; ok {
+				seen[c[1]] = true
+				out = append(out, c[1]+"="+v)
 				continue
 			}
 		}

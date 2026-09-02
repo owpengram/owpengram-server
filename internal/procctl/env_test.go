@@ -133,3 +133,56 @@ func TestWriteEnvValuesRoundTrip(t *testing.T) {
 		t.Error(".env lost .env.example's comment lines on write")
 	}
 }
+
+// TestWriteEnvValuesPreservesUnrelatedCustomValues guards against a real
+// regression: a save that only touches one section's keys used to reset
+// every OTHER already-customized key (e.g. TELESRV_ADMIN_UI_PASSWORD) back
+// to .env.example's bare template default, because the old implementation
+// fell back to the template line instead of the current .env value for any
+// key missing from that save's payload.
+func TestWriteEnvValuesPreservesUnrelatedCustomValues(t *testing.T) {
+	root := findRepoRoot(t)
+	tmpl, err := os.ReadFile(filepath.Join(root, ".env.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env.example"), tmpl, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(dir)
+
+	// First save sets the admin password, as a one-time setup step would.
+	if err := m.WriteEnvValues(map[string]string{
+		"TELESRV_ADMIN_UI_PASSWORD": "s3cret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later, unrelated save (e.g. the Storage page) that never mentions
+	// the password must not disturb it.
+	if err := m.WriteEnvValues(map[string]string{
+		"TELESRV_STORAGE_MAX_TOTAL_BYTES": "209715200",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := m.ReadEnvGroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{}
+	for _, g := range groups {
+		for _, f := range g.Fields {
+			values[f.Key] = f.Value
+		}
+	}
+	if values["TELESRV_ADMIN_UI_PASSWORD"] != "s3cret" {
+		t.Errorf("TELESRV_ADMIN_UI_PASSWORD = %q, want it preserved as \"s3cret\" after an unrelated save", values["TELESRV_ADMIN_UI_PASSWORD"])
+	}
+	if values["TELESRV_STORAGE_MAX_TOTAL_BYTES"] != "209715200" {
+		t.Errorf("TELESRV_STORAGE_MAX_TOTAL_BYTES = %q, want 209715200", values["TELESRV_STORAGE_MAX_TOTAL_BYTES"])
+	}
+}

@@ -171,6 +171,89 @@ func TestCreatePhotoFromUploadReceiptReplaysAfterPartCleanup(t *testing.T) {
 	}
 }
 
+// TestMaxUploadFileBytesRejectsOversizedAssembledDocument covers
+// TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES enforcement (WithMaxUploadFileBytes):
+// the check must fire against the TOTAL assembled size (sum of every part),
+// not any single part -- each individual part here is well under the limit,
+// only their sum exceeds it.
+func TestMaxUploadFileBytesRejectsOversizedAssembledDocument(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	local, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	const partSize = 1024
+	const maxUploadFileBytes = 2 * partSize // exactly 2 parts' worth; 3 parts must be rejected
+	svc := NewService(media, local, 2, WithVideoThumbnailer(nil), WithMaxUploadFileBytes(maxUploadFileBytes))
+
+	parts := []string{
+		strings.Repeat("a", partSize),
+		strings.Repeat("b", partSize),
+		strings.Repeat("c", partSize),
+	}
+	for i, part := range parts {
+		if _, err := svc.SaveBigFilePart(ctx, 10, 300, i, len(parts), []byte(part)); err != nil {
+			t.Fatalf("SaveBigFilePart %d: %v", i, err)
+		}
+	}
+	_, err = svc.CreateDocumentFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 300, Parts: len(parts), Name: "big.bin", Big: true},
+		domain.DocumentSpec{MimeType: "application/octet-stream"},
+	)
+	if !errors.Is(err, domain.ErrFileTooLarge) {
+		t.Fatalf("CreateDocumentFromUpload over max size err = %v, want ErrFileTooLarge", err)
+	}
+}
+
+// TestMaxUploadFileBytesAllowsAssembledSizeAtOrUnderLimit ensures the check
+// is an upper bound, not an off-by-one trap: a total exactly at the
+// configured ceiling must still succeed.
+func TestMaxUploadFileBytesAllowsAssembledSizeAtOrUnderLimit(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	local, err := NewLocalFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewLocalFS: %v", err)
+	}
+	const partSize = 1024
+	const maxUploadFileBytes = 2 * partSize
+	svc := NewService(media, local, 2, WithVideoThumbnailer(nil), WithMaxUploadFileBytes(maxUploadFileBytes))
+
+	parts := []string{strings.Repeat("a", partSize), strings.Repeat("b", partSize)}
+	for i, part := range parts {
+		if _, err := svc.SaveBigFilePart(ctx, 10, 301, i, len(parts), []byte(part)); err != nil {
+			t.Fatalf("SaveBigFilePart %d: %v", i, err)
+		}
+	}
+	doc, err := svc.CreateDocumentFromUpload(ctx,
+		domain.UploadedFileRef{OwnerUserID: 10, FileID: 301, Parts: len(parts), Name: "exact.bin", Big: true},
+		domain.DocumentSpec{MimeType: "application/octet-stream"},
+	)
+	if err != nil {
+		t.Fatalf("CreateDocumentFromUpload at exact max size: %v", err)
+	}
+	if doc.Size != int64(maxUploadFileBytes) {
+		t.Fatalf("doc size = %d, want %d", doc.Size, maxUploadFileBytes)
+	}
+}
+
+// TestMaxUploadFileBytesUnlimitedByDefault ensures leaving
+// WithMaxUploadFileBytes unset (or 0) never rejects on size -- only the
+// protocol's own MaxUploadPartBytes/MaxUploadParts ceiling still applies.
+func TestMaxUploadFileBytesUnlimitedByDefault(t *testing.T) {
+	ctx := context.Background()
+	media := newFakeMediaStore()
+	svc, _ := newUploadPartTestService(t, media, domain.UploadPartQuota{})
+	file := domain.UploadedFileRef{OwnerUserID: 10, FileID: 302, Parts: 1, Name: "photo.jpg"}
+	if _, err := svc.SaveFilePart(ctx, file.OwnerUserID, file.FileID, 0, []byte(strings.Repeat("z", 4096))); err != nil {
+		t.Fatalf("SaveFilePart: %v", err)
+	}
+	if _, err := svc.CreatePhotoFromUpload(ctx, file); err != nil {
+		t.Fatalf("CreatePhotoFromUpload with no configured max size: %v", err)
+	}
+}
+
 type countingUploadPartBackend struct {
 	*LocalFS
 	getUploadPartCalls int

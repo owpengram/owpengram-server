@@ -237,6 +237,37 @@ WHERE orphaned_at IS NOT NULL AND orphaned_at < sqlc.arg(cutoff)::timestamptz
 ORDER BY orphaned_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
 
+-- name: ListDocumentIDsForHardRetentionOlderThan :many
+-- "Hard" retention mode: candidates are documents older than cutoff (by
+-- upload/created_at, NOT orphaned_at -- a live reference does not exempt
+-- them) that still own at least one file_blobs row. The EXISTS check is what
+-- keeps this sweep from re-selecting the same document forever: once its
+-- blob bytes are purged (DeleteFileBlobsForDocument removes the file_blobs
+-- rows but deliberately leaves this documents row in place), it naturally
+-- drops out of this query on the next pass.
+SELECT d.id FROM documents d
+WHERE d.created_at < sqlc.arg(cutoff)::timestamptz
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  )
+ORDER BY d.created_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListPhotoIDsForHardRetentionOlderThan :many
+-- See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
+-- candidate selection, for photos.
+SELECT p.id FROM photos p
+WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
 -- name: CountFileBlobRefs :one
 SELECT COUNT(*)::int FROM file_blobs WHERE backend = sqlc.arg(backend)::text AND object_key = sqlc.arg(object_key)::text;
 

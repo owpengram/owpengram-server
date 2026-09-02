@@ -87,8 +87,11 @@ func (c *stickerSetNegativeCache) delete(refs ...domain.StickerSetRef) {
 // 每个 chunk 一次 GetFileBlob 的 PG 往返（一个文件按 ≤512KB/1MB 分多次 getFile，热门贴纸/
 // reaction/头像更被大量用户重复拉）。
 //
-// FileBlob 元数据小（约百字节）且内容不可变：location_key 一旦写入即固定指向同一 object_key，
-// 新建 blob 用随机 id 生成 location_key 不会与已缓存项冲突，故只读填充、无需失效。
+// FileBlob 元数据小（约百字节），新建 blob 用随机 id 生成 location_key 不会与已缓存项冲突，
+// 故写入路径只读填充、无需失效。但一个 location_key 的 file_blobs 行可以被存储 retention
+// 清理主动删除（尤其是 hard 模式：不等 orphaned，仍被引用的媒体到期也会被清理字节），这种情况
+// 下必须调用 delete 使该 key 失效，否则缓存会继续认为它存在，导致后续下载走到已被删除的字节
+// 而不是优雅返回 LOCATION_INVALID。
 type blobMetaCache struct {
 	mu  sync.Mutex
 	cap int
@@ -138,6 +141,17 @@ func (c *blobMetaCache) put(key string, blob domain.FileBlob) {
 			c.ll.Remove(oldest)
 			delete(c.m, oldest.Value.(*blobMetaEntry).key)
 		}
+	}
+}
+
+// delete 使一个 location_key 的缓存元数据立即失效（如果存在）。见上方类型注释：
+// 存储 retention 清理主动删掉该 location_key 的 file_blobs 行后必须调用。
+func (c *blobMetaCache) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.m[key]; ok {
+		c.ll.Remove(el)
+		delete(c.m, key)
 	}
 }
 
@@ -216,6 +230,21 @@ func (c *blobBytesCache) put(key string, bytes []byte) {
 		c.ll.Remove(oldest)
 		entry := oldest.Value.(*blobBytesEntry)
 		delete(c.m, entry.key)
+		c.used -= entry.size
+	}
+}
+
+// delete evicts a cached object_key's full bytes (if present) and reclaims
+// its budget. Called after a retention sweep physically deletes the object
+// from its backend, so a later GetFile can't keep serving bytes that no
+// longer exist on disk/S3.
+func (c *blobBytesCache) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.m[key]; ok {
+		entry := el.Value.(*blobBytesEntry)
+		c.ll.Remove(el)
+		delete(c.m, key)
 		c.used -= entry.size
 	}
 }

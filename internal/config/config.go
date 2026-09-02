@@ -13,9 +13,18 @@ import (
 
 	"golang.org/x/text/language"
 
+	"telesrv/internal/app/files"
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"
+)
+
+// Storage retention modes for TELESRV_STORAGE_RETENTION_MODE. See
+// Config.StorageRetentionMode for what each one does.
+const (
+	StorageRetentionModeOff    = "off"
+	StorageRetentionModeOrphan = "orphan"
+	StorageRetentionModeHard   = "hard"
 )
 
 const (
@@ -311,19 +320,41 @@ type Config struct {
 	// the s3 backend (no OS-level free space concept), and usable as an
 	// optional soft budget cap on localfs too. <=0 disables this check.
 	StorageMaxTotalBytes int64
+	// StorageMaxUploadFileBytes caps the total assembled size of a single
+	// uploaded file (sum of all its parts, not any one part) -- rejected at
+	// upload-finalize time with a FILE_TOO_BIG rpc error. <=0 disables this
+	// check (the only remaining ceiling is then the protocol's own part-count
+	// limit, files.MaxUploadPartBytes*files.MaxUploadParts, ~4GB). Validated
+	// at config-load time to never exceed that protocol ceiling -- a larger
+	// value could never actually be reached, so it's refused as a
+	// startup-time misconfiguration rather than silently accepted as a no-op.
+	StorageMaxUploadFileBytes int64
 	// StorageUsageRefreshInterval is how often the cached free-space/budget
 	// usage gauge refreshes; <=0 uses a 1 minute default.
 	StorageUsageRefreshInterval time.Duration
-	// StorageRetentionEnable turns on the orphaned-media age sweep. Off by
-	// default: orphaned media (no live message/profile-photo/sticker-set
-	// reference) is tracked and visible in the admin panel, but nothing is
-	// auto-deleted until the operator explicitly opts in.
-	StorageRetentionEnable bool
-	// StorageRetentionMaxAge is how long a document/photo must have been
-	// orphaned (not how old the media itself is) before the sweep deletes
-	// it. Never deletes media that still has a live reference, regardless
-	// of age. <=0 uses a 30 day default. The sweep itself runs on the
-	// shared RetentionInterval/RetentionBatch cadence alongside every other
+	// StorageRetentionMode selects the storage retention sweep behavior:
+	//   - "off" (default): no sweep at all.
+	//   - "orphan": safe mode -- deletes a document/photo's blob only once it
+	//     has had no live message/profile-photo/sticker-set reference for at
+	//     least StorageRetentionMaxAge. Never touches media still referenced,
+	//     regardless of age.
+	//   - "hard": aggressive mode -- deletes a document/photo's blob bytes
+	//     once the media itself (its upload/created time, not how long it's
+	//     been orphaned) is older than StorageRetentionMaxAge, REGARDLESS of
+	//     whether it's still referenced by a live message. Only the blob
+	//     bytes are removed; the document/photo metadata row is kept so the
+	//     message still renders (dimensions, mime type, filename) --
+	//     subsequent downloads get LOCATION_INVALID ("media no longer
+	//     available") instead of the message breaking outright. This is
+	//     irreversible and can surprise users if misunderstood: old media in
+	//     active conversations WILL disappear.
+	// Any other value fails config validation.
+	StorageRetentionMode string
+	// StorageRetentionMaxAge is the shared age threshold for both "orphan"
+	// and "hard" modes -- see StorageRetentionMode for how its meaning
+	// differs between them. Ignored when StorageRetentionMode is "off". <=0
+	// uses a 30 day default. The sweep itself runs on the shared
+	// RetentionInterval/RetentionBatch cadence alongside every other
 	// retention check (see maintenance.RetentionWorker).
 	StorageRetentionMaxAge time.Duration
 	// StickerSeedDir 是 reaction / sticker 资源种子目录（导入到 documents/sticker_sets + blob）。
@@ -945,8 +976,9 @@ func Load() (Config, error) {
 		StorageLowSpaceGuardEnable:        envBoolOr("TELESRV_STORAGE_LOW_SPACE_GUARD_ENABLE", true),
 		StorageMinFreeBytes:               envInt64Or("TELESRV_STORAGE_MIN_FREE_BYTES", 1<<30),
 		StorageMaxTotalBytes:              envInt64Or("TELESRV_STORAGE_MAX_TOTAL_BYTES", 0),
+		StorageMaxUploadFileBytes:         envInt64Or("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES", 0),
 		StorageUsageRefreshInterval:       envDurationOr("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", time.Minute),
-		StorageRetentionEnable:            envBoolOr("TELESRV_STORAGE_RETENTION_ENABLE", false),
+		StorageRetentionMode:              strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_RETENTION_MODE", StorageRetentionModeOff))),
 		StorageRetentionMaxAge:            envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE", 30*24*time.Hour),
 		StickerSeedDir:                    envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
 		StickerSeedMaxSets:                envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
@@ -1285,6 +1317,9 @@ func validateBlobStorageConfig(cfg Config) error {
 	if cfg.StorageMaxTotalBytes < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_MAX_TOTAL_BYTES must be non-negative")
 	}
+	if err := validateMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes); err != nil {
+		return err
+	}
 	if cfg.StorageLowSpaceGuardEnable && cfg.StorageUsageRefreshInterval <= 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be positive when storage capacity guard is enabled")
 	}
@@ -1474,14 +1509,39 @@ func validateStorageConfig(cfg Config) error {
 	if cfg.StorageMaxTotalBytes < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_MAX_TOTAL_BYTES must be non-negative")
 	}
+	if err := validateMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes); err != nil {
+		return err
+	}
 	if cfg.StorageUsageRefreshInterval < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be non-negative")
 	}
 	if cfg.StorageRetentionMaxAge < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE must be non-negative")
 	}
-	if cfg.StorageRetentionEnable && cfg.StorageRetentionMaxAge <= 0 {
-		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE must be positive when TELESRV_STORAGE_RETENTION_ENABLE is true")
+	switch cfg.StorageRetentionMode {
+	case StorageRetentionModeOff:
+		// no sweep; StorageRetentionMaxAge is ignored.
+	case StorageRetentionModeOrphan, StorageRetentionModeHard:
+		if cfg.StorageRetentionMaxAge <= 0 {
+			return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE must be positive when TELESRV_STORAGE_RETENTION_MODE is %q", cfg.StorageRetentionMode)
+		}
+	default:
+		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MODE must be \"off\", \"orphan\", or \"hard\", got %q", cfg.StorageRetentionMode)
+	}
+	return nil
+}
+
+// validateMaxUploadFileBytes checks TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES: it
+// must be non-negative, and if set (>0) must not exceed the protocol's own
+// part-count upload ceiling -- a larger configured value could never actually
+// be hit, so it's refused as a startup-time misconfiguration.
+func validateMaxUploadFileBytes(v int64) error {
+	if v < 0 {
+		return fmt.Errorf("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES must be non-negative")
+	}
+	const protocolCeiling = int64(files.MaxUploadPartBytes) * int64(files.MaxUploadParts)
+	if v > protocolCeiling {
+		return fmt.Errorf("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES (%d) must not exceed the protocol upload ceiling of %d bytes (%d parts x %d bytes)", v, protocolCeiling, files.MaxUploadParts, files.MaxUploadPartBytes)
 	}
 	return nil
 }

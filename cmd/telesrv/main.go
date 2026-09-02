@@ -932,6 +932,7 @@ func run(logger *zap.Logger) error {
 		filesapp.WithUploadPartBackend(localBlobFS),
 		filesapp.WithAdditionalBlobBackend(additionalBlobBackend),
 		filesapp.WithSpaceGuard(spaceGuard),
+		filesapp.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
 		filesapp.WithMapboxMapTiles(cfg.MapboxToken, cfg.MapTileCacheDir),
 		externalMediaOption(cfg),
 		webPagePreviewOption(cfg),
@@ -1063,11 +1064,7 @@ func run(logger *zap.Logger) error {
 		readModelVersionStore,
 		cfg.UserProjectionFactCacheMaxEntries,
 	)
-	storageRetentionMaxAge := cfg.StorageRetentionMaxAge
-	if !cfg.StorageRetentionEnable {
-		storageRetentionMaxAge = 0
-	}
-	go maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
+	retentionWorker := maintenance.NewRetentionWorker(dispatchOutboxStore, tempAuthKeyStore, logger.Named("maintenance").Named("retention"),
 		cfg.UpdateEventRetention,
 		cfg.RetentionInterval,
 		cfg.RetentionBatch,
@@ -1080,9 +1077,17 @@ func run(logger *zap.Logger) error {
 		WithModerationRetention(moderationReportStore).
 		WithUserUpdateRetention(updateEventStore).
 		WithChannelUpdateRetention(channelStore).
-		WithOrphanAuthKeyRetention(authKeyStore, activeSessions, cfg.OrphanAuthKeyRetention).
-		WithOrphanedMediaRetention(filesService, storageRetentionMaxAge).
-		Run(ctx)
+		WithOrphanAuthKeyRetention(authKeyStore, activeSessions, cfg.OrphanAuthKeyRetention)
+	// TELESRV_STORAGE_RETENTION_MODE is a single 3-way switch: at most one of
+	// the orphan-only (safe) and hard (age-based, ignores live references)
+	// media sweeps is ever wired in, matching "off"/"orphan"/"hard".
+	switch cfg.StorageRetentionMode {
+	case config.StorageRetentionModeOrphan:
+		retentionWorker = retentionWorker.WithOrphanedMediaRetention(filesService, cfg.StorageRetentionMaxAge)
+	case config.StorageRetentionModeHard:
+		retentionWorker = retentionWorker.WithHardMediaRetention(filesService, cfg.StorageRetentionMaxAge)
+	}
+	go retentionWorker.Run(ctx)
 	go filesapp.NewUploadPartGCWorker(filesService, logger.Named("files").Named("upload_gc"),
 		cfg.UploadPartTTL,
 		cfg.UploadPartGCInterval,

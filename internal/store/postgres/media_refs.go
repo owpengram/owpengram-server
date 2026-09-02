@@ -197,6 +197,101 @@ func (s *MediaStore) DeleteDocumentAndBlobs(ctx context.Context, id int64) ([]do
 	return blobs, nil
 }
 
+// ListDocumentIDsForHardRetentionOlderThan returns document ids older than
+// cutoff (by upload/created_at) that still own at least one file_blobs row,
+// oldest first, up to limit -- the "hard" retention sweep's candidate list.
+// Unlike ListOrphanedDocumentIDsOlderThan, this ignores media_references
+// entirely: a document still referenced by a live message is exactly as
+// eligible as an orphaned one.
+func (s *MediaStore) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.q.ListDocumentIDsForHardRetentionOlderThan(ctx, sqlcgen.ListDocumentIDsForHardRetentionOlderThanParams{
+		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		BatchLimit: int32(limit),
+	})
+}
+
+// ListPhotoIDsForHardRetentionOlderThan is the photo counterpart of
+// ListDocumentIDsForHardRetentionOlderThan.
+func (s *MediaStore) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.q.ListPhotoIDsForHardRetentionOlderThan(ctx, sqlcgen.ListPhotoIDsForHardRetentionOlderThanParams{
+		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		BatchLimit: int32(limit),
+	})
+}
+
+// DeleteFileBlobsForDocument deletes every file_blobs row a document owns
+// (main body + thumbnail variants), returning what was deleted so the caller
+// can physically remove each object from its backend once confirming (via
+// CountFileBlobRefs, after this call) no other row still needs it. Unlike
+// DeleteDocumentAndBlobs, this deliberately does NOT delete the documents
+// row itself -- "hard" retention mode keeps the metadata (dimensions, mime
+// type, filename) so a message can still render "this document is no longer
+// available" instead of disappearing outright. A subsequent
+// upload.getFile/GetFileBlob lookup for a location key this call removed
+// correctly finds nothing and reports not-found.
+func (s *MediaStore) DeleteFileBlobsForDocument(ctx context.Context, id int64) ([]domain.FileBlob, error) {
+	var blobs []domain.FileBlob
+	err := withTx(ctx, s.db, "delete document blob bytes (hard retention)", func(tx pgx.Tx) error {
+		qtx := s.q.WithTx(tx)
+		rows, err := qtx.ListFileBlobsByLocationPrefix(ctx, sqlcgen.ListFileBlobsByLocationPrefixParams{
+			ExactKey:      fmt.Sprintf("doc:%d", id),
+			PrefixPattern: fmt.Sprintf("doc:%d:%%", id),
+		})
+		if err != nil {
+			return fmt.Errorf("list document blobs: %w", err)
+		}
+		for _, r := range rows {
+			blobs = append(blobs, domain.FileBlob{
+				LocationKey: r.LocationKey, Backend: domain.MediaBackend(r.Backend), ObjectKey: r.ObjectKey, Size: r.Size,
+			})
+			if err := qtx.DeleteFileBlobRow(ctx, r.LocationKey); err != nil {
+				return fmt.Errorf("delete file blob row: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blobs, nil
+}
+
+// DeleteFileBlobsForPhoto is the photo counterpart of
+// DeleteFileBlobsForDocument -- see its doc comment. Deliberately does not
+// delete the photos row.
+func (s *MediaStore) DeleteFileBlobsForPhoto(ctx context.Context, id int64) ([]domain.FileBlob, error) {
+	var blobs []domain.FileBlob
+	err := withTx(ctx, s.db, "delete photo blob bytes (hard retention)", func(tx pgx.Tx) error {
+		qtx := s.q.WithTx(tx)
+		rows, err := qtx.ListFileBlobsByLocationPrefix(ctx, sqlcgen.ListFileBlobsByLocationPrefixParams{
+			ExactKey:      fmt.Sprintf("photo:%d", id),
+			PrefixPattern: fmt.Sprintf("photo:%d:%%", id),
+		})
+		if err != nil {
+			return fmt.Errorf("list photo blobs: %w", err)
+		}
+		for _, r := range rows {
+			blobs = append(blobs, domain.FileBlob{
+				LocationKey: r.LocationKey, Backend: domain.MediaBackend(r.Backend), ObjectKey: r.ObjectKey, Size: r.Size,
+			})
+			if err := qtx.DeleteFileBlobRow(ctx, r.LocationKey); err != nil {
+				return fmt.Errorf("delete file blob row: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blobs, nil
+}
+
 // DeletePhotoAndBlobs deletes a photo row and every file_blobs row it owns
 // (one per rendition size), returning what was deleted so the caller can
 // physically remove each object from its backend once confirming (via
