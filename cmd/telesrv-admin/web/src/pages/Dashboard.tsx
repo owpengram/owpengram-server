@@ -151,12 +151,12 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
           icon={<HardDrive />}
           label="Disk free"
           percent={
-            host?.Ready && host.DiskTotalBytes > 0
+            host?.Ready && host.DiskReady && host.DiskTotalBytes > 0
               ? ((host.DiskTotalBytes - host.DiskFreeBytes) / host.DiskTotalBytes) * 100
               : undefined
           }
-          valueText={host?.Ready ? formatBytes(String(host.DiskFreeBytes)) : "…"}
-          sub={host?.Ready ? `of ${formatBytes(String(host.DiskTotalBytes))}` : undefined}
+          valueText={host?.Ready && host.DiskReady ? formatBytes(String(host.DiskFreeBytes)) : "…"}
+          sub={host?.Ready && host.DiskReady ? `of ${formatBytes(String(host.DiskTotalBytes))}` : "no reading yet"}
           warnAbove={85}
         />
       </Section>

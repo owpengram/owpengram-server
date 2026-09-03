@@ -236,46 +236,88 @@ func (s *MediaStore) DeleteDocumentAndBlobs(ctx context.Context, id int64) ([]do
 	return blobs, nil
 }
 
+// nullableTimestamptz converts an optional cutoff into the nullable
+// pgtype.Timestamptz the hard-retention List*/Count* queries expect: nil
+// means "no age filter at all" (sqlc.narg(cutoff) IS NULL in the query),
+// matching the manual-purge admin action's "no date = everything" contract.
+// The automatic sweep (files.Service.DeleteBlobBytesForMediaOlderThan)
+// always passes a non-nil cutoff.
+func nullableTimestamptz(cutoff *time.Time) pgtype.Timestamptz {
+	if cutoff == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *cutoff, Valid: true}
+}
+
 // ListDocumentIDsForHardRetentionOlderThan returns document ids in the given
 // category older than cutoff (by upload/created_at) that still own at least
 // one file_blobs row, oldest first, up to limit -- the "hard" retention
 // sweep's candidate list. Unlike ListOrphanedDocumentIDsOlderThan, this
 // ignores media_references entirely: a document still referenced by a live
-// message is exactly as eligible as an orphaned one.
-func (s *MediaStore) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, category domain.MediaCategory, cutoff time.Time, limit int) ([]int64, error) {
+// message is exactly as eligible as an orphaned one. cutoff may be nil,
+// meaning no age filter at all (every document in the category is a
+// candidate) -- used by the manual purge admin action.
+func (s *MediaStore) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, category domain.MediaCategory, cutoff *time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListDocumentIDsForHardRetentionOlderThan(ctx, sqlcgen.ListDocumentIDsForHardRetentionOlderThanParams{
-		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Cutoff:     nullableTimestamptz(cutoff),
 		Category:   int16(category),
 		BatchLimit: int32(limit),
 	})
 }
 
+// CountDocumentsForHardRetention is the exact-count counterpart of
+// ListDocumentIDsForHardRetentionOlderThan, for the manual purge admin
+// action's dry-run preview.
+func (s *MediaStore) CountDocumentsForHardRetention(ctx context.Context, category domain.MediaCategory, cutoff *time.Time) (int, error) {
+	n, err := s.q.CountDocumentsForHardRetention(ctx, sqlcgen.CountDocumentsForHardRetentionParams{
+		Cutoff:   nullableTimestamptz(cutoff),
+		Category: int16(category),
+	})
+	return int(n), err
+}
+
 // ListPhotoIDsForHardRetentionOlderThan is the photo counterpart of
 // ListDocumentIDsForHardRetentionOlderThan (excluding a live avatar -- see
-// ListAvatarPhotoIDsForHardRetentionOlderThan).
-func (s *MediaStore) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+// ListAvatarPhotoIDsForHardRetentionOlderThan). cutoff may be nil -- see
+// ListDocumentIDsForHardRetentionOlderThan.
+func (s *MediaStore) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff *time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListPhotoIDsForHardRetentionOlderThan(ctx, sqlcgen.ListPhotoIDsForHardRetentionOlderThanParams{
-		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Cutoff:     nullableTimestamptz(cutoff),
 		BatchLimit: int32(limit),
 	})
 }
 
+// CountPhotosForHardRetention is the exact-count counterpart of
+// ListPhotoIDsForHardRetentionOlderThan.
+func (s *MediaStore) CountPhotosForHardRetention(ctx context.Context, cutoff *time.Time) (int, error) {
+	n, err := s.q.CountPhotosForHardRetention(ctx, nullableTimestamptz(cutoff))
+	return int(n), err
+}
+
 // ListAvatarPhotoIDsForHardRetentionOlderThan is the "Avatar" category
-// counterpart of ListPhotoIDsForHardRetentionOlderThan.
-func (s *MediaStore) ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+// counterpart of ListPhotoIDsForHardRetentionOlderThan. cutoff may be nil --
+// see ListDocumentIDsForHardRetentionOlderThan.
+func (s *MediaStore) ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff *time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListAvatarPhotoIDsForHardRetentionOlderThan(ctx, sqlcgen.ListAvatarPhotoIDsForHardRetentionOlderThanParams{
-		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Cutoff:     nullableTimestamptz(cutoff),
 		BatchLimit: int32(limit),
 	})
+}
+
+// CountAvatarPhotosForHardRetention is the exact-count counterpart of
+// ListAvatarPhotoIDsForHardRetentionOlderThan.
+func (s *MediaStore) CountAvatarPhotosForHardRetention(ctx context.Context, cutoff *time.Time) (int, error) {
+	n, err := s.q.CountAvatarPhotosForHardRetention(ctx, nullableTimestamptz(cutoff))
+	return int(n), err
 }
 
 // DeleteFileBlobsForDocument deletes every file_blobs row a document owns

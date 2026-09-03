@@ -136,6 +136,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-gif-catalog-category", s.requireAuthAPI(http.HandlerFunc(s.handleSetGifCatalogCategoryAPI)))
 	mux.Handle("POST /api/actions/auto-categorize-gif-catalog", s.requireAuthAPI(http.HandlerFunc(s.handleAutoCategorizeGifCatalogAPI)))
 	mux.Handle("POST /api/actions/delete-uncategorized-gifs", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteUncategorizedGifsAPI)))
+	mux.Handle("POST /api/actions/storage-manual-purge", s.requireAuthAPI(http.HandlerFunc(s.handleStorageManualPurgeAPI)))
 	mux.Handle("POST /api/actions/delete-gif-catalog-entry", s.requireAuthAPI(http.HandlerFunc(s.handleDeleteGifCatalogEntryAPI)))
 	mux.Handle("POST /api/actions/mint-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleMintCollectibleUsernameAPI)))
 	mux.Handle("POST /api/actions/transfer-collectible-username", s.requireAuthAPI(http.HandlerFunc(s.handleTransferCollectibleUsernameAPI)))
@@ -2037,6 +2038,37 @@ func (s *server) handleDeleteUncategorizedGifsAPI(w http.ResponseWriter, r *http
 		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-uncategorized-gifs"),
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gif-catalog/delete-uncategorized", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// storageManualPurgeAPIRequest mirrors ManualPurgeStorageRequest's frontend
+// payload (see StoragePage.tsx's manual purge modal): categories/include_avatars
+// go through as native JSON, created_before is an ISO/RFC3339 date string
+// (produced by `new Date(x).toISOString()` on the frontend, same convention
+// as freeze_until -- see setAccountFrozenAPIRequest.Until) that encoding/json
+// parses straight into *time.Time; the field left undefined by the frontend
+// (no date entered) decodes to nil, meaning no age filter at all.
+type storageManualPurgeAPIRequest struct {
+	CommandID      string     `json:"command_id"`
+	Reason         string     `json:"reason"`
+	Confirm        bool       `json:"confirm"`
+	Categories     []string   `json:"categories"`
+	IncludeAvatars bool       `json:"include_avatars"`
+	CreatedBefore  *time.Time `json:"created_before"`
+}
+
+func (s *server) handleStorageManualPurgeAPI(w http.ResponseWriter, r *http.Request) {
+	var body storageManualPurgeAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.ManualPurgeStorageRequest{
+		CommandMeta:    s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "storage-manual-purge"),
+		Categories:     body.Categories,
+		IncludeAvatars: body.IncludeAvatars,
+		CreatedBefore:  body.CreatedBefore,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/storage/manual-purge", req)
 	writeCommandResultAPI(w, result, err)
 }
 

@@ -24,19 +24,29 @@ type fakeCategorySweepStore struct {
 	queriedAvatars       bool
 }
 
-func (f *fakeCategorySweepStore) ListDocumentIDsForHardRetentionOlderThan(_ context.Context, category domain.MediaCategory, _ time.Time, _ int) ([]int64, error) {
+func (f *fakeCategorySweepStore) ListDocumentIDsForHardRetentionOlderThan(_ context.Context, category domain.MediaCategory, _ *time.Time, _ int) ([]int64, error) {
 	f.queriedDocCategories = append(f.queriedDocCategories, category)
 	return nil, nil
 }
 
-func (f *fakeCategorySweepStore) ListPhotoIDsForHardRetentionOlderThan(context.Context, time.Time, int) ([]int64, error) {
+func (f *fakeCategorySweepStore) ListPhotoIDsForHardRetentionOlderThan(context.Context, *time.Time, int) ([]int64, error) {
 	f.queriedPhotos = true
 	return nil, nil
 }
 
-func (f *fakeCategorySweepStore) ListAvatarPhotoIDsForHardRetentionOlderThan(context.Context, time.Time, int) ([]int64, error) {
+func (f *fakeCategorySweepStore) ListAvatarPhotoIDsForHardRetentionOlderThan(context.Context, *time.Time, int) ([]int64, error) {
 	f.queriedAvatars = true
 	return nil, nil
+}
+
+func (f *fakeCategorySweepStore) CountDocumentsForHardRetention(context.Context, domain.MediaCategory, *time.Time) (int, error) {
+	return 0, nil
+}
+func (f *fakeCategorySweepStore) CountPhotosForHardRetention(context.Context, *time.Time) (int, error) {
+	return 0, nil
+}
+func (f *fakeCategorySweepStore) CountAvatarPhotosForHardRetention(context.Context, *time.Time) (int, error) {
+	return 0, nil
 }
 
 func (f *fakeCategorySweepStore) ListOrphanedDocumentIDsOlderThan(_ context.Context, category domain.MediaCategory, _ time.Time, _ int) ([]int64, error) {

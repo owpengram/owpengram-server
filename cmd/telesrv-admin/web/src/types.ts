@@ -753,6 +753,11 @@ export type HostStatsSnapshot = {
   MemTotalBytes: number;
   DiskFreeBytes: number;
   DiskTotalBytes: number;
+  // False when the disk-space sample itself failed (wrong path, not
+  // created yet, etc) -- DiskFreeBytes/DiskTotalBytes are stale/zero in
+  // that case, not "the disk is actually full". Independent of Ready,
+  // which only covers CPU/memory.
+  DiskReady: boolean;
   Ready: boolean;
 };
 

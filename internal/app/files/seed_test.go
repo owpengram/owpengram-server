@@ -157,6 +157,13 @@ func (f *fakeMediaStore) GetFileBlob(_ context.Context, key string) (domain.File
 	return b, ok, nil
 }
 
+func (f *fakeMediaStore) DeleteFileBlobRow(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.blobs, key)
+	return nil
+}
+
 func (f *fakeMediaStore) GetFileBlobs(_ context.Context, keys []string) (map[string]domain.FileBlob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

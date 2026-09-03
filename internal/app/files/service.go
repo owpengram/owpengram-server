@@ -112,6 +112,10 @@ type Service struct {
 	// EvictOldestMediaOverBudget as the active-eviction trigger threshold
 	// (<=0 disables eviction regardless of TELESRV_STORAGE_EVICTION_ENABLE).
 	storageMaxTotalBytes int64
+	// secretChatDeleteFileAfterDownload is
+	// TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD -- see
+	// DeleteEncryptedFileBlob's doc comment.
+	secretChatDeleteFileAfterDownload bool
 
 	// retentionNotifyMu guards retentionMessages/retentionChannels: they are
 	// set post-construction (see SetRetentionPurgeNotifier) from
@@ -239,6 +243,18 @@ func WithStorageRetentionAges(global time.Duration, byCategory map[domain.MediaC
 func WithStorageMaxTotalBytes(maxBytes int64) Option {
 	return func(s *Service) {
 		s.storageMaxTotalBytes = maxBytes
+	}
+}
+
+// WithSecretChatDeleteFileAfterDownload enables DeleteEncryptedFileBlob's
+// actual deletion (TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD). Default
+// true -- see that env var's doc comment in internal/config/config.go for
+// why (secret-chat blobs have no other cleanup path at all otherwise).
+// Passing false opts back out for a self-hoster who wants the ciphertext
+// kept around regardless.
+func WithSecretChatDeleteFileAfterDownload(enabled bool) Option {
+	return func(s *Service) {
+		s.secretChatDeleteFileAfterDownload = enabled
 	}
 }
 

@@ -277,9 +277,14 @@ LIMIT sqlc.arg(batch_limit)::int;
 -- rows but deliberately leaves this documents row in place), it naturally
 -- drops out of this query on the next pass. category scopes to one
 -- documents.category bucket per sweep tick -- see
--- ListOrphanedDocumentIDsOlderThan for the 0/None fallback note.
+-- ListOrphanedDocumentIDsOlderThan for the 0/None fallback note. cutoff is
+-- nullable: NULL means no age filter at all (every document in the category
+-- is a candidate, regardless of created_at) -- used by the manual purge admin
+-- action, which unlike the automatic sweep can target "everything" with no
+-- age cutoff. The automatic sweep (files.Service.DeleteBlobBytesForMediaOlderThan)
+-- always passes a real, non-null cutoff.
 SELECT d.id FROM documents d
-WHERE d.created_at < sqlc.arg(cutoff)::timestamptz
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR d.created_at < sqlc.narg(cutoff)::timestamptz)
   AND d.category = sqlc.arg(category)::smallint
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -289,12 +294,26 @@ WHERE d.created_at < sqlc.arg(cutoff)::timestamptz
 ORDER BY d.created_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
 
+-- name: CountDocumentsForHardRetention :one
+-- Exact-count counterpart of ListDocumentIDsForHardRetentionOlderThan, used
+-- by the manual purge admin action's dry-run preview: a LIMIT-capped list
+-- length is not good enough there, the operator needs the real total.
+SELECT COUNT(*)::int FROM documents d
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR d.created_at < sqlc.narg(cutoff)::timestamptz)
+  AND d.category = sqlc.arg(category)::smallint
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  );
+
 -- name: ListPhotoIDsForHardRetentionOlderThan :many
 -- See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
--- candidate selection, for photos. Excludes photos currently active as
--- someone's avatar -- see ListAvatarPhotoIDsForHardRetentionOlderThan.
+-- candidate selection (including the nullable cutoff), for photos. Excludes
+-- photos currently active as someone's avatar -- see
+-- ListAvatarPhotoIDsForHardRetentionOlderThan.
 SELECT p.id FROM photos p
-WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR p.created_at < sqlc.narg(cutoff)::timestamptz)
   AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -304,13 +323,25 @@ WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
 ORDER BY p.created_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
 
+-- name: CountPhotosForHardRetention :one
+-- Exact-count counterpart of ListPhotoIDsForHardRetentionOlderThan -- see
+-- CountDocumentsForHardRetention.
+SELECT COUNT(*)::int FROM photos p
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR p.created_at < sqlc.narg(cutoff)::timestamptz)
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  );
+
 -- name: ListAvatarPhotoIDsForHardRetentionOlderThan :many
 -- Same as ListPhotoIDsForHardRetentionOlderThan but only photos currently
 -- active as someone's avatar (profile_photos.active) -- lets the Avatar
 -- category carry its own retention age, independent of ordinary shared-media
 -- photos.
 SELECT p.id FROM photos p
-WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR p.created_at < sqlc.narg(cutoff)::timestamptz)
   AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -319,6 +350,17 @@ WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
   )
 ORDER BY p.created_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: CountAvatarPhotosForHardRetention :one
+-- Exact-count counterpart of ListAvatarPhotoIDsForHardRetentionOlderThan.
+SELECT COUNT(*)::int FROM photos p
+WHERE (sqlc.narg(cutoff)::timestamptz IS NULL OR p.created_at < sqlc.narg(cutoff)::timestamptz)
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  );
 
 -- name: ListOldestDocumentsForEviction :many
 -- Active eviction (TELESRV_STORAGE_EVICTION_ENABLE): candidates are every

@@ -79,6 +79,51 @@ func (q *Queries) CountAvailableReactions(ctx context.Context) (int32, error) {
 	return total, err
 }
 
+const countAvatarPhotosForHardRetention = `-- name: CountAvatarPhotosForHardRetention :one
+SELECT COUNT(*)::int FROM photos p
+WHERE ($1::timestamptz IS NULL OR p.created_at < $1::timestamptz)
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+`
+
+// Exact-count counterpart of ListAvatarPhotoIDsForHardRetentionOlderThan.
+func (q *Queries) CountAvatarPhotosForHardRetention(ctx context.Context, cutoff pgtype.Timestamptz) (int32, error) {
+	row := q.db.QueryRow(ctx, countAvatarPhotosForHardRetention, cutoff)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countDocumentsForHardRetention = `-- name: CountDocumentsForHardRetention :one
+SELECT COUNT(*)::int FROM documents d
+WHERE ($1::timestamptz IS NULL OR d.created_at < $1::timestamptz)
+  AND d.category = $2::smallint
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  )
+`
+
+type CountDocumentsForHardRetentionParams struct {
+	Cutoff   pgtype.Timestamptz
+	Category int16
+}
+
+// Exact-count counterpart of ListDocumentIDsForHardRetentionOlderThan, used
+// by the manual purge admin action's dry-run preview: a LIMIT-capped list
+// length is not good enough there, the operator needs the real total.
+func (q *Queries) CountDocumentsForHardRetention(ctx context.Context, arg CountDocumentsForHardRetentionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countDocumentsForHardRetention, arg.Cutoff, arg.Category)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countFileBlobRefs = `-- name: CountFileBlobRefs :one
 SELECT COUNT(*)::int FROM file_blobs WHERE backend = $1::text AND object_key = $2::text
 `
@@ -90,6 +135,26 @@ type CountFileBlobRefsParams struct {
 
 func (q *Queries) CountFileBlobRefs(ctx context.Context, arg CountFileBlobRefsParams) (int32, error) {
 	row := q.db.QueryRow(ctx, countFileBlobRefs, arg.Backend, arg.ObjectKey)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPhotosForHardRetention = `-- name: CountPhotosForHardRetention :one
+SELECT COUNT(*)::int FROM photos p
+WHERE ($1::timestamptz IS NULL OR p.created_at < $1::timestamptz)
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+`
+
+// Exact-count counterpart of ListPhotoIDsForHardRetentionOlderThan -- see
+// CountDocumentsForHardRetention.
+func (q *Queries) CountPhotosForHardRetention(ctx context.Context, cutoff pgtype.Timestamptz) (int32, error) {
+	row := q.db.QueryRow(ctx, countPhotosForHardRetention, cutoff)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -866,7 +931,7 @@ func (q *Queries) ListAvatarOrphanedPhotoIDsOlderThan(ctx context.Context, arg L
 
 const listAvatarPhotoIDsForHardRetentionOlderThan = `-- name: ListAvatarPhotoIDsForHardRetentionOlderThan :many
 SELECT p.id FROM photos p
-WHERE p.created_at < $1::timestamptz
+WHERE ($1::timestamptz IS NULL OR p.created_at < $1::timestamptz)
   AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -908,7 +973,7 @@ func (q *Queries) ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Contex
 
 const listDocumentIDsForHardRetentionOlderThan = `-- name: ListDocumentIDsForHardRetentionOlderThan :many
 SELECT d.id FROM documents d
-WHERE d.created_at < $1::timestamptz
+WHERE ($1::timestamptz IS NULL OR d.created_at < $1::timestamptz)
   AND d.category = $2::smallint
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -933,7 +998,12 @@ type ListDocumentIDsForHardRetentionOlderThanParams struct {
 // rows but deliberately leaves this documents row in place), it naturally
 // drops out of this query on the next pass. category scopes to one
 // documents.category bucket per sweep tick -- see
-// ListOrphanedDocumentIDsOlderThan for the 0/None fallback note.
+// ListOrphanedDocumentIDsOlderThan for the 0/None fallback note. cutoff is
+// nullable: NULL means no age filter at all (every document in the category
+// is a candidate, regardless of created_at) -- used by the manual purge admin
+// action, which unlike the automatic sweep can target "everything" with no
+// age cutoff. The automatic sweep (files.Service.DeleteBlobBytesForMediaOlderThan)
+// always passes a real, non-null cutoff.
 func (q *Queries) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, arg ListDocumentIDsForHardRetentionOlderThanParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listDocumentIDsForHardRetentionOlderThan, arg.Cutoff, arg.Category, arg.BatchLimit)
 	if err != nil {
@@ -1207,7 +1277,7 @@ func (q *Queries) ListOrphanedPhotoIDsOlderThan(ctx context.Context, arg ListOrp
 
 const listPhotoIDsForHardRetentionOlderThan = `-- name: ListPhotoIDsForHardRetentionOlderThan :many
 SELECT p.id FROM photos p
-WHERE p.created_at < $1::timestamptz
+WHERE ($1::timestamptz IS NULL OR p.created_at < $1::timestamptz)
   AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
@@ -1224,8 +1294,9 @@ type ListPhotoIDsForHardRetentionOlderThanParams struct {
 }
 
 // See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
-// candidate selection, for photos. Excludes photos currently active as
-// someone's avatar -- see ListAvatarPhotoIDsForHardRetentionOlderThan.
+// candidate selection (including the nullable cutoff), for photos. Excludes
+// photos currently active as someone's avatar -- see
+// ListAvatarPhotoIDsForHardRetentionOlderThan.
 func (q *Queries) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, arg ListPhotoIDsForHardRetentionOlderThanParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listPhotoIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
 	if err != nil {

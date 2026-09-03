@@ -279,7 +279,7 @@ func TestHardRetentionCategoryFilterOnlyReturnsMatchingCategory(t *testing.T) {
 	}
 
 	cutoff := time.Now().Add(-24 * time.Hour)
-	videoIDs, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryVideo, cutoff, 1000)
+	videoIDs, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryVideo, &cutoff, 1000)
 	if err != nil {
 		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan(Video): %v", err)
 	}
@@ -287,12 +287,129 @@ func TestHardRetentionCategoryFilterOnlyReturnsMatchingCategory(t *testing.T) {
 		t.Fatalf("video-category candidates = %v, want to include %d and exclude %d", videoIDs, videoID, musicID)
 	}
 
-	musicIDs, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryMusic, cutoff, 1000)
+	musicIDs, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryMusic, &cutoff, 1000)
 	if err != nil {
 		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan(Music): %v", err)
 	}
 	if !containsInt64(musicIDs, musicID) || containsInt64(musicIDs, videoID) {
 		t.Fatalf("music-category candidates = %v, want to include %d and exclude %d", musicIDs, musicID, videoID)
+	}
+}
+
+// TestManualPurgeNilCutoffIgnoresAge guards the manual purge admin action's
+// query-layer contract: a nil cutoff on the hard-retention List/Count
+// queries must mean "no age filter at all" -- a document created just now is
+// still a candidate -- while a real, non-nil cutoff still filters normally.
+// This is the query-layer half of files.Service.ManualPurge/CountManualPurgeCandidates's
+// "no date = everything matching the categories, regardless of age" contract
+// (the automatic sweep, by contrast, never passes a nil cutoff).
+func TestManualPurgeNilCutoffIgnoresAge(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	media := NewMediaStore(pool)
+
+	freshID := time.Now().UnixNano()
+	locationKey := "doc:" + strconv.FormatInt(freshID, 10)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM documents WHERE id = $1", freshID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM file_blobs WHERE location_key = $1", locationKey)
+	})
+
+	if err := media.PutDocument(ctx, domain.Document{ID: freshID, MimeType: "application/octet-stream", Size: 128}); err != nil {
+		t.Fatalf("PutDocument: %v", err)
+	}
+	// Deliberately NOT backdated -- created_at stays "just now", unlike every
+	// other hard-retention test in this file, since the whole point here is
+	// that a nil cutoff must not exempt a fresh document.
+	if _, err := pool.Exec(ctx, "UPDATE documents SET category = $2 WHERE id = $1", freshID, int16(domain.MediaCategoryFile)); err != nil {
+		t.Fatalf("categorize document: %v", err)
+	}
+	blob := postgresTestBlob(locationKey, "manual-purge-nil-cutoff", 128, "application/octet-stream")
+	if err := media.PutFileBlob(ctx, blob); err != nil {
+		t.Fatalf("PutFileBlob: %v", err)
+	}
+
+	// nil cutoff: the fresh document IS a candidate.
+	ids, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryFile, nil, 1000)
+	if err != nil {
+		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan(nil cutoff): %v", err)
+	}
+	if !containsInt64(ids, freshID) {
+		t.Fatalf("nil-cutoff candidates = %v, want to include fresh document %d", ids, freshID)
+	}
+	count, err := media.CountDocumentsForHardRetention(ctx, domain.MediaCategoryFile, nil)
+	if err != nil {
+		t.Fatalf("CountDocumentsForHardRetention(nil cutoff): %v", err)
+	}
+	if count < 1 {
+		t.Fatalf("nil-cutoff count = %d, want >= 1 (must include fresh document)", count)
+	}
+
+	// A real cutoff in the past still excludes the fresh document.
+	pastCutoff := time.Now().Add(-24 * time.Hour)
+	ids, err = media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryFile, &pastCutoff, 1000)
+	if err != nil {
+		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan(past cutoff): %v", err)
+	}
+	if containsInt64(ids, freshID) {
+		t.Fatalf("past-cutoff candidates = %v, want to exclude fresh document %d", ids, freshID)
+	}
+	count, err = media.CountDocumentsForHardRetention(ctx, domain.MediaCategoryFile, &pastCutoff)
+	if err != nil {
+		t.Fatalf("CountDocumentsForHardRetention(past cutoff): %v", err)
+	}
+	// Some other, unrelated old File-category document could in principle
+	// exist in this shared test database, so this only asserts the fresh
+	// document itself dropped out, via the id-level checks above; the count
+	// assertion below just guards against the query going the wrong
+	// direction entirely (e.g. cutoff being ignored and still counting
+	// everything).
+	allCount, err := media.CountDocumentsForHardRetention(ctx, domain.MediaCategoryFile, nil)
+	if err != nil {
+		t.Fatalf("CountDocumentsForHardRetention(nil, recheck): %v", err)
+	}
+	if count > allCount {
+		t.Fatalf("past-cutoff count %d > nil-cutoff count %d, cutoff filter is backwards", count, allCount)
+	}
+}
+
+// TestManualPurgePhotoAndAvatarNilCutoffIgnoresAge is the photo/avatar
+// counterpart of TestManualPurgeNilCutoffIgnoresAge.
+func TestManualPurgePhotoAndAvatarNilCutoffIgnoresAge(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	media := NewMediaStore(pool)
+
+	photoID := time.Now().UnixNano()
+	locationKey := "photo:" + strconv.FormatInt(photoID, 10)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM photos WHERE id = $1", photoID)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM file_blobs WHERE location_key = $1", locationKey)
+	})
+
+	if err := media.PutPhoto(ctx, domain.Photo{ID: photoID, AccessHash: 1}); err != nil {
+		t.Fatalf("PutPhoto: %v", err)
+	}
+	blob := postgresTestBlob(locationKey, "manual-purge-photo-nil-cutoff", 64, "image/jpeg")
+	if err := media.PutFileBlob(ctx, blob); err != nil {
+		t.Fatalf("PutFileBlob: %v", err)
+	}
+
+	ids, err := media.ListPhotoIDsForHardRetentionOlderThan(ctx, nil, 1000)
+	if err != nil {
+		t.Fatalf("ListPhotoIDsForHardRetentionOlderThan(nil cutoff): %v", err)
+	}
+	if !containsInt64(ids, photoID) {
+		t.Fatalf("nil-cutoff photo candidates = %v, want to include fresh photo %d", ids, photoID)
+	}
+
+	pastCutoff := time.Now().Add(-24 * time.Hour)
+	ids, err = media.ListPhotoIDsForHardRetentionOlderThan(ctx, &pastCutoff, 1000)
+	if err != nil {
+		t.Fatalf("ListPhotoIDsForHardRetentionOlderThan(past cutoff): %v", err)
+	}
+	if containsInt64(ids, photoID) {
+		t.Fatalf("past-cutoff photo candidates = %v, want to exclude fresh photo %d", ids, photoID)
 	}
 }
 

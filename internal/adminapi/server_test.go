@@ -476,6 +476,10 @@ func (fakeService) DeleteGifCatalogEntry(_ context.Context, req admin.DeleteGifC
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) ManualPurgeStorage(_ context.Context, req admin.ManualPurgeStorageRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) EmojiAnimation(context.Context, int64) ([]byte, bool, error) {
 	return []byte(`{"v":"5.7","w":100,"h":100}`), true, nil
 }

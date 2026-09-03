@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Loader2, RefreshCw, Search, Settings2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
@@ -38,7 +38,7 @@ function SortableHeader({
   );
 }
 
-function StorageOverviewTab() {
+function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   const [stats, setStats] = useState<StorageStatsResponse | null>(null);
   const [rows, setRows] = useState<AccountStorageRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -148,6 +148,7 @@ function StorageOverviewTab() {
               <SortableHeader label={"Account"} sortKey="username" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
               <SortableHeader label={"Storage used"} sortKey="bytes" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
               <SortableHeader label={"Files"} sortKey="files" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -157,9 +158,10 @@ function StorageOverviewTab() {
                 <td>{displayUsername(row.Username) || row.FirstName || "-"}</td>
                 <td className="mono">{formatBytes(row.Bytes)}</td>
                 <td className="mono">{formatQuantity(row.FileCount)}</td>
+                <td><button className="row-link" type="button" onClick={() => navigate(`/accounts/${row.UserID}`)}>{"Details"} <ChevronRight size={14} /></button></td>
               </tr>
             ))}
-            {rows.length === 0 && <EmptyRow colSpan={4} />}
+            {rows.length === 0 && <EmptyRow colSpan={5} />}
           </tbody>
         </table>
       </div>
@@ -174,7 +176,7 @@ function StorageOverviewTab() {
   );
 }
 
-export function StoragePage({ navigate: _navigate }: { navigate: Navigate }) {
+export function StoragePage({ navigate }: { navigate: Navigate }) {
   const [tab, setTab] = useState<"overview" | "limits">("overview");
   return (
     <PageFrame title={"Storage"} eyebrow={"Media / Storage usage"}>
@@ -186,7 +188,7 @@ export function StoragePage({ navigate: _navigate }: { navigate: Navigate }) {
           {"Limits & Retention"}
         </button>
       </div>
-      {tab === "overview" ? <StorageOverviewTab /> : <LimitsRetentionSection />}
+      {tab === "overview" ? <StorageOverviewTab navigate={navigate} /> : <LimitsRetentionSection />}
     </PageFrame>
   );
 }
@@ -438,6 +440,92 @@ function CategoryRetentionModal({
   );
 }
 
+// ManualPurgeStorageModal lets an operator delete media blob bytes right now
+// by hand-picked category (and, optionally, avatars) with an optional
+// "created before" age cutoff -- the manual counterpart of the automatic
+// hard-retention sweep above. Leaving the date empty purges everything
+// matching the selected categories regardless of age. Deletion semantics are
+// identical to "hard" retention mode: only the file bytes are removed, never
+// the document/photo row, so an affected message still renders its
+// placeholder (see internal/app/files.Service.ManualPurge's doc comment).
+// Follows the same modal-backdrop/command-modal structure as
+// CategoryRetentionModal, but hands the actual mutation off to ActionButton
+// (reason + dry-run + confirm) since -- unlike the settings above -- this is
+// an immediate, irreversible delete rather than a saved .env value.
+function ManualPurgeStorageModal({ onClose }: { onClose: () => void }) {
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [dateValue, setDateValue] = useState("");
+
+  const documentFields = CATEGORY_AGE_FIELDS.filter((f) => f.key !== "avatar");
+  const allSelected = CATEGORY_AGE_FIELDS.every((f) => selected[f.key]);
+
+  function toggle(key: string) {
+    setSelected((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function toggleAll() {
+    const next = !allSelected;
+    const nextSelected: Record<string, boolean> = {};
+    for (const field of CATEGORY_AGE_FIELDS) nextSelected[field.key] = next;
+    setSelected(nextSelected);
+  }
+
+  const chosenCategories = documentFields.filter((f) => selected[f.key]).map((f) => f.key);
+  const includeAvatars = Boolean(selected.avatar);
+  const canSubmit = chosenCategories.length > 0 || includeAvatars;
+
+  return createPortal(
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal command-modal" role="dialog" aria-modal="true" aria-label={"Manually purge storage"}>
+        <div className="modal-head">
+          <div>
+            <div className="eyebrow">{"Limits & Retention"}</div>
+            <h2>{"Manually purge storage"}</h2>
+          </div>
+          <button className="icon-btn" type="button" onClick={onClose} aria-label={"Close"}><X size={15} /></button>
+        </div>
+        <div className="command-body">
+          <p className="env-field-desc">
+            {"Deletes the file bytes of every document/photo matching the categories below, right now -- independent of the retention mode/age configured above. The message/profile-photo itself is never deleted, only its file; a purged item starts showing as unavailable. Leave \"Created before\" empty to purge everything in the selected categories, regardless of age."}
+          </p>
+          <div className="attr-block">
+            <label className="checkline">
+              <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+              {" "}{"Select all"}
+            </label>
+            {CATEGORY_AGE_FIELDS.map((field) => (
+              <label key={field.key} className="checkline">
+                <input type="checkbox" checked={Boolean(selected[field.key])} onChange={() => toggle(field.key)} />
+                {" "}{field.label}
+              </label>
+            ))}
+          </div>
+          <label className="duration-field">
+            <span>{"Created before (optional)"}</span>
+            <input type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} />
+            <span className="env-field-desc">{"Empty = no age limit, purge everything matching the selected categories."}</span>
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button className="btn" type="button" onClick={onClose}>{"Close"}</button>
+          <ActionButton
+            disabled={!canSubmit}
+            label={"Purge selected storage"}
+            tone="danger"
+            path="/api/actions/storage-manual-purge"
+            payload={() => ({
+              categories: chosenCategories,
+              include_avatars: includeAvatars,
+              created_before: dateValue ? new Date(dateValue).toISOString() : undefined
+            })}
+          />
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function LimitsRetentionSection() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
@@ -451,6 +539,7 @@ function LimitsRetentionSection() {
   const [categoryAgeMinutes, setCategoryAgeMinutes] = useState<Record<string, string>>({});
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [evictionEnable, setEvictionEnable] = useState(false);
+  const [manualPurgeOpen, setManualPurgeOpen] = useState(false);
 
   async function load() {
     setError("");
@@ -620,6 +709,16 @@ function LimitsRetentionSection() {
               {"Once total physical storage exceeds the Max total storage budget above, actively delete the oldest files (regardless of category or age) until back under budget -- the same way \"hard\" retention mode purges files. Independent of the retention mode above: this can run even when that's Off. Off by default, since this changes the storage budget from block-new-uploads-only to also reclaiming from existing files."}
             </p>
           </div>
+
+          <div className="attr-block" style={{ marginTop: "1.5em" }}>
+            <button className="btn danger icon-text" type="button" onClick={() => setManualPurgeOpen(true)}>
+              <Settings2 size={15} /> {"Manually purge storage..."}
+            </button>
+            <span className="env-field-desc">
+              {"Delete media file bytes right now by hand-picked category and an optional age cutoff, independent of the retention settings above."}
+            </span>
+          </div>
+          {manualPurgeOpen && <ManualPurgeStorageModal onClose={() => setManualPurgeOpen(false)} />}
 
           <div className="gift-table-actions env-save-row">
             <ActionButton

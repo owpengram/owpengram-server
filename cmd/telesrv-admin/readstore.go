@@ -2539,28 +2539,40 @@ const (
 )
 
 // perOwnerMediaSizeSQL is shared between StorageStats and
-// ListAccountStorageUsage: each document row's size is its stored column;
-// each photo row has no single size column (JSONB sizes holds one entry per
-// rendition), so its "attributed size" is the largest rendition -- the
-// dominant cost, thumbnails are comparatively tiny. This is an
-// approximation (not the exact sum of every rendition's blob bytes, which
-// would require joining file_blobs by location_key prefix) chosen for admin
-// visibility, not billing precision.
+// ListAccountStorageUsage: attributes each document/photo's REAL remaining
+// bytes (the sum of every file_blobs row it still owns -- main body plus
+// thumbnail/rendition variants) to its owner, one row per document/photo so
+// an outer COUNT(*)/SUM(size) aggregate still gets an accurate file count
+// alongside the byte total. This used to read documents.size / the largest
+// photo rendition size directly -- a static value on the metadata row that
+// survives a hard-retention purge unchanged, so it kept counting bytes for
+// files whose blobs were long gone. Joining through file_blobs instead means
+// a purged item correctly contributes 0: there is nothing left to attribute.
 const perOwnerMediaSizeSQL = `
-SELECT owner_user_id, size FROM documents
+SELECT d.owner_user_id, COALESCE((
+    SELECT SUM(fb.size) FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+), 0) AS size
+FROM documents d
 UNION ALL
 SELECT p.owner_user_id, COALESCE((
-    SELECT MAX((elem->>'size')::bigint) FROM jsonb_array_elements(p.sizes) elem
+    SELECT SUM(fb.size) FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
 ), 0) AS size
 FROM photos p
 `
 
 // StorageStatsRow is the admin panel's storage overview: physical bytes
 // (from file_blobs, backend-dedup-aware -- what's actually consuming disk
-// or S3) versus logical bytes (sum of the same approximate per-row
-// attribution the per-account breakdown uses, which can legitimately be
-// higher than physical when identical content is shared by more than one
-// document/photo).
+// or S3, deduplicated exactly once across the whole system) versus logical
+// bytes (the SAME real, still-existing file_blobs bytes as physical, just
+// summed per-owner via perOwnerMediaSizeSQL without deduplicating content
+// shared across accounts/documents -- so logical can legitimately be higher
+// than physical when the same blob is attributed to more than one
+// document/photo, but a purged file with no file_blobs rows left correctly
+// contributes 0 to both, never a stale non-zero "ghost" size).
 type StorageStatsRow struct {
 	PhysicalBytes     int64 `json:"PhysicalBytes,string"`
 	LogicalBytes      int64 `json:"LogicalBytes,string"`

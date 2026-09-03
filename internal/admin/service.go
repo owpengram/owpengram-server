@@ -63,6 +63,10 @@ const (
 	ActionAutoCategorizeGifCatalog = "gif_catalog.auto_categorize"
 	ActionDeleteUncategorizedGifs  = "gif_catalog.delete_uncategorized"
 	ActionDeleteGifCatalogEntry    = "gif_catalog.delete"
+	// Manual storage purge: admin-chosen categories + optional age cutoff,
+	// independent of the automatic retention sweep's config-derived
+	// selection. See StorageService's doc comment.
+	ActionManualPurgeStorage = "storage.manual_purge"
 	// Collectible (Fragment-style) username lifecycle.
 	ActionMintCollectibleUsername     = "usernames.collectible.mint"
 	ActionTransferCollectibleUsername = "usernames.collectible.transfer"
@@ -337,6 +341,22 @@ type GifCatalogService interface {
 	AdminDeleteGifCatalogEntry(ctx context.Context, id int64) (bool, error)
 }
 
+// StorageService is the admin-console surface over manual storage purge --
+// deleting media blob bytes (never the document/photo metadata row) by
+// admin-chosen category and an optional age cutoff, independent of the
+// automatic retention sweep's config-derived categories/age. See
+// internal/app/files.Service.ManualPurge's doc comment for the exact
+// deletion semantics (identical to "hard" retention mode).
+type StorageService interface {
+	// CountManualPurgeCandidates is the dry-run preview: an exact count of
+	// how many documents/photos the selection would purge. before == nil
+	// means no age filter at all.
+	CountManualPurgeCandidates(ctx context.Context, categories []domain.MediaCategory, includeAvatars bool, before *time.Time) (docs int, photos int, err error)
+	// ManualPurge actually deletes the selected media's blob bytes, up to
+	// limit documents/photos per category/bucket, returning what was purged.
+	ManualPurge(ctx context.Context, categories []domain.MediaCategory, includeAvatars bool, before *time.Time, limit int) (purgedDocs int, purgedPhotos int, bytesReclaimed int64, err error)
+}
+
 // BotService creates bot accounts on behalf of the admin. It mirrors the
 // owner-scoped /newbot flow: a bot is a users row (is_bot=true) plus a bots row
 // owned by ownerUserID, and the returned token is shown once to the operator.
@@ -402,6 +422,7 @@ type Dependencies struct {
 	Photos                 AvatarResolver
 	StickerSets            StickerSetsService
 	GifCatalog             GifCatalogService
+	Storage                StorageService
 	Bots                   BotService
 	Emoji                  EmojiService
 	Moderation             ModerationService
@@ -433,6 +454,7 @@ type Service struct {
 	photos                 AvatarResolver
 	stickerSets            StickerSetsService
 	gifCatalog             GifCatalogService
+	storage                StorageService
 	bots                   BotService
 	emoji                  EmojiService
 	moderation             ModerationService
@@ -491,6 +513,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.GifCatalog != nil {
 		s.gifCatalog = deps.GifCatalog
+	}
+	if deps.Storage != nil {
+		s.storage = deps.Storage
 	}
 	if deps.Bots != nil {
 		s.bots = deps.Bots
@@ -747,6 +772,22 @@ type DeleteUncategorizedGifsRequest struct {
 type DeleteGifCatalogEntryRequest struct {
 	CommandMeta
 	ID int64 `json:"id"`
+}
+
+// ManualPurgeStorageRequest is the manual storage purge action's request.
+// Categories are the admin UI's category keys (see manualPurgeCategoryKeys)
+// -- "photo", "video", "round_video", "gif", "music", "voice", "file".
+// "avatar" is not a category key; it is the separate IncludeAvatars flag,
+// since Avatar is not a domain.MediaCategory (see
+// files.Service.ManualPurge's doc comment). CreatedBefore is an optional
+// ISO-8601/RFC3339 cutoff -- nil (the field omitted or JSON null) means no
+// age filter at all: every document/photo in the selected categories is
+// purged, regardless of age.
+type ManualPurgeStorageRequest struct {
+	CommandMeta
+	Categories     []string   `json:"categories"`
+	IncludeAvatars bool       `json:"include_avatars,omitempty"`
+	CreatedBefore  *time.Time `json:"created_before,omitempty"`
 }
 
 type SetAccountFrozenRequest struct {
@@ -3031,6 +3072,88 @@ func (s *Service) DeleteUncategorizedGifs(ctx context.Context, req DeleteUncateg
 		details["deleted_entries"] = deletedEntries
 		details["deleted_documents"] = deletedDocuments
 		return CommandResult{Message: "uncategorized gifs deleted", Details: details}, err
+	})
+}
+
+// manualPurgeCategoryKeys maps the admin UI's category keys (see
+// CATEGORY_AGE_FIELDS in cmd/telesrv-admin/web/src/pages/StoragePage.tsx) to
+// their domain.MediaCategory value. "avatar" is deliberately absent -- it
+// maps to ManualPurgeStorageRequest.IncludeAvatars instead, since Avatar is
+// not a domain.MediaCategory (see files.Service.ManualPurge's doc comment).
+var manualPurgeCategoryKeys = map[string]domain.MediaCategory{
+	"photo":       domain.MediaCategoryPhoto,
+	"video":       domain.MediaCategoryVideo,
+	"round_video": domain.MediaCategoryRoundVideo,
+	"gif":         domain.MediaCategoryGif,
+	"music":       domain.MediaCategoryMusic,
+	"voice":       domain.MediaCategoryVoice,
+	"file":        domain.MediaCategoryFile,
+}
+
+// parseManualPurgeCategories resolves each admin-supplied category key
+// (case-insensitive) to its domain.MediaCategory, rejecting an unknown key
+// outright rather than silently ignoring it -- an operator who fat-fingers a
+// category name deserves an error, not a purge that quietly did less than
+// they asked for. Duplicate keys collapse to one entry.
+func parseManualPurgeCategories(keys []string) ([]domain.MediaCategory, error) {
+	categories := make([]domain.MediaCategory, 0, len(keys))
+	seen := make(map[domain.MediaCategory]bool, len(keys))
+	for _, raw := range keys {
+		key := strings.ToLower(strings.TrimSpace(raw))
+		cat, ok := manualPurgeCategoryKeys[key]
+		if !ok {
+			return nil, fmt.Errorf("unknown storage category: %q", raw)
+		}
+		if seen[cat] {
+			continue
+		}
+		seen[cat] = true
+		categories = append(categories, cat)
+	}
+	return categories, nil
+}
+
+// manualPurgeBatchLimit bounds how many documents/photos a single
+// ManualPurgeStorage confirm call purges per category/bucket. An operator
+// whose dry-run count exceeds this runs the (idempotent, self-terminating --
+// see files.Service.ManualPurge) confirm action again to keep purging.
+const manualPurgeBatchLimit = 5000
+
+// ManualPurgeStorage deletes media blob bytes (never the document/photo
+// metadata row) by admin-chosen category and an optional "created before"
+// cutoff -- the manual counterpart of the automatic hard-retention sweep.
+// See StorageService and files.Service.ManualPurge's doc comments for the
+// exact semantics.
+func (s *Service) ManualPurgeStorage(ctx context.Context, req ManualPurgeStorageRequest) (CommandResult, error) {
+	if s == nil || s.storage == nil {
+		return CommandResult{}, fmt.Errorf("storage service is not configured")
+	}
+	categories, err := parseManualPurgeCategories(req.Categories)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if len(categories) == 0 && !req.IncludeAvatars {
+		return CommandResult{}, fmt.Errorf("at least one category (or avatars) must be selected")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionManualPurgeStorage, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{}
+		if req.DryRun {
+			// A real count, not just "validated" -- this is a bulk,
+			// irreversible delete, and an operator confirming it deserves to
+			// know how much they're about to purge before they do.
+			docs, photos, err := s.storage.CountManualPurgeCandidates(ctx, categories, req.IncludeAvatars, req.CreatedBefore)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			details["would_delete_documents"] = docs
+			details["would_delete_photos"] = photos
+			return CommandResult{Message: fmt.Sprintf("would purge %d document(s) and %d photo(s)", docs, photos), Details: details}, nil
+		}
+		purgedDocs, purgedPhotos, bytesReclaimed, err := s.storage.ManualPurge(ctx, categories, req.IncludeAvatars, req.CreatedBefore, manualPurgeBatchLimit)
+		details["purged_documents"] = purgedDocs
+		details["purged_photos"] = purgedPhotos
+		details["bytes_reclaimed"] = bytesReclaimed
+		return CommandResult{Message: fmt.Sprintf("purged %d document(s) and %d photo(s)", purgedDocs, purgedPhotos), Details: details}, err
 	})
 }
 

@@ -490,6 +490,11 @@ var (
 	activeFieldRe    = regexp.MustCompile(`^(TELESRV_[A-Z0-9_]+)=(.*)$`)
 	commentedFieldRe = regexp.MustCompile(`^#\s*(TELESRV_[A-Z0-9_]+)=(.*)$`)
 	sensitiveKeyRe   = regexp.MustCompile(`(PASSWORD|SECRET|_TOKEN|API_KEY)`)
+	// sensitiveKeyExceptRe excludes names that trip sensitiveKeyRe on the
+	// word "SECRET" while meaning Telegram's secret-chat feature, not a
+	// credential (e.g. TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD) --
+	// there's nothing to mask there, it's a plain boolean toggle.
+	sensitiveKeyExceptRe = regexp.MustCompile(`SECRET_CHAT`)
 	groupHeaderRe    = regexp.MustCompile(`^##\s*(.+?)\s*--\s*(.+)$`)
 	sectionBreakRe   = regexp.MustCompile(`^#\s*={10,}\s*$`)
 )
@@ -554,7 +559,7 @@ func (m *Manager) ReadEnvGroups() ([]EnvGroup, error) {
 			DefaultValue:     defaultValue,
 			Description:      description,
 			EnabledByDefault: enabledByDefault,
-			Sensitive:        sensitiveKeyRe.MatchString(key),
+			Sensitive:        sensitiveKeyRe.MatchString(key) && !sensitiveKeyExceptRe.MatchString(key),
 			Value:            value,
 		})
 	}

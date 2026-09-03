@@ -383,6 +383,19 @@ type Config struct {
 	// StorageMaxTotalBytes has meant so far (block new uploads only ->
 	// block-and-reclaim from existing ones too).
 	StorageEvictionEnable bool
+	// SecretChatDeleteFileAfterDownload deletes a secret-chat encrypted
+	// file's blob bytes (location_key "enc:<id>") as soon as the recipient
+	// has fully downloaded it. Secret chats are single-device on both ends
+	// (no multi-device sync), so once delivered there is no other device
+	// that will ever ask for it again -- unlike ordinary message media,
+	// which stays downloadable for re-fetch/sync/forward. Default true:
+	// none of the automatic retention/eviction machinery touches these
+	// blobs at all (they have no documents/photos row), so leaving this off
+	// means they simply accumulate forever with no way to reclaim the
+	// space -- an explicit TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD=false
+	// opts back out for a self-hoster who wants the ciphertext kept around
+	// regardless.
+	SecretChatDeleteFileAfterDownload bool
 	// StickerSeedDir 是 reaction / sticker 资源种子目录（导入到 documents/sticker_sets + blob）。
 	StickerSeedDir string
 	// StickerSeedMaxSets 限制导入的常规贴纸集数量（避免启动时导入过多包），<=0 表示不限。
@@ -1009,6 +1022,7 @@ func Load() (Config, error) {
 		StorageRetentionMaxAgeByCategory:  storageRetentionMaxAgeByCategoryFromEnv(envDurationOr),
 		StorageRetentionMaxAgeAvatar:      envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE_AVATAR", 0),
 		StorageEvictionEnable:             envBoolOr("TELESRV_STORAGE_EVICTION_ENABLE", false),
+		SecretChatDeleteFileAfterDownload: envBoolOr("TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD", true),
 		StickerSeedDir:                    envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
 		StickerSeedMaxSets:                envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
 		PremiumPromoSeedDir:               envOr("TELESRV_PREMIUM_PROMO_SEED_DIR", "data/premium-promo"),

@@ -69,10 +69,19 @@ type mediaRetentionStore interface {
 	// photo still referenced by a live message is exactly as eligible as an
 	// orphaned one once it's old enough. The delete methods physically
 	// remove only the file_blobs row(s)/bytes, never the document/photo
-	// metadata row -- see DeleteFileBlobsForDocument's doc comment.
-	ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, category domain.MediaCategory, cutoff time.Time, limit int) ([]int64, error)
-	ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error)
-	ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error)
+	// metadata row -- see DeleteFileBlobsForDocument's doc comment. cutoff is
+	// a *time.Time so it can be nil ("no age filter at all") -- the automatic
+	// sweep below always passes a real cutoff; the manual purge admin action
+	// (see ManualPurge) is what actually uses nil.
+	ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, category domain.MediaCategory, cutoff *time.Time, limit int) ([]int64, error)
+	ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff *time.Time, limit int) ([]int64, error)
+	ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff *time.Time, limit int) ([]int64, error)
+	// Count* are the exact-count counterparts of the List* queries just
+	// above, used by CountManualPurgeCandidates's dry-run preview: a
+	// LIMIT-capped list length is not a real total.
+	CountDocumentsForHardRetention(ctx context.Context, category domain.MediaCategory, cutoff *time.Time) (int, error)
+	CountPhotosForHardRetention(ctx context.Context, cutoff *time.Time) (int, error)
+	CountAvatarPhotosForHardRetention(ctx context.Context, cutoff *time.Time) (int, error)
 	DeleteFileBlobsForDocument(ctx context.Context, id int64) ([]domain.FileBlob, error)
 	DeleteFileBlobsForPhoto(ctx context.Context, id int64) ([]domain.FileBlob, error)
 
@@ -193,7 +202,7 @@ func (s *Service) DeleteBlobBytesForMediaOlderThan(ctx context.Context, now time
 			continue
 		}
 		cutoff := now.Add(-age)
-		docIDs, err := store.ListDocumentIDsForHardRetentionOlderThan(ctx, cat, cutoff, limit)
+		docIDs, err := store.ListDocumentIDsForHardRetentionOlderThan(ctx, cat, &cutoff, limit)
 		if err != nil {
 			return purged, fmt.Errorf("list documents for hard retention (category %d): %w", cat, err)
 		}
@@ -213,7 +222,7 @@ func (s *Service) DeleteBlobBytesForMediaOlderThan(ctx context.Context, now time
 	}
 	if age := s.categoryRetentionAge(domain.MediaCategoryPhoto); age > 0 {
 		photoCutoff := now.Add(-age)
-		photoIDs, err := store.ListPhotoIDsForHardRetentionOlderThan(ctx, photoCutoff, limit)
+		photoIDs, err := store.ListPhotoIDsForHardRetentionOlderThan(ctx, &photoCutoff, limit)
 		if err != nil {
 			return purged, fmt.Errorf("list photos for hard retention: %w", err)
 		}
@@ -233,7 +242,7 @@ func (s *Service) DeleteBlobBytesForMediaOlderThan(ctx context.Context, now time
 	}
 	if age := s.avatarRetentionAge(); age > 0 {
 		avatarCutoff := now.Add(-age)
-		avatarIDs, err := store.ListAvatarPhotoIDsForHardRetentionOlderThan(ctx, avatarCutoff, limit)
+		avatarIDs, err := store.ListAvatarPhotoIDsForHardRetentionOlderThan(ctx, &avatarCutoff, limit)
 		if err != nil {
 			return purged, fmt.Errorf("list avatar photos for hard retention: %w", err)
 		}
@@ -252,6 +261,169 @@ func (s *Service) DeleteBlobBytesForMediaOlderThan(ctx context.Context, now time
 		}
 	}
 	return purged, nil
+}
+
+// manualPurgeCategories enumerates the domain.MediaCategory values the
+// manual purge admin action (ManualPurge/CountManualPurgeCandidates) accepts.
+// Unlike hardRetentionDocumentCategories (used by the automatic sweep),
+// this includes MediaCategoryPhoto -- an operator explicitly choosing
+// categories to purge expects "Photo" to be one of the choices, even though
+// photos have no documents.category column and are resolved through the
+// dedicated ListPhotoIDsForHardRetentionOlderThan query instead. Avatar is
+// deliberately NOT a domain.MediaCategory member and is instead its own
+// includeAvatars bool parameter, matching how the automatic sweep already
+// splits avatar photos out via avatarRetentionAge/ListAvatarPhotoIDsForHardRetentionOlderThan.
+var manualPurgeCategories = map[domain.MediaCategory]bool{
+	domain.MediaCategoryPhoto:      true,
+	domain.MediaCategoryVideo:      true,
+	domain.MediaCategoryRoundVideo: true,
+	domain.MediaCategoryGif:        true,
+	domain.MediaCategoryMusic:      true,
+	domain.MediaCategoryVoice:      true,
+	domain.MediaCategoryFile:       true,
+}
+
+// validateManualPurgeCategories rejects any category outside
+// manualPurgeCategories (e.g. MediaCategoryNone or MediaCategoryURL, which
+// are not meaningful purge targets) rather than silently ignoring it -- an
+// operator who fat-fingers a category deserves an error, not a purge that
+// quietly did less than they asked for.
+func validateManualPurgeCategories(categories []domain.MediaCategory) error {
+	for _, cat := range categories {
+		if !manualPurgeCategories[cat] {
+			return fmt.Errorf("unsupported manual purge category: %d", cat)
+		}
+	}
+	return nil
+}
+
+// CountManualPurgeCandidates is the dry-run counterpart of ManualPurge: an
+// exact count of how many documents/photos the given selection would purge,
+// without deleting anything. before may be nil, meaning no age filter at all
+// (every document/photo in the selected categories is a candidate,
+// regardless of created_at) -- unlike the automatic sweep, which always
+// filters by a configured age.
+func (s *Service) CountManualPurgeCandidates(ctx context.Context, categories []domain.MediaCategory, includeAvatars bool, before *time.Time) (docs int, photos int, err error) {
+	store, ok := s.media.(mediaRetentionStore)
+	if !ok {
+		return 0, 0, nil
+	}
+	if err := validateManualPurgeCategories(categories); err != nil {
+		return 0, 0, err
+	}
+	for _, cat := range categories {
+		if cat == domain.MediaCategoryPhoto {
+			n, err := store.CountPhotosForHardRetention(ctx, before)
+			if err != nil {
+				return docs, photos, fmt.Errorf("count photos for manual purge: %w", err)
+			}
+			photos += n
+			continue
+		}
+		n, err := store.CountDocumentsForHardRetention(ctx, cat, before)
+		if err != nil {
+			return docs, photos, fmt.Errorf("count documents for manual purge (category %d): %w", cat, err)
+		}
+		docs += n
+	}
+	if includeAvatars {
+		n, err := store.CountAvatarPhotosForHardRetention(ctx, before)
+		if err != nil {
+			return docs, photos, fmt.Errorf("count avatar photos for manual purge: %w", err)
+		}
+		photos += n
+	}
+	return docs, photos, nil
+}
+
+// ManualPurge is the admin-triggered counterpart of DeleteBlobBytesForMediaOlderThan
+// ("hard" retention mode's blob-purge primitive): instead of config-derived
+// categories and a configured retention age, the operator explicitly chooses
+// which categories to purge and an optional cutoff date. before == nil means
+// no age filter at all -- everything matching the chosen categories is
+// purged, regardless of how recently it was created. Deletion semantics are
+// identical to the automatic sweep: only file_blobs bytes are removed, never
+// the documents/photos metadata row, and notifyRetentionPurge still turns any
+// message still displaying the purged media into the retention-purge notice.
+// limit bounds how many documents/photos are purged per category/bucket in
+// this single call (the admin action loops/paginates by calling again if the
+// dry-run count exceeds one call's limit).
+func (s *Service) ManualPurge(ctx context.Context, categories []domain.MediaCategory, includeAvatars bool, before *time.Time, limit int) (purgedDocs int, purgedPhotos int, bytesReclaimed int64, err error) {
+	store, ok := s.media.(mediaRetentionStore)
+	if !ok || limit <= 0 {
+		return 0, 0, 0, nil
+	}
+	if err := validateManualPurgeCategories(categories); err != nil {
+		return 0, 0, 0, err
+	}
+	for _, cat := range categories {
+		if cat == domain.MediaCategoryPhoto {
+			photoIDs, err := store.ListPhotoIDsForHardRetentionOlderThan(ctx, before, limit)
+			if err != nil {
+				return purgedDocs, purgedPhotos, bytesReclaimed, fmt.Errorf("list photos for manual purge: %w", err)
+			}
+			for _, id := range photoIDs {
+				blobs, err := store.DeleteFileBlobsForPhoto(ctx, id)
+				if err != nil {
+					s.log.Warn("manual purge photo blob delete failed", zap.Int64("photo_id", id), zap.Error(err))
+					continue
+				}
+				if len(blobs) == 0 {
+					continue
+				}
+				s.deleteOrphanedBlobs(ctx, store, blobs)
+				for _, b := range blobs {
+					bytesReclaimed += b.Size
+				}
+				s.notifyRetentionPurge(ctx, domain.MediaKindPhoto, id)
+				purgedPhotos++
+			}
+			continue
+		}
+		docIDs, err := store.ListDocumentIDsForHardRetentionOlderThan(ctx, cat, before, limit)
+		if err != nil {
+			return purgedDocs, purgedPhotos, bytesReclaimed, fmt.Errorf("list documents for manual purge (category %d): %w", cat, err)
+		}
+		for _, id := range docIDs {
+			blobs, err := store.DeleteFileBlobsForDocument(ctx, id)
+			if err != nil {
+				s.log.Warn("manual purge document blob delete failed", zap.Int64("document_id", id), zap.Error(err))
+				continue
+			}
+			if len(blobs) == 0 {
+				continue
+			}
+			s.deleteOrphanedBlobs(ctx, store, blobs)
+			for _, b := range blobs {
+				bytesReclaimed += b.Size
+			}
+			s.notifyRetentionPurge(ctx, domain.MediaKindDocument, id)
+			purgedDocs++
+		}
+	}
+	if includeAvatars {
+		avatarIDs, err := store.ListAvatarPhotoIDsForHardRetentionOlderThan(ctx, before, limit)
+		if err != nil {
+			return purgedDocs, purgedPhotos, bytesReclaimed, fmt.Errorf("list avatar photos for manual purge: %w", err)
+		}
+		for _, id := range avatarIDs {
+			blobs, err := store.DeleteFileBlobsForPhoto(ctx, id)
+			if err != nil {
+				s.log.Warn("manual purge avatar photo blob delete failed", zap.Int64("photo_id", id), zap.Error(err))
+				continue
+			}
+			if len(blobs) == 0 {
+				continue
+			}
+			s.deleteOrphanedBlobs(ctx, store, blobs)
+			for _, b := range blobs {
+				bytesReclaimed += b.Size
+			}
+			s.notifyRetentionPurge(ctx, domain.MediaKindPhoto, id)
+			purgedPhotos++
+		}
+	}
+	return purgedDocs, purgedPhotos, bytesReclaimed, nil
 }
 
 // EvictOldestMediaOverBudget implements maintenance.StorageEvictionStore
