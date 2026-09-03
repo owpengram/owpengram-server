@@ -2574,8 +2574,15 @@ FROM photos p
 // document/photo, but a purged file with no file_blobs rows left correctly
 // contributes 0 to both, never a stale non-zero "ghost" size).
 type StorageStatsRow struct {
-	PhysicalBytes     int64 `json:"PhysicalBytes,string"`
-	LogicalBytes      int64 `json:"LogicalBytes,string"`
+	PhysicalBytes int64 `json:"PhysicalBytes,string"`
+	LogicalBytes  int64 `json:"LogicalBytes,string"`
+	// UnattributedBytes, DocumentCount, PhotoCount and AccountCount all count
+	// only items that still own real file_blobs bytes -- documents/photos
+	// rows themselves are kept forever after a hard-retention purge (so a
+	// message can still render "here was a file"), so counting rows instead
+	// of live bytes would keep growing even as the actual content becomes
+	// physically empty, diverging further and further from PhysicalBytes
+	// above.
 	UnattributedBytes int64 `json:"UnattributedBytes,string"`
 	DocumentCount     int64 `json:"DocumentCount,string"`
 	PhotoCount        int64 `json:"PhotoCount,string"`
@@ -2597,14 +2604,31 @@ SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x`).Scan(&
 SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id = 0`).Scan(&stats.UnattributedBytes); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("sum unattributed media bytes: %w", err)
 	}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*)::bigint FROM documents`).Scan(&stats.DocumentCount); err != nil {
+	// Documents/Photos/AccountCount all count only items that still own real
+	// file_blobs bytes -- documents/photos rows are deliberately kept forever
+	// after a hard-retention purge (so a message can still render "here was
+	// a file"), so a plain count(*) would keep growing even as everything it
+	// counts becomes physically empty, wildly diverging from PhysicalBytes
+	// above and making the overview page look broken/confusing rather than
+	// informative.
+	if err := s.pool.QueryRow(ctx, `
+SELECT count(*)::bigint FROM documents d WHERE EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+)`).Scan(&stats.DocumentCount); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("count documents: %w", err)
 	}
-	if err := s.pool.QueryRow(ctx, `SELECT count(*)::bigint FROM photos`).Scan(&stats.PhotoCount); err != nil {
+	if err := s.pool.QueryRow(ctx, `
+SELECT count(*)::bigint FROM photos p WHERE EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+)`).Scan(&stats.PhotoCount); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("count photos: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
-SELECT count(DISTINCT owner_user_id)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id <> 0`).Scan(&stats.AccountCount); err != nil {
+SELECT count(DISTINCT owner_user_id)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id <> 0 AND size > 0`).Scan(&stats.AccountCount); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("count storage accounts: %w", err)
 	}
 	stats.BackendKind = strings.ToLower(strings.TrimSpace(os.Getenv("TELESRV_BLOB_BACKEND")))
@@ -2680,9 +2704,14 @@ func (s *readStore) ListAccountStorageUsage(ctx context.Context, q string, sortB
 	args = append(args, offset, limit+1)
 	rows, err := s.pool.Query(ctx, `
 WITH totals AS (
+    -- size > 0 excludes documents/photos whose file_blobs bytes have already
+    -- been purged -- their row is kept forever (see perOwnerMediaSizeSQL's
+    -- doc comment) so counting every row here would keep FileCount growing
+    -- long after Bytes has settled at (or near) 0, same mismatch this query
+    -- used to have before it was joined through file_blobs at all.
     SELECT owner_user_id, SUM(size)::bigint AS bytes, COUNT(*)::bigint AS file_count
     FROM (`+perOwnerMediaSizeSQL+`) x
-    WHERE owner_user_id <> 0
+    WHERE owner_user_id <> 0 AND size > 0
     GROUP BY owner_user_id
 )
 SELECT t.owner_user_id, COALESCE(u.username, ''), COALESCE(u.first_name, ''), t.bytes, t.file_count

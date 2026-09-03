@@ -420,6 +420,9 @@ function CategoryRetentionModal({
           <p className="env-field-desc">
             {"Leave a category at 0 to inherit the shared Retention age. The mode switch still applies to all of them -- these only change how old that one category's media must be."}
           </p>
+          <p className="modal-warn-note">
+            {"Danger zone: Avatar and GIF are shared buckets, not per-user ones. Avatar also covers the built-in system bots' own profile photos (BotFather, Stickers, ChatBot, VerifyBot, the official system account), and GIF also covers the server's bundled GIF catalog (@gif) -- a short age here purges those right along with ordinary user media."}
+          </p>
           {CATEGORY_AGE_FIELDS.map((field) => (
             <DurationField
               key={field.key}
@@ -487,6 +490,9 @@ function ManualPurgeStorageModal({ onClose }: { onClose: () => void }) {
         <div className="command-body">
           <p className="env-field-desc">
             {"Deletes the file bytes of every document/photo matching the categories below, right now -- independent of the retention mode/age configured above. The message/profile-photo itself is never deleted, only its file; a purged item starts showing as unavailable. Leave \"Created before\" empty to purge everything in the selected categories, regardless of age."}
+          </p>
+          <p className="modal-warn-note">
+            {"Danger zone: Avatar and GIF are shared buckets, not per-user ones. Selecting Avatar also purges the built-in system bots' own profile photos (BotFather, Stickers, ChatBot, VerifyBot, the official system account) -- these are bundled with the server and restore themselves automatically on the next restart. Selecting GIF also purges the server's bundled GIF catalog (@gif) entries, and those do NOT restore themselves: the catalog only re-imports a GIF whose source file is still sitting in TELESRV_GIF_SEED_DIR, so a purge is permanent for any catalog entry whose original file was since moved/deleted."}
           </p>
           <div className="attr-block">
             <label className="checkline">

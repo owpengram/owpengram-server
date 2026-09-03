@@ -349,6 +349,21 @@ func (s *MediaStore) DeleteFileBlobsForDocument(ctx context.Context, id int64) (
 				return fmt.Errorf("delete file blob row: %w", err)
 			}
 		}
+		// gif_catalog and user_sticker_collections entries are pure picker
+		// metadata -- unlike a chat message (which keeps rendering "media
+		// unavailable" off the documents row after its bytes are gone), a
+		// picker entry has no placeholder concept: once the underlying gif's
+		// bytes are purged it's just a dead thumbnail nobody can open, so it
+		// gets removed here too, in the same transaction as the actual blob
+		// purge, instead of drifting out of sync until some separate sweep
+		// happens to notice. No-op (0 rows) for the overwhelming majority of
+		// documents, which are never in either table.
+		if _, err := tx.Exec(ctx, `DELETE FROM gif_catalog WHERE document_id = $1`, id); err != nil {
+			return fmt.Errorf("delete gif catalog entry for purged document: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM user_sticker_collections WHERE document_id = $1`, id); err != nil {
+			return fmt.Errorf("delete sticker collection entries for purged document: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
