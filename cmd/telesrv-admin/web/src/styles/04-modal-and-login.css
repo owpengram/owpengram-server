@@ -461,22 +461,6 @@
   border-radius: var(--radius);
 }
 
-/* Warns that an Avatar/GIF retention control also reaches built-in server
-   resources (system bot avatars, the bundled GIF catalog), not just
-   ordinary user media -- see StoragePage.tsx's CategoryRetentionModal and
-   ManualPurgeStorageModal. */
-.modal-warn-note {
-  padding: 9px 12px;
-  background: var(--warn-tint);
-  border: 1px solid var(--warn-border);
-  border-radius: var(--radius);
-  color: var(--warn);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.4;
-  margin: 0 0 10px;
-}
-
 .secret-reveal-label {
   display: flex;
   align-items: center;

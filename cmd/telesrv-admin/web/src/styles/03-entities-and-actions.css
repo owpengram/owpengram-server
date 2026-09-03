@@ -206,6 +206,40 @@
   border-top: 0;
 }
 
+/* A GitHub-Settings-style "Danger Zone" box: a red-bordered card with its own
+   title strip, wrapping the specific fields/toggles that reach outside plain
+   per-user data (e.g. StoragePage's Avatar/GIF retention controls, which also
+   govern the built-in system bot avatars and the bundled GIF catalog) --
+   distinct from .danger-zone above, which is just a plain action-row divider,
+   not a bordered card. */
+.danger-zone-box {
+  margin: 4px 0 14px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.danger-zone-box-title {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--danger);
+  background: var(--danger-tint);
+  border-bottom: 1px solid var(--danger-border);
+}
+
+.danger-zone-box-body {
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.danger-zone-box-body .env-field-desc {
+  color: var(--danger-text, var(--danger));
+}
+
 .authorization-block {
   display: grid;
   gap: 10px;

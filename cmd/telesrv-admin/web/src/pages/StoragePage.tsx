@@ -225,6 +225,14 @@ const CATEGORY_AGE_FIELDS: { key: string; envKey: string; label: string }[] = [
   { key: "avatar", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_AVATAR", label: "Avatar" }
 ];
 
+// DANGER_ZONE_CATEGORY_KEYS marks the two CATEGORY_AGE_FIELDS/manual-purge
+// categories that reach beyond ordinary per-user media: Avatar also covers
+// the built-in system bots' own profile photos, and GIF also covers the
+// server's bundled GIF catalog (@gif). CategoryRetentionModal and
+// ManualPurgeStorageModal both split these into their own boxed "Danger
+// zone" section instead of listing them alongside Photo/Video/Music/etc.
+const DANGER_ZONE_CATEGORY_KEYS = new Set(["gif", "avatar"]);
+
 // Mirrors internal/app/files.MaxUploadPartBytes * MaxUploadParts -- the
 // protocol's own upload-part-count ceiling that TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES
 // can never legally exceed (internal/config validates this server-side too;
@@ -420,10 +428,7 @@ function CategoryRetentionModal({
           <p className="env-field-desc">
             {"Leave a category at 0 to inherit the shared Retention age. The mode switch still applies to all of them -- these only change how old that one category's media must be."}
           </p>
-          <p className="modal-warn-note">
-            {"Danger zone: Avatar and GIF are shared buckets, not per-user ones. Avatar also covers the built-in system bots' own profile photos (BotFather, Stickers, ChatBot, VerifyBot, the official system account), and GIF also covers the server's bundled GIF catalog (@gif) -- a short age here purges those right along with ordinary user media."}
-          </p>
-          {CATEGORY_AGE_FIELDS.map((field) => (
+          {CATEGORY_AGE_FIELDS.filter((f) => !DANGER_ZONE_CATEGORY_KEYS.has(f.key)).map((field) => (
             <DurationField
               key={field.key}
               label={field.label}
@@ -433,6 +438,24 @@ function CategoryRetentionModal({
               onChange={(minutes) => onChange(field.key, minutes)}
             />
           ))}
+          <div className="danger-zone-box">
+            <div className="danger-zone-box-title">{"Danger zone"}</div>
+            <div className="danger-zone-box-body">
+              <p className="env-field-desc">
+                {"Also affects built-in system bot avatars and the bundled GIF catalog (@gif), not just user media."}
+              </p>
+              {CATEGORY_AGE_FIELDS.filter((f) => DANGER_ZONE_CATEGORY_KEYS.has(f.key)).map((field) => (
+                <DurationField
+                  key={field.key}
+                  label={field.label}
+                  help={"Inherits the shared Retention age when left at 0."}
+                  minutes={categoryAgeMinutes[field.key] || "0"}
+                  disabled={disabled}
+                  onChange={(minutes) => onChange(field.key, minutes)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
         <div className="modal-actions">
           <button className="btn primary" type="button" onClick={onClose}>{"Close"}</button>
@@ -491,20 +514,31 @@ function ManualPurgeStorageModal({ onClose }: { onClose: () => void }) {
           <p className="env-field-desc">
             {"Deletes the file bytes of every document/photo matching the categories below, right now -- independent of the retention mode/age configured above. The message/profile-photo itself is never deleted, only its file; a purged item starts showing as unavailable. Leave \"Created before\" empty to purge everything in the selected categories, regardless of age."}
           </p>
-          <p className="modal-warn-note">
-            {"Danger zone: Avatar and GIF are shared buckets, not per-user ones. Selecting Avatar also purges the built-in system bots' own profile photos (BotFather, Stickers, ChatBot, VerifyBot, the official system account) -- these are bundled with the server and restore themselves automatically on the next restart. Selecting GIF also purges the server's bundled GIF catalog (@gif) entries, and those do NOT restore themselves: the catalog only re-imports a GIF whose source file is still sitting in TELESRV_GIF_SEED_DIR, so a purge is permanent for any catalog entry whose original file was since moved/deleted."}
-          </p>
           <div className="attr-block">
             <label className="checkline">
               <input type="checkbox" checked={allSelected} onChange={toggleAll} />
               {" "}{"Select all"}
             </label>
-            {CATEGORY_AGE_FIELDS.map((field) => (
+            {CATEGORY_AGE_FIELDS.filter((f) => !DANGER_ZONE_CATEGORY_KEYS.has(f.key)).map((field) => (
               <label key={field.key} className="checkline">
                 <input type="checkbox" checked={Boolean(selected[field.key])} onChange={() => toggle(field.key)} />
                 {" "}{field.label}
               </label>
             ))}
+          </div>
+          <div className="danger-zone-box">
+            <div className="danger-zone-box-title">{"Danger zone"}</div>
+            <div className="danger-zone-box-body">
+              <p className="env-field-desc">
+                {"Avatar also purges system bot avatars (auto-restored on next restart). GIF also purges the bundled GIF catalog (@gif) -- permanently, unless its source file is still in TELESRV_GIF_SEED_DIR."}
+              </p>
+              {CATEGORY_AGE_FIELDS.filter((f) => DANGER_ZONE_CATEGORY_KEYS.has(f.key)).map((field) => (
+                <label key={field.key} className="checkline">
+                  <input type="checkbox" checked={Boolean(selected[field.key])} onChange={() => toggle(field.key)} />
+                  {" "}{field.label}
+                </label>
+              ))}
+            </div>
           </div>
           <label className="duration-field">
             <span>{"Created before (optional)"}</span>
