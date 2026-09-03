@@ -617,8 +617,14 @@ function LimitsRetentionSection() {
       setMaxUploadFileBytes(values[STORAGE_ENV_KEYS.maxUploadFile] || "0");
       const mode = (values[STORAGE_ENV_KEYS.retentionMode] || "off").trim().toLowerCase();
       setRetentionMode(mode === "orphan" || mode === "hard" ? mode : "off");
-      const mins = parseDurationMinutes(values[STORAGE_ENV_KEYS.retentionMaxAge] || "720h");
-      setRetentionAgeMinutes(mins > 0 ? String(Math.max(1, Math.round(mins))) : "43200");
+      // "720h" is only a stand-in for a genuinely UNSET value (empty string,
+      // e.g. a fresh install) -- an explicit "0m" is a real, meaningful
+      // setting (retention disabled by default, relying purely on
+      // Per-category overrides) and must display as 0, not silently get
+      // coerced back to the 30-day default the moment this page reloads.
+      const rawRetentionMaxAge = values[STORAGE_ENV_KEYS.retentionMaxAge];
+      const mins = parseDurationMinutes(rawRetentionMaxAge || "720h");
+      setRetentionAgeMinutes(String(Math.max(0, Math.round(mins))));
       const nextCategoryAges: Record<string, string> = {};
       for (const field of CATEGORY_AGE_FIELDS) {
         const raw = values[field.envKey] || "";
