@@ -662,71 +662,115 @@ function LimitsRetentionSection() {
         <p style={{ color: "var(--muted)" }}>{"Loading current settings..."}</p>
       ) : (
         <div className="card-body">
-          <div className="attr-block">
-            <ByteSizeField
-              label={"Max total storage budget"}
-              help={"Reject new uploads once total tracked blob bytes would exceed this. Empty/0 = unlimited."}
-              bytes={maxTotalBytes}
-              onChange={setMaxTotalBytes}
-            />
-            {blobBackend === "localfs" && (
-              <ByteSizeField
-                label={"Min free space guard"}
-                help={"localfs backend only: reject new uploads once real free disk space falls below this. Empty/0 disables the check."}
-                bytes={minFreeBytes}
-                onChange={setMinFreeBytes}
+          <div className="action-groups">
+            <section className="section-block">
+              <SectionHead title={"Size limits"} />
+              <div className="card-body">
+                <div className="attr-block">
+                  <ByteSizeField
+                    label={"Max total storage budget"}
+                    help={"Reject new uploads once total tracked blob bytes would exceed this. Empty/0 = unlimited."}
+                    bytes={maxTotalBytes}
+                    onChange={setMaxTotalBytes}
+                  />
+                  {blobBackend === "localfs" && (
+                    <ByteSizeField
+                      label={"Min free space guard"}
+                      help={"localfs backend only: reject new uploads once real free disk space falls below this. Empty/0 disables the check."}
+                      bytes={minFreeBytes}
+                      onChange={setMinFreeBytes}
+                    />
+                  )}
+                  <ByteSizeField
+                    label={"Max single file size"}
+                    help={"Reject a single upload once its total assembled size exceeds this. Empty/0 = unlimited, bounded only by the protocol's own ~4GB per-file ceiling."}
+                    bytes={maxUploadFileBytes}
+                    onChange={setMaxUploadFileBytes}
+                  />
+                  {uploadCeilingExceeded && (
+                    <Alert>{"This exceeds the protocol's own ~4GB upload ceiling and will be refused when the server restarts."}</Alert>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="section-block">
+              <SectionHead
+                title={"Retention"}
+                action={
+                  <button className="btn compact-btn icon-text" type="button" onClick={() => setCategoryModalOpen(true)}>
+                    <Settings2 size={14} /> {"Per-category..."}
+                  </button>
+                }
               />
-            )}
-            <ByteSizeField
-              label={"Max single file size"}
-              help={"Reject a single upload once its total assembled size exceeds this. Empty/0 = unlimited, bounded only by the protocol's own ~4GB per-file ceiling."}
-              bytes={maxUploadFileBytes}
-              onChange={setMaxUploadFileBytes}
-            />
-            {uploadCeilingExceeded && (
-              <Alert>{"This exceeds the protocol's own ~4GB upload ceiling and will be refused when the server restarts."}</Alert>
-            )}
+              <div className="card-body">
+                <div className="attr-block">
+                  <label className="duration-field">
+                    <span>{"Retention mode"}</span>
+                    <select value={retentionMode} onChange={(event) => setRetentionMode(event.target.value)}>
+                      <option value="off">{"Off"}</option>
+                      <option value="orphan">{"Delete once no longer used (safe)"}</option>
+                      <option value="hard">{"Delete after a fixed time, even if still in use"}</option>
+                    </select>
+                  </label>
+                  <p className="env-field-desc">
+                    {retentionMode === "off" &&
+                      "No storage sweep runs; nothing is auto-deleted. Storage usage is still tracked and shown above either way."}
+                    {retentionMode === "orphan" &&
+                      "Safe: a document or photo's file is deleted only once it is no longer referenced by any message, profile photo, or sticker set. Media still visible in a conversation is never touched, regardless of age."}
+                    {retentionMode === "hard" &&
+                      "Irreversible and aggressive: a document or photo's file bytes are deleted once old enough, REGARDLESS of whether a message still references it. Old media in active conversations will start showing as unavailable once purged -- only the file is removed, the message itself keeps rendering its placeholder (name, size, thumbnail)."}
+                  </p>
+                  <DurationField
+                    label={"Retention age"}
+                    help={
+                      (retentionMode === "hard"
+                        ? "How old the media itself must be, counted from when it was uploaded, before its bytes are purged."
+                        : "How long a document or photo must have had zero references before its file is deleted.") +
+                      " Set to 0 to disable the sweep by default and only clean up categories you explicitly override via Per-category."
+                    }
+                    minutes={retentionAgeMinutes}
+                    disabled={retentionMode === "off"}
+                    onChange={setRetentionAgeMinutes}
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section className="section-block">
+              <SectionHead title={"Reclaim space"} />
+              <div className="card-body">
+                <div className="attr-block">
+                  <label className="checkline">
+                    <input
+                      type="checkbox"
+                      checked={evictionEnable}
+                      onChange={(event) => setEvictionEnable(event.target.checked)}
+                    />
+                    {" "}{"Actively reclaim space once over budget"}
+                  </label>
+                  <p className="env-field-desc">
+                    {"Once total physical storage exceeds the Max total storage budget, actively delete the oldest files (regardless of category or age) until back under budget -- the same way \"hard\" retention mode purges files. Independent of the retention mode: this can run even when that's Off. Off by default, since this changes the storage budget from block-new-uploads-only to also reclaiming from existing files."}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-block">
+              <SectionHead title={"Manual purge"} />
+              <div className="card-body">
+                <div className="attr-block">
+                  <button className="btn danger icon-text" type="button" onClick={() => setManualPurgeOpen(true)}>
+                    <Settings2 size={15} /> {"Manually purge storage..."}
+                  </button>
+                  <span className="env-field-desc">
+                    {"Delete media file bytes right now by hand-picked category and an optional age cutoff, independent of the retention settings above."}
+                  </span>
+                </div>
+              </div>
+            </section>
           </div>
 
-          <div className="attr-block" style={{ marginTop: "1.5em" }}>
-            <label className="duration-field">
-              <span>{"Retention mode"}</span>
-              <select value={retentionMode} onChange={(event) => setRetentionMode(event.target.value)}>
-                <option value="off">{"Off"}</option>
-                <option value="orphan">{"Delete once no longer used (safe)"}</option>
-                <option value="hard">{"Delete after a fixed time, even if still in use"}</option>
-              </select>
-            </label>
-            <p className="env-field-desc">
-              {retentionMode === "off" &&
-                "No storage sweep runs; nothing is auto-deleted. Storage usage is still tracked and shown above either way."}
-              {retentionMode === "orphan" &&
-                "Safe: a document or photo's file is deleted only once it is no longer referenced by any message, profile photo, or sticker set. Media still visible in a conversation is never touched, regardless of age."}
-              {retentionMode === "hard" &&
-                "Irreversible and aggressive: a document or photo's file bytes are deleted once old enough, REGARDLESS of whether a message still references it. Old media in active conversations will start showing as unavailable once purged -- only the file is removed, the message itself keeps rendering its placeholder (name, size, thumbnail)."}
-            </p>
-            <DurationField
-              label={"Retention age"}
-              help={
-                (retentionMode === "hard"
-                  ? "How old the media itself must be, counted from when it was uploaded, before its bytes are purged."
-                  : "How long a document or photo must have had zero references before its file is deleted.") +
-                " Set to 0 to disable the sweep by default and only clean up categories you explicitly override below."
-              }
-              minutes={retentionAgeMinutes}
-              disabled={retentionMode === "off"}
-              onChange={setRetentionAgeMinutes}
-            />
-          </div>
-
-          <div className="attr-block" style={{ marginTop: "1.5em" }}>
-            <button className="btn icon-text" type="button" onClick={() => setCategoryModalOpen(true)}>
-              <Settings2 size={15} /> {"Per-category overrides..."}
-            </button>
-            <span className="env-field-desc">
-              {"Optional -- give Photo/Video/GIF/Music/Voice/File/Avatar their own retention age instead of the shared one above."}
-            </span>
-          </div>
           {categoryModalOpen && (
             <CategoryRetentionModal
               categoryAgeMinutes={categoryAgeMinutes}
@@ -735,29 +779,6 @@ function LimitsRetentionSection() {
               onClose={() => setCategoryModalOpen(false)}
             />
           )}
-
-          <div className="attr-block" style={{ marginTop: "1.5em" }}>
-            <label className="checkline">
-              <input
-                type="checkbox"
-                checked={evictionEnable}
-                onChange={(event) => setEvictionEnable(event.target.checked)}
-              />
-              {" "}{"Actively reclaim space once over budget"}
-            </label>
-            <p className="env-field-desc">
-              {"Once total physical storage exceeds the Max total storage budget above, actively delete the oldest files (regardless of category or age) until back under budget -- the same way \"hard\" retention mode purges files. Independent of the retention mode above: this can run even when that's Off. Off by default, since this changes the storage budget from block-new-uploads-only to also reclaiming from existing files."}
-            </p>
-          </div>
-
-          <div className="attr-block" style={{ marginTop: "1.5em" }}>
-            <button className="btn danger icon-text" type="button" onClick={() => setManualPurgeOpen(true)}>
-              <Settings2 size={15} /> {"Manually purge storage..."}
-            </button>
-            <span className="env-field-desc">
-              {"Delete media file bytes right now by hand-picked category and an optional age cutoff, independent of the retention settings above."}
-            </span>
-          </div>
           {manualPurgeOpen && <ManualPurgeStorageModal onClose={() => setManualPurgeOpen(false)} />}
 
           <div className="gift-table-actions env-save-row">
