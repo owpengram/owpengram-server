@@ -73,6 +73,9 @@ func (f *fakeFiles) GetFile(_ context.Context, req domain.FileDownloadRequest) (
 func (f *fakeFiles) CreateEncryptedFileFromUpload(context.Context, domain.UploadedFileRef, int) (domain.EncryptedFileRef, error) {
 	return domain.EncryptedFileRef{ID: 9001, AccessHash: 9002, Size: 16, DCID: 2, KeyFingerprint: 7}, nil
 }
+func (f *fakeFiles) DeleteEncryptedFileBlob(context.Context, string) error {
+	return nil
+}
 func (f *fakeFiles) GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, string) {
 	return []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4}, "image/png"
 }

@@ -104,6 +104,19 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 		return nil, internalErr()
 	}
 	if found {
+		if isSecretChatFileFullyDownloaded(key, req.Offset, len(chunk.Bytes), chunk.Total) {
+			// The recipient has now received every byte of this secret-chat
+			// file. Best-effort, fire-and-forget: DeleteEncryptedFileBlob is
+			// itself a no-op unless TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD
+			// is enabled, and must never delay or fail this download response
+			// -- use a detached context since ctx may be canceled the moment
+			// this handler returns.
+			go func(locationKey string) {
+				if err := r.deps.Files.DeleteEncryptedFileBlob(context.Background(), locationKey); err != nil && r.log != nil {
+					r.log.Warn("delete secret chat file after download failed", zap.String("location_key", locationKey), zap.Error(err))
+				}
+			}(key)
+		}
 		return &tg.UploadFile{
 			Type:  storageFileType(chunk.MimeType, chunk.Bytes),
 			Mtime: 0,
@@ -111,6 +124,19 @@ func (r *Router) onUploadGetFile(ctx context.Context, req *tg.UploadGetFileReque
 		}, nil
 	}
 	return nil, locationInvalidErr()
+}
+
+// isSecretChatFileFullyDownloaded reports whether a getFile response for
+// location key key just delivered the last byte of a secret-chat encrypted
+// file (location_key "enc:<id>") -- the signal onUploadGetFile uses to
+// fire-and-forget DeleteEncryptedFileBlob. total<=0 (unknown size) never
+// counts as fully downloaded -- there is nothing to compare against, so
+// treating that as "done" could delete a file mid-transfer.
+func isSecretChatFileFullyDownloaded(key string, offset int64, chunkLen int, total int64) bool {
+	if !strings.HasPrefix(key, "enc:") || total <= 0 {
+		return false
+	}
+	return offset+int64(chunkLen) >= total
 }
 
 // authorizedFileLocationKey applies the authorization/capability checks which cannot be

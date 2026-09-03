@@ -941,6 +941,10 @@ type FilesService interface {
 	GetFile(ctx context.Context, req domain.FileDownloadRequest) (domain.FileChunk, bool, error)
 	// CreateEncryptedFileFromUpload 把密聊上传分片组装成盲 blob 并铸造 EncryptedFile 快照（P2）。
 	CreateEncryptedFileFromUpload(ctx context.Context, file domain.UploadedFileRef, keyFingerprint int) (domain.EncryptedFileRef, error)
+	// DeleteEncryptedFileBlob deletes a secret-chat encrypted file's blob
+	// bytes once fully downloaded (TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD,
+	// no-op otherwise) -- see internal/app/files.Service.DeleteEncryptedFileBlob.
+	DeleteEncryptedFileBlob(ctx context.Context, locationKey string) error
 	// GeoMapTile 渲染 geo 消息地图缩略占位图（upload.getWebFile），确定性、无外部依赖。
 	GeoMapTile(lat, long float64, w, h, zoom, scale int) ([]byte, string)
 	// 资源读取（reaction / sticker / document）。

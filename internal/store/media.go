@@ -34,6 +34,12 @@ type MediaStore interface {
 	// 供低磁盘空间守卫的周期性用量刷新使用（尤其是 s3 backend 的预算模式，没有
 	// 操作系统级"剩余空间"概念，只能靠这个累计值和配置的预算比较）。
 	SumFileBlobBytes(ctx context.Context) (int64, error)
+	// DeleteFileBlobRow deletes exactly one file_blobs row by its exact
+	// location_key -- no prefix matching (unlike the doc:/photo: sweep
+	// primitives, since callers of this method, e.g. secret-chat
+	// delete-after-download, already know the precise key and it never has
+	// sibling thumbnail/rendition rows to also clean up).
+	DeleteFileBlobRow(ctx context.Context, locationKey string) error
 
 	// seed 状态。只记录静态资源 catalog 的内容 hash，用于启动时跳过未变化的重复导入；
 	// 真实可服务性仍由 documents/file_blobs 校验保证，不能只相信这里的 hash。

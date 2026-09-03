@@ -10,6 +10,37 @@ import (
 	"telesrv/internal/domain"
 )
 
+// TestIsSecretChatFileFullyDownloaded covers the fire-and-forget
+// delete-after-download trigger in onUploadGetFile: only an "enc:"-prefixed
+// (secret-chat) location key, with a known total size, whose chunk reaches
+// the end of the file, counts as fully downloaded.
+func TestIsSecretChatFileFullyDownloaded(t *testing.T) {
+	cases := []struct {
+		name     string
+		key      string
+		offset   int64
+		chunkLen int
+		total    int64
+		want     bool
+	}{
+		{"secret chat, last chunk reaches exact end", "enc:123", 900, 100, 1000, true},
+		{"secret chat, last chunk overlaps past end", "enc:123", 950, 100, 1000, true},
+		{"secret chat, still mid-file", "enc:123", 0, 100, 1000, false},
+		{"secret chat, unknown total must never look done", "enc:123", 0, 100, 0, false},
+		{"secret chat, negative total must never look done", "enc:123", 0, 100, -1, false},
+		{"ordinary document key, even if it would otherwise look complete", "doc:123", 900, 100, 1000, false},
+		{"ordinary photo key", "photo:123:x", 0, 1000, 1000, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSecretChatFileFullyDownloaded(c.key, c.offset, c.chunkLen, c.total); got != c.want {
+				t.Fatalf("isSecretChatFileFullyDownloaded(%q, %d, %d, %d) = %v, want %v",
+					c.key, c.offset, c.chunkLen, c.total, got, c.want)
+			}
+		})
+	}
+}
+
 func TestFileSaveErrMapsStorageCapacityWithoutFloodWait(t *testing.T) {
 	err := fileSaveErr(domain.ErrStorageFull)
 	if !tgerr.Is(err, "STORAGE_FULL") {

@@ -238,6 +238,12 @@ func (s *MediaStore) PutFileBlob(ctx context.Context, blob domain.FileBlob) erro
 	})
 }
 
+// DeleteFileBlobRow deletes exactly one file_blobs row by its exact
+// location_key -- see the store.MediaStore interface doc comment.
+func (s *MediaStore) DeleteFileBlobRow(ctx context.Context, locationKey string) error {
+	return s.q.DeleteFileBlobRow(ctx, locationKey)
+}
+
 func (s *MediaStore) GetFileBlob(ctx context.Context, locationKey string) (domain.FileBlob, bool, error) {
 	row, err := s.q.GetFileBlob(ctx, locationKey)
 	if err != nil {
