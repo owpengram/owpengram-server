@@ -81,6 +81,9 @@ func (f *fakeCategorySweepStore) DeletePhotoAndBlobs(context.Context, int64) ([]
 func (f *fakeCategorySweepStore) OrphanDocumentIfUnreferenced(context.Context, int64) (bool, error) {
 	return false, nil
 }
+func (f *fakeCategorySweepStore) OrphanPhotoIfUnreferenced(context.Context, int64) (bool, error) {
+	return false, nil
+}
 func (f *fakeCategorySweepStore) DeleteFileBlobsForDocument(context.Context, int64) ([]domain.FileBlob, error) {
 	return nil, nil
 }

@@ -63,10 +63,12 @@ func (s *Service) retentionNotifier() (RetentionPurgeMessageEditor, RetentionPur
 
 // notifyRetentionPurge turns a just-completed hard-retention/eviction blob
 // purge of a document/photo into a visible service-message notice on every
-// message that still embeds it. profile_photo/sticker_set/gift references
-// have no message to edit and are skipped. Best-effort throughout: a lookup
-// or edit failure is logged and never propagated -- the underlying blob purge
-// has already committed and must not be undone or retried because of this.
+// message that still embeds it, then reaps the documents/photos metadata row
+// itself if that leaves nothing referencing it at all. profile_photo/
+// sticker_set/gift references have no message to edit and are skipped.
+// Best-effort throughout: a lookup or edit failure is logged and never
+// propagated -- the underlying blob purge has already committed and must not
+// be undone or retried because of this.
 func (s *Service) notifyRetentionPurge(ctx context.Context, kind domain.MediaKind, mediaID int64) {
 	messages, channels := s.retentionNotifier()
 	if messages == nil && channels == nil {
@@ -90,6 +92,31 @@ func (s *Service) notifyRetentionPurge(ctx context.Context, kind domain.MediaKin
 			s.notifyRetentionPurgeChannelMessage(ctx, channels, ref.RefKey)
 		case domain.MediaRefKindProfilePhoto, domain.MediaRefKindStickerSet, domain.MediaRefKindGift:
 			// No message to edit for these ref kinds.
+		}
+	}
+	// Every message edited above just had its media replaced with the purge
+	// notice, which -- like any other media-changing edit -- drops its
+	// media_references row (see replaceMessageBoxMediaIndexTx /
+	// replaceChannelMediaIndexTx). If that leaves zero references of ANY
+	// kind (no live profile_photo/sticker_set/gift reference either, and no
+	// edit above failed partway through), the documents/photos row is now
+	// pure dead weight -- nothing anywhere still displays its filename,
+	// dimensions, or mime type -- so delete it for real instead of keeping
+	// it forever. deleteDocumentNowIfUnreferenced/deletePhotoNowIfUnreferenced
+	// re-check media_references themselves before touching anything, so a
+	// stale/failed edit above simply leaves a live reference behind and this
+	// becomes a safe no-op -- the exact same check ordinary orphan-mode
+	// deletion already relies on.
+	switch kind {
+	case domain.MediaKindDocument:
+		if _, err := s.deleteDocumentNowIfUnreferenced(ctx, mediaID); err != nil {
+			s.log.Warn("delete now-unreferenced document after retention purge failed",
+				zap.Int64("document_id", mediaID), zap.Error(err))
+		}
+	case domain.MediaKindPhoto:
+		if _, err := s.deletePhotoNowIfUnreferenced(ctx, mediaID); err != nil {
+			s.log.Warn("delete now-unreferenced photo after retention purge failed",
+				zap.Int64("photo_id", mediaID), zap.Error(err))
 		}
 	}
 }

@@ -144,6 +144,9 @@ func (f *fakeManualPurgeStore) DeletePhotoAndBlobs(context.Context, int64) ([]do
 func (f *fakeManualPurgeStore) OrphanDocumentIfUnreferenced(context.Context, int64) (bool, error) {
 	return false, nil
 }
+func (f *fakeManualPurgeStore) OrphanPhotoIfUnreferenced(context.Context, int64) (bool, error) {
+	return false, nil
+}
 func (f *fakeManualPurgeStore) SumFileBlobBytes(context.Context) (int64, error) { return 0, nil }
 func (f *fakeManualPurgeStore) ListOldestMediaForEviction(context.Context, int) ([]domain.EvictionCandidate, error) {
 	return nil, nil

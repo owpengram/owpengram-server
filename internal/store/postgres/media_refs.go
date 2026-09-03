@@ -152,6 +152,21 @@ WHERE id = $1
 	return tag.RowsAffected() > 0, nil
 }
 
+// OrphanPhotoIfUnreferenced is OrphanDocumentIfUnreferenced's photo
+// counterpart -- see its doc comment.
+func (s *MediaStore) OrphanPhotoIfUnreferenced(ctx context.Context, id int64) (bool, error) {
+	tag, err := s.db.Exec(ctx, `
+UPDATE photos SET orphaned_at = now()
+WHERE id = $1
+  AND orphaned_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM media_references WHERE media_kind = 'photo' AND media_id = $1)`,
+		id)
+	if err != nil {
+		return false, fmt.Errorf("orphan photo if unreferenced: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ListOrphanedDocumentIDsOlderThan returns document ids in the given category
 // whose orphaned_at is set and older than cutoff, oldest first, up to limit.
 func (s *MediaStore) ListOrphanedDocumentIDsOlderThan(ctx context.Context, category domain.MediaCategory, cutoff time.Time, limit int) ([]int64, error) {

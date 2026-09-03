@@ -78,6 +78,9 @@ func (f *fakeEncryptedBlobStore) DeletePhotoAndBlobs(context.Context, int64) ([]
 func (f *fakeEncryptedBlobStore) OrphanDocumentIfUnreferenced(context.Context, int64) (bool, error) {
 	return false, nil
 }
+func (f *fakeEncryptedBlobStore) OrphanPhotoIfUnreferenced(context.Context, int64) (bool, error) {
+	return false, nil
+}
 func (f *fakeEncryptedBlobStore) ListDocumentIDsForHardRetentionOlderThan(context.Context, domain.MediaCategory, *time.Time, int) ([]int64, error) {
 	return nil, nil
 }

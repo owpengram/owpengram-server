@@ -63,6 +63,9 @@ type mediaRetentionStore interface {
 	// OrphanDocumentIfUnreferenced is the immediate (no grace period)
 	// counterpart to the age-based sweep above -- see its doc comment.
 	OrphanDocumentIfUnreferenced(ctx context.Context, id int64) (bool, error)
+	// OrphanPhotoIfUnreferenced is OrphanDocumentIfUnreferenced's photo
+	// counterpart, used the same way by deletePhotoNowIfUnreferenced.
+	OrphanPhotoIfUnreferenced(ctx context.Context, id int64) (bool, error)
 
 	// -- "hard" retention mode (TELESRV_STORAGE_RETENTION_MODE=hard) --
 	// Candidate selection ignores media_references entirely: a document/
@@ -508,6 +511,28 @@ func (s *Service) deleteDocumentNowIfUnreferenced(ctx context.Context, id int64)
 	blobs, err := store.DeleteDocumentAndBlobs(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("delete document: %w", err)
+	}
+	s.deleteOrphanedBlobs(ctx, store, blobs)
+	return true, nil
+}
+
+// deletePhotoNowIfUnreferenced is deleteDocumentNowIfUnreferenced's photo
+// counterpart -- see its doc comment.
+func (s *Service) deletePhotoNowIfUnreferenced(ctx context.Context, id int64) (bool, error) {
+	store, ok := s.media.(mediaRetentionStore)
+	if !ok {
+		return false, nil
+	}
+	orphaned, err := store.OrphanPhotoIfUnreferenced(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("orphan photo: %w", err)
+	}
+	if !orphaned {
+		return false, nil
+	}
+	blobs, err := store.DeletePhotoAndBlobs(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("delete photo: %w", err)
 	}
 	s.deleteOrphanedBlobs(ctx, store, blobs)
 	return true, nil
