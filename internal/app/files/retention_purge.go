@@ -36,13 +36,18 @@ type RetentionPurgeChannelEditor interface {
 // capability the storage retention sweep needs to turn a hard-retention/
 // eviction blob purge into a visible messageActionCustomAction notice on
 // every message still embedding the purged document/photo. Both app-layer
-// services are constructed after this Service in cmd/telesrv/main.go (and
-// the background retention sweep goroutine is started before either exists),
-// so this is a post-construction setter rather than a NewService option: a
-// sweep tick that races ahead of this call simply finds both fields nil and
-// skips the notice for that tick, same as any other per-reference failure
-// below (best-effort -- the underlying blob purge has already committed and
-// must never be undone or retried because of a notice failure).
+// services are constructed after this Service in cmd/telesrv/main.go, so
+// this is a post-construction setter rather than a NewService option --
+// cmd/telesrv/main.go deliberately calls this BEFORE starting the
+// retentionWorker.Run goroutine, since a sweep tick that raced ahead of this
+// call would find both fields nil and permanently lose the notice for
+// whatever it purged that tick (a purged document/photo never again matches
+// the hard-retention candidate query, so there's no later tick to retry the
+// notice on). If both fields are still nil here for some other reason (e.g.
+// a future caller reordering), the notice is best-effort and silently
+// skipped, same as any other per-reference failure below -- the underlying
+// blob purge has already committed and must never be undone or retried
+// because of a notice failure.
 func (s *Service) SetRetentionPurgeNotifier(messages RetentionPurgeMessageEditor, channels RetentionPurgeChannelEditor) {
 	s.retentionNotifyMu.Lock()
 	defer s.retentionNotifyMu.Unlock()

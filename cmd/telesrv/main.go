@@ -1128,7 +1128,10 @@ func run(logger *zap.Logger) error {
 	// Active eviction is independent of TELESRV_STORAGE_RETENTION_MODE (can
 	// run even when that's "off") and reuses the same media sweep ticker.
 	retentionWorker = retentionWorker.WithStorageEviction(filesService, cfg.StorageEvictionEnable)
-	go retentionWorker.Run(ctx)
+	// retentionWorker.Run itself isn't started here -- see the
+	// filesService.SetRetentionPurgeNotifier call below, which must happen
+	// first so the worker's very first (synchronous) sweep tick can't purge
+	// blobs before there's anywhere to send the purge notice.
 	go filesapp.NewUploadPartGCWorker(filesService, logger.Named("files").Named("upload_gc"),
 		cfg.UploadPartTTL,
 		cfg.UploadPartGCInterval,
@@ -1425,12 +1428,16 @@ func run(logger *zap.Logger) error {
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
 	// Wires the storage retention sweep's purge-notice capability now that
-	// both edit-capable app services exist -- filesService (and the
-	// background retentionWorker goroutine reading it) was constructed
-	// earlier, before either was available. A sweep tick that races ahead of
-	// this call simply finds no notifier yet and skips the notice for that
-	// tick (best-effort, see files.SetRetentionPurgeNotifier).
+	// both edit-capable app services exist -- filesService was constructed
+	// earlier, before either was available. Must happen before
+	// retentionWorker.Run starts below: that call's first sweep tick runs
+	// synchronously (maintenance.RetentionWorker.Run -> runOnce), and once a
+	// document/photo's blob bytes are purged it never again matches the
+	// hard-retention candidate query (see ListDocumentIDsForHardRetentionOlderThan's
+	// doc comment) -- so a tick that raced ahead of this call wouldn't just
+	// delay the notice, it would permanently lose it (files.SetRetentionPurgeNotifier).
 	filesService.SetRetentionPurgeNotifier(messagesService, channelsService)
+	go retentionWorker.Run(ctx)
 	moderationService := moderationapp.NewService(
 		moderationReportStore,
 		moderationapp.WithMessageReaders(messagesService, channelsService),
