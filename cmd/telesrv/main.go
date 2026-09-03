@@ -550,6 +550,25 @@ func webPagePreviewOption(cfg config.Config) filesapp.Option {
 	return filesapp.WithWebPagePreview(cfg.WebPagePreviewMaxBytes, cfg.WebPagePreviewRatePerMin)
 }
 
+// fastestPositiveDuration returns the smaller of a and b, treating a
+// non-positive value as "not configured" rather than as the smallest
+// possible duration -- 0 only when both are non-positive (nothing
+// configured). Used to derive the storage retention sweep's ticker cadence
+// from whichever of the shared default age and its per-category overrides
+// asks to run soonest.
+func fastestPositiveDuration(a, b time.Duration) time.Duration {
+	if a <= 0 {
+		return b
+	}
+	if b <= 0 {
+		return a
+	}
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func run(logger *zap.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -933,6 +952,8 @@ func run(logger *zap.Logger) error {
 		filesapp.WithAdditionalBlobBackend(additionalBlobBackend),
 		filesapp.WithSpaceGuard(spaceGuard),
 		filesapp.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
+		filesapp.WithStorageRetentionAges(cfg.StorageRetentionMaxAge, cfg.StorageRetentionMaxAgeByCategory, cfg.StorageRetentionMaxAgeAvatar),
+		filesapp.WithStorageMaxTotalBytes(cfg.StorageMaxTotalBytes),
 		filesapp.WithMapboxMapTiles(cfg.MapboxToken, cfg.MapTileCacheDir),
 		externalMediaOption(cfg),
 		webPagePreviewOption(cfg),
@@ -1081,12 +1102,31 @@ func run(logger *zap.Logger) error {
 	// TELESRV_STORAGE_RETENTION_MODE is a single 3-way switch: at most one of
 	// the orphan-only (safe) and hard (age-based, ignores live references)
 	// media sweeps is ever wired in, matching "off"/"orphan"/"hard".
+	// The worker's own maxAge parameter only drives how often the sweep
+	// ticks (internal/app/maintenance.RetentionWorker.mediaRetentionInterval)
+	// -- the real per-category cutoff math lives entirely in
+	// files.Service (WithStorageRetentionAges above). Passing the raw shared
+	// default here would tick as slowly as a 30-day default even when a
+	// TELESRV_STORAGE_RETENTION_MAX_AGE_<CATEGORY> override asks for a much
+	// shorter age (or, if the shared default is 0 -- "disabled by default,
+	// only specific categories opt in" -- would disable the sweep outright,
+	// since a 0 maxAge here used to gate the whole sweep off). Use the
+	// fastest positive age across the shared default and every override
+	// instead, so the ticker -- and the sweep-enabled gate -- reflect
+	// whatever is actually configured to run soonest.
+	fastestRetentionAge := fastestPositiveDuration(cfg.StorageRetentionMaxAge, cfg.StorageRetentionMaxAgeAvatar)
+	for _, age := range cfg.StorageRetentionMaxAgeByCategory {
+		fastestRetentionAge = fastestPositiveDuration(fastestRetentionAge, age)
+	}
 	switch cfg.StorageRetentionMode {
 	case config.StorageRetentionModeOrphan:
-		retentionWorker = retentionWorker.WithOrphanedMediaRetention(filesService, cfg.StorageRetentionMaxAge)
+		retentionWorker = retentionWorker.WithOrphanedMediaRetention(filesService, fastestRetentionAge)
 	case config.StorageRetentionModeHard:
-		retentionWorker = retentionWorker.WithHardMediaRetention(filesService, cfg.StorageRetentionMaxAge)
+		retentionWorker = retentionWorker.WithHardMediaRetention(filesService, fastestRetentionAge)
 	}
+	// Active eviction is independent of TELESRV_STORAGE_RETENTION_MODE (can
+	// run even when that's "off") and reuses the same media sweep ticker.
+	retentionWorker = retentionWorker.WithStorageEviction(filesService, cfg.StorageEvictionEnable)
 	go retentionWorker.Run(ctx)
 	go filesapp.NewUploadPartGCWorker(filesService, logger.Named("files").Named("upload_gc"),
 		cfg.UploadPartTTL,
@@ -1383,6 +1423,13 @@ func run(logger *zap.Logger) error {
 		messageapp.WithSendPermissionChecker(adminService),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
+	// Wires the storage retention sweep's purge-notice capability now that
+	// both edit-capable app services exist -- filesService (and the
+	// background retentionWorker goroutine reading it) was constructed
+	// earlier, before either was available. A sweep tick that races ahead of
+	// this call simply finds no notifier yet and skips the notice for that
+	// tick (best-effort, see files.SetRetentionPurgeNotifier).
+	filesService.SetRetentionPurgeNotifier(messagesService, channelsService)
 	moderationService := moderationapp.NewService(
 		moderationReportStore,
 		moderationapp.WithMessageReaders(messagesService, channelsService),

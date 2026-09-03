@@ -105,6 +105,30 @@ RETURNING media_kind, media_id`, string(refKind), refKey)
 	return nil
 }
 
+// ListMediaReferences returns every live reference row for (kind, mediaID) --
+// used by the storage retention sweep to turn a hard-retention/eviction blob
+// purge into a visible notice on every message that still embeds the purged
+// media. See internal/app/files.notifyRetentionPurge.
+func (s *MediaStore) ListMediaReferences(ctx context.Context, kind domain.MediaKind, mediaID int64) ([]domain.MediaReference, error) {
+	rows, err := s.q.ListMediaReferences(ctx, sqlcgen.ListMediaReferencesParams{
+		MediaKind: string(kind),
+		MediaID:   mediaID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list media references: %w", err)
+	}
+	out := make([]domain.MediaReference, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.MediaReference{
+			Kind:    domain.MediaKind(r.MediaKind),
+			MediaID: r.MediaID,
+			RefKind: domain.MediaRefKind(r.RefKind),
+			RefKey:  r.RefKey,
+		})
+	}
+	return out, nil
+}
+
 // ---- storage retention sweep ----
 
 // OrphanDocumentIfUnreferenced marks a document orphaned right now if
@@ -128,25 +152,40 @@ WHERE id = $1
 	return tag.RowsAffected() > 0, nil
 }
 
-// ListOrphanedDocumentIDsOlderThan returns document ids whose orphaned_at is
-// set and older than cutoff, oldest first, up to limit.
-func (s *MediaStore) ListOrphanedDocumentIDsOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+// ListOrphanedDocumentIDsOlderThan returns document ids in the given category
+// whose orphaned_at is set and older than cutoff, oldest first, up to limit.
+func (s *MediaStore) ListOrphanedDocumentIDsOlderThan(ctx context.Context, category domain.MediaCategory, cutoff time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListOrphanedDocumentIDsOlderThan(ctx, sqlcgen.ListOrphanedDocumentIDsOlderThanParams{
 		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Category:   int16(category),
 		BatchLimit: int32(limit),
 	})
 }
 
-// ListOrphanedPhotoIDsOlderThan returns photo ids whose orphaned_at is set
-// and older than cutoff, oldest first, up to limit.
+// ListOrphanedPhotoIDsOlderThan returns photo ids (excluding a live avatar --
+// see ListAvatarOrphanedPhotoIDsOlderThan) whose orphaned_at is set and older
+// than cutoff, oldest first, up to limit.
 func (s *MediaStore) ListOrphanedPhotoIDsOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListOrphanedPhotoIDsOlderThan(ctx, sqlcgen.ListOrphanedPhotoIDsOlderThanParams{
+		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		BatchLimit: int32(limit),
+	})
+}
+
+// ListAvatarOrphanedPhotoIDsOlderThan is the "Avatar" category counterpart of
+// ListOrphanedPhotoIDsOlderThan -- see the query's doc comment for why this
+// is expected to stay empty in practice under "orphan" mode.
+func (s *MediaStore) ListAvatarOrphanedPhotoIDsOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.q.ListAvatarOrphanedPhotoIDsOlderThan(ctx, sqlcgen.ListAvatarOrphanedPhotoIDsOlderThanParams{
 		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
 		BatchLimit: int32(limit),
 	})
@@ -197,29 +236,43 @@ func (s *MediaStore) DeleteDocumentAndBlobs(ctx context.Context, id int64) ([]do
 	return blobs, nil
 }
 
-// ListDocumentIDsForHardRetentionOlderThan returns document ids older than
-// cutoff (by upload/created_at) that still own at least one file_blobs row,
-// oldest first, up to limit -- the "hard" retention sweep's candidate list.
-// Unlike ListOrphanedDocumentIDsOlderThan, this ignores media_references
-// entirely: a document still referenced by a live message is exactly as
-// eligible as an orphaned one.
-func (s *MediaStore) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+// ListDocumentIDsForHardRetentionOlderThan returns document ids in the given
+// category older than cutoff (by upload/created_at) that still own at least
+// one file_blobs row, oldest first, up to limit -- the "hard" retention
+// sweep's candidate list. Unlike ListOrphanedDocumentIDsOlderThan, this
+// ignores media_references entirely: a document still referenced by a live
+// message is exactly as eligible as an orphaned one.
+func (s *MediaStore) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, category domain.MediaCategory, cutoff time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListDocumentIDsForHardRetentionOlderThan(ctx, sqlcgen.ListDocumentIDsForHardRetentionOlderThanParams{
 		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Category:   int16(category),
 		BatchLimit: int32(limit),
 	})
 }
 
 // ListPhotoIDsForHardRetentionOlderThan is the photo counterpart of
-// ListDocumentIDsForHardRetentionOlderThan.
+// ListDocumentIDsForHardRetentionOlderThan (excluding a live avatar -- see
+// ListAvatarPhotoIDsForHardRetentionOlderThan).
 func (s *MediaStore) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	return s.q.ListPhotoIDsForHardRetentionOlderThan(ctx, sqlcgen.ListPhotoIDsForHardRetentionOlderThanParams{
+		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
+		BatchLimit: int32(limit),
+	})
+}
+
+// ListAvatarPhotoIDsForHardRetentionOlderThan is the "Avatar" category
+// counterpart of ListPhotoIDsForHardRetentionOlderThan.
+func (s *MediaStore) ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, cutoff time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return s.q.ListAvatarPhotoIDsForHardRetentionOlderThan(ctx, sqlcgen.ListAvatarPhotoIDsForHardRetentionOlderThanParams{
 		Cutoff:     pgtype.Timestamptz{Time: cutoff, Valid: true},
 		BatchLimit: int32(limit),
 	})
@@ -290,6 +343,32 @@ func (s *MediaStore) DeleteFileBlobsForPhoto(ctx context.Context, id int64) ([]d
 		return nil, err
 	}
 	return blobs, nil
+}
+
+// ListOldestMediaForEviction returns up to limit documents and limit photos
+// still owning file_blobs bytes, oldest-uploaded first, for the active
+// eviction sweep to interleave by actual created_at (not drain one table
+// before the other) -- see domain.EvictionCandidate.
+func (s *MediaStore) ListOldestMediaForEviction(ctx context.Context, limit int) ([]domain.EvictionCandidate, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	docs, err := s.q.ListOldestDocumentsForEviction(ctx, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list oldest documents for eviction: %w", err)
+	}
+	photos, err := s.q.ListOldestPhotosForEviction(ctx, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list oldest photos for eviction: %w", err)
+	}
+	out := make([]domain.EvictionCandidate, 0, len(docs)+len(photos))
+	for _, d := range docs {
+		out = append(out, domain.EvictionCandidate{Kind: domain.MediaKindDocument, MediaID: d.ID, CreatedAt: d.CreatedAt.Time})
+	}
+	for _, p := range photos {
+		out = append(out, domain.EvictionCandidate{Kind: domain.MediaKindPhoto, MediaID: p.ID, CreatedAt: p.CreatedAt.Time})
+	}
+	return out, nil
 }
 
 // DeletePhotoAndBlobs deletes a photo row and every file_blobs row it owns

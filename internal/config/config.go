@@ -357,6 +357,32 @@ type Config struct {
 	// RetentionInterval/RetentionBatch cadence alongside every other
 	// retention check (see maintenance.RetentionWorker).
 	StorageRetentionMaxAge time.Duration
+	// StorageRetentionMaxAgeByCategory overrides StorageRetentionMaxAge for
+	// one document media category (Photo/Video/RoundVideo/Gif/Music/Voice/
+	// File); a category absent from the map inherits the shared global age.
+	// Populated from TELESRV_STORAGE_RETENTION_MAX_AGE_<CATEGORY> env vars,
+	// one per category -- unset or non-positive means "inherit global" for
+	// that category (a document that hasn't been classified, e.g. a sticker,
+	// always uses the global age -- there is no override for that bucket).
+	// Avatar is not a domain.MediaCategory (a photo becomes/stops being an
+	// avatar via profile_photos, not a document attribute), so it gets its
+	// own StorageRetentionMaxAgeAvatar field instead of a map entry.
+	StorageRetentionMaxAgeByCategory map[domain.MediaCategory]time.Duration
+	// StorageRetentionMaxAgeAvatar overrides StorageRetentionMaxAge for
+	// photos currently active as someone's avatar (profile_photos.active).
+	// <=0 means "inherit global", same convention as
+	// StorageRetentionMaxAgeByCategory.
+	StorageRetentionMaxAgeAvatar time.Duration
+	// StorageEvictionEnable turns on active eviction: once the total physical
+	// blob bytes exceed StorageMaxTotalBytes, the oldest documents/photos
+	// (interleaved by created_at across both tables, regardless of category
+	// or age) are purged the same way "hard" retention mode purges blob
+	// bytes -- repeated until back under budget. Independent of
+	// StorageRetentionMode: eviction can run even when retention mode is
+	// "off". Default false (opt-in), since this changes what
+	// StorageMaxTotalBytes has meant so far (block new uploads only ->
+	// block-and-reclaim from existing ones too).
+	StorageEvictionEnable bool
 	// StickerSeedDir 是 reaction / sticker 资源种子目录（导入到 documents/sticker_sets + blob）。
 	StickerSeedDir string
 	// StickerSeedMaxSets 限制导入的常规贴纸集数量（避免启动时导入过多包），<=0 表示不限。
@@ -980,6 +1006,9 @@ func Load() (Config, error) {
 		StorageUsageRefreshInterval:       envDurationOr("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", time.Minute),
 		StorageRetentionMode:              strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_RETENTION_MODE", StorageRetentionModeOff))),
 		StorageRetentionMaxAge:            envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE", 30*24*time.Hour),
+		StorageRetentionMaxAgeByCategory:  storageRetentionMaxAgeByCategoryFromEnv(envDurationOr),
+		StorageRetentionMaxAgeAvatar:      envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE_AVATAR", 0),
+		StorageEvictionEnable:             envBoolOr("TELESRV_STORAGE_EVICTION_ENABLE", false),
 		StickerSeedDir:                    envOr("TELESRV_STICKER_SEED_DIR", "data/sticker-seed"),
 		StickerSeedMaxSets:                envIntOr("TELESRV_STICKER_SEED_MAX_SETS", 300),
 		PremiumPromoSeedDir:               envOr("TELESRV_PREMIUM_PROMO_SEED_DIR", "data/premium-promo"),
@@ -1518,13 +1547,21 @@ func validateStorageConfig(cfg Config) error {
 	if cfg.StorageRetentionMaxAge < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE must be non-negative")
 	}
+	if cfg.StorageRetentionMaxAgeAvatar < 0 {
+		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE_AVATAR must be non-negative")
+	}
 	switch cfg.StorageRetentionMode {
 	case StorageRetentionModeOff:
 		// no sweep; StorageRetentionMaxAge is ignored.
 	case StorageRetentionModeOrphan, StorageRetentionModeHard:
-		if cfg.StorageRetentionMaxAge <= 0 {
-			return fmt.Errorf("TELESRV_STORAGE_RETENTION_MAX_AGE must be positive when TELESRV_STORAGE_RETENTION_MODE is %q", cfg.StorageRetentionMode)
-		}
+		// StorageRetentionMaxAge (the shared default) is no longer required to
+		// be positive here: it can legitimately be 0 -- "no sweep by default"
+		// -- while individual TELESRV_STORAGE_RETENTION_MAX_AGE_<CATEGORY>/
+		// _AVATAR overrides opt specific categories in. The sweep itself
+		// (internal/app/files/retention.go) skips any category whose
+		// *effective* age (its own override, or this shared default) is <=0,
+		// so a 0 default with no overrides simply means the mode runs and
+		// purges nothing -- equivalent to "off" in practice, not dangerous.
 	default:
 		return fmt.Errorf("TELESRV_STORAGE_RETENTION_MODE must be \"off\", \"orphan\", or \"hard\", got %q", cfg.StorageRetentionMode)
 	}
@@ -2073,6 +2110,33 @@ func (e envSource) envFloatOr(key string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+// storageRetentionMaxAgeByCategoryFromEnv builds Config.StorageRetentionMaxAgeByCategory:
+// one TELESRV_STORAGE_RETENTION_MAX_AGE_<CATEGORY> env var per document
+// media category, using envDurationOr(key, 0) so "unset" and "explicitly 0"
+// both cleanly mean "inherit the shared global age" -- only a positive value
+// gets an entry in the map.
+func storageRetentionMaxAgeByCategoryFromEnv(envDurationOr func(key string, def time.Duration) time.Duration) map[domain.MediaCategory]time.Duration {
+	entries := []struct {
+		category domain.MediaCategory
+		envKey   string
+	}{
+		{domain.MediaCategoryPhoto, "TELESRV_STORAGE_RETENTION_MAX_AGE_PHOTO"},
+		{domain.MediaCategoryVideo, "TELESRV_STORAGE_RETENTION_MAX_AGE_VIDEO"},
+		{domain.MediaCategoryRoundVideo, "TELESRV_STORAGE_RETENTION_MAX_AGE_ROUND_VIDEO"},
+		{domain.MediaCategoryGif, "TELESRV_STORAGE_RETENTION_MAX_AGE_GIF"},
+		{domain.MediaCategoryMusic, "TELESRV_STORAGE_RETENTION_MAX_AGE_MUSIC"},
+		{domain.MediaCategoryVoice, "TELESRV_STORAGE_RETENTION_MAX_AGE_VOICE"},
+		{domain.MediaCategoryFile, "TELESRV_STORAGE_RETENTION_MAX_AGE_FILE"},
+	}
+	out := make(map[domain.MediaCategory]time.Duration, len(entries))
+	for _, e := range entries {
+		if age := envDurationOr(e.envKey, 0); age > 0 {
+			out[e.category] = age
+		}
+	}
+	return out
 }
 
 // envDurationOr 读取 time.ParseDuration 格式（如 "200ms"、"30s"）的时长配置；解析失败回退默认值。

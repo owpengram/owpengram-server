@@ -100,6 +100,27 @@ type Service struct {
 	// restart -- deleting only the DB row would make a "deleted" GIF come
 	// back on its own.
 	gifSeedDir string
+
+	// storageRetentionGlobalMaxAge/storageRetentionCategoryAges/
+	// storageRetentionAvatarMaxAge back categoryRetentionAge/avatarRetentionAge
+	// (retention.go) -- the per-category storage retention age overrides plus
+	// the shared global fallback age. Set via WithStorageRetentionAges.
+	storageRetentionGlobalMaxAge time.Duration
+	storageRetentionCategoryAges map[domain.MediaCategory]time.Duration
+	storageRetentionAvatarMaxAge time.Duration
+	// storageMaxTotalBytes is TELESRV_STORAGE_MAX_TOTAL_BYTES, reused by
+	// EvictOldestMediaOverBudget as the active-eviction trigger threshold
+	// (<=0 disables eviction regardless of TELESRV_STORAGE_EVICTION_ENABLE).
+	storageMaxTotalBytes int64
+
+	// retentionNotifyMu guards retentionMessages/retentionChannels: they are
+	// set post-construction (see SetRetentionPurgeNotifier) from
+	// cmd/telesrv/main.go once messageapp/channelapp services exist, which
+	// happens after this Service and the background retention sweep that
+	// reads them are already running.
+	retentionNotifyMu sync.RWMutex
+	retentionMessages RetentionPurgeMessageEditor
+	retentionChannels RetentionPurgeChannelEditor
 }
 
 // Option 配置 files 服务的可选能力。
@@ -197,6 +218,27 @@ func WithGifCatalog(c store.GifCatalogStore) Option {
 		if c != nil {
 			s.gifCatalog = c
 		}
+	}
+}
+
+// WithStorageRetentionAges configures the per-category storage retention age
+// overrides (Config.StorageRetentionMaxAgeByCategory/-MaxAgeAvatar) plus the
+// shared global fallback age (Config.StorageRetentionMaxAge), consumed by
+// categoryRetentionAge/avatarRetentionAge in retention.go.
+func WithStorageRetentionAges(global time.Duration, byCategory map[domain.MediaCategory]time.Duration, avatarMaxAge time.Duration) Option {
+	return func(s *Service) {
+		s.storageRetentionGlobalMaxAge = global
+		s.storageRetentionCategoryAges = byCategory
+		s.storageRetentionAvatarMaxAge = avatarMaxAge
+	}
+}
+
+// WithStorageMaxTotalBytes records TELESRV_STORAGE_MAX_TOTAL_BYTES for
+// EvictOldestMediaOverBudget's active-eviction trigger threshold, reusing the
+// same cap SpaceGuard already enforces against new uploads.
+func WithStorageMaxTotalBytes(maxBytes int64) Option {
+	return func(s *Service) {
+		s.storageMaxTotalBytes = maxBytes
 	}
 }
 

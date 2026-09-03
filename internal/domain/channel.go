@@ -634,6 +634,10 @@ const (
 	ChannelActionSuggestedPostApproval ChannelMessageActionType = "suggested_post_approval"
 	ChannelActionSuggestedPostSuccess  ChannelMessageActionType = "suggested_post_success"
 	ChannelActionSuggestedPostRefund   ChannelMessageActionType = "suggested_post_refund"
+	// ChannelActionCustomText 映射 messageActionCustomAction（stock TL 类型）：
+	// 当前唯一用途是把 storage retention 硬回收/主动淘汰清理掉的频道消息就地
+	// 转成这条通知（见 EditChannelMessageRequest.RetentionPurge）。
+	ChannelActionCustomText ChannelMessageActionType = "custom_text"
 )
 
 // ChannelMessageAction describes a service action without depending on tg.*.
@@ -678,6 +682,8 @@ type ChannelMessageAction struct {
 	SuggestedPostScheduleDate   int
 	SuggestedPostPrice          *SuggestedPostPrice
 	SuggestedPostPayerInitiated bool
+	// Text 仅 custom_text 服务消息使用（messageActionCustomAction.message）。
+	Text string
 }
 
 // ChannelMessage is a single stored message in a channel/supergroup.
@@ -1967,6 +1973,15 @@ type EditChannelMessageRequest struct {
 	// 仅当目标当前 media 仍是 ID==ExpectedWebPageID 的 pending 链接预览才替换。
 	WebPageResolve    bool
 	ExpectedWebPageID int64
+	// RetentionPurge 置位时为存储 retention 硬回收/主动淘汰的服务端内部编辑：
+	// 绕过普通的发送者/管理员编辑权限校验，仅由 internal/app/files 的
+	// retention purge 通知路径设置。见 EditMessageRequest.RetentionPurge。
+	RetentionPurge bool
+	// RetentionPurgeAction 与 RetentionPurge 搭配使用：频道消息的服务动作
+	// 存于独立的 Action 字段（不像私聊消息把服务动作折进 Media.Kind=service），
+	// 所以 retention 通知在频道侧必须整条消息转成一条新的服务消息（清空
+	// body/media，只设置这个 Action），而不是像私聊那样替换 Media。
+	RetentionPurgeAction *ChannelMessageAction
 }
 
 // EditChannelMessageResult describes one channel edit update.

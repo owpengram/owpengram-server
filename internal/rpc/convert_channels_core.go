@@ -224,6 +224,8 @@ func tgChannelMessageAction(action domain.ChannelMessageAction) tg.MessageAction
 		return &tg.MessageActionChannelCreate{Title: action.Title}
 	case domain.ChannelActionHistoryClear:
 		return &tg.MessageActionHistoryClear{}
+	case domain.ChannelActionCustomText:
+		return &tg.MessageActionCustomAction{Message: action.Text}
 	case domain.ChannelActionChatAddUser, domain.ChannelActionChatJoined:
 		return &tg.MessageActionChatAddUser{Users: append([]int64(nil), action.UserIDs...)}
 	case domain.ChannelActionChatJoinedByLink:

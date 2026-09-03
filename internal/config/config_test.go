@@ -550,14 +550,31 @@ func TestLoadRejectsInvalidStorageRetentionMode(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsStorageRetentionModeWithoutMaxAge(t *testing.T) {
+// TestLoadAcceptsStorageRetentionModeWithZeroMaxAgeAndCategoryOverride guards
+// a real reported bug: TELESRV_STORAGE_RETENTION_MAX_AGE=0 (the shared
+// default) used to be rejected outright whenever the mode was orphan/hard,
+// which made it impossible to run the sweep for only specific
+// TELESRV_STORAGE_RETENTION_MAX_AGE_<CATEGORY> overrides while leaving
+// everything else alone. A zero shared default is now legitimate: the sweep
+// itself (internal/app/files/retention.go) skips any category whose
+// *effective* age is <=0, so 0 here just means "no default sweep" rather
+// than "purge everything immediately".
+func TestLoadAcceptsStorageRetentionModeWithZeroMaxAgeAndCategoryOverride(t *testing.T) {
 	for _, mode := range []string{StorageRetentionModeOrphan, StorageRetentionModeHard} {
 		t.Run(mode, func(t *testing.T) {
 			disableDefaultConfigFile(t)
 			t.Setenv("TELESRV_STORAGE_RETENTION_MODE", mode)
 			t.Setenv("TELESRV_STORAGE_RETENTION_MAX_AGE", "0s")
-			if _, err := Load(); err == nil {
-				t.Fatalf("Load accepted TELESRV_STORAGE_RETENTION_MODE=%s with zero max age", mode)
+			t.Setenv("TELESRV_STORAGE_RETENTION_MAX_AGE_VIDEO", "24h")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load rejected TELESRV_STORAGE_RETENTION_MODE=%s with zero shared max age + a category override: %v", mode, err)
+			}
+			if cfg.StorageRetentionMaxAge != 0 {
+				t.Fatalf("StorageRetentionMaxAge = %v, want 0", cfg.StorageRetentionMaxAge)
+			}
+			if got := cfg.StorageRetentionMaxAgeByCategory[domain.MediaCategoryVideo]; got != 24*time.Hour {
+				t.Fatalf("StorageRetentionMaxAgeByCategory[Video] = %v, want 24h", got)
 			}
 		})
 	}

@@ -1252,6 +1252,7 @@ type Document struct {
 	CreatedAt     pgtype.Timestamptz
 	OwnerUserID   int64
 	OrphanedAt    pgtype.Timestamptz
+	Category      int16
 }
 
 type EncryptedFile struct {

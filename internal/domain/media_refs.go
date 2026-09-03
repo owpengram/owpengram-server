@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // MediaKind identifies which table a media_references row points into.
 type MediaKind string
 
@@ -43,6 +45,16 @@ type OrphanCandidate struct {
 	ObjectKey  string
 	Size       int64
 	OrphanedAt int64 // unix seconds
+}
+
+// EvictionCandidate is one document/photo still owning file_blobs bytes,
+// used by the active-eviction sweep (TELESRV_STORAGE_EVICTION_ENABLE) to pick
+// the oldest media overall across both tables once total physical storage
+// exceeds TELESRV_STORAGE_MAX_TOTAL_BYTES.
+type EvictionCandidate struct {
+	Kind      MediaKind
+	MediaID   int64
+	CreatedAt time.Time
 }
 
 // MediaRefTarget identifies one document/photo embedded in a message's media

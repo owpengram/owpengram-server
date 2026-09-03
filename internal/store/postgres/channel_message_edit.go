@@ -12,7 +12,12 @@ import (
 )
 
 func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
-	if req.UserID == 0 || req.ChannelID == 0 || req.ID <= 0 {
+	retentionPurge := req.RetentionPurge && req.RetentionPurgeAction != nil
+	// RetentionPurge is a server-internal edit with no acting user (the
+	// storage retention sweep, not an RPC caller) -- UserID==0 is normally
+	// invalid, and req.UserID would otherwise also need to name an existing
+	// channel member for getChannelForMember below.
+	if (req.UserID == 0 && !retentionPurge) || req.ChannelID == 0 || req.ID <= 0 {
 		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
 	}
 	beginner, ok := s.db.(txBeginner)
@@ -44,13 +49,34 @@ func (s *ChannelStore) EditChannelMessage(ctx context.Context, req domain.EditCh
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	channel, member, err := s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+	var (
+		channel domain.Channel
+		member  domain.ChannelMember
+	)
+	if retentionPurge {
+		// No membership requirement: this is a server-internal edit, not an
+		// action taken by any particular channel member.
+		channel, err = s.channelByID(ctx, tx, req.ChannelID)
+	} else {
+		channel, member, err = s.getChannelForMember(ctx, tx, req.UserID, req.ChannelID)
+	}
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
 	}
 	msg, err := s.getChannelMessage(ctx, tx, req.ChannelID, req.ID)
 	if err != nil {
 		return domain.EditChannelMessageResult{}, err
+	}
+	if retentionPurge {
+		if msg.Deleted {
+			return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
+		}
+		if msg.Action != nil {
+			// 幂等守卫：已经是服务消息(含已被本路径转换过的 retention 通知)
+			// 不再重复编辑 -- 见 EditMessageRequest.RetentionPurge 同款守卫。
+			return domain.EditChannelMessageResult{}, domain.ErrMessageNotModified
+		}
+		return s.applyRetentionPurgeChannelMessage(ctx, tx, channel, msg, req)
 	}
 	if msg.Deleted || msg.Action != nil {
 		return domain.EditChannelMessageResult{}, domain.ErrMessageIDInvalid
@@ -281,6 +307,74 @@ WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, mediaJSON); err != ni
 	committed = true
 	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
 	return domain.EditChannelMessageResult{Channel: channel, Message: msg, Event: event, ServiceMessage: serviceMsg, ServiceEvent: serviceEvent, Recipients: recipients}, nil
+}
+
+// applyRetentionPurgeChannelMessage turns msg into a real service message
+// (messageActionCustomAction via req.RetentionPurgeAction) in place. Unlike a
+// normal channel edit -- which only ever replaces body/entities/media --
+// channel service actions live in a structurally separate Action column
+// (see tgChannelMessage: m.Action != nil renders tg.MessageService instead of
+// tg.Message), so this clears body/media and sets Action instead of touching
+// them. Reuses the same pts/durable-event/admin-log machinery as a normal
+// edit so getChannelDifference and the fanout dispatcher see it identically.
+func (s *ChannelStore) applyRetentionPurgeChannelMessage(ctx context.Context, tx pgx.Tx, channel domain.Channel, msg domain.ChannelMessage, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
+	actionJSON, err := marshalJSON(req.RetentionPurgeAction, "{}")
+	if err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("encode retention purge channel action: %w", err)
+	}
+	pts, err := s.reserveChannelPts(ctx, tx, req.ChannelID)
+	if err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("allocate retention purge channel pts: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE channel_messages
+SET body = '', entities = '[]'::jsonb, media = '{}'::jsonb, action = $3, edit_date = $4, pts = $5, updated_at = now()
+WHERE channel_id = $1 AND id = $2`, req.ChannelID, req.ID, actionJSON, req.EditDate, pts); err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("update retention purge channel message: %w", err)
+	}
+	prevMsg := msg
+	msg.Body = ""
+	msg.Entities = nil
+	msg.Media = nil
+	msg.Action = req.RetentionPurgeAction
+	msg.EditDate = req.EditDate
+	msg.Pts = pts
+	// 媒体索引/media_references 靠这次替换后的（空）媒体重建：原文档/照片
+	// 不再被这条消息引用，storage retention 的孤儿判定据此推进。
+	if err := replaceChannelMediaIndexTx(ctx, tx, req.ChannelID, req.ID, msg.Date, msg.Media, nil); err != nil {
+		return domain.EditChannelMessageResult{}, err
+	}
+	event := domain.ChannelUpdateEvent{
+		ChannelID:    req.ChannelID,
+		Type:         domain.ChannelUpdateEditMessage,
+		Pts:          pts,
+		PtsCount:     1,
+		Date:         req.EditDate,
+		Message:      msg,
+		SenderUserID: req.UserID,
+	}
+	if err := insertChannelEventTx(ctx, tx, event); err != nil {
+		return domain.EditChannelMessageResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE channels SET pts = $2, updated_at = now() WHERE id = $1`, req.ChannelID, pts); err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("update retention purge channel pts: %w", err)
+	}
+	channel.Pts = pts
+	if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
+		ChannelID:   req.ChannelID,
+		UserID:      req.UserID,
+		Date:        req.EditDate,
+		Type:        domain.ChannelAdminLogEditMessage,
+		PrevMessage: &prevMsg,
+		NewMessage:  &msg,
+	}); err != nil {
+		return domain.EditChannelMessageResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.EditChannelMessageResult{}, fmt.Errorf("commit retention purge channel message: %w", err)
+	}
+	recipients, _ := s.ListActiveChannelMemberIDs(ctx, req.UserID, req.ChannelID, 0)
+	return domain.EditChannelMessageResult{Channel: channel, Message: msg, Event: event, Recipients: recipients}, nil
 }
 
 func isChannelTodoParticipantEdit(req domain.EditChannelMessageRequest, msg domain.ChannelMessage) bool {

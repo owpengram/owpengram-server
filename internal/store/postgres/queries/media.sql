@@ -202,6 +202,16 @@ WHERE id = sqlc.arg(media_id)::bigint AND orphaned_at IS NOT NULL;
 UPDATE photos SET orphaned_at = NULL
 WHERE id = sqlc.arg(media_id)::bigint AND orphaned_at IS NOT NULL;
 
+-- name: ListMediaReferences :many
+-- Every live reference to a document/photo -- used by the storage retention
+-- sweep to turn a hard-retention/eviction blob purge into a visible notice on
+-- every message that still embeds the purged media (see
+-- files.notifyRetentionPurge). profile_photo/sticker_set/gift refs have no
+-- message to edit and are filtered by the caller, not this query.
+SELECT media_kind, media_id, ref_kind, ref_key
+FROM media_references
+WHERE media_kind = sqlc.arg(media_kind)::text AND media_id = sqlc.arg(media_id)::bigint;
+
 -- name: RemoveMediaReference :exec
 DELETE FROM media_references
 WHERE media_kind = sqlc.arg(media_kind)::text
@@ -226,15 +236,36 @@ WHERE id = sqlc.arg(media_id)::bigint
   );
 
 -- name: ListOrphanedDocumentIDsOlderThan :many
+-- category selects one documents.category bucket per sweep tick (per-category
+-- retention age, see internal/app/files/retention.go) -- 0 (MediaCategoryNone)
+-- covers unclassified documents (e.g. stickers), which always use the shared
+-- global age since there is no per-category override for that bucket.
 SELECT id FROM documents
 WHERE orphaned_at IS NOT NULL AND orphaned_at < sqlc.arg(cutoff)::timestamptz
+  AND category = sqlc.arg(category)::smallint
 ORDER BY orphaned_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ListOrphanedPhotoIDsOlderThan :many
-SELECT id FROM photos
-WHERE orphaned_at IS NOT NULL AND orphaned_at < sqlc.arg(cutoff)::timestamptz
-ORDER BY orphaned_at ASC
+-- Excludes photos currently active as someone's avatar -- see
+-- ListAvatarOrphanedPhotoIDsOlderThan for that split-off bucket.
+SELECT p.id FROM photos p
+WHERE p.orphaned_at IS NOT NULL AND p.orphaned_at < sqlc.arg(cutoff)::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+ORDER BY p.orphaned_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListAvatarOrphanedPhotoIDsOlderThan :many
+-- Same as ListOrphanedPhotoIDsOlderThan but only photos currently active as
+-- someone's avatar (profile_photos.active) -- lets the Avatar category carry
+-- its own retention age. In practice a live avatar is never orphaned (an
+-- active profile_photos row is itself a media_references entry), so this
+-- bucket is expected to stay empty under "orphan" mode; kept for symmetry
+-- with the "hard" mode avatar split, which is the one that actually matters.
+SELECT p.id FROM photos p
+WHERE p.orphaned_at IS NOT NULL AND p.orphaned_at < sqlc.arg(cutoff)::timestamptz
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+ORDER BY p.orphaned_at ASC
 LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ListDocumentIDsForHardRetentionOlderThan :many
@@ -244,9 +275,12 @@ LIMIT sqlc.arg(batch_limit)::int;
 -- keeps this sweep from re-selecting the same document forever: once its
 -- blob bytes are purged (DeleteFileBlobsForDocument removes the file_blobs
 -- rows but deliberately leaves this documents row in place), it naturally
--- drops out of this query on the next pass.
+-- drops out of this query on the next pass. category scopes to one
+-- documents.category bucket per sweep tick -- see
+-- ListOrphanedDocumentIDsOlderThan for the 0/None fallback note.
 SELECT d.id FROM documents d
 WHERE d.created_at < sqlc.arg(cutoff)::timestamptz
+  AND d.category = sqlc.arg(category)::smallint
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'doc:' || d.id::text
@@ -257,10 +291,58 @@ LIMIT sqlc.arg(batch_limit)::int;
 
 -- name: ListPhotoIDsForHardRetentionOlderThan :many
 -- See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
--- candidate selection, for photos.
+-- candidate selection, for photos. Excludes photos currently active as
+-- someone's avatar -- see ListAvatarPhotoIDsForHardRetentionOlderThan.
 SELECT p.id FROM photos p
 WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListAvatarPhotoIDsForHardRetentionOlderThan :many
+-- Same as ListPhotoIDsForHardRetentionOlderThan but only photos currently
+-- active as someone's avatar (profile_photos.active) -- lets the Avatar
+-- category carry its own retention age, independent of ordinary shared-media
+-- photos.
+SELECT p.id FROM photos p
+WHERE p.created_at < sqlc.arg(cutoff)::timestamptz
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListOldestDocumentsForEviction :many
+-- Active eviction (TELESRV_STORAGE_EVICTION_ENABLE): candidates are every
+-- document that still owns at least one file_blobs row, oldest-uploaded
+-- first, REGARDLESS of category or age -- unlike the retention sweeps above,
+-- eviction only cares about reclaiming bytes once the total physical budget
+-- (TELESRV_STORAGE_MAX_TOTAL_BYTES) is exceeded. created_at is returned so
+-- the caller can interleave these with ListOldestPhotosForEviction by actual
+-- age instead of draining one table before touching the other.
+SELECT d.id, d.created_at FROM documents d
+WHERE EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  )
+ORDER BY d.created_at ASC
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: ListOldestPhotosForEviction :many
+-- See ListOldestDocumentsForEviction -- same oldest-first eviction candidate
+-- selection, for photos (avatars included: eviction is bytes-only and does
+-- not honor the Avatar category's separate retention age).
+SELECT p.id, p.created_at FROM photos p
+WHERE EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'photo:' || p.id::text
        OR fb.location_key LIKE 'photo:' || p.id::text || ':%'

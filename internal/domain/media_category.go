@@ -159,6 +159,26 @@ func classifyDocumentCategory(doc *Document) (MediaCategory, bool) {
 	}
 }
 
+// DocumentMediaCategory returns the single document-attribute category
+// (Video/Gif/Music/Voice/RoundVideo/File) for a document media payload, used
+// to populate the documents.category column alongside the shared media
+// index. Unlike ClassifyMediaCategories (which can also add unrelated
+// categories such as URL from message entities), this only ever answers "what
+// kind of document is this", returning MediaCategoryNone for a non-document
+// payload or for sticker/custom-emoji documents (they classify to nothing --
+// see classifyDocumentCategory). Zero new classification logic: reuses
+// classifyDocumentCategory exactly.
+func DocumentMediaCategory(media *MessageMedia) MediaCategory {
+	if media == nil || media.Kind != MessageMediaKindDocument {
+		return MediaCategoryNone
+	}
+	c, ok := classifyDocumentCategory(media.Document)
+	if !ok {
+		return MediaCategoryNone
+	}
+	return c
+}
+
 func hasURLEntity(entities []MessageEntity) bool {
 	for _, e := range entities {
 		if e.Type == MessageEntityURL || e.Type == MessageEntityTextURL || e.Type == MessageEntityEmail {

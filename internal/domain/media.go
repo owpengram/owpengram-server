@@ -591,6 +591,11 @@ const (
 	// 状态切换与关闭请求。会话级保护不能写入普通消息的 NoForwards 字段。
 	MessageServiceActionNoForwardsToggle  MessageServiceActionKind = "no_forwards_toggle"
 	MessageServiceActionNoForwardsRequest MessageServiceActionKind = "no_forwards_request"
+	// MessageServiceActionCustomText 映射 messageActionCustomAction（stock TL
+	// 类型，两端客户端已原生支持，无需任何 client 补丁）：服务端把纯文本状态
+	// 通知（当前唯一用途：storage retention 硬回收把已清理媒体的消息就地转成
+	// 这条通知）渲染成居中灰色系统气泡，而不是一次看起来像普通编辑的文本替换。
+	MessageServiceActionCustomText MessageServiceActionKind = "custom_text"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
@@ -673,6 +678,8 @@ type MessageServiceAction struct {
 	RequestedPeer     *MessageRequestedPeerAction  `json:"requested_peer,omitempty"`
 	ChatThemeEmoticon string                       `json:"chat_theme_emoticon,omitempty"`
 	NoForwards        *MessageNoForwardsAction     `json:"no_forwards,omitempty"`
+	// Text 承载 MessageServiceActionCustomText 的固定通知文案（messageActionCustomAction.message）。
+	Text string `json:"text,omitempty"`
 }
 
 // MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。

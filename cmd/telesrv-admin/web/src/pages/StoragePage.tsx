@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Loader2, RefreshCw, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Loader2, RefreshCw, Search, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
@@ -200,12 +201,27 @@ export function StoragePage({ navigate: _navigate }: { navigate: Navigate }) {
 // GB inputs for byte budgets, a mode dropdown + day count for retention.
 
 const STORAGE_ENV_KEYS = {
+  blobBackend: "TELESRV_BLOB_BACKEND",
   maxTotal: "TELESRV_STORAGE_MAX_TOTAL_BYTES",
   minFree: "TELESRV_STORAGE_MIN_FREE_BYTES",
   maxUploadFile: "TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES",
   retentionMode: "TELESRV_STORAGE_RETENTION_MODE",
-  retentionMaxAge: "TELESRV_STORAGE_RETENTION_MAX_AGE"
+  retentionMaxAge: "TELESRV_STORAGE_RETENTION_MAX_AGE",
+  evictionEnable: "TELESRV_STORAGE_EVICTION_ENABLE"
 } as const;
+
+// Per-category retention age overrides -- each optional, empty/0 means
+// "inherit the shared Retention age" above. Order matches the admin UI list.
+const CATEGORY_AGE_FIELDS: { key: string; envKey: string; label: string }[] = [
+  { key: "photo", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_PHOTO", label: "Photo" },
+  { key: "video", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_VIDEO", label: "Video" },
+  { key: "round_video", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_ROUND_VIDEO", label: "Round video (video message)" },
+  { key: "gif", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_GIF", label: "GIF" },
+  { key: "music", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_MUSIC", label: "Music" },
+  { key: "voice", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_VOICE", label: "Voice message" },
+  { key: "file", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_FILE", label: "File" },
+  { key: "avatar", envKey: "TELESRV_STORAGE_RETENTION_MAX_AGE_AVATAR", label: "Avatar" }
+];
 
 // Mirrors internal/app/files.MaxUploadPartBytes * MaxUploadParts -- the
 // protocol's own upload-part-count ceiling that TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES
@@ -272,11 +288,23 @@ function DurationField({
   const totalMinutes = Number(minutes || "0");
   const [unitLabel, setUnitLabel] = useState(() => bestDurationUnit(totalMinutes).label);
   const unit = DURATION_UNITS.find((u) => u.label === unitLabel) ?? DURATION_UNITS[2];
-  const amount = totalMinutes > 0 ? totalMinutes / unit.minutes : NaN;
+  // 0 is a real, distinct value here (e.g. the shared Retention age
+  // deliberately set to 0 to disable the default sweep) -- unlike
+  // ByteSizeField's "0/empty = Unlimited" convention, this must not collapse
+  // to a blank input, or there'd be no way to tell "0" from "not typed yet".
+  const amount = Number.isFinite(totalMinutes) ? totalMinutes / unit.minutes : NaN;
 
   function handleAmountChange(raw: string) {
+    if (!raw.trim()) {
+      onChange("0");
+      return;
+    }
     const parsed = Number(raw);
-    if (!raw.trim() || Number.isNaN(parsed) || parsed <= 0) {
+    if (Number.isNaN(parsed) || parsed < 0) {
+      onChange("0");
+      return;
+    }
+    if (parsed === 0) {
       onChange("0");
       return;
     }
@@ -292,6 +320,7 @@ function DurationField({
           min="0"
           step="any"
           value={Number.isNaN(amount) ? "" : amount}
+          placeholder={"0"}
           disabled={disabled}
           onChange={(event) => handleAmountChange(event.target.value)}
         />
@@ -357,15 +386,71 @@ function ByteSizeField({
   );
 }
 
+// CategoryRetentionModal is a focused editor for the per-category age
+// overrides -- pulled out of the main Limits & Retention flow (which was
+// getting crowded with 8 extra duration fields) into its own dialog, following
+// the same modal-backdrop/command-modal pattern as MintCollectibleUsernameModal.
+// It edits the same categoryAgeMinutes state the parent already owns; there's
+// no separate save here, just Close -- the one shared "Save limits &
+// retention settings" button below still covers these values too.
+function CategoryRetentionModal({
+  categoryAgeMinutes,
+  onChange,
+  disabled,
+  onClose
+}: {
+  categoryAgeMinutes: Record<string, string>;
+  onChange: (key: string, minutes: string) => void;
+  disabled: boolean;
+  onClose: () => void;
+}) {
+  return createPortal(
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal command-modal" role="dialog" aria-modal="true" aria-label={"Per-category retention overrides"}>
+        <div className="modal-head">
+          <div>
+            <div className="eyebrow">{"Limits & Retention"}</div>
+            <h2>{"Per-category overrides"}</h2>
+          </div>
+          <button className="icon-btn" type="button" onClick={onClose} aria-label={"Close"}><X size={15} /></button>
+        </div>
+        <div className="command-body">
+          <p className="env-field-desc">
+            {"Leave a category at 0 to inherit the shared Retention age. The mode switch still applies to all of them -- these only change how old that one category's media must be."}
+          </p>
+          {CATEGORY_AGE_FIELDS.map((field) => (
+            <DurationField
+              key={field.key}
+              label={field.label}
+              help={"Inherits the shared Retention age when left at 0."}
+              minutes={categoryAgeMinutes[field.key] || "0"}
+              disabled={disabled}
+              onChange={(minutes) => onChange(field.key, minutes)}
+            />
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="btn primary" type="button" onClick={onClose}>{"Close"}</button>
+        </div>
+      </section>
+    </div>,
+    document.body
+  );
+}
+
 function LimitsRetentionSection() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [initial, setInitial] = useState<Record<string, string>>({});
+  const [blobBackend, setBlobBackend] = useState("s3");
   const [maxTotalBytes, setMaxTotalBytes] = useState("0");
   const [minFreeBytes, setMinFreeBytes] = useState("0");
   const [maxUploadFileBytes, setMaxUploadFileBytes] = useState("0");
   const [retentionMode, setRetentionMode] = useState("off");
   const [retentionAgeMinutes, setRetentionAgeMinutes] = useState("43200");
+  const [categoryAgeMinutes, setCategoryAgeMinutes] = useState<Record<string, string>>({});
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [evictionEnable, setEvictionEnable] = useState(false);
 
   async function load() {
     setError("");
@@ -378,6 +463,7 @@ function LimitsRetentionSection() {
         }
       }
       setInitial(values);
+      setBlobBackend((values[STORAGE_ENV_KEYS.blobBackend] || "s3").trim().toLowerCase());
       setMaxTotalBytes(values[STORAGE_ENV_KEYS.maxTotal] || "0");
       setMinFreeBytes(values[STORAGE_ENV_KEYS.minFree] || "0");
       setMaxUploadFileBytes(values[STORAGE_ENV_KEYS.maxUploadFile] || "0");
@@ -385,6 +471,14 @@ function LimitsRetentionSection() {
       setRetentionMode(mode === "orphan" || mode === "hard" ? mode : "off");
       const mins = parseDurationMinutes(values[STORAGE_ENV_KEYS.retentionMaxAge] || "720h");
       setRetentionAgeMinutes(mins > 0 ? String(Math.max(1, Math.round(mins))) : "43200");
+      const nextCategoryAges: Record<string, string> = {};
+      for (const field of CATEGORY_AGE_FIELDS) {
+        const raw = values[field.envKey] || "";
+        const categoryMins = parseDurationMinutes(raw);
+        nextCategoryAges[field.key] = categoryMins > 0 ? String(Math.round(categoryMins)) : "0";
+      }
+      setCategoryAgeMinutes(nextCategoryAges);
+      setEvictionEnable((values[STORAGE_ENV_KEYS.evictionEnable] || "false").trim().toLowerCase() === "true");
       setLoaded(true);
     } catch (err) {
       setError(errorMessage(err));
@@ -404,14 +498,26 @@ function LimitsRetentionSection() {
       [STORAGE_ENV_KEYS.retentionMode]: retentionMode,
       [STORAGE_ENV_KEYS.retentionMaxAge]: retentionMode === "off"
         ? (initial[STORAGE_ENV_KEYS.retentionMaxAge] || "720h")
-        : `${Math.max(1, Math.round(Number(retentionAgeMinutes || "0")))}m`
+        // 0 is a legitimate value here: "no sweep by default", left for
+        // per-category overrides below to opt specific categories in. Don't
+        // clamp it up to a minimum of 1 -- that used to make it impossible to
+        // ever save a 0 global age.
+        : `${Math.max(0, Math.round(Number(retentionAgeMinutes || "0")))}m`,
+      [STORAGE_ENV_KEYS.evictionEnable]: evictionEnable ? "true" : "false"
     };
+    // Per-category overrides: a field left at "inherit global" (0) saves as
+    // empty rather than a redundant explicit duration, matching the "unset
+    // means inherit" contract on the server side.
+    for (const field of CATEGORY_AGE_FIELDS) {
+      const mins = Math.round(Number(categoryAgeMinutes[field.key] || "0"));
+      next[field.envKey] = mins > 0 ? `${mins}m` : "";
+    }
     const changed: Record<string, string> = {};
     for (const [key, value] of Object.entries(next)) {
       if ((initial[key] ?? "") !== value) changed[key] = value;
     }
     return changed;
-  }, [maxTotalBytes, minFreeBytes, maxUploadFileBytes, retentionMode, retentionAgeMinutes, initial]);
+  }, [maxTotalBytes, minFreeBytes, maxUploadFileBytes, retentionMode, retentionAgeMinutes, categoryAgeMinutes, evictionEnable, initial]);
 
   const hasChanges = Object.keys(pendingValues).length > 0;
   const uploadCeilingExceeded = Number(maxUploadFileBytes || "0") > PROTOCOL_UPLOAD_CEILING_BYTES;
@@ -434,12 +540,14 @@ function LimitsRetentionSection() {
               bytes={maxTotalBytes}
               onChange={setMaxTotalBytes}
             />
-            <ByteSizeField
-              label={"Min free space guard"}
-              help={"localfs backend only: reject new uploads once real free disk space falls below this. Empty/0 disables the check."}
-              bytes={minFreeBytes}
-              onChange={setMinFreeBytes}
-            />
+            {blobBackend === "localfs" && (
+              <ByteSizeField
+                label={"Min free space guard"}
+                help={"localfs backend only: reject new uploads once real free disk space falls below this. Empty/0 disables the check."}
+                bytes={minFreeBytes}
+                onChange={setMinFreeBytes}
+              />
+            )}
             <ByteSizeField
               label={"Max single file size"}
               help={"Reject a single upload once its total assembled size exceeds this. Empty/0 = unlimited, bounded only by the protocol's own ~4GB per-file ceiling."}
@@ -471,14 +579,46 @@ function LimitsRetentionSection() {
             <DurationField
               label={"Retention age"}
               help={
-                retentionMode === "hard"
+                (retentionMode === "hard"
                   ? "How old the media itself must be, counted from when it was uploaded, before its bytes are purged."
-                  : "How long a document or photo must have had zero references before its file is deleted."
+                  : "How long a document or photo must have had zero references before its file is deleted.") +
+                " Set to 0 to disable the sweep by default and only clean up categories you explicitly override below."
               }
               minutes={retentionAgeMinutes}
               disabled={retentionMode === "off"}
               onChange={setRetentionAgeMinutes}
             />
+          </div>
+
+          <div className="attr-block" style={{ marginTop: "1.5em" }}>
+            <button className="btn icon-text" type="button" onClick={() => setCategoryModalOpen(true)}>
+              <Settings2 size={15} /> {"Per-category overrides..."}
+            </button>
+            <span className="env-field-desc">
+              {"Optional -- give Photo/Video/GIF/Music/Voice/File/Avatar their own retention age instead of the shared one above."}
+            </span>
+          </div>
+          {categoryModalOpen && (
+            <CategoryRetentionModal
+              categoryAgeMinutes={categoryAgeMinutes}
+              onChange={(key, minutes) => setCategoryAgeMinutes((prev) => ({ ...prev, [key]: minutes }))}
+              disabled={retentionMode === "off"}
+              onClose={() => setCategoryModalOpen(false)}
+            />
+          )}
+
+          <div className="attr-block" style={{ marginTop: "1.5em" }}>
+            <label className="checkline">
+              <input
+                type="checkbox"
+                checked={evictionEnable}
+                onChange={(event) => setEvictionEnable(event.target.checked)}
+              />
+              {" "}{"Actively reclaim space once over budget"}
+            </label>
+            <p className="env-field-desc">
+              {"Once total physical storage exceeds the Max total storage budget above, actively delete the oldest files (regardless of category or age) until back under budget -- the same way \"hard\" retention mode purges files. Independent of the retention mode above: this can run even when that's Off. Off by default, since this changes the storage budget from block-new-uploads-only to also reclaiming from existing files."}
+            </p>
           </div>
 
           <div className="gift-table-actions env-save-row">

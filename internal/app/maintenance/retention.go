@@ -124,6 +124,8 @@ type RetentionWorker struct {
 	activeAuthKeyHeartbeat      ActiveAuthKeyHeartbeatStore
 	orphanedMedia               OrphanedMediaRetentionStore
 	hardMedia                   HardMediaRetentionStore
+	eviction                    StorageEvictionStore
+	evictionEnabled             bool
 	logger                      *zap.Logger
 	retention                   time.Duration
 	botAPIRetention             time.Duration
@@ -311,8 +313,19 @@ func (w *RetentionWorker) mediaRetentionInterval() time.Duration {
 	if w.hardMedia != nil && w.hardMediaMaxAge > 0 && (maxAge == 0 || w.hardMediaMaxAge < maxAge) {
 		maxAge = w.hardMediaMaxAge
 	}
+	evictionActive := w.eviction != nil && w.evictionEnabled
 	if maxAge <= 0 {
-		return 0
+		if !evictionActive {
+			return 0
+		}
+		// Eviction is reactive to total bytes, not a fixed age, and is
+		// independent of TELESRV_STORAGE_RETENTION_MODE -- it can be the only
+		// thing enabled. Fall back to the shared housekeeping interval so it
+		// still gets its own ticker instead of never running.
+		maxAge = w.interval
+		if maxAge <= 0 {
+			maxAge = time.Hour
+		}
 	}
 	interval := w.interval
 	if interval <= 0 || maxAge < interval {
@@ -324,12 +337,36 @@ func (w *RetentionWorker) mediaRetentionInterval() time.Duration {
 	return interval
 }
 
+// StorageEvictionStore actively reclaims space once total physical blob bytes
+// exceed TELESRV_STORAGE_MAX_TOTAL_BYTES: the oldest documents/photos
+// (interleaved by created_at across both tables, regardless of category or
+// age) are purged -- reusing the exact same blob-purge + retention-purge
+// notice primitive as HardMediaRetentionStore -- until back under budget.
+// Independent of TELESRV_STORAGE_RETENTION_MODE.
+type StorageEvictionStore interface {
+	EvictOldestMediaOverBudget(ctx context.Context, limit int) (int, error)
+}
+
+// WithStorageEviction enables the active eviction sweep
+// (TELESRV_STORAGE_EVICTION_ENABLE). It shares the same ticker as the
+// orphan/hard media sweeps (see mediaRetentionInterval) and is independent of
+// TELESRV_STORAGE_RETENTION_MODE -- it can run even when that is "off".
+func (w *RetentionWorker) WithStorageEviction(store StorageEvictionStore, enabled bool) *RetentionWorker {
+	w.eviction = store
+	w.evictionEnabled = enabled
+	return w
+}
+
 func (w *RetentionWorker) runMediaRetentionOnce(ctx context.Context) {
 	if w.orphanedMedia != nil && w.orphanedMediaMaxAge > 0 {
 		// Only ever touches documents/photos already marked orphaned (no live
 		// message/profile-photo/sticker-set reference remains) -- media still
 		// visible in a conversation is never a candidate, regardless of age.
-		mediaDeleted, err := w.orphanedMedia.DeleteOrphanedOlderThan(ctx, time.Now().Add(-w.orphanedMediaMaxAge), w.batch)
+		// The store itself derives each category's effective cutoff from
+		// "now" (per-category retention age overrides, global age as
+		// fallback) -- this worker only owns when the sweep runs, not the
+		// per-category cutoff math.
+		mediaDeleted, err := w.orphanedMedia.DeleteOrphanedOlderThan(ctx, time.Now(), w.batch)
 		if err != nil {
 			w.logger.Warn("orphaned media storage retention sweep failed", zap.Error(err))
 		} else if mediaDeleted > 0 {
@@ -337,17 +374,26 @@ func (w *RetentionWorker) runMediaRetentionOnce(ctx context.Context) {
 		}
 	}
 	if w.hardMedia != nil && w.hardMediaMaxAge > 0 {
-		// "Hard" mode: purges blob bytes for documents/photos older than
-		// hardMediaMaxAge regardless of whether a live reference remains --
-		// the store is required to keep the document/photo metadata row
-		// intact, only removing file_blobs rows/bytes, so a message still
-		// renders its media placeholder (LOCATION_INVALID on download)
-		// instead of breaking outright.
-		hardDeleted, err := w.hardMedia.DeleteBlobBytesForMediaOlderThan(ctx, time.Now().Add(-w.hardMediaMaxAge), w.batch)
+		// "Hard" mode: purges blob bytes for documents/photos older than the
+		// effective per-category age (falling back to hardMediaMaxAge)
+		// regardless of whether a live reference remains -- the store is
+		// required to keep the document/photo metadata row intact, only
+		// removing file_blobs rows/bytes, so a message still renders its
+		// media placeholder (LOCATION_INVALID on download) instead of
+		// breaking outright.
+		hardDeleted, err := w.hardMedia.DeleteBlobBytesForMediaOlderThan(ctx, time.Now(), w.batch)
 		if err != nil {
 			w.logger.Warn("hard media storage retention sweep failed", zap.Error(err))
 		} else if hardDeleted > 0 {
 			w.logger.Info("hard media storage retention sweep complete", zap.Int("deleted", hardDeleted))
+		}
+	}
+	if w.eviction != nil && w.evictionEnabled {
+		evicted, err := w.eviction.EvictOldestMediaOverBudget(ctx, w.batch)
+		if err != nil {
+			w.logger.Warn("active storage eviction sweep failed", zap.Error(err))
+		} else if evicted > 0 {
+			w.logger.Info("active storage eviction sweep complete", zap.Int("evicted", evicted))
 		}
 	}
 }

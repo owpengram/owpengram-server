@@ -1514,6 +1514,22 @@ func (s *Service) EditMessage(ctx context.Context, userID int64, req domain.Edit
 	return s.channels.EditChannelMessage(ctx, req)
 }
 
+// EditChannelMessageInternal performs a server-internal channel message edit
+// with no acting user -- currently only the storage retention sweep
+// (internal/app/files.notifyRetentionPurge), which needs to turn a purged
+// message into a visible notice but has no RPC caller/channel member behind
+// it. Bypasses the userID==0 gate EditMessage enforces for ordinary
+// RPC-driven edits; the store's own RetentionPurge bypass (see
+// EditChannelMessageRequest.RetentionPurge) enforces the actual permission
+// bypass semantics, so this refuses anything that isn't actually a retention
+// purge request rather than becoming a second general-purpose edit path.
+func (s *Service) EditChannelMessageInternal(ctx context.Context, req domain.EditChannelMessageRequest) (domain.EditChannelMessageResult, error) {
+	if s == nil || s.channels == nil || !req.RetentionPurge || req.RetentionPurgeAction == nil || req.ChannelID == 0 || req.ID <= 0 {
+		return domain.EditChannelMessageResult{}, domain.ErrChannelInvalid
+	}
+	return s.channels.EditChannelMessage(ctx, req)
+}
+
 // GetInlineBotMessage returns one live channel message addressed by a signed inline id.
 func (s *Service) GetInlineBotMessage(ctx context.Context, botID, channelID int64, id int) (domain.Channel, domain.ChannelMessage, bool, error) {
 	if s == nil || s.channels == nil || botID == 0 || channelID == 0 || id <= 0 || id > domain.MaxMessageBoxID {

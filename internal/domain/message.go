@@ -555,6 +555,12 @@ type OutboxReadDateRequest struct {
 	ID          int
 }
 
+// RetentionPurgeNoticeText is the fixed notice text used for the
+// messageActionCustomAction (MessageServiceActionCustomText) service message
+// a storage-retention blob purge (hard mode or active eviction) turns a
+// message into once its underlying document/photo bytes are gone.
+const RetentionPurgeNoticeText = "This file was deleted by the server's storage retention policy."
+
 // EditMessageRequest 是账号视角下编辑一条已发送私聊消息的命令。
 // Media 非 nil 时整体替换消息媒体快照（当前唯一调用方是 live location 续报/停止，
 // rpc 层负责限定媒体种类）；nil 表示纯文本编辑。
@@ -589,6 +595,11 @@ type EditMessageRequest struct {
 	// 否则返回 ErrMessageNotModified（消息已删/已改/已解析）。
 	WebPageResolve    bool
 	ExpectedWebPageID int64
+	// RetentionPurge 置位时为存储 retention 硬回收/主动淘汰的服务端内部编辑：
+	// 绕过 authorEdit/viaBotEdit/WebPageResolve 之外的普通作者校验（回收发生
+	// 在任意账号的历史消息上，不是消息真正作者的操作），仅由
+	// internal/app/files 的 retention purge 通知路径设置。
+	RetentionPurge bool
 }
 
 // EditedMessageForUser 描述一次编辑对某个 owner 视角造成的影响。

@@ -64,7 +64,7 @@ func TestHardRetentionPurgesBlobBytesButKeepsMetadataRow(t *testing.T) {
 	})
 
 	cutoff := time.Now().Add(-24 * time.Hour)
-	ids, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, cutoff, 1000)
+	ids, err := media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryNone, cutoff, 1000)
 	if err != nil {
 		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestHardRetentionPurgesBlobBytesButKeepsMetadataRow(t *testing.T) {
 
 	// Idempotent / self-terminating: a second sweep pass no longer selects
 	// this document, since it no longer owns any file_blobs row.
-	ids, err = media.ListDocumentIDsForHardRetentionOlderThan(ctx, cutoff, 1000)
+	ids, err = media.ListDocumentIDsForHardRetentionOlderThan(ctx, domain.MediaCategoryNone, cutoff, 1000)
 	if err != nil {
 		t.Fatalf("ListDocumentIDsForHardRetentionOlderThan (2nd pass): %v", err)
 	}

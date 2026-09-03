@@ -83,8 +83,17 @@ func (s *MessageStore) EditMessage(ctx context.Context, req domain.EditMessageRe
 	}
 	authorEdit := target.Outgoing && target.MessageSenderID == req.OwnerUserID && target.FromUserID == req.OwnerUserID
 	viaBotEdit := req.ViaBotEditBotID != 0 && target.ViaBotID == req.ViaBotEditBotID
-	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !validTodoParticipantEdit(req, target, oldEntities) {
+	if !authorEdit && !viaBotEdit && !req.WebPageResolve && !req.RetentionPurge && !validTodoParticipantEdit(req, target, oldEntities) {
 		return res, domain.ErrMessageAuthorRequired
+	}
+	if req.RetentionPurge {
+		// 幂等守卫：已经是这条 retention 通知的消息不再重复编辑（同一被回收
+		// 媒体可能被多个 box 的 media_references 行各引用一次，比如自己与对端
+		// 各自的 box——同一条共享 private_message 只需真正编辑一次）。
+		if targetMedia, err := decodeMessageMedia(target.MediaJson); err == nil &&
+			targetMedia != nil && targetMedia.Kind == domain.MessageMediaKindService {
+			return res, domain.ErrMessageNotModified
+		}
 	}
 	richChanged := req.SetRichMessage && !richMessagesEqual(targetRich, req.RichMessage)
 	if req.Media == nil && !req.SetReplyMarkup && !richChanged && target.Body == req.Message && target.HideEdited == req.HideEdited && sameMessageEntities(oldEntities, req.Entities) {

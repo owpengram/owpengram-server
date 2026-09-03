@@ -825,20 +825,103 @@ func (q *Queries) ListAvailableReactions(ctx context.Context) ([]AvailableReacti
 	return items, nil
 }
 
+const listAvatarOrphanedPhotoIDsOlderThan = `-- name: ListAvatarOrphanedPhotoIDsOlderThan :many
+SELECT p.id FROM photos p
+WHERE p.orphaned_at IS NOT NULL AND p.orphaned_at < $1::timestamptz
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+ORDER BY p.orphaned_at ASC
+LIMIT $2::int
+`
+
+type ListAvatarOrphanedPhotoIDsOlderThanParams struct {
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// Same as ListOrphanedPhotoIDsOlderThan but only photos currently active as
+// someone's avatar (profile_photos.active) -- lets the Avatar category carry
+// its own retention age. In practice a live avatar is never orphaned (an
+// active profile_photos row is itself a media_references entry), so this
+// bucket is expected to stay empty under "orphan" mode; kept for symmetry
+// with the "hard" mode avatar split, which is the one that actually matters.
+func (q *Queries) ListAvatarOrphanedPhotoIDsOlderThan(ctx context.Context, arg ListAvatarOrphanedPhotoIDsOlderThanParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listAvatarOrphanedPhotoIDsOlderThan, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAvatarPhotoIDsForHardRetentionOlderThan = `-- name: ListAvatarPhotoIDsForHardRetentionOlderThan :many
+SELECT p.id FROM photos p
+WHERE p.created_at < $1::timestamptz
+  AND EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+  AND EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT $2::int
+`
+
+type ListAvatarPhotoIDsForHardRetentionOlderThanParams struct {
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// Same as ListPhotoIDsForHardRetentionOlderThan but only photos currently
+// active as someone's avatar (profile_photos.active) -- lets the Avatar
+// category carry its own retention age, independent of ordinary shared-media
+// photos.
+func (q *Queries) ListAvatarPhotoIDsForHardRetentionOlderThan(ctx context.Context, arg ListAvatarPhotoIDsForHardRetentionOlderThanParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listAvatarPhotoIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDocumentIDsForHardRetentionOlderThan = `-- name: ListDocumentIDsForHardRetentionOlderThan :many
 SELECT d.id FROM documents d
 WHERE d.created_at < $1::timestamptz
+  AND d.category = $2::smallint
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'doc:' || d.id::text
        OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
   )
 ORDER BY d.created_at ASC
-LIMIT $2::int
+LIMIT $3::int
 `
 
 type ListDocumentIDsForHardRetentionOlderThanParams struct {
 	Cutoff     pgtype.Timestamptz
+	Category   int16
 	BatchLimit int32
 }
 
@@ -848,9 +931,11 @@ type ListDocumentIDsForHardRetentionOlderThanParams struct {
 // keeps this sweep from re-selecting the same document forever: once its
 // blob bytes are purged (DeleteFileBlobsForDocument removes the file_blobs
 // rows but deliberately leaves this documents row in place), it naturally
-// drops out of this query on the next pass.
+// drops out of this query on the next pass. category scopes to one
+// documents.category bucket per sweep tick -- see
+// ListOrphanedDocumentIDsOlderThan for the 0/None fallback note.
 func (q *Queries) ListDocumentIDsForHardRetentionOlderThan(ctx context.Context, arg ListDocumentIDsForHardRetentionOlderThanParams) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listDocumentIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
+	rows, err := q.db.Query(ctx, listDocumentIDsForHardRetentionOlderThan, arg.Cutoff, arg.Category, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -917,20 +1002,156 @@ func (q *Queries) ListFileBlobsByLocationPrefix(ctx context.Context, arg ListFil
 	return items, nil
 }
 
+const listMediaReferences = `-- name: ListMediaReferences :many
+SELECT media_kind, media_id, ref_kind, ref_key
+FROM media_references
+WHERE media_kind = $1::text AND media_id = $2::bigint
+`
+
+type ListMediaReferencesParams struct {
+	MediaKind string
+	MediaID   int64
+}
+
+type ListMediaReferencesRow struct {
+	MediaKind string
+	MediaID   int64
+	RefKind   string
+	RefKey    string
+}
+
+// Every live reference to a document/photo -- used by the storage retention
+// sweep to turn a hard-retention/eviction blob purge into a visible notice on
+// every message that still embeds the purged media (see
+// files.notifyRetentionPurge). profile_photo/sticker_set/gift refs have no
+// message to edit and are filtered by the caller, not this query.
+func (q *Queries) ListMediaReferences(ctx context.Context, arg ListMediaReferencesParams) ([]ListMediaReferencesRow, error) {
+	rows, err := q.db.Query(ctx, listMediaReferences, arg.MediaKind, arg.MediaID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMediaReferencesRow
+	for rows.Next() {
+		var i ListMediaReferencesRow
+		if err := rows.Scan(
+			&i.MediaKind,
+			&i.MediaID,
+			&i.RefKind,
+			&i.RefKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOldestDocumentsForEviction = `-- name: ListOldestDocumentsForEviction :many
+SELECT d.id, d.created_at FROM documents d
+WHERE EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'doc:' || d.id::text
+       OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
+  )
+ORDER BY d.created_at ASC
+LIMIT $1::int
+`
+
+type ListOldestDocumentsForEvictionRow struct {
+	ID        int64
+	CreatedAt pgtype.Timestamptz
+}
+
+// Active eviction (TELESRV_STORAGE_EVICTION_ENABLE): candidates are every
+// document that still owns at least one file_blobs row, oldest-uploaded
+// first, REGARDLESS of category or age -- unlike the retention sweeps above,
+// eviction only cares about reclaiming bytes once the total physical budget
+// (TELESRV_STORAGE_MAX_TOTAL_BYTES) is exceeded. created_at is returned so
+// the caller can interleave these with ListOldestPhotosForEviction by actual
+// age instead of draining one table before touching the other.
+func (q *Queries) ListOldestDocumentsForEviction(ctx context.Context, batchLimit int32) ([]ListOldestDocumentsForEvictionRow, error) {
+	rows, err := q.db.Query(ctx, listOldestDocumentsForEviction, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOldestDocumentsForEvictionRow
+	for rows.Next() {
+		var i ListOldestDocumentsForEvictionRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOldestPhotosForEviction = `-- name: ListOldestPhotosForEviction :many
+SELECT p.id, p.created_at FROM photos p
+WHERE EXISTS (
+    SELECT 1 FROM file_blobs fb
+    WHERE fb.location_key = 'photo:' || p.id::text
+       OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
+  )
+ORDER BY p.created_at ASC
+LIMIT $1::int
+`
+
+type ListOldestPhotosForEvictionRow struct {
+	ID        int64
+	CreatedAt pgtype.Timestamptz
+}
+
+// See ListOldestDocumentsForEviction -- same oldest-first eviction candidate
+// selection, for photos (avatars included: eviction is bytes-only and does
+// not honor the Avatar category's separate retention age).
+func (q *Queries) ListOldestPhotosForEviction(ctx context.Context, batchLimit int32) ([]ListOldestPhotosForEvictionRow, error) {
+	rows, err := q.db.Query(ctx, listOldestPhotosForEviction, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOldestPhotosForEvictionRow
+	for rows.Next() {
+		var i ListOldestPhotosForEvictionRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrphanedDocumentIDsOlderThan = `-- name: ListOrphanedDocumentIDsOlderThan :many
 SELECT id FROM documents
 WHERE orphaned_at IS NOT NULL AND orphaned_at < $1::timestamptz
+  AND category = $2::smallint
 ORDER BY orphaned_at ASC
-LIMIT $2::int
+LIMIT $3::int
 `
 
 type ListOrphanedDocumentIDsOlderThanParams struct {
 	Cutoff     pgtype.Timestamptz
+	Category   int16
 	BatchLimit int32
 }
 
+// category selects one documents.category bucket per sweep tick (per-category
+// retention age, see internal/app/files/retention.go) -- 0 (MediaCategoryNone)
+// covers unclassified documents (e.g. stickers), which always use the shared
+// global age since there is no per-category override for that bucket.
 func (q *Queries) ListOrphanedDocumentIDsOlderThan(ctx context.Context, arg ListOrphanedDocumentIDsOlderThanParams) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listOrphanedDocumentIDsOlderThan, arg.Cutoff, arg.BatchLimit)
+	rows, err := q.db.Query(ctx, listOrphanedDocumentIDsOlderThan, arg.Cutoff, arg.Category, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -950,9 +1171,10 @@ func (q *Queries) ListOrphanedDocumentIDsOlderThan(ctx context.Context, arg List
 }
 
 const listOrphanedPhotoIDsOlderThan = `-- name: ListOrphanedPhotoIDsOlderThan :many
-SELECT id FROM photos
-WHERE orphaned_at IS NOT NULL AND orphaned_at < $1::timestamptz
-ORDER BY orphaned_at ASC
+SELECT p.id FROM photos p
+WHERE p.orphaned_at IS NOT NULL AND p.orphaned_at < $1::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
+ORDER BY p.orphaned_at ASC
 LIMIT $2::int
 `
 
@@ -961,6 +1183,8 @@ type ListOrphanedPhotoIDsOlderThanParams struct {
 	BatchLimit int32
 }
 
+// Excludes photos currently active as someone's avatar -- see
+// ListAvatarOrphanedPhotoIDsOlderThan for that split-off bucket.
 func (q *Queries) ListOrphanedPhotoIDsOlderThan(ctx context.Context, arg ListOrphanedPhotoIDsOlderThanParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listOrphanedPhotoIDsOlderThan, arg.Cutoff, arg.BatchLimit)
 	if err != nil {
@@ -984,6 +1208,7 @@ func (q *Queries) ListOrphanedPhotoIDsOlderThan(ctx context.Context, arg ListOrp
 const listPhotoIDsForHardRetentionOlderThan = `-- name: ListPhotoIDsForHardRetentionOlderThan :many
 SELECT p.id FROM photos p
 WHERE p.created_at < $1::timestamptz
+  AND NOT EXISTS (SELECT 1 FROM profile_photos pp WHERE pp.photo_id = p.id AND pp.active)
   AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'photo:' || p.id::text
@@ -999,7 +1224,8 @@ type ListPhotoIDsForHardRetentionOlderThanParams struct {
 }
 
 // See ListDocumentIDsForHardRetentionOlderThan -- same "hard" retention
-// candidate selection, for photos.
+// candidate selection, for photos. Excludes photos currently active as
+// someone's avatar -- see ListAvatarPhotoIDsForHardRetentionOlderThan.
 func (q *Queries) ListPhotoIDsForHardRetentionOlderThan(ctx context.Context, arg ListPhotoIDsForHardRetentionOlderThanParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, listPhotoIDsForHardRetentionOlderThan, arg.Cutoff, arg.BatchLimit)
 	if err != nil {

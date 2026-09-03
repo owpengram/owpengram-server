@@ -139,6 +139,8 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 	switch m.ServiceAction.Kind {
 	case domain.MessageServiceActionHistoryClear:
 		return &tg.MessageActionHistoryClear{}
+	case domain.MessageServiceActionCustomText:
+		return &tg.MessageActionCustomAction{Message: m.ServiceAction.Text}
 	case domain.MessageServiceActionSuggestProfilePhoto:
 		if m.ServiceAction.Photo == nil || m.ServiceAction.Photo.ID == 0 {
 			return &tg.MessageActionEmpty{}

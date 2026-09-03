@@ -24,7 +24,28 @@ ON CONFLICT (channel_id, id, category) DO NOTHING`, channelID, id, int16(c), dat
 			return fmt.Errorf("insert channel media index: %w", err)
 		}
 	}
+	if err := setDocumentCategoryTx(ctx, tx, media); err != nil {
+		return err
+	}
 	return addMediaReferencesTx(ctx, tx, media, domain.MediaRefKindChannelMessage, channelMessageRefKey(channelID, id))
+}
+
+// setDocumentCategoryTx persists media.Document's retention-sweep category
+// (see domain.DocumentMediaCategory) onto its documents row, alongside the
+// message_box_media/channel_message_media index write these callers already
+// do -- zero new classification logic, just also stamping the already
+// computed value directly onto documents.category so the per-category
+// storage retention sweep (internal/app/files/retention.go) can filter on it
+// without a join. No-op for non-document media.
+func setDocumentCategoryTx(ctx context.Context, tx pgx.Tx, media *domain.MessageMedia) error {
+	if media == nil || media.Kind != domain.MessageMediaKindDocument || media.Document == nil || media.Document.ID == 0 {
+		return nil
+	}
+	category := domain.DocumentMediaCategory(media)
+	if _, err := tx.Exec(ctx, `UPDATE documents SET category = $2 WHERE id = $1`, media.Document.ID, int16(category)); err != nil {
+		return fmt.Errorf("set document category: %w", err)
+	}
+	return nil
 }
 
 // deleteChannelMediaIndexTx 清掉一条频道消息的全部索引行(编辑改媒体前先清后插)。
@@ -56,6 +77,9 @@ VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (owner_user_id, box_id, category) DO NOTHING`, ownerUserID, boxID, peerID, int16(c), date); err != nil {
 			return fmt.Errorf("insert message box media index: %w", err)
 		}
+	}
+	if err := setDocumentCategoryTx(ctx, tx, media); err != nil {
+		return err
 	}
 	return addMediaReferencesTx(ctx, tx, media, domain.MediaRefKindMessageBox, messageBoxRefKey(ownerUserID, boxID))
 }
