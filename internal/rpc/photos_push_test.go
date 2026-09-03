@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	botsapp "telesrv/internal/app/bots"
+	dialogsapp "telesrv/internal/app/dialogs"
 	appusers "telesrv/internal/app/users"
 	"telesrv/internal/domain"
 	"telesrv/internal/store/memory"
@@ -481,5 +482,65 @@ func TestUploadProfilePhotoFallbackEmojiAndInvalidFlags(t *testing.T) {
 	}
 	if cur, ok, err := files.CurrentProfilePhotoKind(ctx, domain.PeerTypeUser, owner.ID, domain.ProfilePhotoKindProfile); err != nil || !ok || cur.ID != 778 {
 		t.Fatalf("current profile photo after invalid = %+v ok=%v err=%v, want preserved 778", cur, ok, err)
+	}
+}
+
+// TestUploadProfilePhotoNotifiesPrivateDialogPeer guards the fix for "avatars
+// never refresh live": before pushPeerPhotoUpdate existed, a changed avatar
+// was pushed only to the owner's own other sessions (see
+// TestUploadProfilePhotoPushesUpdateToOtherDevices above) -- a private-dialog
+// peer got nothing at all and kept showing the stale avatar until they
+// happened to reopen the chat or restart their client. peer must now receive
+// a bare UpdateUser{UserID: owner} signal (never an embedded tg.User -- see
+// pushPeerPhotoUpdate's doc comment on why the raw photo must not be baked in
+// for a privacy-gated peer view).
+func TestUploadProfilePhotoNotifiesPrivateDialogPeer(t *testing.T) {
+	ctx := context.Background()
+	userStore := memory.NewUserStore()
+	dialogStore := memory.NewDialogStore()
+	owner, _ := userStore.Create(ctx, domain.User{AccessHash: 11, Phone: "15550001009", FirstName: "Owner"})
+	peer, _ := userStore.Create(ctx, domain.User{AccessHash: 12, Phone: "15550001010", FirstName: "Peer"})
+	// A private dialog from owner's side is exactly what marks peer as a
+	// presence/photo fan-out candidate -- see presenceFanoutCandidates.
+	if err := dialogStore.Upsert(ctx, owner.ID, domain.Dialog{Peer: domain.Peer{Type: domain.PeerTypeUser, ID: peer.ID}}); err != nil {
+		t.Fatalf("seed dialog: %v", err)
+	}
+	sessions := &captureSessions{}
+	files := &fakeFiles{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Users:    appusers.NewService(userStore, appusers.WithPhotoProvider(files)),
+		Files:    files,
+		Sessions: sessions,
+		Dialogs:  dialogsapp.NewService(dialogStore),
+	}, zaptest.NewLogger(t), clock.System)
+
+	req := &tg.PhotosUploadProfilePhotoRequest{}
+	req.SetFile(&tg.InputFile{ID: 42, Parts: 1, Name: "a.jpg"})
+	if _, err := r.onPhotosUploadProfilePhoto(WithUserID(ctx, owner.ID), req); err != nil {
+		t.Fatalf("uploadProfilePhoto: %v", err)
+	}
+
+	// pushPeerPhotoUpdate runs last inside pushSelfPhotoUpdateWithUser (after
+	// the owner's own-session push), so it's both the last pushed user id and
+	// the last recorded userMessage -- see that function's call order.
+	pushed := sessions.pushedUserIDs()
+	if len(pushed) == 0 || pushed[len(pushed)-1] != peer.ID {
+		t.Fatalf("pushed user ids = %v, want peer %d last", pushed, peer.ID)
+	}
+	peerUpdates, ok := sessions.lastUserPush().(*tg.Updates)
+	if !ok {
+		t.Fatalf("peer push = %T, want *tg.Updates", sessions.lastUserPush())
+	}
+	hasSignal := false
+	for _, u := range peerUpdates.Updates {
+		if uu, ok := u.(*tg.UpdateUser); ok && uu.UserID == owner.ID {
+			hasSignal = true
+		}
+	}
+	if !hasSignal {
+		t.Fatalf("peer updates = %+v, want bare UpdateUser signal for owner", peerUpdates.Updates)
+	}
+	if len(peerUpdates.Users) != 0 {
+		t.Fatalf("peer updates.Users = %+v, want empty -- raw photo must not bypass privacy for a peer push", peerUpdates.Users)
 	}
 }

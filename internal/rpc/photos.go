@@ -642,6 +642,7 @@ func (r *Router) pushSelfPhotoUpdateWithUser(ctx context.Context, self domain.Us
 	updates := selfPhotoUpdates(self, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, self.ID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+	r.pushPeerPhotoUpdate(ctx, self.ID)
 }
 
 func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int64, bot domain.User, projected *tg.User) {
@@ -651,6 +652,54 @@ func (r *Router) pushBotPhotoUpdateToOwner(ctx context.Context, ownerUserID int6
 	updates := selfPhotoUpdates(bot, int(r.clock.Now().Unix()), projected)
 	r.pushUserUpdates(ctx, ownerUserID, updates)
 	r.pushSelfPhotoUpdateToCurrentSession(ctx, updates)
+	// The bot's own dialog peers (anyone who has chatted with it) never
+	// received anything here before -- only the human managing the bot's
+	// profile did (above). A bot has no contacts, so presenceFanoutCandidates
+	// resolves to its private-dialog peers only, which is exactly who needs
+	// to see a changed bot avatar.
+	r.pushPeerPhotoUpdate(ctx, bot.ID)
+}
+
+// pushPeerPhotoUpdate notifies ownerUserID's contacts and private-dialog
+// peers that its profile photo changed, reusing presenceFanoutCandidates
+// (the same "contacts ∪ private-dialog peers" set presence pushes already
+// compute) -- until this existed, a changed avatar was never pushed to
+// anyone except the owning account's own other sessions, so a contact's chat
+// window kept showing the old avatar until they happened to reopen the chat
+// or restart their client.
+//
+// Sends only a bare tg.UpdateUser{UserID: ownerUserID} signal, never an
+// embedded tg.User: unlike the owner's own devices (which can always see
+// their own photo, so pushSelfPhotoUpdateWithUser safely embeds it), a
+// peer's view of ownerUserID's photo is privacy-gated
+// (domain.PrivacyKeyProfilePhoto) -- baking the raw photo in here would
+// bypass that gate. The bare signal instead makes the recipient's client
+// re-fetch ownerUserID through the ordinary users/getFullUser path, which
+// already applies that privacy check correctly.
+//
+// Uses the durable per-recipient push path (pushUserMessage), not the
+// transient one presence uses: a missed avatar refresh is far stickier and
+// more noticeable than a missed status blip, so a recipient who is offline
+// right now should still pick this up on their next reconnect via normal
+// update dispatch, not just while they happen to be online already.
+func (r *Router) pushPeerPhotoUpdate(ctx context.Context, ownerUserID int64) {
+	if ownerUserID == 0 {
+		return
+	}
+	recipients := r.presenceFanoutCandidates(ctx, ownerUserID)
+	if len(recipients) == 0 {
+		return
+	}
+	update := &tg.Updates{
+		Updates: []tg.UpdateClass{&tg.UpdateUser{UserID: ownerUserID}},
+		Date:    int(r.clock.Now().Unix()),
+	}
+	for _, recipientID := range recipients {
+		if recipientID == 0 || recipientID == ownerUserID {
+			continue
+		}
+		r.pushUserMessage(ctx, recipientID, "push peer photo update", update)
+	}
 }
 
 // defaultSelfPhotoEchoPushDelay 是头像变更后向当前 session 回显 updateUser 的延迟：
