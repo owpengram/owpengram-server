@@ -245,11 +245,20 @@ const BYTE_UNITS: { label: string; bytes: number }[] = [
   { label: "TB", bytes: 1024 ** 4 }
 ];
 
-function bestByteUnit(bytes: number): { label: string; bytes: number } {
-  for (let i = BYTE_UNITS.length - 1; i >= 0; i--) {
-    if (bytes >= BYTE_UNITS[i].bytes) return BYTE_UNITS[i];
+// Max single file size can never usefully exceed the protocol's own per-file
+// ceiling (PROTOCOL_UPLOAD_CEILING_BYTES, ~4000MiB) -- so its unit picker
+// drops TB entirely (a single file will never be measured in terabytes) and
+// caps the amount at a round 4096MB/4GB (both the same byte value, since
+// these units are binary) instead of letting the input accept an arbitrarily
+// large number that Save would just reject anyway.
+const MAX_FILE_SIZE_UNITS = BYTE_UNITS.filter((u) => u.label !== "TB");
+const MAX_FILE_SIZE_CAP_BYTES = 4 * 1024 ** 3;
+
+function bestByteUnit(bytes: number, units: { label: string; bytes: number }[] = BYTE_UNITS): { label: string; bytes: number } {
+  for (let i = units.length - 1; i >= 0; i--) {
+    if (bytes >= units[i].bytes) return units[i];
   }
-  return BYTE_UNITS[1]; // default to GB for small/zero values
+  return units[Math.min(1, units.length - 1)]; // default to GB (or the 2nd unit) for small/zero values
 }
 
 // parseDurationMinutes reads a Go-style duration string (e.g. "720h", "90m",
@@ -347,21 +356,28 @@ function DurationField({
 
 // ByteSizeField edits one byte-count env value as a friendly
 // "amount + unit" pair. bytes is the raw byte count as a string (what the
-// backend stores); an empty/zero value displays as "Unlimited".
+// backend stores); an empty/zero value displays as "Unlimited". units/maxBytes
+// let a caller narrow this down for a field with its own hard ceiling (e.g.
+// Max single file size, capped at the protocol's own ~4GB per-file limit --
+// there's no point offering TB there, or letting MB/GB amounts go past it).
 function ByteSizeField({
   label,
   help,
   bytes,
-  onChange
+  onChange,
+  units = BYTE_UNITS,
+  maxBytes
 }: {
   label: string;
   help: string;
   bytes: string;
   onChange: (bytes: string) => void;
+  units?: { label: string; bytes: number }[];
+  maxBytes?: number;
 }) {
   const numericBytes = Number(bytes || "0");
-  const [unitLabel, setUnitLabel] = useState(() => bestByteUnit(numericBytes).label);
-  const unit = BYTE_UNITS.find((u) => u.label === unitLabel) ?? BYTE_UNITS[1];
+  const [unitLabel, setUnitLabel] = useState(() => bestByteUnit(numericBytes, units).label);
+  const unit = units.find((u) => u.label === unitLabel) ?? units[0];
   const amount = numericBytes > 0 ? numericBytes / unit.bytes : NaN;
 
   function handleAmountChange(raw: string) {
@@ -370,7 +386,9 @@ function ByteSizeField({
       onChange("0");
       return;
     }
-    onChange(String(Math.round(parsed * unit.bytes)));
+    let value = Math.round(parsed * unit.bytes);
+    if (maxBytes && value > maxBytes) value = maxBytes;
+    onChange(String(value));
   }
 
   return (
@@ -380,13 +398,14 @@ function ByteSizeField({
         <input
           type="number"
           min="0"
+          max={maxBytes ? maxBytes / unit.bytes : undefined}
           step="any"
           value={Number.isNaN(amount) ? "" : amount}
           placeholder={"Unlimited"}
           onChange={(event) => handleAmountChange(event.target.value)}
         />
         <select value={unitLabel} onChange={(event) => setUnitLabel(event.target.value)} style={{ maxWidth: 90 }}>
-          {BYTE_UNITS.map((u) => (
+          {units.map((u) => (
             <option key={u.label} value={u.label}>{u.label}</option>
           ))}
         </select>
@@ -686,6 +705,8 @@ function LimitsRetentionSection() {
                     help={"Reject a single upload once its total assembled size exceeds this. Empty/0 = unlimited, bounded only by the protocol's own ~4GB per-file ceiling."}
                     bytes={maxUploadFileBytes}
                     onChange={setMaxUploadFileBytes}
+                    units={MAX_FILE_SIZE_UNITS}
+                    maxBytes={MAX_FILE_SIZE_CAP_BYTES}
                   />
                   {uploadCeilingExceeded && (
                     <Alert>{"This exceeds the protocol's own ~4GB upload ceiling and will be refused when the server restarts."}</Alert>
