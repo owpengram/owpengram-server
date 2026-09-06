@@ -727,7 +727,7 @@ export type SharedDeviceGroupListResponse = {
 export type StorageStatsResponse = {
   PhysicalBytes: string;
   LogicalBytes: string;
-  UnattributedBytes: string;
+  SystemBytes: string;
   DocumentCount: string;
   PhotoCount: string;
   AccountCount: string;

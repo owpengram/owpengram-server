@@ -119,9 +119,8 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
         <Metric label={"Photos"} value={stats ? formatQuantity(stats.PhotoCount) : "-"} />
         <Metric label={"Accounts with media"} value={stats ? formatQuantity(stats.AccountCount) : "-"} />
         <Metric
-          label={"Unattributed"}
-          value={stats ? formatBytes(stats.UnattributedBytes) : "-"}
-          tone={stats && Number(stats.UnattributedBytes) > 0 ? "warn" : "neutral"}
+          label={"System/bundled content"}
+          value={stats ? formatBytes(stats.SystemBytes) : "-"}
         />
       </div>
 

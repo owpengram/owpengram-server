@@ -2573,36 +2573,73 @@ FROM photos p
 // than physical when the same blob is attributed to more than one
 // document/photo, but a purged file with no file_blobs rows left correctly
 // contributes 0 to both, never a stale non-zero "ghost" size).
+//
+// Every field here deliberately EXCLUDES system/bundled content (owner_user_id
+// = 0 on the documents/photos row -- the built-in sticker packs, emoji sets,
+// default wallpapers, GIF catalog, and system-bot avatars this server seeds
+// at every boot; see internal/app/files's Seed* functions). None of that is
+// something an operator manages through storage retention/purge -- it isn't
+// one of the Photo/Video/GIF/Music/Voice/File/Avatar categories those
+// controls target, it's permanent server furniture -- so counting it here
+// alongside real user uploads made every number on this page mean "user
+// storage plus an unpredictable pile of bundled assets" instead of just
+// answering "how much space are my users actually using". SystemBytes below
+// is the one exception: it reports that excluded total separately, purely
+// for an operator's own curiosity/disk-accounting, never folded into the
+// other totals.
 type StorageStatsRow struct {
 	PhysicalBytes int64 `json:"PhysicalBytes,string"`
 	LogicalBytes  int64 `json:"LogicalBytes,string"`
-	// UnattributedBytes, DocumentCount, PhotoCount and AccountCount all count
-	// only items that still own real file_blobs bytes -- documents/photos
-	// rows themselves are kept forever after a hard-retention purge (so a
-	// message can still render "here was a file"), so counting rows instead
-	// of live bytes would keep growing even as the actual content becomes
-	// physically empty, diverging further and further from PhysicalBytes
-	// above.
-	UnattributedBytes int64 `json:"UnattributedBytes,string"`
-	DocumentCount     int64 `json:"DocumentCount,string"`
-	PhotoCount        int64 `json:"PhotoCount,string"`
-	AccountCount      int64 `json:"AccountCount,string"`
-	BackendKind       string
+	// SystemBytes is the physical size of excluded system/bundled content
+	// (owner_user_id = 0) -- shown separately so the gap between this and
+	// what `docker exec ... mc du` or the MinIO console reports isn't a
+	// mystery, but never added into PhysicalBytes/LogicalBytes/DocumentCount/
+	// PhotoCount/AccountCount above.
+	SystemBytes int64 `json:"SystemBytes,string"`
+	// DocumentCount, PhotoCount and AccountCount all count only items that
+	// still own real file_blobs bytes -- documents/photos rows are
+	// deliberately kept forever after a hard-retention purge (so a message
+	// can still render "here was a file"), so counting rows instead of live
+	// bytes would keep growing even as the actual content becomes physically
+	// empty, diverging further and further from PhysicalBytes above.
+	DocumentCount int64 `json:"DocumentCount,string"`
+	PhotoCount    int64 `json:"PhotoCount,string"`
+	AccountCount  int64 `json:"AccountCount,string"`
+	BackendKind   string
 }
 
 // StorageStats returns the admin panel's storage overview.
 func (s *readStore) StorageStats(ctx context.Context) (StorageStatsRow, error) {
 	var stats StorageStatsRow
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(SUM(size), 0)::bigint FROM file_blobs`).Scan(&stats.PhysicalBytes); err != nil {
+	// Physical usage dedups by (backend, object_key) like the unfiltered
+	// version used to, but only counts an object if at least one real user's
+	// (owner_user_id <> 0) document/photo still references it -- content
+	// shared between a system asset and a real upload (content-addressed
+	// storage, so only possible via a byte-for-byte coincidental duplicate)
+	// still counts, since a real user genuinely has that data stored.
+	if err := s.pool.QueryRow(ctx, `
+SELECT COALESCE(SUM(size), 0)::bigint FROM (
+    SELECT DISTINCT ON (fb.backend, fb.object_key) fb.backend, fb.object_key, fb.size
+    FROM file_blobs fb
+    WHERE EXISTS (
+        SELECT 1 FROM documents d
+        WHERE d.owner_user_id <> 0
+          AND (fb.location_key = 'doc:' || d.id::text OR fb.location_key LIKE 'doc:' || d.id::text || ':%')
+    ) OR EXISTS (
+        SELECT 1 FROM photos p
+        WHERE p.owner_user_id <> 0
+          AND (fb.location_key = 'photo:' || p.id::text OR fb.location_key LIKE 'photo:' || p.id::text || ':%')
+    )
+) x`).Scan(&stats.PhysicalBytes); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("sum physical blob bytes: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
-SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x`).Scan(&stats.LogicalBytes); err != nil {
+SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id <> 0`).Scan(&stats.LogicalBytes); err != nil {
 		return StorageStatsRow{}, fmt.Errorf("sum logical media bytes: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
-SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id = 0`).Scan(&stats.UnattributedBytes); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("sum unattributed media bytes: %w", err)
+SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id = 0`).Scan(&stats.SystemBytes); err != nil {
+		return StorageStatsRow{}, fmt.Errorf("sum system media bytes: %w", err)
 	}
 	// Documents/Photos/AccountCount all count only items that still own real
 	// file_blobs bytes -- documents/photos rows are deliberately kept forever
@@ -2610,9 +2647,10 @@ SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE ow
 	// a file"), so a plain count(*) would keep growing even as everything it
 	// counts becomes physically empty, wildly diverging from PhysicalBytes
 	// above and making the overview page look broken/confusing rather than
-	// informative.
+	// informative. owner_user_id <> 0 excludes system/bundled content -- see
+	// StorageStatsRow's doc comment.
 	if err := s.pool.QueryRow(ctx, `
-SELECT count(*)::bigint FROM documents d WHERE EXISTS (
+SELECT count(*)::bigint FROM documents d WHERE d.owner_user_id <> 0 AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'doc:' || d.id::text
        OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
@@ -2620,7 +2658,7 @@ SELECT count(*)::bigint FROM documents d WHERE EXISTS (
 		return StorageStatsRow{}, fmt.Errorf("count documents: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
-SELECT count(*)::bigint FROM photos p WHERE EXISTS (
+SELECT count(*)::bigint FROM photos p WHERE p.owner_user_id <> 0 AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'photo:' || p.id::text
        OR fb.location_key LIKE 'photo:' || p.id::text || ':%'

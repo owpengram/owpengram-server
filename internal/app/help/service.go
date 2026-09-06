@@ -82,6 +82,7 @@ type Service struct {
 	mapboxToken              string
 	emailSignupEnable        bool
 	emailSignupPhonePrefixes []string
+	maxUploadFileBytes       int64
 
 	appConfigOnce  sync.Once
 	appConfigCache domain.AppConfig
@@ -129,6 +130,42 @@ func WithEmailSignupPhonePrefixes(prefixes []string) Option {
 	}
 }
 
+// maxUploadFilePartBytes mirrors internal/app/files.MaxUploadPartBytes (not
+// imported to avoid pulling the whole files package into help just for one
+// constant): the wire size of one upload chunk, used to convert
+// TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES into the part-count unit
+// upload_max_fileparts_default/_premium are declared in.
+const maxUploadFilePartBytes = 524288
+
+// WithMaxUploadFileBytes overrides the stock upload_max_fileparts_default/
+// _premium app config keys (already in tdesktopDefaultAppConfigBase, values
+// 4000/8000 -- 2000/4000 MB at 512KB/part) with TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES's
+// part-count equivalent, when configured smaller than the protocol default.
+// tdesktop's Data::PremiumLimits::uploadMaxDefault/Premium already read
+// these two keys (data_premium_limits.cpp) and feed both the pre-upload size
+// check and its warning dialog (localimageloader.cpp's FileSizeLimit/
+// FileSizePremiumLimit, storage_media_prepare.cpp) -- so overriding the
+// number here is enough to make an adapted client warn about (and reject)
+// files above this self-hosted server's real ceiling, instead of only its
+// own hardcoded ~2/4GB assumption. 0 (unlimited, the default) leaves the
+// stock 4000/8000 values untouched.
+func WithMaxUploadFileBytes(bytes int64) Option {
+	return func(s *Service) {
+		s.maxUploadFileBytes = bytes
+	}
+}
+
+// maxUploadFileParts converts a configured byte ceiling to the number of
+// 512KB parts it takes to hold it, rounding up (a partial final part still
+// needs a whole slot) and never below 1.
+func maxUploadFileParts(bytes int64) int64 {
+	parts := (bytes + maxUploadFilePartBytes - 1) / maxUploadFilePartBytes
+	if parts < 1 {
+		return 1
+	}
+	return parts
+}
+
 // NewService 创建 help 服务。
 func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, opts ...Option) *Service {
 	s := &Service{
@@ -143,12 +180,12 @@ func NewService(appConfigs store.AppConfigStore, countries store.CountryStore, o
 	return s
 }
 
-func defaultAppConfig(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) domain.AppConfig {
-	jsonBytes := defaultAppConfigJSON(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes)
-	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes), JSON: jsonBytes}
+func defaultAppConfig(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string, maxUploadFileBytes int64) domain.AppConfig {
+	jsonBytes := defaultAppConfigJSON(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes, maxUploadFileBytes)
+	return domain.AppConfig{Client: tdesktopClient, Hash: defaultAppConfigHashFor(mapboxToken, emailSignupEnable, emailSignupPhonePrefixes, maxUploadFileBytes), JSON: jsonBytes}
 }
 
-func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) []byte {
+func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string, maxUploadFileBytes int64) []byte {
 	androidInvoiceBilling := `,"premium_playmarket_direct_currency_list":` + compatandroid.DirectInvoiceCurrenciesJSON()
 	base := tdesktopDefaultAppConfigBase + tdesktopNoForwardsAppConfig + androidInvoiceBilling
 	if emailSignupEnable {
@@ -158,6 +195,11 @@ func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool, emailSignu
 				base += `,"email_signup_phone_prefixes":` + string(prefixesJSON)
 			}
 		}
+	}
+	if maxUploadFileBytes > 0 {
+		parts := strconv.FormatInt(maxUploadFileParts(maxUploadFileBytes), 10)
+		base = strings.Replace(base, `"upload_max_fileparts_default":4000`, `"upload_max_fileparts_default":`+parts, 1)
+		base = strings.Replace(base, `"upload_max_fileparts_premium":8000`, `"upload_max_fileparts_premium":`+parts, 1)
 	}
 	if mapboxToken == "" {
 		return []byte(base + `}`)
@@ -170,13 +212,16 @@ func defaultAppConfigJSON(mapboxToken string, emailSignupEnable bool, emailSignu
 	return []byte(base + `,"tdesktop_config_map":{"maps":` + tokenJSON + `,"geo":` + tokenJSON + `,"bmaps":` + tokenJSON + `,"bgeo":` + tokenJSON + `}}`)
 }
 
-func defaultAppConfigHashFor(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string) int {
+func defaultAppConfigHashFor(mapboxToken string, emailSignupEnable bool, emailSignupPhonePrefixes []string, maxUploadFileBytes int64) int {
 	h := defaultAppConfigHash
 	if emailSignupEnable {
 		h += 1000003 // large odd offset so toggling the flag always changes the hash
 		if len(emailSignupPhonePrefixes) > 0 {
 			h += 1 + int(crc32.ChecksumIEEE([]byte(strings.Join(emailSignupPhonePrefixes, ",")))&0x3fffffff)
 		}
+	}
+	if maxUploadFileBytes > 0 {
+		h += 1 + int(crc32.ChecksumIEEE([]byte(strconv.FormatInt(maxUploadFileBytes, 10)))&0x3fffffff)
 	}
 	if mapboxToken == "" {
 		return h
@@ -243,9 +288,9 @@ func (s *Service) accountAppConfig(ctx context.Context, userID int64, base domai
 
 func (s *Service) loadAppConfig(ctx context.Context) domain.AppConfig {
 	if s == nil {
-		return defaultAppConfig("", false, nil)
+		return defaultAppConfig("", false, nil, 0)
 	}
-	defaultCfg := defaultAppConfig(s.mapboxToken, s.emailSignupEnable, s.emailSignupPhonePrefixes)
+	defaultCfg := defaultAppConfig(s.mapboxToken, s.emailSignupEnable, s.emailSignupPhonePrefixes, s.maxUploadFileBytes)
 	s.appConfigOnce.Do(func() {
 		if s.appConfigs == nil {
 			s.appConfigCache = defaultCfg

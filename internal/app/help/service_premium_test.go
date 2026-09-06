@@ -119,6 +119,66 @@ func containsJSONCurrency(values []any, want string) bool {
 	return false
 }
 
+func TestAppConfigKeepsStockUploadPartsLimitsByDefault(t *testing.T) {
+	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, 0)
+	if err != nil || notModified {
+		t.Fatalf("GetAppConfig = notModified %v err %v", notModified, err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(cfg.JSON, &decoded); err != nil {
+		t.Fatalf("app config json invalid: %v", err)
+	}
+	if got := decoded["upload_max_fileparts_default"]; got != float64(4000) {
+		t.Fatalf("upload_max_fileparts_default = %v, want 4000 (unconfigured limit)", got)
+	}
+	if got := decoded["upload_max_fileparts_premium"]; got != float64(8000) {
+		t.Fatalf("upload_max_fileparts_premium = %v, want 8000 (unconfigured limit)", got)
+	}
+}
+
+func TestAppConfigUsesConfiguredMaxUploadFileBytesAndHash(t *testing.T) {
+	// 500MiB / 512KiB-per-part = 1000 parts exactly.
+	svc := NewService(nil, nil, WithMaxUploadFileBytes(500*1024*1024))
+	cfg, notModified, err := svc.GetAppConfig(context.Background(), 0, 0)
+	if err != nil || notModified {
+		t.Fatalf("GetAppConfig = notModified %v err %v", notModified, err)
+	}
+	if cfg.Hash == defaultAppConfigHash {
+		t.Fatalf("hash = %d, want limit-specific hash", cfg.Hash)
+	}
+	if _, notModified, err := svc.GetAppConfig(context.Background(), 0, cfg.Hash); err != nil || !notModified {
+		t.Fatalf("GetAppConfig(hash) = notModified %v err %v, want notModified", notModified, err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(cfg.JSON, &decoded); err != nil {
+		t.Fatalf("app config json invalid: %v", err)
+	}
+	if got := decoded["upload_max_fileparts_default"]; got != float64(1000) {
+		t.Fatalf("upload_max_fileparts_default = %v, want 1000", got)
+	}
+	if got := decoded["upload_max_fileparts_premium"]; got != float64(1000) {
+		t.Fatalf("upload_max_fileparts_premium = %v, want 1000", got)
+	}
+}
+
+func TestMaxUploadFilePartsRoundsUpAndFloorsAtOne(t *testing.T) {
+	cases := []struct {
+		bytes int64
+		want  int64
+	}{
+		{0, 1},
+		{1, 1},
+		{maxUploadFilePartBytes, 1},
+		{maxUploadFilePartBytes + 1, 2},
+		{500 * 1024 * 1024, 1000},
+	}
+	for _, c := range cases {
+		if got := maxUploadFileParts(c.bytes); got != c.want {
+			t.Errorf("maxUploadFileParts(%d) = %d, want %d", c.bytes, got, c.want)
+		}
+	}
+}
+
 func TestAppConfigOmitsMapboxTokenByDefault(t *testing.T) {
 	cfg, notModified, err := (*Service)(nil).GetAppConfig(context.Background(), 0, 0)
 	if err != nil || notModified {

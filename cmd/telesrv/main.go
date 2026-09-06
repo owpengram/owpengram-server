@@ -1611,6 +1611,7 @@ func run(logger *zap.Logger) error {
 			help.WithMapboxToken(cfg.MapboxToken),
 			help.WithEmailSignupEnable(cfg.EmailSignupEnable),
 			help.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes),
+			help.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
 			help.WithAccountFreezeProvider(adminService),
 		),
 		AppUpdates:                 appUpdateResolver,
