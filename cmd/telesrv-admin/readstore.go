@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/errgroup"
 
 	"telesrv/internal/domain"
 )
@@ -509,44 +510,77 @@ type DashboardCounts struct {
 	PendingVerifications int64
 }
 
+// DashboardCounts gathers every headline number on the admin overview.
+//
+// The queries are independent, so they run concurrently: this used to be eight
+// round trips in series and the page waited for their sum. errgroup cancels the
+// rest as soon as one fails, and each goroutine writes to its own field of
+// `out`, so no locking is needed.
 func (s *readStore) DashboardCounts(ctx context.Context) (DashboardCounts, error) {
 	var out DashboardCounts
-	var err error
-	if out.Users, err = s.CountAccounts(ctx); err != nil {
-		return out, err
-	}
-	if out.OnlineUsers, err = s.CountOnlineAccounts(ctx); err != nil {
-		return out, err
-	}
-	if err := s.pool.QueryRow(ctx, `
+	g, gctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		v, err := s.CountAccounts(gctx)
+		out.Users = v
+		return err
+	})
+	g.Go(func() error {
+		v, err := s.CountOnlineAccounts(gctx)
+		out.OnlineUsers = v
+		return err
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*) FROM users WHERE is_bot AND deleted_at IS NULL`).Scan(&out.Bots); err != nil {
-		return out, fmt.Errorf("count bots: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count bots: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*) FILTER (WHERE broadcast), count(*) FILTER (WHERE megagroup)
 FROM channels WHERE NOT deleted AND NOT monoforum`).Scan(&out.BroadcastChannels, &out.Supergroups); err != nil {
-		return out, fmt.Errorf("count channels: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count channels: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*) FILTER (WHERE set_kind = 'stickers'), count(*) FILTER (WHERE set_kind = 'emoji')
 FROM sticker_sets WHERE deleted = false`).Scan(&out.StickerSets, &out.EmojiSets); err != nil {
-		return out, fmt.Errorf("count sticker sets: %w", err)
-	}
-	// There's no global GIF catalog -- a GIF is just a document a user saved to
-	// their personal collection (messages.saveGif). This counts distinct
-	// documents saved by anyone, the closest thing to "how many GIFs does this
-	// server know about."
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count sticker sets: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		// There's no global GIF catalog -- a GIF is just a document a user saved
+		// to their personal collection (messages.saveGif). This counts distinct
+		// documents saved by anyone, the closest thing to "how many GIFs does
+		// this server know about."
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(DISTINCT document_id) FROM user_sticker_collections WHERE kind = 'gif'`).Scan(&out.Gifs); err != nil {
-		return out, fmt.Errorf("count gifs: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count gifs: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*) FROM moderation_cases WHERE status NOT IN ('resolved', 'dismissed')`).Scan(&out.PendingReports); err != nil {
-		return out, fmt.Errorf("count pending moderation cases: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count pending moderation cases: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*) FROM verification_applications WHERE status IN ('submitted', 'in_review')`).Scan(&out.PendingVerifications); err != nil {
-		return out, fmt.Errorf("count pending verification applications: %w", err)
+			return fmt.Errorf("count pending verification applications: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return DashboardCounts{}, err
 	}
 	return out, nil
 }
@@ -2609,15 +2643,22 @@ type StorageStatsRow struct {
 }
 
 // StorageStats returns the admin panel's storage overview.
+// StorageStats runs six aggregates over file_blobs/documents/photos. They are
+// independent and each is expensive, so they run concurrently rather than
+// summing their latencies -- see file_blobs_location_key_pattern_idx for why
+// they were slow in the first place.
 func (s *readStore) StorageStats(ctx context.Context) (StorageStatsRow, error) {
 	var stats StorageStatsRow
+	g, gctx := errgroup.WithContext(ctx)
+
 	// Physical usage dedups by (backend, object_key) like the unfiltered
 	// version used to, but only counts an object if at least one real user's
 	// (owner_user_id <> 0) document/photo still references it -- content
 	// shared between a system asset and a real upload (content-addressed
 	// storage, so only possible via a byte-for-byte coincidental duplicate)
 	// still counts, since a real user genuinely has that data stored.
-	if err := s.pool.QueryRow(ctx, `
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT COALESCE(SUM(size), 0)::bigint FROM (
     SELECT DISTINCT ON (fb.backend, fb.object_key) fb.backend, fb.object_key, fb.size
     FROM file_blobs fb
@@ -2631,16 +2672,24 @@ SELECT COALESCE(SUM(size), 0)::bigint FROM (
           AND (fb.location_key = 'photo:' || p.id::text OR fb.location_key LIKE 'photo:' || p.id::text || ':%')
     )
 ) x`).Scan(&stats.PhysicalBytes); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("sum physical blob bytes: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("sum physical blob bytes: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id <> 0`).Scan(&stats.LogicalBytes); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("sum logical media bytes: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("sum logical media bytes: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id = 0`).Scan(&stats.SystemBytes); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("sum system media bytes: %w", err)
-	}
+			return fmt.Errorf("sum system media bytes: %w", err)
+		}
+		return nil
+	})
 	// Documents/Photos/AccountCount all count only items that still own real
 	// file_blobs bytes -- documents/photos rows are deliberately kept forever
 	// after a hard-retention purge (so a message can still render "here was
@@ -2649,26 +2698,40 @@ SELECT COALESCE(SUM(size), 0)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE ow
 	// above and making the overview page look broken/confusing rather than
 	// informative. owner_user_id <> 0 excludes system/bundled content -- see
 	// StorageStatsRow's doc comment.
-	if err := s.pool.QueryRow(ctx, `
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*)::bigint FROM documents d WHERE d.owner_user_id <> 0 AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'doc:' || d.id::text
        OR fb.location_key LIKE 'doc:' || d.id::text || ':%'
 )`).Scan(&stats.DocumentCount); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("count documents: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count documents: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(*)::bigint FROM photos p WHERE p.owner_user_id <> 0 AND EXISTS (
     SELECT 1 FROM file_blobs fb
     WHERE fb.location_key = 'photo:' || p.id::text
        OR fb.location_key LIKE 'photo:' || p.id::text || ':%'
 )`).Scan(&stats.PhotoCount); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("count photos: %w", err)
-	}
-	if err := s.pool.QueryRow(ctx, `
+			return fmt.Errorf("count photos: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		if err := s.pool.QueryRow(gctx, `
 SELECT count(DISTINCT owner_user_id)::bigint FROM (`+perOwnerMediaSizeSQL+`) x WHERE owner_user_id <> 0 AND size > 0`).Scan(&stats.AccountCount); err != nil {
-		return StorageStatsRow{}, fmt.Errorf("count storage accounts: %w", err)
+			return fmt.Errorf("count storage accounts: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return StorageStatsRow{}, err
 	}
+
 	stats.BackendKind = strings.ToLower(strings.TrimSpace(os.Getenv("TELESRV_BLOB_BACKEND")))
 	if stats.BackendKind == "" {
 		stats.BackendKind = "s3"

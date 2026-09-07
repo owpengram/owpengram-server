@@ -19,6 +19,7 @@ import (
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tlprofile"
+	"golang.org/x/sync/errgroup"
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
@@ -352,13 +353,26 @@ func (s *server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
 		return
 	}
-	counts, err := s.read.DashboardCounts(r.Context())
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	storage, err := s.read.StorageStats(r.Context())
-	if err != nil {
+	// The two halves hit different tables and neither feeds the other, so the
+	// page waited for their sum for no reason. Storage in particular is the
+	// expensive one; running it alongside the counts means the response costs
+	// whichever is slower rather than both.
+	var (
+		counts  DashboardCounts
+		storage StorageStatsRow
+	)
+	g, gctx := errgroup.WithContext(r.Context())
+	g.Go(func() error {
+		var err error
+		counts, err = s.read.DashboardCounts(gctx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		storage, err = s.read.StorageStats(gctx)
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
