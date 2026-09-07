@@ -1,6 +1,7 @@
-import { ShieldOff } from "lucide-react";
+import { EyeOff, ShieldOff } from "lucide-react";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import { Alert, PageFrame } from "./components/ui";
+import { StatusScreen } from "./components/StatusScreen";
+import type { Navigate } from "./routing";
 // Permission names exactly as the backend spells them
 // (cmd/telesrv-admin/security.go). "*" is the wildcard an operator configures for
 // a full-access session.
@@ -85,52 +86,65 @@ export function useThirdPartyVerificationHidden(): boolean {
 }
 
 // PermissionGate is what a direct URL hits: without the right the operator gets
-// an explanation naming the missing permission, not an empty table that looks
+// a proper refusal naming the missing permission, not an empty table that looks
 // like "no data".
-export function PermissionGate({ permission, children }: { permission: string; children: ReactNode }) {
+export function PermissionGate({
+  permission,
+  navigate,
+  children
+}: {
+  permission: string;
+  navigate?: Navigate;
+  children: ReactNode;
+}) {
   const { can } = usePermissions();
   if (can(permission)) {
     return <>{children}</>;
   }
-  return <PermissionDenied permission={permission} />;
+  return <PermissionDenied permission={permission} navigate={navigate} />;
 }
 
-export function PermissionDenied({ permission }: { permission: string }) {
+export function PermissionDenied({ permission, navigate }: { permission: string; navigate?: Navigate }) {
   return (
-    <PageFrame title={"Not enough rights"} eyebrow={"Console / Access"}>
-      <Alert>{`This session was not granted the ${permission} permission, so the section stays closed.`}</Alert>
-      <section className="section-block">
-        <div className="entity-head">
-          <div>
-            <div className="entity-title"><ShieldOff size={16} /> {"Section unavailable"}</div>
-            <div className="entity-subtitle">{"Ask an operator to add the permission to TELESRV_ADMIN_UI_PERMISSIONS and sign in again."}</div>
-          </div>
-        </div>
-      </section>
-    </PageFrame>
+    <StatusScreen
+      code="403"
+      icon={ShieldOff}
+      title={"You do not have access to this section"}
+      detail={permission}
+      navigate={navigate}
+    >
+      {/* Named in the same words the operator editor uses, so "Reveal bot
+          tokens" is what gets asked for rather than "bots.token.read". The raw
+          string is still shown below, because that is what has to be ticked. */}
+      {`It needs the "${permissionTitle(permission)}" permission. Ask an operator who can manage operators to add it, then sign in again.`}
+    </StatusScreen>
   );
 }
 
 // ThirdPartyVerificationHiddenGate is what a direct URL to a third-party
 // verification page hits while the feature is hidden -- distinct from
 // PermissionGate because no permission grant (not even "*") changes this.
-export function ThirdPartyVerificationHiddenGate({ children }: { children: ReactNode }) {
+export function ThirdPartyVerificationHiddenGate({
+  navigate,
+  children
+}: {
+  navigate?: Navigate;
+  children: ReactNode;
+}) {
   const hidden = useThirdPartyVerificationHidden();
   if (!hidden) {
     return <>{children}</>;
   }
   return (
-    <PageFrame title={"Feature hidden"} eyebrow={"Console / Third-party marks"}>
-      <Alert>{"Third-party bot verification is hidden on this server (TELESRV_HIDE_THIRD_PARTY_VERIFICATION=true)."}</Alert>
-      <section className="section-block">
-        <div className="entity-head">
-          <div>
-            <div className="entity-title"><ShieldOff size={16} /> {"Not fully finished"}</div>
-            <div className="entity-subtitle">{"This feature may cause unstable server behavior and is hidden by default. Set TELESRV_HIDE_THIRD_PARTY_VERIFICATION=false to re-enable it."}</div>
-          </div>
-        </div>
-      </section>
-    </PageFrame>
+    <StatusScreen
+      code="404"
+      icon={EyeOff}
+      title={"This section is switched off"}
+      detail="TELESRV_HIDE_THIRD_PARTY_VERIFICATION=false"
+      navigate={navigate}
+    >
+      {"Third-party bot verification is not finished and is hidden on this server. It is a server setting, not a permission -- no account can see it while it is off."}
+    </StatusScreen>
   );
 }
 

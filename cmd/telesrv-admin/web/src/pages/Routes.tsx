@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { type Navigate, type RouteState } from "../routing";
 import { AccountDetailPage } from "./AccountDetailPage";
 import { AccountsPage } from "./AccountsPage";
@@ -27,12 +28,30 @@ import { VerificationPage } from "./VerificationPage";
 import {
   PermissionGate,
   ThirdPartyVerificationHiddenGate,
+  permissionAccountsRead,
+  permissionAdminsManage,
   permissionBotVerificationReview,
-  permissionServerManage, permissionAdminsManage,
+  permissionBotsRead,
+  permissionBroadcastsRead,
+  permissionChannelsRead,
+  permissionContentRead,
+  permissionDashboardRead,
+  permissionMessagesRead,
+  permissionModerationReview,
+  permissionServerManage,
+  permissionStorageRead,
+  permissionUsernamesRead,
   permissionVerificationReview
 } from "../permissions";
 
 export function Routes({ route, navigate }: { route: RouteState; navigate: Navigate }) {
+  // Every section is wrapped in the right it needs. Without this the page
+  // rendered, fired its request, and showed the backend's "permission X is
+  // required" as a red bar over an empty table -- an error where a refusal
+  // belongs. Gating here means the request is never made either.
+  const gate = (permission: string, node: ReactNode) => (
+    <PermissionGate navigate={navigate} permission={permission}>{node}</PermissionGate>
+  );
   const accountID = route.path.match(/^\/accounts\/(\d+)$/)?.[1];
   const channelID = route.path.match(/^\/channels\/(\d+)$/)?.[1];
   const botID = route.path.match(/^\/bots\/(\d+)$/)?.[1];
@@ -45,8 +64,8 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   const botVerificationRequestID = route.path.match(/^\/bot-verification\/(\d+)$/)?.[1];
   if (botVerificationRequestID) {
     return (
-      <ThirdPartyVerificationHiddenGate>
-        <PermissionGate permission={permissionBotVerificationReview}>
+      <ThirdPartyVerificationHiddenGate navigate={navigate}>
+        <PermissionGate navigate={navigate} permission={permissionBotVerificationReview}>
           <BotVerificationRequestPage id={botVerificationRequestID} navigate={navigate} />
         </PermissionGate>
       </ThirdPartyVerificationHiddenGate>
@@ -54,8 +73,8 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/bot-verification") {
     return (
-      <ThirdPartyVerificationHiddenGate>
-        <PermissionGate permission={permissionBotVerificationReview}>
+      <ThirdPartyVerificationHiddenGate navigate={navigate}>
+        <PermissionGate navigate={navigate} permission={permissionBotVerificationReview}>
           <BotVerificationPage navigate={navigate} />
         </PermissionGate>
       </ThirdPartyVerificationHiddenGate>
@@ -66,108 +85,108 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   // itself instead of rendering an empty queue.
   if (verificationID) {
     return (
-      <PermissionGate permission={permissionVerificationReview}>
+      <PermissionGate navigate={navigate} permission={permissionVerificationReview}>
         <VerificationDetailPage id={verificationID} navigate={navigate} />
       </PermissionGate>
     );
   }
   if (route.path === "/verification") {
     return (
-      <PermissionGate permission={permissionVerificationReview}>
+      <PermissionGate navigate={navigate} permission={permissionVerificationReview}>
         <VerificationPage navigate={navigate} />
       </PermissionGate>
     );
   }
   if (collectibleUsernameID) {
-    return <CollectibleUsernameDetailPage id={collectibleUsernameID} navigate={navigate} />;
+    return gate(permissionUsernamesRead, <CollectibleUsernameDetailPage id={collectibleUsernameID} navigate={navigate} />);
   }
   if (route.path === "/collectible-usernames") {
-    return <CollectibleUsernamesPage navigate={navigate} />;
+    return gate(permissionUsernamesRead, <CollectibleUsernamesPage navigate={navigate} />);
   }
   if (route.path === "/storage") {
-    return <StoragePage navigate={navigate} />;
+    return gate(permissionStorageRead, <StoragePage navigate={navigate} />);
   }
   if (accountID) {
-    return <AccountDetailPage id={Number(accountID)} navigate={navigate} />;
+    return gate(permissionAccountsRead, <AccountDetailPage id={Number(accountID)} navigate={navigate} />);
   }
   if (channelID) {
-    return <ChannelDetailPage id={Number(channelID)} navigate={navigate} />;
+    return gate(permissionChannelsRead, <ChannelDetailPage id={Number(channelID)} navigate={navigate} />);
   }
   if (botID) {
-    return <BotDetailPage id={Number(botID)} navigate={navigate} />;
+    return gate(permissionBotsRead, <BotDetailPage id={Number(botID)} navigate={navigate} />);
   }
   if (moderationCaseID) {
-    return <ModerationCaseDetailPage id={Number(moderationCaseID)} navigate={navigate} />;
+    return gate(permissionModerationReview, <ModerationCaseDetailPage id={Number(moderationCaseID)} navigate={navigate} />);
   }
   if (route.path === "/accounts/shared-devices") {
-    return <SharedDevicesPage navigate={navigate} />;
+    return gate(permissionAccountsRead, <SharedDevicesPage navigate={navigate} />);
   }
   if (route.path === "/accounts") {
-    return <AccountsPage navigate={navigate} />;
+    return gate(permissionAccountsRead, <AccountsPage navigate={navigate} />);
   }
   if (route.path === "/channels") {
-    return <ChannelsPage navigate={navigate} />;
+    return gate(permissionChannelsRead, <ChannelsPage navigate={navigate} />);
   }
   if (route.path === "/bots") {
-    return <BotsPage navigate={navigate} />;
+    return gate(permissionBotsRead, <BotsPage navigate={navigate} />);
   }
   if (route.path === "/moderation") {
-    return <ModerationCasesPage navigate={navigate} />;
+    return gate(permissionModerationReview, <ModerationCasesPage navigate={navigate} />);
   }
   if (route.path === "/broadcasts") {
-    return <BroadcastsPage />;
+    return gate(permissionBroadcastsRead, <BroadcastsPage />);
   }
   if (route.path === "/emoji") {
-    return <StickerSetsPage kind="emoji" />;
+    return gate(permissionContentRead, <StickerSetsPage kind="emoji" />);
   }
 	if (route.path === "/stickers") {
-		return <StickerSetsPage kind="stickers" />;
+		return gate(permissionContentRead, <StickerSetsPage kind="stickers" />);
 	}
   if (route.path === "/gif-catalog") {
-    return <GifCatalogPage />;
+    return gate(permissionContentRead, <GifCatalogPage />);
   }
   if (route.path === "/admin-users") {
     return (
-      <PermissionGate permission={permissionAdminsManage}>
+      <PermissionGate navigate={navigate} permission={permissionAdminsManage}>
         <AdminUsersPage />
       </PermissionGate>
     );
   }
   if (route.path === "/server-settings") {
     return (
-      <PermissionGate permission={permissionServerManage}>
+      <PermissionGate navigate={navigate} permission={permissionServerManage}>
         <ServerSettingsPage />
       </PermissionGate>
     );
   }
   if (route.path === "/messages/detail" || route.path === "/messages/private/detail") {
-    return (
+    return gate(permissionMessagesRead, (
       <MessageDetailPage
         ownerUserID={Number(route.search.get("owner_user_id") || "0")}
         msgID={Number(route.search.get("msg_id") || "0")}
         navigate={navigate}
       />
-    );
+    ));
   }
   if (route.path === "/messages/groups/detail") {
-    return (
+    return gate(permissionMessagesRead, (
       <GroupMessageDetailPage
         channelID={Number(route.search.get("channel_id") || "0")}
         msgID={Number(route.search.get("msg_id") || "0")}
         navigate={navigate}
       />
-    );
+    ));
   }
   // Both tabs keep their own path so a link to one still opens on it -- the
   // tab is a view of /messages, not a hidden bit of component state.
   if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups") {
-    return (
+    return gate(permissionMessagesRead, (
       <MessagesPage
         navigate={navigate}
         tab={route.path === "/messages/groups" ? "groups" : "private"}
         onTab={(tab) => navigate(tab === "groups" ? "/messages/groups" : "/messages/private")}
       />
-    );
+    ));
   }
-  return <Dashboard navigate={navigate} />;
+  return gate(permissionDashboardRead, <Dashboard navigate={navigate} />);
 }

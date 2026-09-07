@@ -32,10 +32,22 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
     setBusy(true);
     setError("");
     try {
-      // The login answer carries the permission set and the CSRF token; api.login
-      // remembers the token, the session state keeps the rights.
+      // api.login remembers the CSRF token and tells us the sign-in worked.
       const result = await api.login(secret, username);
-      onLogin({ actor: result.actor, permissions: result.permissions ?? [] });
+      // The session itself is then read from /api/session rather than assembled
+      // out of the login answer. The login response carries only the actor and
+      // the permissions, so building a session from it silently dropped the
+      // build info, the API layers and the third-party-verification flag --
+      // which is why the sidebar footer was blank until the page was reloaded.
+      // One endpoint decides what a session is.
+      try {
+        onLogin(await api.session());
+      } catch {
+        // Signed in, but the follow-up read failed. Falling back to what the
+        // login answer does carry beats bouncing someone back to a login form
+        // they have already passed; a reload fills in the rest.
+        onLogin({ actor: result.actor, permissions: result.permissions ?? [] });
+      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {

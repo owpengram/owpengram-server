@@ -1102,3 +1102,85 @@ textarea:focus {
 .modal.narrow {
   width: min(460px, 100%);
 }
+
+/* Refusal screens (403 / 404). A full-height panel rather than an alert strip
+   above an empty page: hitting one is the end of that navigation, not a
+   warning about the page you are on. */
+.status-screen {
+  position: relative;
+  display: grid;
+  min-height: min(560px, 70vh);
+  overflow: hidden;
+  place-items: center;
+  padding: 32px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  text-align: center;
+}
+
+/* The status code as a watermark. Large enough to be read instantly, faint
+   enough that the sentence below it is what the eye lands on. */
+.status-screen-code {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--heading);
+  font-size: clamp(140px, 26vw, 280px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  opacity: 0.05;
+  transform: translate(-50%, -50%);
+  user-select: none;
+  pointer-events: none;
+}
+
+.status-screen-body {
+  position: relative;
+  display: grid;
+  max-width: 460px;
+  gap: 12px;
+  justify-items: center;
+}
+
+.status-screen-icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  color: var(--brand);
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: 50%;
+}
+
+.status-screen-body h1 {
+  margin: 0;
+  color: var(--heading);
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.status-screen-body p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.status-screen-detail {
+  padding: 5px 10px;
+  color: var(--text-soft);
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.status-screen-body .btn {
+  margin-top: 4px;
+}
