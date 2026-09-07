@@ -506,3 +506,61 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Collapsible navigation.
+   Scoped to the width where the sidebar is actually a sidebar: below 1120px the
+   shell already stacks it into a horizontal strip (05-responsive.css), and
+   collapsing that would just hide the labels of a bar that has room for them. */
+@media (min-width: 1121px) {
+  .shell--nav-collapsed {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  /* Everything that only makes sense with room for words goes away: the
+     wordmark beside the logo, the "Navigation" heading, the version block and
+     the Connect/Share buttons. The icons and their tooltips remain. */
+  .shell--nav-collapsed .brand > span:not(.brand-mark),
+  .shell--nav-collapsed .sidebar-label,
+  .shell--nav-collapsed .sidebar-status,
+  .shell--nav-collapsed .sidebar-server-actions,
+  .shell--nav-collapsed .nav-item-label {
+    display: none;
+  }
+
+  .shell--nav-collapsed .sidebar {
+    padding: 18px 10px;
+    align-items: center;
+  }
+
+  .shell--nav-collapsed .brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  /* One column instead of icon + label, so the glyph sits centred in the rail
+     rather than clinging to the left edge where the text used to start. */
+  .shell--nav-collapsed .nav-item {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 0;
+    width: 44px;
+  }
+
+  .shell--nav-collapsed .nav-list {
+    justify-items: center;
+  }
+}
+
+/* The toggle sits with the page title rather than inside the sidebar: it has to
+   stay reachable at 68px wide, and a control that hides with the thing it
+   controls is a trap. */
+.topbar-lead {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.nav-toggle {
+  flex: 0 0 auto;
+}

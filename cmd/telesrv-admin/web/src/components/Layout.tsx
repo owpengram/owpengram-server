@@ -9,6 +9,8 @@ import {
   LogOut,
   Megaphone,
   MessageSquareText,
+  PanelLeftClose,
+  PanelLeftOpen,
   Settings,
   UserCog,
   UserRound,
@@ -113,6 +115,29 @@ export function Shell({
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
   const canManageServer = useCan(permissionServerManage);
+  // Remembered per browser: an operator who works in a narrow window should not
+  // have to re-collapse the navigation on every visit. A failed read (private
+  // mode, blocked storage) just means the default.
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("owpengram.nav.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleNav() {
+    setNavCollapsed((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem("owpengram.nav.collapsed", next ? "1" : "0");
+      } catch {
+        // Not being able to remember the choice is not a reason to refuse it.
+      }
+      return next;
+    });
+  }
+
   const [addServerLinkOpen, setAddServerLinkOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
@@ -221,7 +246,7 @@ export function Shell({
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${navCollapsed ? "shell--nav-collapsed" : ""}`.trim()}>
       <aside className="sidebar">
         <AppLink className="brand" href="/" navigate={navigate}>
           <span className="brand-mark"><img src={brandIconSrc} alt={brandName} onError={() => setBrandIconFailed(true)} /></span>
@@ -326,7 +351,17 @@ export function Shell({
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <div>
+          <div className="topbar-lead">
+            <button
+              className="icon-btn nav-toggle"
+              type="button"
+              onClick={toggleNav}
+              aria-expanded={!navCollapsed}
+              aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+              title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
+            >
+              {navCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            </button>
             <h1>{routeTitle(route.path)}</h1>
           </div>
           <div className="topbar-actions">
@@ -363,9 +398,16 @@ function NavLink({
 }) {
   const active = activeWhen ? activeWhen(route.path) : href === "/" ? route.path === "/" : route.path.startsWith(href);
   return (
-    <AppLink className={`nav-item ${active ? "active" : ""}`} href={href} navigate={navigate}>
+    <AppLink
+      className={`nav-item ${active ? "active" : ""}`}
+      href={href}
+      navigate={navigate}
+      // The label is hidden when the sidebar is collapsed, so it moves to the
+      // tooltip -- an icon rail with no names is a memory test.
+      title={typeof children === "string" ? children : undefined}
+    >
       {icon ?? <span aria-hidden="true" className="nav-dot" />}
-      <span>{children}</span>
+      <span className="nav-item-label">{children}</span>
     </AppLink>
   );
 }
