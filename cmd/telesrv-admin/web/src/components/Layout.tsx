@@ -214,15 +214,6 @@ export function Shell({
   // Third-party verification is additionally hidden by default (not fully
   // finished) regardless of what the session was granted -- see permissions.tsx.
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
-  const messagesActive = route.path.startsWith("/messages");
-  const [messagesOpen, setMessagesOpen] = useState(messagesActive);
-
-  useEffect(() => {
-    if (messagesActive) {
-      setMessagesOpen(true);
-    }
-  }, [messagesActive]);
-
   async function logout() {
     await api.logout().catch(() => undefined);
     onLogout();
@@ -277,38 +268,17 @@ export function Shell({
 			{canReadContent && (
 			  <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
 			)}
-          <div className={`nav-section ${messagesActive ? "active" : ""} ${messagesOpen ? "open" : ""}`}>
-            <button
-              className="nav-section-toggle"
-              type="button"
-              aria-expanded={messagesOpen}
-              onClick={() => setMessagesOpen((open) => !open)}
+          {canReadMessages && (
+            <NavLink
+              icon={<MessageSquareText size={16} />}
+              href="/messages/private"
+              route={route}
+              navigate={navigate}
+              activeWhen={(path) => path.startsWith("/messages")}
             >
-              <MessageSquareText size={16} />
-              <span>{"Messages"}</span>
-              <ChevronDown className="nav-section-chevron" size={15} />
-            </button>
-            {messagesOpen && (
-              <div className="nav-children">
-                <NavLink
-                  href="/messages/private"
-                  route={route}
-                  navigate={navigate}
-                  activeWhen={(path) => path === "/messages" || path === "/messages/detail" || path.startsWith("/messages/private")}
-                >
-                  {"Private"}
-                </NavLink>
-                <NavLink
-                  href="/messages/groups"
-                  route={route}
-                  navigate={navigate}
-                  activeWhen={(path) => path.startsWith("/messages/groups")}
-                >
-                  {"Groups"}
-                </NavLink>
-              </div>
-            )}
-          </div>
+              {"Messages"}
+            </NavLink>
+          )}
           {canManageAdmins && (
             <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
           )}

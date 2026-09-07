@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { MessageView } from "../components/MessageView";
 import { formatDate, formatUnix } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { MessageDetail } from "../types";
@@ -41,37 +42,46 @@ export function MessageDetailPage({ ownerUserID, msgID, navigate }: { ownerUserI
       <SplitLayout
         main={
           <div className="stacked-sections">
-            <section className="entity-head">
-              <div>
-                <div className="entity-title">{`Owner ${msg.OwnerUserID} · Peer ${msg.PeerID}`}</div>
-                <div className="entity-subtitle">{`Sender ${msg.FromUserID} · ${formatUnix(msg.Date)}`}</div>
-              </div>
-              <div className="entity-badges">
-                {msg.Deleted ? <Badge tone="danger">{"Deleted"}</Badge> : <Badge>{"Live"}</Badge>}
-                <Badge>pts {msg.PTS}</Badge>
-                <Badge>{msg.Outgoing ? "Outgoing" : "Incoming"}</Badge>
-              </div>
-            </section>
+            <MessageView
+              body={msg.Body}
+              media={msg.Media}
+              sender={`From ${msg.FromUserID}`}
+              meta={`${msg.Outgoing ? "Sent to" : "Received from"} ${msg.PeerID} · ${formatUnix(msg.Date)}`}
+              badges={
+                <>
+                  {msg.Deleted ? <Badge tone="danger">{"Deleted"}</Badge> : <Badge>{"Live"}</Badge>}
+                  <Badge>{msg.Outgoing ? "Outgoing" : "Incoming"}</Badge>
+                </>
+              }
+            />
             <div className="summary-grid">
               <Summary label={"Message box ID"} value={String(msg.BoxID)} mono />
               <Summary label={"Private message ID"} value={String(msg.PrivateMessageID)} mono />
               <Summary label={"Message sender"} value={String(msg.MessageSenderID)} mono />
-              <Summary label={"Time"} value={formatUnix(msg.Date)} />
+              <Summary label={"pts"} value={String(msg.PTS)} mono />
             </div>
-            <section className="section-block">
-              <SectionHead title={"Message Box"} text={"message_boxes read-only snapshot"} />
-              <JsonBlock value={detail.MessageJSON} />
-            </section>
-            <div className="raw-grid">
-              <section className="section-block">
-                <SectionHead title={"Dialog Row"} text={"dialogs read-only snapshot"} />
-                <JsonBlock value={detail.DialogJSON} />
-              </section>
-              <section className="section-block">
-                <SectionHead title={"Private Message Row"} text={"private_messages read-only snapshot"} />
-                <JsonBlock value={detail.PrivateJSON} />
-              </section>
-            </div>
+            {/* The stored rows stay reachable, but folded: they answer "why is
+                this message in this state", which is a rarer question than
+                "what does it say". */}
+            <details className="raw-details">
+              <summary>{"Stored rows (JSON)"}</summary>
+              <div className="stacked-sections">
+                <section className="section-block">
+                  <SectionHead title={"Message Box"} text={"message_boxes read-only snapshot"} />
+                  <JsonBlock value={detail.MessageJSON} />
+                </section>
+                <div className="raw-grid">
+                  <section className="section-block">
+                    <SectionHead title={"Dialog Row"} text={"dialogs read-only snapshot"} />
+                    <JsonBlock value={detail.DialogJSON} />
+                  </section>
+                  <section className="section-block">
+                    <SectionHead title={"Private Message Row"} text={"private_messages read-only snapshot"} />
+                    <JsonBlock value={detail.PrivateJSON} />
+                  </section>
+                </div>
+              </div>
+            </details>
             <section className="section-block">
               <SectionHead title={"Update Events"} text={"durable user_update_events"} />
               <div className="table-wrap">

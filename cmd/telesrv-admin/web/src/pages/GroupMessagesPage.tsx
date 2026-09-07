@@ -2,12 +2,12 @@ import { ChevronRight, Search } from "lucide-react";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import { ChannelPicker } from "../components/EntityPicker";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { Alert, Badge, EmptyRow, Metric, QueryPanel } from "../components/ui";
 import { channelKind, formatUnix } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { ChannelRow, GroupMessageListResponse } from "../types";
 
-export function GroupMessagesPage({ navigate }: { navigate: Navigate }) {
+export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
   const [channel, setChannel] = useState<ChannelRow | null>(null);
   const [beforeDate, setBeforeDate] = useState("");
   const [beforeID, setBeforeID] = useState("");
@@ -52,7 +52,7 @@ export function GroupMessagesPage({ navigate }: { navigate: Navigate }) {
   const rows = data?.rows ?? [];
 
   return (
-    <PageFrame title={"Group Messages"} eyebrow={"Supergroup / channel messages"}>
+    <>
       {error && <Alert>{error}</Alert>}
       <QueryPanel>
         <div className="message-selector-grid single">
@@ -114,6 +114,6 @@ export function GroupMessagesPage({ navigate }: { navigate: Navigate }) {
           </tbody>
         </table>
       </div>
-    </PageFrame>
+    </>
   );
 }

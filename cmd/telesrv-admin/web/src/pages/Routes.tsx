@@ -11,7 +11,6 @@ import { BotsPage } from "./BotsPage";
 import { BroadcastsPage } from "./BroadcastsPage";
 import { Dashboard } from "./Dashboard";
 import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
-import { GroupMessagesPage } from "./GroupMessagesPage";
 import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { StickerSetsPage } from "./StickerSetsPage";
@@ -159,11 +158,16 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
       />
     );
   }
-  if (route.path === "/messages/groups") {
-    return <GroupMessagesPage navigate={navigate} />;
-  }
-  if (route.path === "/messages" || route.path === "/messages/private") {
-    return <MessagesPage navigate={navigate} />;
+  // Both tabs keep their own path so a link to one still opens on it -- the
+  // tab is a view of /messages, not a hidden bit of component state.
+  if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups") {
+    return (
+      <MessagesPage
+        navigate={navigate}
+        tab={route.path === "/messages/groups" ? "groups" : "private"}
+        onTab={(tab) => navigate(tab === "groups" ? "/messages/groups" : "/messages/private")}
+      />
+    );
   }
   return <Dashboard navigate={navigate} />;
 }

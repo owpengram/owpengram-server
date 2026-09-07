@@ -1250,3 +1250,139 @@
   align-items: center;
   gap: 8px;
 }
+
+/* The message itself, rendered the way it was read rather than the way it is
+   stored. Leads every message detail page; the database rows sit below it in a
+   folded block. */
+.message-view {
+  display: grid;
+  gap: 10px;
+}
+
+.message-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.message-view-head strong {
+  display: block;
+  color: var(--heading);
+  font-size: 14px;
+}
+
+.message-view-head small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Given a bubble's shape on purpose: it is the one element on the page that is
+   the message rather than a fact about it. */
+.message-bubble {
+  display: grid;
+  gap: 10px;
+  max-width: 720px;
+  padding: 14px 16px;
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  border-top-left-radius: var(--radius-xs);
+}
+
+.message-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  /* Message text keeps its own line breaks; collapsing them would silently
+     reformat what was actually sent. */
+  white-space: pre-wrap;
+}
+
+.message-text.empty {
+  color: var(--muted-2);
+  font-style: italic;
+}
+
+.message-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.message-attachment-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--brand);
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: var(--radius-sm);
+}
+
+.message-attachment-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.message-attachment-copy strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.message-attachment-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Folded raw rows. Closed by default so the page opens on the message, not on
+   three JSON dumps -- still one click away for the times the stored state is
+   the actual question. */
+.raw-details > summary {
+  padding: 8px 10px;
+  color: var(--text-soft);
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.raw-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-details > summary::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.raw-details[open] > summary::before {
+  content: "▾ ";
+}
+
+.raw-details[open] > summary {
+  margin-bottom: 12px;
+}
