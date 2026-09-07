@@ -259,6 +259,12 @@ func (s *captureUpdates) RecordPeerSettings(_ context.Context, authKeyID [8]byte
 	return s.recordCapturedEvent(authKeyID, userID, domain.UpdateEvent{Type: domain.UpdateEventPeerSettings, Peer: peer, Settings: settings})
 }
 
+func (s *captureUpdates) RecordNotifySettings(_ context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, topicID int, settings domain.PeerNotifySettings, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	s.captureExclude(excludeAuthKeyID, excludeSessionID)
+	sc := settings.Clone()
+	return s.recordCapturedEvent(authKeyID, userID, domain.UpdateEvent{Type: domain.UpdateEventNotifySettings, Peer: peer, TopMsgID: topicID, NotifyPeerSettings: &sc})
+}
+
 func (s *captureUpdates) RecordPeerStoryBlocked(_ context.Context, authKeyID [8]byte, userID int64, peer domain.Peer, blocked bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	s.captureExclude(excludeAuthKeyID, excludeSessionID)
 	return s.recordCapturedEvent(authKeyID, userID, domain.UpdateEvent{Type: domain.UpdateEventPeerStoryBlocked, Peer: peer, Bool: blocked})

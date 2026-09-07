@@ -94,7 +94,22 @@ func (r *Router) onAccountUpdateNotifySettings(ctx context.Context, req *tg.Acco
 		}
 		r.notifySettings.Delete(userID)
 	}
-	// 推 updateNotifySettings 给本人其它在线设备（多设备静音同步）。
+	// 推 updateNotifySettings 给本人其它在线设备（多设备静音同步）。NotifyScopePeer（静音/
+	// 取消静音某一具体会话，最常见场景）走 durable outbox：对方另一台设备当时不在线也能
+	// 在重连后经 getDifference 追上最新静音状态，而不是停留在旧设置继续弹通知直到重启
+	// app 才刷新。其余全局作用域（NotifyUsers/Chats/Broadcasts）仍走旧的 best-effort 推送。
+	if scope.Kind == domain.NotifyScopePeer && r.deps.Updates != nil {
+		authKeyID, _ := AuthKeyIDFrom(ctx)
+		sessionID, _ := SessionIDFrom(ctx)
+		event, _, err := r.deps.Updates.RecordNotifySettings(ctx, authKeyID, userID, scope.Peer, scope.TopicID, settings, rawAuthKeyIDForOrigin(ctx), sessionID)
+		if err != nil {
+			return false, internalErr()
+		}
+		if sessionID != 0 {
+			r.bookkeepAuxPtsForCurrentSession(ctx, event)
+		}
+		return true, nil
+	}
 	r.pushUserUpdates(ctx, userID, &tg.Updates{
 		Updates: []tg.UpdateClass{&tg.UpdateNotifySettings{
 			Peer:           tgNotifyPeer(scope),

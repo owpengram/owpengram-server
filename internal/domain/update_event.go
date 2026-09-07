@@ -28,6 +28,11 @@ const (
 	UpdateEventPinnedDialogs    UpdateEventType = "pinned_dialogs"
 	UpdateEventDialogUnreadMark UpdateEventType = "dialog_unread_mark"
 	UpdateEventPeerSettings     UpdateEventType = "peer_settings"
+	// UpdateEventNotifySettings 映射 updateNotifySettings（静音/预览等设置变化）。历史上
+	// account.updateNotifySettings 只走 best-effort 推送，对方另一台离线设备错过就永远
+	// 追不上，继续用旧设置弹通知直到重启。这里改走 durable dispatch，可经 getDifference
+	// 恢复。仅覆盖 NotifyScopePeer（静音某个具体会话，最常见场景）。
+	UpdateEventNotifySettings   UpdateEventType = "notify_settings"
 	UpdateEventPeerStoryBlocked UpdateEventType = "peer_story_blocked"
 	// UpdateEventUserPhone 只用于读取历史版本已落库的 updateUserPhone 事件。
 	// TL 构造器不携 pts，当前写路径禁止再产生该 event。
@@ -74,23 +79,24 @@ const (
 
 // UpdateEvent 是账号视角的增量事件，按 user_id + pts 顺序持久化。
 type UpdateEvent struct {
-	UserID           int64
-	Type             UpdateEventType
-	Pts              int
-	PtsCount         int
-	Date             int
-	Message          Message
-	Story            Story
-	Peer             Peer
-	Peers            []Peer
-	Bool             bool
-	Phone            string
-	EmojiStatus      UserEmojiStatus
-	Settings         PeerSettings
-	MessageIDs       []int
-	MaxID            int
-	StillUnreadCount int
-	ChannelPts       int
+	UserID             int64
+	Type               UpdateEventType
+	Pts                int
+	PtsCount           int
+	Date               int
+	Message            Message
+	Story              Story
+	Peer               Peer
+	Peers              []Peer
+	Bool               bool
+	Phone              string
+	EmojiStatus        UserEmojiStatus
+	Settings           PeerSettings
+	NotifyPeerSettings *PeerNotifySettings
+	MessageIDs         []int
+	MaxID              int
+	StillUnreadCount   int
+	ChannelPts         int
 	// TopMsgID 仅 forum per-topic 已读事件（read_channel_discussion_*）使用：承载话题 id
 	// （General=1），与 MaxID(=read_max_id) 一起映射 updateReadChannelDiscussionInbox/Outbox。
 	TopMsgID int
@@ -134,6 +140,7 @@ func (e UpdateEvent) LacksWirePts() bool {
 		UpdateEventPinnedSavedDialogs,
 		UpdateEventDialogUnreadMark,
 		UpdateEventPeerSettings,
+		UpdateEventNotifySettings,
 		UpdateEventPeerStoryBlocked,
 		UpdateEventUserPhone,
 		UpdateEventUserEmojiStatus,

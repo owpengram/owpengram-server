@@ -406,6 +406,15 @@ func tgOtherUpdateFromEvent(event domain.UpdateEvent) tg.UpdateClass {
 			return nil
 		}
 		return &tg.UpdatePeerSettings{Peer: peer, Settings: tgPeerSettings(event.Settings)}
+	case domain.UpdateEventNotifySettings:
+		if event.Peer.Type != domain.PeerTypeCommunity && tgPeer(event.Peer) == nil {
+			return nil
+		}
+		if event.NotifyPeerSettings == nil {
+			return nil
+		}
+		scope := domain.NotifyScope{Kind: domain.NotifyScopePeer, Peer: event.Peer, TopicID: event.TopMsgID}
+		return &tg.UpdateNotifySettings{Peer: tgNotifyPeer(scope), NotifySettings: *tgPeerNotifySettings(event.NotifyPeerSettings)}
 	case domain.UpdateEventPeerStoryBlocked:
 		peer := tgPeer(event.Peer)
 		if peer == nil {

@@ -680,6 +680,19 @@ func (s *Service) RecordPeerSettings(ctx context.Context, stateAuthKeyID [8]byte
 	}, true, excludeSessionID)
 }
 
+// RecordNotifySettings 记录 per-peer 通知设置变化（updateNotifySettings），走 durable
+// outbox 而非旧的 best-effort 推送。
+func (s *Service) RecordNotifySettings(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, topicID int, settings domain.PeerNotifySettings, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
+	sc := settings.Clone()
+	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{
+		Type:               domain.UpdateEventNotifySettings,
+		Peer:               peer,
+		TopMsgID:           topicID,
+		NotifyPeerSettings: &sc,
+		PtsCount:           1,
+	}, true, excludeSessionID)
+}
+
 // RecordPeerStoryBlocked 记录当前账号 story blocklist 对某个 peer 的可见状态变化。
 func (s *Service) RecordPeerStoryBlocked(ctx context.Context, stateAuthKeyID [8]byte, userID int64, peer domain.Peer, blocked bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, domain.UpdateState, error) {
 	return s.recordEvent(ctx, stateAuthKeyID, excludeAuthKeyID, userID, domain.UpdateEvent{

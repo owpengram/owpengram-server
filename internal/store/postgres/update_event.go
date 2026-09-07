@@ -183,7 +183,12 @@ func appendUserUpdateEvent(ctx context.Context, db sqlcgen.DBTX, q *sqlcgen.Quer
 	if err != nil {
 		return err
 	}
-	settings, err := encodePeerSettings(event.Settings)
+	var settings []byte
+	if event.Type == domain.UpdateEventNotifySettings {
+		settings, err = encodeNotifyPeerSettings(event.NotifyPeerSettings)
+	} else {
+		settings, err = encodePeerSettings(event.Settings)
+	}
 	if err != nil {
 		return err
 	}
@@ -366,6 +371,13 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 		if err != nil {
 			return nil, fmt.Errorf("decode peer settings: %w", err)
 		}
+		var notifyPeerSettings *domain.PeerNotifySettings
+		if domain.UpdateEventType(row.EventType) == domain.UpdateEventNotifySettings {
+			notifyPeerSettings, err = decodeNotifyPeerSettings(row.PeerSettingsJson)
+			if err != nil {
+				return nil, fmt.Errorf("decode notify peer settings: %w", err)
+			}
+		}
 		messageIDs, err := decodeEventMessageIDs(row.MessageIdsJson)
 		if err != nil {
 			return nil, fmt.Errorf("decode message ids: %w", err)
@@ -407,29 +419,30 @@ func (s *UpdateEventStore) ListAfter(ctx context.Context, userID int64, pts, lim
 			return nil, fmt.Errorf("decode message rich message: %w", err)
 		}
 		event := domain.UpdateEvent{
-			UserID:           row.UserID,
-			Type:             domain.UpdateEventType(row.EventType),
-			Pts:              int(row.Pts),
-			PtsCount:         int(row.PtsCount),
-			Date:             int(row.Date),
-			Peer:             domain.Peer{Type: domain.PeerType(row.EventPeerType), ID: row.EventPeerID},
-			Story:            story,
-			Peers:            peers,
-			Bool:             row.EventBool,
-			Phone:            row.EventPhone,
-			Settings:         settings,
-			MessageIDs:       messageIDs,
-			MaxID:            int(row.MaxID),
-			StillUnreadCount: int(row.StillUnreadCount),
-			ChannelPts:       int(row.ChannelPts),
-			FilterID:         int(row.FilterID),
-			DialogFilter:     dialogFilter,
-			FilterOrder:      filterOrder,
-			FolderPeers:      folderPeers,
-			TagsEnabled:      row.TagsEnabled,
-			FolderID:         int(row.FolderID),
-			Reaction:         reaction,
-			EmojiStatus:      emojiStatus,
+			UserID:             row.UserID,
+			Type:               domain.UpdateEventType(row.EventType),
+			Pts:                int(row.Pts),
+			PtsCount:           int(row.PtsCount),
+			Date:               int(row.Date),
+			Peer:               domain.Peer{Type: domain.PeerType(row.EventPeerType), ID: row.EventPeerID},
+			Story:              story,
+			Peers:              peers,
+			Bool:               row.EventBool,
+			Phone:              row.EventPhone,
+			Settings:           settings,
+			NotifyPeerSettings: notifyPeerSettings,
+			MessageIDs:         messageIDs,
+			MaxID:              int(row.MaxID),
+			StillUnreadCount:   int(row.StillUnreadCount),
+			ChannelPts:         int(row.ChannelPts),
+			FilterID:           int(row.FilterID),
+			DialogFilter:       dialogFilter,
+			FilterOrder:        filterOrder,
+			FolderPeers:        folderPeers,
+			TagsEnabled:        row.TagsEnabled,
+			FolderID:           int(row.FolderID),
+			Reaction:           reaction,
+			EmojiStatus:        emojiStatus,
 			Message: domain.Message{
 				ID:             int(row.MessageID),
 				UID:            row.PrivateMessageID,
@@ -566,6 +579,13 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 		if err != nil {
 			return nil, fmt.Errorf("decode peer settings: %w", err)
 		}
+		var notifyPeerSettings *domain.PeerNotifySettings
+		if domain.UpdateEventType(row.EventType) == domain.UpdateEventNotifySettings {
+			notifyPeerSettings, err = decodeNotifyPeerSettings(row.PeerSettingsJson)
+			if err != nil {
+				return nil, fmt.Errorf("decode notify peer settings: %w", err)
+			}
+		}
 		messageIDs, err := decodeEventMessageIDs(row.MessageIdsJson)
 		if err != nil {
 			return nil, fmt.Errorf("decode message ids: %w", err)
@@ -607,29 +627,30 @@ func (s *UpdateEventStore) BatchByCursor(ctx context.Context, cursors []store.Ev
 			return nil, fmt.Errorf("decode message rich message: %w", err)
 		}
 		event := domain.UpdateEvent{
-			UserID:           row.UserID,
-			Type:             domain.UpdateEventType(row.EventType),
-			Pts:              int(row.Pts),
-			PtsCount:         int(row.PtsCount),
-			Date:             int(row.Date),
-			Peer:             domain.Peer{Type: domain.PeerType(row.EventPeerType), ID: row.EventPeerID},
-			Story:            story,
-			Peers:            peers,
-			Bool:             row.EventBool,
-			Phone:            row.EventPhone,
-			Settings:         settings,
-			MessageIDs:       messageIDs,
-			MaxID:            int(row.MaxID),
-			StillUnreadCount: int(row.StillUnreadCount),
-			ChannelPts:       int(row.ChannelPts),
-			FilterID:         int(row.FilterID),
-			DialogFilter:     dialogFilter,
-			FilterOrder:      filterOrder,
-			FolderPeers:      folderPeers,
-			TagsEnabled:      row.TagsEnabled,
-			FolderID:         int(row.FolderID),
-			Reaction:         reaction,
-			EmojiStatus:      emojiStatus,
+			UserID:             row.UserID,
+			Type:               domain.UpdateEventType(row.EventType),
+			Pts:                int(row.Pts),
+			PtsCount:           int(row.PtsCount),
+			Date:               int(row.Date),
+			Peer:               domain.Peer{Type: domain.PeerType(row.EventPeerType), ID: row.EventPeerID},
+			Story:              story,
+			Peers:              peers,
+			Bool:               row.EventBool,
+			Phone:              row.EventPhone,
+			Settings:           settings,
+			NotifyPeerSettings: notifyPeerSettings,
+			MessageIDs:         messageIDs,
+			MaxID:              int(row.MaxID),
+			StillUnreadCount:   int(row.StillUnreadCount),
+			ChannelPts:         int(row.ChannelPts),
+			FilterID:           int(row.FilterID),
+			DialogFilter:       dialogFilter,
+			FilterOrder:        filterOrder,
+			FolderPeers:        folderPeers,
+			TagsEnabled:        row.TagsEnabled,
+			FolderID:           int(row.FolderID),
+			Reaction:           reaction,
+			EmojiStatus:        emojiStatus,
 			Message: domain.Message{
 				ID:             int(row.MessageID),
 				UID:            row.PrivateMessageID,
@@ -1069,6 +1090,53 @@ func decodePeerSettings(raw string) (domain.PeerSettings, error) {
 		BusinessBotManageURL:  wire.BusinessBotManageURL,
 		BusinessBotPaused:     wire.BusinessBotPaused,
 		BusinessBotCanReply:   wire.BusinessBotCanReply,
+	}, nil
+}
+
+type notifyPeerSettingsJSON struct {
+	ShowPreviews      *bool `json:"show_previews,omitempty"`
+	Silent            *bool `json:"silent,omitempty"`
+	MuteUntil         *int  `json:"mute_until,omitempty"`
+	StoriesMuted      *bool `json:"stories_muted,omitempty"`
+	StoriesHideSender *bool `json:"stories_hide_sender,omitempty"`
+}
+
+// encodeNotifyPeerSettings/decodeNotifyPeerSettings reuse the peer_settings_json column:
+// UpdateEventNotifySettings rows never populate domain.UpdateEvent.Settings (that field is
+// PeerSettings, an unrelated type for a different event type), so there is no collision.
+// Adding a dedicated column would need a migration + sqlc regen; this avoids both for a
+// small, cleanly-scoped payload.
+func encodeNotifyPeerSettings(settings *domain.PeerNotifySettings) ([]byte, error) {
+	if settings == nil {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(notifyPeerSettingsJSON{
+		ShowPreviews:      settings.ShowPreviews,
+		Silent:            settings.Silent,
+		MuteUntil:         settings.MuteUntil,
+		StoriesMuted:      settings.StoriesMuted,
+		StoriesHideSender: settings.StoriesHideSender,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal notify peer settings: %w", err)
+	}
+	return raw, nil
+}
+
+func decodeNotifyPeerSettings(raw string) (*domain.PeerNotifySettings, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var wire notifyPeerSettingsJSON
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil {
+		return nil, err
+	}
+	return &domain.PeerNotifySettings{
+		ShowPreviews:      wire.ShowPreviews,
+		Silent:            wire.Silent,
+		MuteUntil:         wire.MuteUntil,
+		StoriesMuted:      wire.StoriesMuted,
+		StoriesHideSender: wire.StoriesHideSender,
 	}, nil
 }
 
