@@ -13,6 +13,11 @@
   --panel: #ffffff;
   --panel-subtle: #f7f9fc;
   --panel-strong: #f1f5f9;
+  /* Loading placeholders. Kept as their own pair rather than reusing the
+     panel shades because the sheen has to read as lighter than the base in
+     both themes, and the panel ramp runs the opposite way in dark. */
+  --skeleton-base: #e6ebf2;
+  --skeleton-sheen: #f4f7fa;
   --surface-soft: #f2f7fd;
   --overlay: rgba(24, 34, 47, 0.42);
   --topbar-bg: rgba(255, 255, 255, 0.94);
@@ -100,6 +105,8 @@
   --panel: #171f28;
   --panel-subtle: #1c2530;
   --panel-strong: #212c38;
+  --skeleton-base: #212c38;
+  --skeleton-sheen: #2e3d4c;
   --surface-soft: #1a232d;
   --overlay: rgba(5, 8, 12, 0.62);
   --topbar-bg: rgba(21, 28, 36, 0.86);

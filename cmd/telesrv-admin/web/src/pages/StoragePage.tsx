@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { Alert, EmptyRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
+import { Alert, EmptyRow, LoadingRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { displayUsername, formatBytes, formatQuantity } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { AccountStorageRow, StorageStatsResponse } from "../types";
@@ -40,6 +40,10 @@ function SortableHeader({
 
 function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   const [stats, setStats] = useState<StorageStatsResponse | null>(null);
+  // Tracked separately from `error`: loadStats deliberately swallows its
+  // failure so it can't block the account list, which would otherwise leave
+  // the metric skeletons shimmering forever on a stats-only outage.
+  const [statsFailed, setStatsFailed] = useState(false);
   const [rows, setRows] = useState<AccountStorageRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
@@ -52,8 +56,10 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   async function loadStats() {
     try {
       setStats(await api.storageStats());
+      setStatsFailed(false);
     } catch {
       // Stats are a header nicety; a failure here shouldn't block the list.
+      setStatsFailed(true);
     }
   }
 
@@ -109,18 +115,39 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
     <>
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label={"Physical usage (on disk / S3)"} value={stats ? formatBytes(stats.PhysicalBytes) : "-"} />
-        <Metric label={"Logical usage (sum per account)"} value={stats ? formatBytes(stats.LogicalBytes) : "-"} />
-        <Metric label={"Saved by dedup"} value={formatBytes(String(dedupBytes))} tone={dedupBytes > 0 ? "good" : "neutral"} />
-        <Metric label={"Backend"} value={stats?.BackendKind ?? "-"} />
+        <Metric
+          label={"Physical usage (on disk / S3)"}
+          value={stats ? formatBytes(stats.PhysicalBytes) : "-"}
+          loading={!stats && !statsFailed}
+        />
+        <Metric
+          label={"Logical usage (sum per account)"}
+          value={stats ? formatBytes(stats.LogicalBytes) : "-"}
+          loading={!stats && !statsFailed}
+        />
+        <Metric
+          label={"Saved by dedup"}
+          // Derived from stats, so before they land this is a placeholder 0 --
+          // it has to shimmer like the rest rather than assert "0 B", which
+          // reads as a real measurement of nothing saved.
+          value={formatBytes(String(dedupBytes))}
+          loading={!stats && !statsFailed}
+          tone={dedupBytes > 0 ? "good" : "neutral"}
+        />
+        <Metric label={"Backend"} value={stats?.BackendKind ?? "-"} loading={!stats && !statsFailed} />
       </div>
       <div className="metric-row">
-        <Metric label={"Documents"} value={stats ? formatQuantity(stats.DocumentCount) : "-"} />
-        <Metric label={"Photos"} value={stats ? formatQuantity(stats.PhotoCount) : "-"} />
-        <Metric label={"Accounts with media"} value={stats ? formatQuantity(stats.AccountCount) : "-"} />
+        <Metric label={"Documents"} value={stats ? formatQuantity(stats.DocumentCount) : "-"} loading={!stats && !statsFailed} />
+        <Metric label={"Photos"} value={stats ? formatQuantity(stats.PhotoCount) : "-"} loading={!stats && !statsFailed} />
+        <Metric
+          label={"Accounts with media"}
+          value={stats ? formatQuantity(stats.AccountCount) : "-"}
+          loading={!stats && !statsFailed}
+        />
         <Metric
           label={"System/bundled content"}
           value={stats ? formatBytes(stats.SystemBytes) : "-"}
+          loading={!stats && !statsFailed}
         />
       </div>
 
@@ -160,7 +187,7 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
                 <td><button className="row-link" type="button" onClick={() => navigate(`/accounts/${row.UserID}`)}>{"Details"} <ChevronRight size={14} /></button></td>
               </tr>
             ))}
-            {rows.length === 0 && <EmptyRow colSpan={5} />}
+            {rows.length === 0 && (busy ? <LoadingRow colSpan={5} /> : <EmptyRow colSpan={5} />)}
           </tbody>
         </table>
       </div>

@@ -72,11 +72,25 @@ export function StatusItem({ label, value, tone }: { label: string; value: strin
   );
 }
 
-export function Metric({ label, value, tone = "neutral", mono = false }: { label: string; value: string; tone?: Tone; mono?: boolean }) {
+export function Metric({
+  label,
+  value,
+  tone = "neutral",
+  mono = false,
+  loading = false
+}: {
+  label: string;
+  value: string;
+  tone?: Tone;
+  mono?: boolean;
+  loading?: boolean;
+}) {
   return (
     <div className={`metric ${tone}`}>
       <span>{label}</span>
-      <strong className={mono ? "mono" : ""}>{value}</strong>
+      <strong className={mono ? "mono" : ""} aria-busy={loading || undefined}>
+        {loading ? <span className="skeleton skeleton-text" aria-label="Loading" /> : value}
+      </strong>
     </div>
   );
 }
@@ -117,6 +131,26 @@ export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
 
 export function EmptyRow({ colSpan }: { colSpan: number }) {
   return <tr><td colSpan={colSpan} className="empty-cell">{"No results"}</td></tr>;
+}
+
+// Placeholder rows for a table that has nothing yet *because it is still
+// loading* -- distinct from EmptyRow, which asserts the query genuinely
+// returned nothing. Showing "No results" during the first fetch reads as a
+// wrong answer rather than a pending one.
+export function LoadingRow({ colSpan, rows = 3 }: { colSpan: number; rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }, (_, row) => (
+        <tr key={row} aria-busy="true">
+          {Array.from({ length: colSpan }, (_unused, cell) => (
+            <td key={cell}>
+              <span className="skeleton skeleton-text" aria-label={cell === 0 ? "Loading" : undefined} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
 }
 
 export function LoadingSurface({ label }: { label: string }) {

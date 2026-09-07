@@ -58,7 +58,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
         <StatTile
           icon={<Flag />}
           label="Pending reports"
-          value={counts ? formatQuantity(String(counts.PendingReports)) : "…"}
+          value={counts ? formatQuantity(String(counts.PendingReports)) : ""}
+          loading={!counts && !error}
           tone={counts && counts.PendingReports > 0 ? "warn" : "good"}
           href="/moderation"
           navigate={navigate}
@@ -66,7 +67,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
         <StatTile
           icon={<BadgeCheck />}
           label="Verification requests"
-          value={counts ? formatQuantity(String(counts.PendingVerifications)) : "…"}
+          value={counts ? formatQuantity(String(counts.PendingVerifications)) : ""}
+          loading={!counts && !error}
           tone={counts && counts.PendingVerifications > 0 ? "warn" : "good"}
           href="/verification"
           navigate={navigate}
@@ -74,27 +76,44 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
       </Section>
 
       <Section title="People &amp; chats">
-        <StatTile icon={<Users />} label="Users" value={counts ? formatQuantity(String(counts.Users)) : "…"} href="/accounts" navigate={navigate} />
+        <StatTile
+          icon={<Users />}
+          label="Users"
+          value={counts ? formatQuantity(String(counts.Users)) : ""}
+          loading={!counts && !error}
+          href="/accounts"
+          navigate={navigate}
+        />
         <StatTile
           icon={<Activity />}
           label="Online now"
-          value={counts ? formatQuantity(String(counts.OnlineUsers)) : "…"}
+          value={counts ? formatQuantity(String(counts.OnlineUsers)) : ""}
+          loading={!counts && !error}
           sub="last 5 min"
           href="/accounts"
           navigate={navigate}
         />
-        <StatTile icon={<Bot />} label="Bots" value={counts ? formatQuantity(String(counts.Bots)) : "…"} href="/bots" navigate={navigate} />
+        <StatTile
+          icon={<Bot />}
+          label="Bots"
+          value={counts ? formatQuantity(String(counts.Bots)) : ""}
+          loading={!counts && !error}
+          href="/bots"
+          navigate={navigate}
+        />
         <StatTile
           icon={<Radio />}
           label="Channels"
-          value={counts ? formatQuantity(String(counts.BroadcastChannels)) : "…"}
+          value={counts ? formatQuantity(String(counts.BroadcastChannels)) : ""}
+          loading={!counts && !error}
           href="/channels"
           navigate={navigate}
         />
         <StatTile
           icon={<UsersRound />}
           label="Supergroups"
-          value={counts ? formatQuantity(String(counts.Supergroups)) : "…"}
+          value={counts ? formatQuantity(String(counts.Supergroups)) : ""}
+          loading={!counts && !error}
           href="/channels"
           navigate={navigate}
         />
@@ -104,21 +123,24 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
         <StatTile
           icon={<Sticker />}
           label="Sticker packs"
-          value={counts ? formatQuantity(String(counts.StickerSets)) : "…"}
+          value={counts ? formatQuantity(String(counts.StickerSets)) : ""}
+          loading={!counts && !error}
           href="/stickers"
           navigate={navigate}
         />
         <StatTile
           icon={<Smile />}
           label="Emoji packs"
-          value={counts ? formatQuantity(String(counts.EmojiSets)) : "…"}
+          value={counts ? formatQuantity(String(counts.EmojiSets)) : ""}
+          loading={!counts && !error}
           href="/emoji"
           navigate={navigate}
         />
         <StatTile
           icon={<Film />}
           label="GIFs"
-          value={counts ? formatQuantity(String(counts.Gifs)) : "…"}
+          value={counts ? formatQuantity(String(counts.Gifs)) : ""}
+          loading={!counts && !error}
           sub="saved by users"
           href="/gif-catalog"
           navigate={navigate}
@@ -126,7 +148,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
         <StatTile
           icon={<Database />}
           label="Media storage used"
-          value={storage ? formatBytes(storage.PhysicalBytes) : "…"}
+          value={storage ? formatBytes(storage.PhysicalBytes) : ""}
+          loading={!storage && !error}
           sub={storage ? `${storage.BackendKind} backend` : undefined}
           href="/storage"
           navigate={navigate}
@@ -138,13 +161,15 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
           icon={<Cpu />}
           label="CPU load"
           percent={host?.Ready ? host.CPUPercent : undefined}
-          valueText={host?.Ready ? `${host.CPUPercent.toFixed(0)}%` : "…"}
+          valueText={host?.Ready ? `${host.CPUPercent.toFixed(0)}%` : ""}
+          loading={!host?.Ready && !error}
         />
         <UsageTile
           icon={<MemoryStick />}
           label="RAM used"
           percent={host?.Ready && host.MemTotalBytes > 0 ? (host.MemUsedBytes / host.MemTotalBytes) * 100 : undefined}
-          valueText={host?.Ready ? formatBytes(String(host.MemUsedBytes)) : "…"}
+          valueText={host?.Ready ? formatBytes(String(host.MemUsedBytes)) : ""}
+          loading={!host?.Ready && !error}
           sub={host?.Ready ? `of ${formatBytes(String(host.MemTotalBytes))}` : undefined}
         />
         <UsageTile
@@ -155,7 +180,12 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
               ? ((host.DiskTotalBytes - host.DiskFreeBytes) / host.DiskTotalBytes) * 100
               : undefined
           }
-          valueText={host?.Ready && host.DiskReady ? formatBytes(String(host.DiskFreeBytes)) : "…"}
+          // Skeleton only until the first host sample lands. After that a
+          // missing disk reading is a real state, not a pending one -- it can
+          // stay that way indefinitely, and a shimmer would promise a value
+          // that is never coming.
+          valueText={host?.Ready && host.DiskReady ? formatBytes(String(host.DiskFreeBytes)) : "—"}
+          loading={!host?.Ready && !error}
           sub={host?.Ready && host.DiskReady ? `of ${formatBytes(String(host.DiskTotalBytes))}` : "no reading yet"}
           warnAbove={85}
         />
@@ -185,7 +215,8 @@ function StatTile({
   sub,
   tone = "neutral",
   href,
-  navigate
+  navigate,
+  loading = false
 }: {
   icon: ReactNode;
   label: string;
@@ -194,6 +225,7 @@ function StatTile({
   tone?: Tone;
   href?: string;
   navigate?: Navigate;
+  loading?: boolean;
 }) {
   const toneClass = tone === "neutral" ? "" : ` ${tone}`;
   const body = (
@@ -202,7 +234,9 @@ function StatTile({
         <span className="stat-tile-icon">{icon}</span>
         {tone === "warn" && <AlertTriangle size={15} className="stat-tile-open" />}
       </div>
-      <div className="stat-tile-value">{value}</div>
+      <div className="stat-tile-value" aria-busy={loading || undefined}>
+        {loading ? <span className="skeleton skeleton-value" aria-label="Loading" /> : value}
+      </div>
       <div className="stat-tile-label">{label}</div>
       {sub && <div className="stat-tile-sub">{sub}</div>}
     </>
@@ -233,7 +267,8 @@ function UsageTile({
   percent,
   valueText,
   sub,
-  warnAbove = 90
+  warnAbove = 90,
+  loading = false
 }: {
   icon: ReactNode;
   label: string;
@@ -241,6 +276,7 @@ function UsageTile({
   valueText: string;
   sub?: string;
   warnAbove?: number;
+  loading?: boolean;
 }) {
   const clamped = percent === undefined ? 0 : Math.max(0, Math.min(100, percent));
   const tone: Tone = percent === undefined ? "neutral" : percent >= warnAbove ? "danger" : percent >= warnAbove - 15 ? "warn" : "neutral";
@@ -250,7 +286,9 @@ function UsageTile({
       <div className="stat-tile-head">
         <span className="stat-tile-icon">{icon}</span>
       </div>
-      <div className="stat-tile-value">{valueText}</div>
+      <div className="stat-tile-value" aria-busy={loading || undefined}>
+        {loading ? <span className="skeleton skeleton-value" aria-label="Loading" /> : valueText}
+      </div>
       <div className="stat-tile-label">{label}</div>
       {sub && <div className="stat-tile-sub">{sub}</div>}
       <div className="stat-tile-bar">

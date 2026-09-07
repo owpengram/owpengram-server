@@ -111,6 +111,52 @@ button.stat-tile.clickable {
   line-height: 1.1;
 }
 
+/* Loading placeholder. Sized in em so it occupies the same box as the text it
+   stands in for -- the tile must not resize when the real value arrives. */
+.skeleton {
+  display: inline-block;
+  border-radius: 6px;
+  background-image: linear-gradient(
+    90deg,
+    var(--skeleton-base) 25%,
+    var(--skeleton-sheen) 37%,
+    var(--skeleton-base) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+  /* Nothing here is real content: keep it out of the accessibility tree and
+     out of copied text. The live region announcing "loading" belongs on the
+     container, not on every bar. */
+  user-select: none;
+}
+
+.skeleton-value {
+  height: 0.85em;
+  width: 2.75ch;
+  vertical-align: middle;
+}
+
+.skeleton-text {
+  height: 0.8em;
+  width: 6ch;
+  vertical-align: middle;
+}
+
+@keyframes skeletonShimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
 .stat-tile.warn .stat-tile-value {
   color: var(--warn);
 }
