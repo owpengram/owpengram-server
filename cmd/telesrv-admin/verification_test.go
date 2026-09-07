@@ -35,7 +35,7 @@ func panelServer(t *testing.T, permissions ...string) *server {
 func signIn(t *testing.T, srv *server) ([]*http.Cookie, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"secret":"letmein"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"owpengram","secret":"letmein"}`))
 	srv.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", rec.Code, rec.Body.String())
@@ -94,7 +94,7 @@ func TestPanelSessionReportsPermissions(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode session: %v", err)
 	}
-	if body.Actor != "admin" || len(body.Permissions) != 1 || body.Permissions[0] != permissionVerificationReview {
+	if body.Actor != breakGlassUsername || len(body.Permissions) != 1 || body.Permissions[0] != permissionVerificationReview {
 		t.Fatalf("session=%+v, want the granted permissions reported to the panel", body)
 	}
 }
@@ -245,7 +245,7 @@ func originRequest(origin, host string) *http.Request {
 
 func TestLoginRefusesAForeignOrigin(t *testing.T) {
 	srv := panelServer(t, permissionAll)
-	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"secret":"letmein"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"owpengram","secret":"letmein"}`))
 	req.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
 	srv.routes().ServeHTTP(rec, req)

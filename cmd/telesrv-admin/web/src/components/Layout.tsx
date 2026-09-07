@@ -10,6 +10,8 @@ import {
   Megaphone,
   MessageSquareText,
   Settings,
+  UserCog,
+  UserRound,
   Share2,
   ShieldAlert,
   ShieldCheck,
@@ -21,7 +23,17 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
-import { permissionBotVerificationReview, permissionServerManage, permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
+import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
+  permissionAccountsRead,
+  permissionChannelsRead,
+  permissionBotsRead,
+  permissionMessagesRead,
+  permissionModerationReview,
+  permissionBroadcastsRead,
+  permissionStorageRead,
+  permissionContentRead,
+  permissionUsernamesRead,
+  permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
 import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AddServerLinkModal } from "./AddServerLinkModal";
@@ -84,6 +96,18 @@ export function Shell({
   // The verification queue is hidden for a session without verification.review:
   // the entry would only lead to a 403 (and the route itself is gated as well).
   const canReviewVerification = useCan(permissionVerificationReview);
+  const canManageAdmins = useCan(permissionAdminsManage);
+  // Each section entry is hidden without the right to open it: the route is
+  // gated server-side either way, so showing it would only lead to a 403.
+  const canReadAccounts = useCan(permissionAccountsRead);
+  const canReadChannels = useCan(permissionChannelsRead);
+  const canReadBots = useCan(permissionBotsRead);
+  const canReadMessages = useCan(permissionMessagesRead);
+  const canReviewModeration = useCan(permissionModerationReview);
+  const canReadBroadcasts = useCan(permissionBroadcastsRead);
+  const canReadStorage = useCan(permissionStorageRead);
+  const canReadContent = useCan(permissionContentRead);
+  const canReadUsernames = useCan(permissionUsernamesRead);
   // Same reasoning for the third-party queue, which has its own right: the two
   // sections are granted independently, so one entry can be visible without the other.
   const canReviewBotVerification = useCan(permissionBotVerificationReview);
@@ -217,22 +241,42 @@ export function Shell({
         <div className="sidebar-label">{"Navigation"}</div>
         <nav className="nav-list" aria-label={"Primary navigation"}>
           <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{"Overview"}</NavLink>
-          <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
-          <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{"Supergroups / Channels"}</NavLink>
-          <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{"Bots"}</NavLink>
-          <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
-          <NavLink icon={<Megaphone size={16} />} href="/broadcasts" route={route} navigate={navigate}>{"Broadcasts"}</NavLink>
+          {canReadAccounts && (
+            <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
+          )}
+          {canReadChannels && (
+            <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{"Supergroups / Channels"}</NavLink>
+          )}
+          {canReadBots && (
+            <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{"Bots"}</NavLink>
+          )}
+          {canReviewModeration && (
+            <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
+          )}
+          {canReadBroadcasts && (
+            <NavLink icon={<Megaphone size={16} />} href="/broadcasts" route={route} navigate={navigate}>{"Broadcasts"}</NavLink>
+          )}
           {canReviewVerification && (
             <NavLink icon={<BadgeCheck size={16} />} href="/verification" route={route} navigate={navigate}>{"Verification"}</NavLink>
           )}
           {canReviewBotVerification && !thirdPartyVerificationHidden && (
             <NavLink icon={<Stamp size={16} />} href="/bot-verification" route={route} navigate={navigate}>{"Third-party marks"}</NavLink>
           )}
-          <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
-          <NavLink icon={<Database size={16} />} href="/storage" route={route} navigate={navigate}>{"Storage"}</NavLink>
-			<NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
-			<NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
-			<NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
+          {canReadUsernames && (
+            <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
+          )}
+          {canReadStorage && (
+            <NavLink icon={<Database size={16} />} href="/storage" route={route} navigate={navigate}>{"Storage"}</NavLink>
+          )}
+			{canReadContent && (
+			  <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
+			)}
+			{canReadContent && (
+			  <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
+			)}
+			{canReadContent && (
+			  <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
+			)}
           <div className={`nav-section ${messagesActive ? "active" : ""} ${messagesOpen ? "open" : ""}`}>
             <button
               className="nav-section-toggle"
@@ -265,6 +309,9 @@ export function Shell({
               </div>
             )}
           </div>
+          {canManageAdmins && (
+            <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
+          )}
           {canManageServer && (
             <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
           )}
@@ -313,7 +360,7 @@ export function Shell({
           </div>
           <div className="topbar-actions">
             <ThemeSwitch />
-            <span className="actor-pill">{`Actor: ${actor}`}</span>
+            <span className="actor-pill"><UserRound size={14} /> {actor}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={"Log out"}>
               <LogOut size={16} /> {"Log out"}
             </button>

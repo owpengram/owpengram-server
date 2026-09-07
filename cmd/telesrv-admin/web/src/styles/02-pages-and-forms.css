@@ -936,3 +936,169 @@ textarea:focus {
   }
 }
 
+/* Operator accounts (AdminUsersPage). The permission picker is a checkbox grid
+   rather than a role dropdown: the backend stores a permission set, so the
+   screen shows exactly that set instead of a friendlier abstraction that could
+   drift from what the routes enforce.
+
+   Selectors carry .form-stack because these labels live inside one, and
+   ".form-stack label { display: grid }" would otherwise out-specify a bare
+   .permission-item and stack the box above its own text. */
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+
+.form-stack .permission-item,
+.permission-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-subtle);
+  cursor: pointer;
+  font-size: 12px;
+  transition: border-color 140ms ease;
+}
+
+.permission-item:hover {
+  border-color: var(--brand-tint-border);
+}
+
+/* Explicit box size: the generic "input" rule gives fields a text-input's
+   padding and .form-stack stretches them to 100%, neither of which suits a
+   checkbox. */
+.form-stack .permission-item input[type="checkbox"],
+.permission-item input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border-radius: 4px;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+/* Title over hint. The checkbox stays vertically centred against the pair
+   rather than against the first line, so a two-line entry does not look
+   top-heavy. */
+.permission-copy {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.permission-copy strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The standalone Enabled toggle is one control, not a grid cell, so it sits at
+   its natural width instead of stretching across the row. */
+.permission-item.standalone {
+  justify-self: start;
+  width: max-content;
+}
+
+/* A granted permission, listed in the table. It carries the human name now, so
+   it is set in the UI font -- the raw "content.manage" string stays available
+   as the chip's tooltip for anyone who needs to match it against the .env. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pill.good {
+  border-color: var(--good-border);
+  color: var(--good);
+}
+
+/* Grouped permission editor. Each group is a labelled block so the twenty-odd
+   rights read as a few short decisions rather than one undifferentiated run. */
+.permission-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.permission-group {
+  display: grid;
+  gap: 8px;
+}
+
+.permission-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.permission-group-head strong {
+  display: block;
+  color: var(--heading);
+  font-size: 13px;
+}
+
+.permission-group-head small {
+  display: block;
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Username and password sit side by side above the rights, so the identity
+   fields do not read as the first permission group. */
+.operator-identity {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+/* The password dialog has one field; the command modal's default width would
+   leave it stranded in the middle of a mostly empty sheet. */
+.modal.narrow {
+  width: min(460px, 100%);
+}

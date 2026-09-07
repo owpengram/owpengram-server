@@ -482,8 +482,11 @@ a {
 .actor-pill {
   display: inline-flex;
   min-height: 30px;
+  /* Icon and name read as one label rather than two adjacent things. */
+  gap: 6px;
   align-items: center;
-  padding: 0 10px;
+  padding: 0 12px;
+  font-weight: 600;
   color: var(--text-soft);
   background: var(--panel-subtle);
   border: 1px solid var(--line);

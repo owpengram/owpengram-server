@@ -1,4 +1,5 @@
 import type {
+  AdminConsoleUserList,
   AccountDetail,
   AccountListResponse,
   AccountStatsResponse,
@@ -144,16 +145,21 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   session: () => request<AdminSession>("/api/session"),
-  login: async (secret: string) => {
+  // The built-in operator is named "owpengram" and is checked against the
+  // configured TELESRV_ADMIN_UI_PASSWORD / _TOKEN -- the break-glass login
+  // that still works when the database is unreachable. A blank username is
+  // rejected: there is no anonymous way in.
+  login: async (secret: string, username = "") => {
     const result = await request<AdminLoginResult>("/api/login", {
       method: "POST",
-      body: JSON.stringify({ secret })
+      body: JSON.stringify({ username, secret })
     });
     // Stashed here rather than in the caller so no login path can forget it.
     rememberCSRFToken(result.csrf_token);
     return result;
   },
   logout: () => request<{ ok: boolean }>("/api/logout", { method: "POST", body: "{}" }),
+  adminUsers: () => request<AdminConsoleUserList>("/api/admin-users"),
   accounts: (params: URLSearchParams) => request<AccountListResponse>(`/api/accounts?${params.toString()}`),
   accountStats: () => request<AccountStatsResponse>("/api/accounts/stats"),
   sharedDeviceGroups: (params: URLSearchParams) => request<SharedDeviceGroupListResponse>(`/api/accounts/shared-devices?${params.toString()}`),
