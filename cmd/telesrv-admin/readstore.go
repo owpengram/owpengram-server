@@ -2658,19 +2658,35 @@ func (s *readStore) StorageStats(ctx context.Context) (StorageStatsRow, error) {
 	// storage, so only possible via a byte-for-byte coincidental duplicate)
 	// still counts, since a real user genuinely has that data stored.
 	g.Go(func() error {
+		// Reads the owner out of the location_key ("doc:<id>", "doc:<id>:<thumb>",
+		// "photo:<id>:<size>") and looks it up by primary key, instead of asking
+		// "is there any document whose id, glued into a string, equals this key".
+		//
+		// That original phrasing was the one query file_blobs_location_key_pattern_idx
+		// could not help: the pattern is built from d.id and matched against
+		// fb.location_key, so no index on location_key applies and every blob had
+		// to scan documents (then photos) end to end. This direction is a plain
+		// PK probe per blob.
+		//
+		// The CASE keeps the cast total -- a key whose second field isn't numeric
+		// yields NULL rather than raising, and NULL matches no id, exactly like
+		// the string form matched no row. Keys of other kinds ("enc:<id>") are
+		// excluded by the kind check, as before.
 		if err := s.pool.QueryRow(gctx, `
 SELECT COALESCE(SUM(size), 0)::bigint FROM (
     SELECT DISTINCT ON (fb.backend, fb.object_key) fb.backend, fb.object_key, fb.size
     FROM file_blobs fb
-    WHERE EXISTS (
-        SELECT 1 FROM documents d
-        WHERE d.owner_user_id <> 0
-          AND (fb.location_key = 'doc:' || d.id::text OR fb.location_key LIKE 'doc:' || d.id::text || ':%')
-    ) OR EXISTS (
-        SELECT 1 FROM photos p
-        WHERE p.owner_user_id <> 0
-          AND (fb.location_key = 'photo:' || p.id::text OR fb.location_key LIKE 'photo:' || p.id::text || ':%')
-    )
+    CROSS JOIN LATERAL (
+        SELECT split_part(fb.location_key, ':', 1) AS kind,
+               CASE WHEN split_part(fb.location_key, ':', 2) ~ '^[0-9]+$'
+                    THEN split_part(fb.location_key, ':', 2)::bigint
+               END AS owner_id
+    ) k
+    WHERE (k.kind = 'doc' AND EXISTS (
+        SELECT 1 FROM documents d WHERE d.id = k.owner_id AND d.owner_user_id <> 0
+    )) OR (k.kind = 'photo' AND EXISTS (
+        SELECT 1 FROM photos p WHERE p.id = k.owner_id AND p.owner_user_id <> 0
+    ))
 ) x`).Scan(&stats.PhysicalBytes); err != nil {
 			return fmt.Errorf("sum physical blob bytes: %w", err)
 		}
