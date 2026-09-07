@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Loader2, Re
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
+import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, EmptyRow, LoadingRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
 import { displayUsername, formatBytes, formatQuantity } from "../lib/format";
@@ -39,12 +40,18 @@ function SortableHeader({
 }
 
 function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
-  const [stats, setStats] = useState<StorageStatsResponse | null>(null);
+  // Seeded from this session's last figures, so returning to Storage opens on
+  // numbers rather than on shimmering placeholders. loadStats still runs.
+  const [stats, setStats] = useState<StorageStatsResponse | null>(
+    () => cacheGet<StorageStatsResponse>(cacheKeys.storageStats) ?? null
+  );
   // Tracked separately from `error`: loadStats deliberately swallows its
   // failure so it can't block the account list, which would otherwise leave
   // the metric skeletons shimmering forever on a stats-only outage.
   const [statsFailed, setStatsFailed] = useState(false);
-  const [rows, setRows] = useState<AccountStorageRow[]>([]);
+  const [rows, setRows] = useState<AccountStorageRow[]>(
+    () => cacheGet<AccountStorageRow[]>(cacheKeys.storageAccounts) ?? []
+  );
   const [hasMore, setHasMore] = useState(false);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -55,7 +62,9 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
 
   async function loadStats() {
     try {
-      setStats(await api.storageStats());
+      const next = await api.storageStats();
+      cacheSet(cacheKeys.storageStats, next);
+      setStats(next);
       setStatsFailed(false);
     } catch {
       // Stats are a header nicety; a failure here shouldn't block the list.
@@ -77,7 +86,16 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
     try {
       const result = await api.storageAccounts(params);
       const page = result.rows ?? [];
-      setRows((current) => (next ? [...current, ...page] : page));
+      setRows((current) => {
+        const merged = next ? [...current, ...page] : page;
+        // Only the first page is worth keeping: it is what the screen opens on,
+        // and caching an appended list would restore a scroll position nobody
+        // asked for.
+        if (!next) {
+          cacheSet(cacheKeys.storageAccounts, merged);
+        }
+        return merged;
+      });
       setOffset(result.next_offset);
       setHasMore(Boolean(result.has_more));
     } catch (err) {

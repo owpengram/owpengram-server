@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
+import { clearAdminCache } from "../lib/cache";
 import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
   permissionAccountsRead,
   permissionChannelsRead,
@@ -242,6 +243,11 @@ export function Shell({
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
   async function logout() {
     await api.logout().catch(() => undefined);
+    // Drop the cached figures with the session. Without this the next operator
+    // to sign in on this tab would open the dashboard on the previous one's
+    // numbers -- briefly, but from an account that may not be allowed to see
+    // them at all.
+    clearAdminCache();
     onLogout();
   }
 

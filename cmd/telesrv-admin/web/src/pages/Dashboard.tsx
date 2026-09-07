@@ -17,13 +17,19 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { api } from "../api";
+import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
 import { Alert } from "../components/ui";
 import type { Navigate } from "../routing";
 import { formatBytes, formatQuantity } from "../lib/format";
 import type { DashboardResponse } from "../types";
 
 export function Dashboard({ navigate }: { navigate: Navigate }) {
-  const [data, setData] = useState<DashboardResponse | null>(null);
+  // Seeded from the last values this session saw, so coming back to the
+  // dashboard opens on the numbers instead of on a grid of skeletons. The
+  // 15s refresh below still runs and replaces them.
+  const [data, setData] = useState<DashboardResponse | null>(
+    () => cacheGet<DashboardResponse>(cacheKeys.dashboard) ?? null
+  );
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -31,6 +37,7 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
     async function load() {
       try {
         const res = await api.dashboard();
+        cacheSet(cacheKeys.dashboard, res);
         if (!cancelled) setData(res);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load dashboard");
