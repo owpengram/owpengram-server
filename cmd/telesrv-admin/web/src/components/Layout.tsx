@@ -37,6 +37,7 @@ import { permissionBotVerificationReview, permissionServerManage, permissionAdmi
 import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AddServerLinkModal } from "./AddServerLinkModal";
+import { AppBackground } from "./AppBackground";
 import { AppLink } from "./AppLink";
 
 // Compresses a sorted (or unsorted) list of layer numbers into run-length
@@ -338,6 +339,9 @@ export function Shell({
         </header>
         <main className="content">{children}</main>
       </div>
+      {/* Behind everything, fixed to the viewport. The sidebar and topbar paint
+          over it, so it shows through the working area only. */}
+      <AppBackground className="app-background--workspace" />
     </div>
   );
 }

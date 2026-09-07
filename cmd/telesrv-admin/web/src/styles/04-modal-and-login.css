@@ -272,7 +272,7 @@
   overflow: hidden;
 }
 
-.login-page .bg-orbs {
+.bg-orbs {
   position: absolute;
   inset: -60px;
   z-index: 0;
@@ -283,14 +283,14 @@
   will-change: transform;
 }
 
-.login-page .bg-orb {
+.bg-orb {
   position: absolute;
   border-radius: 50%;
   filter: blur(100px);
   pointer-events: none;
 }
 
-.login-page .bg-orb--1 {
+.bg-orb--1 {
   top: -15%;
   left: -10%;
   width: 700px;
@@ -299,7 +299,7 @@
   animation: loginOrbFloat1 20s ease-in-out infinite;
 }
 
-.login-page .bg-orb--2 {
+.bg-orb--2 {
   top: 25%;
   right: -15%;
   width: 600px;
@@ -308,7 +308,7 @@
   animation: loginOrbFloat2 24s ease-in-out infinite;
 }
 
-.login-page .bg-orb--3 {
+.bg-orb--3 {
   bottom: -15%;
   left: 30%;
   width: 500px;
@@ -334,15 +334,15 @@
 }
 
 @media (max-width: 720px) {
-  .login-page .bg-orb { filter: blur(60px); }
-  .login-page .bg-orb--1 { width: 350px; height: 350px; }
-  .login-page .bg-orb--2 { width: 300px; height: 300px; }
-  .login-page .bg-orb--3 { width: 250px; height: 250px; }
+  .bg-orb { filter: blur(60px); }
+  .bg-orb--1 { width: 350px; height: 350px; }
+  .bg-orb--2 { width: 300px; height: 300px; }
+  .bg-orb--3 { width: 250px; height: 250px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-page .bg-orb { animation: none; }
-  .login-page .bg-orbs { transition: none; }
+  .bg-orb { animation: none; }
+  .bg-orbs { transition: none; }
 }
 
 .login-page .login-panel {
@@ -491,9 +491,8 @@
 
 /* The drifting icon field behind the sign-in card. Sits above the blurred orbs
    and below the panel, so the two background layers read as one scene.
-   Positioned absolutely inside .login-page rather than fixed like the site's
-   version, because here it belongs to one screen rather than the whole app. */
-.login-page .bg-icons {
+   Fills whichever .app-background contains it. */
+.bg-icons {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -502,9 +501,52 @@
   pointer-events: none;
 }
 
-.login-page .bg-icon {
+.bg-icon {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
+}
+
+
+/* The background wrapper. On the sign-in screen it fills that screen; behind
+   the workspace it is pinned to the viewport so it does not scroll away under
+   a long page, and so the icons -- which bounce off window bounds -- stay
+   inside the area they are drawn in. */
+.app-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-background--workspace {
+  position: fixed;
+}
+
+/* Quieter behind real content than behind a lone sign-in card: the panel is
+   dense with tables and numbers, and the background has to stay background. */
+.app-background--workspace .bg-icons {
+  opacity: 0.55;
+}
+
+.app-background--workspace .bg-orb {
+  opacity: 0.6;
+}
+
+/* The chrome paints over the background: the sidebar hides the part of it that
+   would otherwise show through the navigation, which is also why the wrapper
+   can span the whole viewport instead of hard-coding the sidebar's width.
+   Only z-index is set here -- the sidebar is already sticky, and restating
+   position would be a chance to change it by accident. The topbar needs
+   nothing: it carries z-index 20 of its own, and a rule here would out-specify
+   its own "position: sticky" and quietly stop it sticking. */
+.shell > .sidebar {
+  z-index: 2;
+}
+
+.workspace > .content {
+  position: relative;
+  z-index: 1;
 }
