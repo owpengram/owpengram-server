@@ -937,3 +937,10 @@ export type AdminConsoleUserList = {
   // from what the routes actually enforce.
   available_permissions: string[];
 };
+
+
+// The two branding fields the login screen may read without a session.
+export type PublicBranding = {
+  name: string;
+  has_icon: boolean;
+};

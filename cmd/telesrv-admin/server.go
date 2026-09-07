@@ -64,6 +64,12 @@ func (s *server) routes() http.Handler {
 	// logout is a state change, and an invalid session is cleared by the gate
 	// itself, so nothing is stranded by protecting it.
 	mux.Handle("POST /api/logout", s.scopedRoute(permissionSessionOnly, http.HandlerFunc(s.handleAPILogout)))
+	// Unauthenticated on purpose: the login screen shows which server it is,
+	// and the name/icon are already public from owpengram-server's own client
+	// endpoints. See publicbranding.go.
+	mux.HandleFunc("GET /api/public/branding", s.handlePublicBrandingAPI)
+	mux.HandleFunc("GET /api/public/icon", s.handlePublicIconAPI)
+
 	mux.Handle("GET /api/session", s.scopedRoute(permissionSessionOnly, http.HandlerFunc(s.handleSession)))
 
 	// Operator accounts. Every one of these is gated on admins.manage -- the

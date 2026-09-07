@@ -277,6 +277,10 @@
   inset: -60px;
   z-index: 0;
   pointer-events: none;
+  /* Eased so the pointer parallax glides instead of snapping to the cursor,
+     matching the marketing site. will-change keeps it off the main thread. */
+  transition: transform 0.3s ease-out;
+  will-change: transform;
 }
 
 .login-page .bg-orb {
@@ -338,6 +342,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .login-page .bg-orb { animation: none; }
+  .login-page .bg-orbs { transition: none; }
 }
 
 .login-page .login-panel {
@@ -482,4 +487,24 @@
   border-radius: var(--radius-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The drifting icon field behind the sign-in card. Sits above the blurred orbs
+   and below the panel, so the two background layers read as one scene.
+   Positioned absolutely inside .login-page rather than fixed like the site's
+   version, because here it belongs to one screen rather than the whole app. */
+.login-page .bg-icons {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  color: var(--brand-2);
+  pointer-events: none;
+}
+
+.login-page .bg-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
 }

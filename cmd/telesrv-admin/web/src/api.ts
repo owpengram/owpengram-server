@@ -1,4 +1,5 @@
 import type {
+  PublicBranding,
   AdminConsoleUserList,
   AccountDetail,
   AccountListResponse,
@@ -145,6 +146,9 @@ export function errorMessage(error: unknown): string {
 
 export const api = {
   session: () => request<AdminSession>("/api/session"),
+  // Reachable before login: the sign-in screen says which server it belongs to.
+  publicBranding: () => request<PublicBranding>("/api/public/branding"),
+  publicIconURL: () => `/api/public/icon?t=${Date.now()}`,
   // The built-in operator is named "owpengram" and is checked against the
   // configured TELESRV_ADMIN_UI_PASSWORD / _TOKEN -- the break-glass login
   // that still works when the database is unreachable. A blank username is

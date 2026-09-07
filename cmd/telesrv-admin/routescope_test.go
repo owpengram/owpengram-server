@@ -30,9 +30,15 @@ func TestEveryAPIRouteDeclaresAScope(t *testing.T) {
 		"s.botVerificationRead(",
 		"s.botVerificationManage(",
 	}
-	// /api/login is the way in, so it is authenticated by the credential it
-	// carries rather than by a session that does not exist yet.
-	exempt := map[string]bool{"POST /api/login": true}
+	// Routes that are reachable before a session exists, each for a stated
+	// reason: /api/login is the way in (it carries its own credential), and the
+	// two branding routes feed the login screen with the server name and icon
+	// that owpengram-server already publishes to every client.
+	exempt := map[string]bool{
+		"POST /api/login":          true,
+		"GET /api/public/branding": true,
+		"GET /api/public/icon":     true,
+	}
 
 	route := regexp.MustCompile(`mux\.Handle(Func)?\("([A-Z]+ /api/[^"]*)"`)
 
