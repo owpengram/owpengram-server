@@ -164,6 +164,16 @@ class Status:
     admin_pid: int | None
     admin_alive: bool
     containers: list[tuple[str, str | None]]
+    # Whether Postgres and Redis -- the two containers nothing here works
+    # without -- both actually report "running", not just exist. Separate
+    # from server_alive/admin_alive on purpose: a Go process can stay alive
+    # as an OS process for a good while after losing its database, so PID
+    # aliveness alone was reporting a deployment as fine when Docker (e.g.
+    # Docker Desktop itself not running yet) had left it unable to serve
+    # anything. See quickstart()'s use of this -- server_alive/admin_alive
+    # and `running` itself are left exactly as every other caller already
+    # relies on them.
+    docker_healthy: bool
 
     @property
     def running(self) -> bool:
@@ -194,9 +204,11 @@ class ServerManager:
         # default for a never-started, fresh install) so the container list
         # shows something sensible even before Start has ever run.
         prefix = self.cached_docker_naming() or state.get("docker_prefix") or "owpengram"
+        postgres_state = self.container_status(f"{prefix}-postgres")
+        redis_state = self.container_status(f"{prefix}-redis")
         containers = [
-            (f"{prefix}-{service}", self.container_status(f"{prefix}-{service}"))
-            for service in ("postgres", "redis")
+            (f"{prefix}-postgres", postgres_state),
+            (f"{prefix}-redis", redis_state),
         ]
         # MinIO is optional (only relevant when TELESRV_BLOB_BACKEND=s3 points
         # at the self-hosted container rather than AWS S3), so unlike
@@ -212,6 +224,7 @@ class ServerManager:
             server_alive=pid_alive(server_pid),
             admin_pid=admin_pid,
             admin_alive=pid_alive(admin_pid),
+            docker_healthy=(postgres_state == "running" and redis_state == "running"),
             containers=containers,
         )
 
@@ -760,9 +773,18 @@ def quickstart() -> int:
     generated_password = bootstrap_env()
 
     status = MANAGER.status()
-    if status.running:
+    if status.running and status.docker_healthy:
         print("[ok] Already running.")
     else:
+        if status.running:
+            # The binaries are alive but Postgres/Redis aren't -- Docker
+            # Desktop not up yet, a container that crashed, whatever the
+            # cause, the running processes have been failing every database
+            # call. Stop them first: launching the fresh ones below without
+            # this would try to bind the ports the stuck ones are still
+            # holding, rather than actually fixing anything.
+            print("[..] Processes are running but Docker isn't -- stopping before restarting cleanly...")
+            MANAGER.stop()
         print("== Starting OwpenGram ==")
         print()
         try:

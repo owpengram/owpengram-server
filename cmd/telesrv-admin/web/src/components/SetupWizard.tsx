@@ -205,7 +205,7 @@ const NETWORK_FIELDS: { key: string; label: string; hint: string; placeholder: s
     key: "TELESRV_PUBLIC_BASE_URL",
     label: "Public base URL",
     hint: "Used for links this server generates -- invites, sticker packs. e.g. https://example.com",
-    placeholder: "http://127.0.0.1"
+    placeholder: "http://127.0.0.1:2401"
   },
   {
     key: "TELESRV_PUBLIC_APP_SCHEME",
@@ -386,10 +386,10 @@ function DoneStep() {
         </button>
       </WizardActions>
       {restartWatcher.waiting && (
-        <RestartOverlay label={"Restarting owpengram-server and the admin panel..."} timedOut={false} onDismiss={restartWatcher.dismiss} />
+        <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} />
       )}
       {restartWatcher.timedOut && (
-        <RestartOverlay label={"Restarting owpengram-server and the admin panel..."} timedOut={true} onDismiss={restartWatcher.dismiss} />
+        <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} />
       )}
     </div>
   );

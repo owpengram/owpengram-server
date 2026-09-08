@@ -551,12 +551,20 @@ export function useAdminRestartWatcher() {
   return { waiting, timedOut, watch, dismiss };
 }
 
-export function RestartOverlay({ label, timedOut, onDismiss }: { label: string; timedOut: boolean; onDismiss: () => void }) {
+// No detail line under the heading on purpose -- "restarting owpengram-server
+// and the admin panel" (or Update's commit count) told the operator nothing
+// they didn't already know from having just clicked Restart/Update/Finish
+// setup, and this is meant to be glanced at for a few seconds, not read.
+export function RestartOverlay({ timedOut, onDismiss }: { timedOut: boolean; onDismiss: () => void }) {
   return createPortal(
     <div className="modal-backdrop" role="presentation">
-      <section className="modal command-modal restart-overlay" role="dialog" aria-modal="true" aria-label={label}>
+      <section className="modal command-modal restart-overlay" role="dialog" aria-modal="true" aria-label={timedOut ? "Restart is taking longer than expected" : "Restarting"}>
         {timedOut ? (
           <div className="command-body restart-overlay-body">
+            <div className="restart-overlay-badge warn">
+              <RefreshCw size={26} />
+            </div>
+            <h2 className="restart-overlay-heading">{"Still restarting..."}</h2>
             <Alert>{"The admin panel did not come back within the expected time. It may still be building/restarting -- reload manually in a bit, or check the server logs."}</Alert>
             <div className="gift-table-actions restart-overlay-actions">
               <button className="btn" type="button" onClick={onDismiss}>{"Dismiss"}</button>
@@ -565,8 +573,11 @@ export function RestartOverlay({ label, timedOut, onDismiss }: { label: string; 
           </div>
         ) : (
           <div className="command-body restart-overlay-body">
-            <Loader2 className="spin" size={28} />
-            <p>{label}</p>
+            <div className="restart-overlay-badge">
+              <RefreshCw size={26} className="restart-overlay-spin" />
+            </div>
+            <h2 className="restart-overlay-heading">{"Restarting"}</h2>
+            <div className="loader-bar restart-overlay-progress" />
           </div>
         )}
       </section>
@@ -655,7 +666,7 @@ const LIVE_POLL_MS = 4000;
 // else's commits and relaunching the deployment deserves the same recorded
 // reason as every other action here. Auto-checks once on mount so the button
 // reflects reality without an operator having to click twice.
-function UpdateButton({ onUpdateStarted }: { onUpdateStarted: (overlayLabel: string) => void }) {
+function UpdateButton({ onUpdateStarted }: { onUpdateStarted: () => void }) {
   const [behind, setBehind] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -692,9 +703,7 @@ function UpdateButton({ onUpdateStarted }: { onUpdateStarted: (overlayLabel: str
         label={`Update (${commits})`}
         path="/api/actions/update-server"
         payload={() => ({})}
-        onDone={() => {
-          onUpdateStarted(`Pulled ${commits} commit${commits === 1 ? "" : "s"} -- rebuilding and restarting owpengram-server and the admin panel...`);
-        }}
+        onDone={onUpdateStarted}
       />
     );
   }
@@ -718,7 +727,6 @@ function ServicesTab() {
   const [statusError, setStatusError] = useState("");
   const [docker, setDocker] = useState<DockerService[] | null>(null);
   const [dockerError, setDockerError] = useState("");
-  const [overlayLabel, setOverlayLabel] = useState("");
   const restartWatcher = useAdminRestartWatcher();
   const pausedRef = useRef(false);
   pausedRef.current = restartWatcher.waiting;
@@ -754,22 +762,14 @@ function ServicesTab() {
           title={"Services"}
           action={
             <div className="services-header-actions">
-              <UpdateButton
-                onUpdateStarted={(label) => {
-                  setOverlayLabel(label);
-                  void restartWatcher.watch();
-                }}
-              />
+              <UpdateButton onUpdateStarted={() => void restartWatcher.watch()} />
               <ActionButton
                 compact
                 tone="primary"
                 label={"Restart"}
                 path="/api/actions/restart-server"
                 payload={() => ({})}
-                onDone={() => {
-                  setOverlayLabel("Restarting owpengram-server and the admin panel...");
-                  void restartWatcher.watch();
-                }}
+                onDone={() => void restartWatcher.watch()}
               />
             </div>
           }
@@ -811,8 +811,8 @@ function ServicesTab() {
           </div>
         )}
       </section>
-      {restartWatcher.waiting && <RestartOverlay label={overlayLabel} timedOut={false} onDismiss={restartWatcher.dismiss} />}
-      {restartWatcher.timedOut && <RestartOverlay label={overlayLabel} timedOut={true} onDismiss={restartWatcher.dismiss} />}
+      {restartWatcher.waiting && <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} />}
+      {restartWatcher.timedOut && <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} />}
     </>
   );
 }

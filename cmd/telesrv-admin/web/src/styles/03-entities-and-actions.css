@@ -1102,21 +1102,61 @@
 }
 
 .restart-overlay {
-  width: min(440px, 100%);
+  width: min(340px, 100%);
+  overflow: hidden;
+  background: var(--panel);
+  background-image: radial-gradient(220px 140px at 50% 0%, var(--brand-tint) 0%, rgba(0, 0, 0, 0) 75%);
 }
 
-.restart-overlay-body {
+/* .restart-overlay-body qualified by its .restart-overlay parent so this
+   padding/gap wins over the bare .command-body rule in 04-modal-and-login
+   (equal specificity otherwise, and that file loads after this one). */
+.restart-overlay .restart-overlay-body {
   display: grid;
   justify-items: center;
-  gap: 12px;
-  padding: 28px 20px;
+  gap: 6px;
+  padding: 36px 24px 32px;
   text-align: center;
+}
+
+.restart-overlay-badge {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 10px;
+  place-items: center;
+  color: var(--brand);
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: 999px;
+  box-shadow: 0 0 0 8px var(--brand-tint);
+}
+
+.restart-overlay-badge.warn {
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-color: var(--warn-border);
+  box-shadow: 0 0 0 8px var(--warn-tint);
+}
+
+.restart-overlay-spin {
+  animation: spin 1.4s linear infinite;
+}
+
+.restart-overlay-heading {
+  margin: 0;
+  color: var(--heading);
+  font-size: 18px;
 }
 
 .restart-overlay-body p {
   margin: 0;
-  color: var(--text-soft);
-  font-weight: 700;
+  color: var(--muted);
+}
+
+.restart-overlay-progress {
+  width: min(220px, 100%);
+  margin-top: 18px;
 }
 
 .restart-overlay-actions {
