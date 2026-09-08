@@ -37,7 +37,22 @@ export function App() {
   }
 
   if (session === null) {
-    return <LoginPage onLogin={setSession} />;
+    return (
+      <LoginPage
+        onLogin={(next) => {
+          // A stale/expired session can be caught on any deep link (a
+          // bookmark, a page refresh mid-review), landing whoever it belongs
+          // to on the login form without them having navigated there --
+          // replaceState rather than a plain navigate() so signing back in
+          // doesn't leave a "login" entry in browser history to land back on
+          // via Back. Every login opens on the dashboard, not wherever the
+          // expired session happened to be.
+          window.history.replaceState(null, "", "/");
+          setRoute(currentRoute());
+          setSession(next);
+        }}
+      />
+    );
   }
 
   return (

@@ -352,13 +352,19 @@
 
 .login-panel {
   display: grid;
-  width: min(420px, 100%);
-  gap: 18px;
-  padding: 22px;
+  width: min(480px, 100%);
+  gap: 22px;
+  padding: 30px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
+  /* The rest of the panel (chrome excluded) is scoped up from the admin
+     panel's normal 13px/dense sizing -- everywhere else on this site is a
+     data-table console meant to be scanned, but this screen is one form,
+     seen once per session, at whatever size someone's monitor happens to
+     be. */
+  font-size: 15px;
 }
 
 .login-head {
@@ -374,6 +380,25 @@
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.login-head-actions .icon-btn {
+  width: 36px;
+  height: 36px;
+}
+
+.login-panel .brand-mark {
+  width: 44px;
+  height: 44px;
+}
+
+.login-panel .brand strong {
+  font-size: 18px;
+}
+
+.login-panel .brand small {
+  margin-top: 4px;
+  font-size: 13px;
 }
 
 .login-chip {
@@ -400,6 +425,16 @@
 
 .form-stack input {
   width: 100%;
+}
+
+.login-panel .form-stack input {
+  height: 46px;
+  padding: 0 14px;
+}
+
+.login-panel .btn {
+  min-height: 44px;
+  font-size: 15px;
 }
 
 /* Login form: username and password are two panels of equal width, slid
