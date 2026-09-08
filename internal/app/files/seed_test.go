@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 // fakeMediaStore 是 store.MediaStore 的内存替身，用于在无 PG 时验证 seed 导入器。
@@ -29,18 +30,25 @@ type fakeMediaStore struct {
 	webPages  map[int64]domain.MessageWebPage
 	seedState map[string]string
 	receipts  map[string]domain.UploadedMediaReceipt
+	// profilePhotos[ownerID|kind] 保存某 owner 当前 profile/fallback 照片引用。
+	profilePhotos map[string]domain.ProfilePhotoRef
 }
 
 func newFakeMediaStore() *fakeMediaStore {
 	return &fakeMediaStore{
-		blobs:     map[string]domain.FileBlob{},
-		docs:      map[int64]domain.Document{},
-		photos:    map[int64]domain.Photo{},
-		sets:      map[int64]domain.StickerSet{},
-		parts:     map[string][]domain.UploadPart{},
-		seedState: map[string]string{},
-		receipts:  map[string]domain.UploadedMediaReceipt{},
+		blobs:         map[string]domain.FileBlob{},
+		docs:          map[int64]domain.Document{},
+		photos:        map[int64]domain.Photo{},
+		sets:          map[int64]domain.StickerSet{},
+		parts:         map[string][]domain.UploadPart{},
+		seedState:     map[string]string{},
+		receipts:      map[string]domain.UploadedMediaReceipt{},
+		profilePhotos: map[string]domain.ProfilePhotoRef{},
 	}
+}
+
+func fakeProfilePhotoKey(ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) string {
+	return fmt.Sprintf("%s:%d:%s", ownerType, ownerID, kind)
 }
 
 func fakeUploadReceiptKey(ownerUserID, fileID int64) string {
@@ -414,29 +422,101 @@ func (f *fakeMediaStore) CountAvailableReactions(_ context.Context) (int, error)
 	defer f.mu.Unlock()
 	return len(f.reactions), nil
 }
-func (f *fakeMediaStore) AddProfilePhotoKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind, _ int64, _ int) error {
+func (f *fakeMediaStore) AddProfilePhotoKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := fakeProfilePhotoKey(ownerType, ownerID, kind)
+	existing := f.profilePhotos[key]
+	ref := domain.ProfilePhotoRef{PhotoID: photoID}
+	if p, ok := f.photos[photoID]; ok {
+		ref.DCID = p.DCID
+		ref.Stripped = domain.StrippedFromSizes(p.Sizes)
+		ref.HasVideo = domain.PhotoHasVideo(p.Sizes)
+	}
+	if existing.PhotoID != photoID {
+		f.profilePhotos[key] = ref
+	}
 	return nil
 }
-func (f *fakeMediaStore) CurrentProfilePhotoKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind) (int64, bool, error) {
-	return 0, false, nil
+func (f *fakeMediaStore) CurrentProfilePhotoKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind) (int64, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ref, ok := f.profilePhotos[fakeProfilePhotoKey(ownerType, ownerID, kind)]
+	if !ok {
+		return 0, false, nil
+	}
+	return ref.PhotoID, true, nil
 }
-func (f *fakeMediaStore) CurrentProfilePhotos(_ context.Context, _ domain.PeerType, _ []int64) (map[int64]domain.ProfilePhotoRef, error) {
-	return map[int64]domain.ProfilePhotoRef{}, nil
+func (f *fakeMediaStore) CurrentProfilePhotos(ctx context.Context, ownerType domain.PeerType, ids []int64) (map[int64]domain.ProfilePhotoRef, error) {
+	return f.CurrentProfilePhotosKind(ctx, ownerType, ids, domain.ProfilePhotoKindProfile)
 }
-func (f *fakeMediaStore) CurrentProfilePhotosKind(_ context.Context, _ domain.PeerType, _ []int64, _ domain.ProfilePhotoKind) (map[int64]domain.ProfilePhotoRef, error) {
-	return map[int64]domain.ProfilePhotoRef{}, nil
+func (f *fakeMediaStore) CurrentProfilePhotosKind(_ context.Context, ownerType domain.PeerType, ids []int64, kind domain.ProfilePhotoKind) (map[int64]domain.ProfilePhotoRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[int64]domain.ProfilePhotoRef, len(ids))
+	for _, id := range ids {
+		if ref, ok := f.profilePhotos[fakeProfilePhotoKey(ownerType, id, kind)]; ok {
+			out[id] = ref
+		}
+	}
+	return out, nil
 }
-func (f *fakeMediaStore) ListProfilePhotosKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind, _, _ int, _ int64) ([]int64, int, error) {
-	return nil, 0, nil
+func (f *fakeMediaStore) ListProfilePhotosKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, offset, limit int, maxID int64) ([]int64, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []int64
+	if ref, ok := f.profilePhotos[fakeProfilePhotoKey(ownerType, ownerID, kind)]; ok {
+		ids = append(ids, ref.PhotoID)
+	}
+	return ids, len(ids), nil
 }
-func (f *fakeMediaStore) ListProfilePhotoDetailsKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind, _, _ int, _ int64) ([]domain.Photo, int, error) {
-	return nil, 0, nil
+func (f *fakeMediaStore) ListProfilePhotoDetailsKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, offset, limit int, maxID int64) ([]domain.Photo, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.Photo
+	if ref, ok := f.profilePhotos[fakeProfilePhotoKey(ownerType, ownerID, kind)]; ok {
+		if p, ok := f.photos[ref.PhotoID]; ok {
+			out = append(out, p)
+		}
+	}
+	return out, len(out), nil
 }
-func (f *fakeMediaStore) DeleteProfilePhotos(_ context.Context, _ domain.PeerType, _ int64, _ []int64) ([]int64, error) {
-	return nil, nil
+func (f *fakeMediaStore) DeleteProfilePhotos(_ context.Context, ownerType domain.PeerType, ownerID int64, photoIDs []int64) ([]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var deleted []int64
+	key := fakeProfilePhotoKey(ownerType, ownerID, domain.ProfilePhotoKindProfile)
+	if ref, ok := f.profilePhotos[key]; ok {
+		for _, id := range photoIDs {
+			if id == ref.PhotoID {
+				deleted = append(deleted, id)
+			}
+		}
+	}
+	if len(deleted) > 0 {
+		delete(f.profilePhotos, key)
+	}
+	return deleted, nil
 }
-func (f *fakeMediaStore) DeleteProfilePhotosKind(_ context.Context, _ domain.PeerType, _ int64, _ domain.ProfilePhotoKind, _ []int64) ([]int64, error) {
-	return nil, nil
+func (f *fakeMediaStore) DeleteProfilePhotosKind(_ context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoIDs []int64) ([]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var deleted []int64
+	key := fakeProfilePhotoKey(ownerType, ownerID, kind)
+	if ref, ok := f.profilePhotos[key]; ok {
+		for _, id := range photoIDs {
+			if id == ref.PhotoID {
+				deleted = append(deleted, id)
+			}
+		}
+	}
+	if len(deleted) > 0 {
+		delete(f.profilePhotos, key)
+	}
+	return deleted, nil
+}
+func (f *fakeMediaStore) WithTx(_ context.Context, fn func(ctx context.Context, txMedia store.MediaStore) error) error {
+	return fn(context.Background(), f)
 }
 
 func TestSeedMediaRepairsPartialReactionBlobs(t *testing.T) {

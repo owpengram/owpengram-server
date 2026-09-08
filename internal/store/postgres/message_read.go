@@ -398,7 +398,11 @@ func (s *MessageStore) ListUnreadReactionMessages(ctx context.Context, ownerUser
 	}
 	out := make([]domain.Message, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, messageFromBoxRow(sqlcgen.CreateMessageBoxRow(row)))
+		msg, err := messageFromBoxRow(sqlcgen.CreateMessageBoxRow(row))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, msg)
 	}
 	if err := s.enrichPrivateMessageReactions(ctx, s.db, ownerUserID, out); err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
@@ -71,6 +72,7 @@ type presenceLastSeenBatchDispatcher struct {
 
 	gate      sync.RWMutex
 	accepting bool
+	pending   atomic.Int64
 }
 
 func newPresenceLastSeenBatchDispatcher(
@@ -89,6 +91,7 @@ func newPresenceLastSeenBatchDispatcher(
 	if metrics == nil {
 		metrics = NopMetrics{}
 	}
+	metrics.PresenceLastSeenPending(0)
 	return &presenceLastSeenBatchDispatcher{
 		updater:   updater,
 		cfg:       cfg,
@@ -108,16 +111,21 @@ func (d *presenceLastSeenBatchDispatcher) submit(update store.UserLastSeenUpdate
 	if !d.accepting {
 		return errPresenceLastSeenBatchStopped
 	}
-	d.metrics.PresenceLastSeenPending(1)
+	d.changePending(1)
 	select {
 	case d.queue <- update:
 		d.metrics.PresenceLastSeenSubmitted()
 		return nil
 	default:
-		d.metrics.PresenceLastSeenPending(-1)
+		d.changePending(-1)
 		d.metrics.PresenceLastSeenOverflow()
 		return errPresenceLastSeenBatchFull
 	}
+}
+
+func (d *presenceLastSeenBatchDispatcher) changePending(delta int) {
+	d.pending.Add(int64(delta))
+	d.metrics.PresenceLastSeenPending(delta)
 }
 
 func (d *presenceLastSeenBatchDispatcher) stopAccepting() {
@@ -223,7 +231,7 @@ func (d *presenceLastSeenBatchDispatcher) executeWithRetry(
 		cancel()
 		d.metrics.PresenceLastSeenBatch(len(updates), time.Since(started), err)
 		if err == nil {
-			d.metrics.PresenceLastSeenPending(-rawCount)
+			d.changePending(-rawCount)
 			return true
 		}
 		if attempt == 1 || attempt&(attempt-1) == 0 {
@@ -286,6 +294,6 @@ func (d *presenceLastSeenBatchDispatcher) reportDrainDropped(count int) {
 		return
 	}
 	d.metrics.PresenceLastSeenDrainDropped(count)
-	d.metrics.PresenceLastSeenPending(-count)
+	d.changePending(-count)
 	d.log.Error("presence last-seen shutdown drain expired", zap.Int("updates", count))
 }

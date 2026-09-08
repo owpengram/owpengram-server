@@ -514,7 +514,7 @@ func (r *Router) forwardFromPeerAndSources(ctx context.Context, userID int64, in
 		}
 		return fromPeer, sources, nil
 	}
-	fromPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, input)
+	fromPeer, err := r.checkedMessageReadPeer(ctx, userID, input, false)
 	return fromPeer, nil, err
 }
 
@@ -682,7 +682,9 @@ func (r *Router) forwardSourcesFromPrivateMessages(ctx context.Context, userID i
 	if fromPeer.Type != domain.PeerTypeUser || fromPeer.ID == 0 {
 		return nil, domain.ErrMessageIDInvalid
 	}
-	if svc, ok := r.deps.Messages.(PrivateNoForwardsService); ok {
+	// Saved Messages has no two-user protection state. Its individual source
+	// messages still pass the noforwards check below, including inferred peers.
+	if svc, ok := r.deps.Messages.(PrivateNoForwardsService); ok && fromPeer.ID != userID {
 		state, err := svc.GetPrivateNoForwards(ctx, userID, fromPeer.ID)
 		if err != nil {
 			return nil, err
@@ -771,6 +773,8 @@ func messageForwardErr(err error) error {
 		return messageIDInvalidErr()
 	case errors.Is(err, domain.ErrChatForwardsRestricted):
 		return chatForwardsRestrictedErr()
+	case errors.Is(err, domain.ErrQuoteTextInvalid):
+		return quoteTextInvalidErr()
 	case errors.Is(err, domain.ErrReplyMessageIDInvalid):
 		return replyMessageIDInvalidErr()
 	case errors.Is(err, domain.ErrMessageRandomIDDuplicate):

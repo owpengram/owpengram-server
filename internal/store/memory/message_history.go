@@ -295,7 +295,7 @@ func (s *MessageStore) memoryHistoryClearAnchorLocked(userID int64, peer domain.
 func filterMessageList(messages []domain.Message, filter domain.MessageFilter) domain.MessageList {
 	filter.AddOffset = domain.ClampMessageHistoryAddOffset(filter.AddOffset)
 	sort.SliceStable(messages, func(i, j int) bool {
-		return messageLess(messages[i], messages[j])
+		return messages[i].ID > messages[j].ID
 	})
 
 	query := strings.ToLower(filter.Query)
@@ -306,6 +306,9 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 	base := make([]domain.Message, 0, len(messages))
 	for _, msg := range messages {
 		if filter.HasPeer && msg.Peer != filter.Peer {
+			continue
+		}
+		if filter.SenderUserID != 0 && msg.From != (domain.Peer{Type: domain.PeerTypeUser, ID: filter.SenderUserID}) {
 			continue
 		}
 		if filter.RestrictPeerIDs {
@@ -346,6 +349,9 @@ func filterMessageList(messages []domain.Message, filter domain.MessageFilter) d
 		base = append(base, msg)
 	}
 
+	if filter.CountOnly {
+		return domain.MessageList{Count: len(base)}
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
@@ -384,7 +390,7 @@ func pageMessageHistory(base []domain.Message, filter domain.MessageFilter, limi
 	}
 	switch messageHistoryLoadType(filter.AddOffset, limit) {
 	case messageHistoryLoadForward:
-		return cloneMessages(forwardMessageHistory(base, filter, limit))
+		return cloneMessages(forwardMessageHistory(base, filter, limit, -filter.AddOffset-limit))
 	case messageHistoryLoadAround:
 		forwardLimit := -filter.AddOffset
 		if forwardLimit > limit {
@@ -395,10 +401,10 @@ func pageMessageHistory(base []domain.Message, filter domain.MessageFilter, limi
 			backwardLimit = 0
 		}
 		page := make([]domain.Message, 0, limit)
-		page = append(page, forwardMessageHistory(base, filter, forwardLimit)...)
-		page = append(page, backwardMessageHistory(base, filter, backwardLimit, true)...)
+		page = append(page, forwardMessageHistory(base, filter, forwardLimit, 0)...)
+		page = append(page, backwardMessageHistory(base, filter, backwardLimit)...)
 		sort.SliceStable(page, func(i, j int) bool {
-			return messageLess(page[i], page[j])
+			return page[i].ID > page[j].ID
 		})
 		return cloneMessages(page)
 	default:
@@ -406,7 +412,7 @@ func pageMessageHistory(base []domain.Message, filter domain.MessageFilter, limi
 		if start < 0 {
 			start = 0
 		}
-		candidates := backwardMessageHistory(base, filter, limit+start, false)
+		candidates := backwardMessageHistory(base, filter, limit+start)
 		if start >= len(candidates) {
 			return nil
 		}
@@ -432,13 +438,13 @@ func messageHistoryLoadType(addOffset, limit int) messageHistoryLoad {
 	return messageHistoryLoadForward
 }
 
-func backwardMessageHistory(base []domain.Message, filter domain.MessageFilter, limit int, includeOffset bool) []domain.Message {
+func backwardMessageHistory(base []domain.Message, filter domain.MessageFilter, limit int) []domain.Message {
 	if limit <= 0 {
 		return nil
 	}
 	out := make([]domain.Message, 0, limit)
 	for _, msg := range base {
-		if !messageBeforeHistoryOffset(msg, filter, includeOffset) {
+		if !messageBeforeHistoryOffset(msg, filter) {
 			continue
 		}
 		out = append(out, msg)
@@ -449,7 +455,7 @@ func backwardMessageHistory(base []domain.Message, filter domain.MessageFilter, 
 	return out
 }
 
-func forwardMessageHistory(base []domain.Message, filter domain.MessageFilter, limit int) []domain.Message {
+func forwardMessageHistory(base []domain.Message, filter domain.MessageFilter, limit, skip int) []domain.Message {
 	if limit <= 0 {
 		return nil
 	}
@@ -459,29 +465,27 @@ func forwardMessageHistory(base []domain.Message, filter domain.MessageFilter, l
 		if !messageAfterHistoryOffset(msg, filter) {
 			continue
 		}
+		if skip > 0 {
+			skip--
+			continue
+		}
 		out = append(out, msg)
 		if len(out) == limit {
 			break
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		return messageLess(out[i], out[j])
+		return out[i].ID > out[j].ID
 	})
 	return out
 }
 
-func messageBeforeHistoryOffset(msg domain.Message, filter domain.MessageFilter, includeOffset bool) bool {
+func messageBeforeHistoryOffset(msg domain.Message, filter domain.MessageFilter) bool {
 	if filter.OffsetDate > 0 {
-		if includeOffset {
-			return msg.Date <= filter.OffsetDate
-		}
 		return msg.Date < filter.OffsetDate
 	}
 	if filter.OffsetID <= 0 {
 		return true
-	}
-	if includeOffset {
-		return msg.ID <= filter.OffsetID
 	}
 	return msg.ID < filter.OffsetID
 }
@@ -493,7 +497,7 @@ func messageAfterHistoryOffset(msg domain.Message, filter domain.MessageFilter) 
 	if filter.OffsetID <= 0 {
 		return false
 	}
-	return msg.ID > filter.OffsetID
+	return msg.ID >= filter.OffsetID
 }
 
 func messageLess(a, b domain.Message) bool {

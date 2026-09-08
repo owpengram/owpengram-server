@@ -23,10 +23,10 @@ func TestRPCResultCloneReservationIsOneShotUnderReleaseRace(t *testing.T) {
 		}
 		reserved := &outboundBodyReservation{budget: budget, bytes: len(encoded.body)}
 		start := make(chan struct{})
-		taken := make(chan outboundOp, 1)
+		taken := make(chan *outboundOp, 1)
 		go func() {
 			<-start
-			op, _ := reserved.take(encoded)
+			op, _ := reserved.take(encoded, fallbackOutboundOpPool)
 			taken <- op
 		}()
 		released := make(chan struct{})
@@ -53,7 +53,7 @@ func TestRPCResultReservationReleaseWinsAdmissionRollback(t *testing.T) {
 		t.Fatal("reserve body")
 	}
 	reserved := &outboundBodyReservation{budget: budget, bytes: len(encoded.body)}
-	op, err := reserved.take(encoded)
+	op, err := reserved.take(encoded, fallbackOutboundOpPool)
 	if err != nil {
 		t.Fatalf("take reservation: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestRPCResultReservationReleaseWinsAdmissionRollback(t *testing.T) {
 	// rolls the op back. The rollback must observe the release request and return
 	// the raw op charge instead of resurrecting an owner nobody will release.
 	reserved.release()
-	if !reserved.reclaim(&op) {
+	if !reserved.reclaim(op) {
 		t.Fatal("reclaim actor reservation")
 	}
 	if got := budget.snapshot(); got != 0 {
@@ -175,7 +175,7 @@ func TestOutboundActorRetargetRequiresSecondBodyReservation(t *testing.T) {
 			terminalBytes = budget.snapshot()
 		},
 	}
-	err := c.handleOutboundSend(state, op)
+	err := c.handleOutboundSend(state, &op)
 	op.finish(outboundResult{err: err})
 	if !errors.Is(terminalErr, ErrOutboundTrackedBudget) {
 		t.Fatalf("retarget terminal error = %v, want %v", terminalErr, ErrOutboundTrackedBudget)
@@ -228,7 +228,7 @@ func TestOutboundActorRetargetTransfersOnlyReplacementToPending(t *testing.T) {
 			terminalBytes = budget.snapshot()
 		},
 	}
-	err := c.handleOutboundSend(state, op)
+	err := c.handleOutboundSend(state, &op)
 	op.finish(outboundResult{err: err})
 	if terminalErr != nil {
 		t.Fatalf("retarget terminal error: %v", terminalErr)

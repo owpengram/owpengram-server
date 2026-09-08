@@ -71,7 +71,7 @@ func NewService(creds store.PasskeyStore, challenges store.PasskeyChallengeStore
 		creds:        creds,
 		challenges:   challenges,
 		rpID:         rpID,
-		rpName:       branding.ProductName,
+		rpName:       branding.ProductName(),
 		dcID:         dcID,
 		challengeTTL: defaultChallengeTTL,
 		now:          time.Now,

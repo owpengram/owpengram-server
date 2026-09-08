@@ -508,6 +508,31 @@ func TestObservedClientLayerNeverLeaksAcrossAuthKeySessions(t *testing.T) {
 	}
 }
 
+func TestPersistAuthKeyClientInfoCarriesClientIP(t *testing.T) {
+	authKeyID := [8]byte{0x68, 0x25, 0x7a, 0x09}
+	auth := &captureAuthService{}
+	r := New(Config{DC: 2, IP: "127.0.0.1", Port: 2398}, Deps{
+		Auth: auth,
+	}, zaptest.NewLogger(t), clock.System)
+	ctx := WithAuthKeyID(
+		WithRawAuthKeyID(WithClientIP(context.Background(), "203.0.113.17"), authKeyID),
+		authKeyID,
+	)
+
+	r.persistAuthKeyClientInfo(ctx, clientSessionInfo{
+		layer:         currentClientLayer,
+		hasClientInfo: true,
+		clientInfo: ClientInfo{
+			APIID: 2040, DeviceModel: "Pixel 9", SystemVersion: "SDK 36", AppVersion: "12.8.7",
+		},
+	})
+
+	got := auth.authKeyClientInfos[authKeyID].IP
+	if got != "203.0.113.17" {
+		t.Fatalf("persisted client IP = %q, want %q", got, "203.0.113.17")
+	}
+}
+
 func TestInvokeWithLayerPersistsClientLayerUpgrade(t *testing.T) {
 	authKeyID := [8]byte{0x68, 0x25, 0x7a, 0x02}
 	userID := int64(1780269504)

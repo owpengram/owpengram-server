@@ -35,6 +35,7 @@ const (
 	ActionSetPhone                 = "account.set_phone"
 	ActionSetLoginEmail            = "account.set_login_email"
 	ActionSetAccountAvatar         = "account.set_avatar"
+	ActionSetAccountAvatarVideo    = "account.set_avatar_video"
 	ActionSetChannelAvatar         = "channel.set_avatar"
 	ActionSetChannelUsername       = "channel.set_username"
 	ActionSetChannelSettings       = "channel.set_settings"
@@ -288,6 +289,9 @@ type AvatarResolver interface {
 	// preview before CreateAvatarFromBytes actually materializes the avatar.
 	ValidateAvatarUpload(data []byte) bool
 	CreateAvatarFromBytes(ctx context.Context, data []byte, ownerUserID int64) (domain.Photo, error)
+	// CreateAvatarVideoFromBytes is CreateAvatarFromBytes's video counterpart,
+	// for the admin console's animated-avatar upload.
+	CreateAvatarVideoFromBytes(ctx context.Context, data []byte, ownerUserID int64, videoStartTs float64) (domain.Photo, error)
 	SetCurrentProfilePhotoKind(ctx context.Context, ownerType domain.PeerType, ownerID int64, kind domain.ProfilePhotoKind, photoID int64, date int) (domain.Photo, bool, error)
 	// GetPhoto looks up a photo by id directly -- used to read a channel's
 	// current avatar, which is denormalized on the channel row as a bare
@@ -871,6 +875,14 @@ type SetAccountAvatarRequest struct {
 	UserID   int64  `json:"user_id"`
 	FileName string `json:"file_name"`
 	Data     []byte `json:"-"`
+}
+
+type SetAccountAvatarVideoRequest struct {
+	CommandMeta
+	UserID       int64   `json:"user_id"`
+	FileName     string  `json:"file_name"`
+	VideoStartTs float64 `json:"video_start_ts"`
+	Data         []byte  `json:"-"`
 }
 
 type SetChannelAvatarRequest struct {
@@ -1604,6 +1616,52 @@ func (s *Service) SetAccountAvatar(ctx context.Context, req SetAccountAvatarRequ
 			details["notify_error"] = err.Error()
 		}
 		return CommandResult{Message: "avatar updated", Details: details}, nil
+	})
+}
+
+// SetAccountAvatarVideo is SetAccountAvatar's video counterpart: force-sets a
+// user's current profile photo from raw uploaded animated-video bytes,
+// reusing the same still-frame + s/a/c rendition pipeline as
+// photos.uploadProfilePhoto's video path. Unlike SetAccountAvatar's
+// ValidateAvatarUpload (an image-header decode), video bytes are only
+// size-bounded here -- the admin console does not decode video containers.
+func (s *Service) SetAccountAvatarVideo(ctx context.Context, req SetAccountAvatarVideoRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if domain.IsSystemUserID(req.UserID) {
+		return CommandResult{}, fmt.Errorf("system user avatar cannot be changed")
+	}
+	if s == nil || s.users == nil || s.photos == nil {
+		return CommandResult{}, fmt.Errorf("admin avatar dependencies are not configured")
+	}
+	if len(req.Data) == 0 || len(req.Data) > MaxAccountAvatarVideoBytes {
+		return CommandResult{}, domain.ErrPhotoInvalid
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSetAccountAvatarVideo, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		u, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		details := map[string]any{"file_name": req.FileName, "bytes": len(req.Data), "bot": u.Bot}
+		if req.DryRun {
+			return CommandResult{Message: "avatar video update validated", Details: details}, nil
+		}
+		photo, err := s.photos.CreateAvatarVideoFromBytes(ctx, req.Data, req.UserID, req.VideoStartTs)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		if _, _, err := s.photos.SetCurrentProfilePhotoKind(ctx, domain.PeerTypeUser, req.UserID, domain.ProfilePhotoKindProfile, photo.ID, int(s.now().Unix())); err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["photo_id"] = strconv.FormatInt(photo.ID, 10)
+		if err := s.notifyUserChanged(ctx, u); err != nil {
+			details["notify_error"] = err.Error()
+		}
+		return CommandResult{Message: "avatar video updated", Details: details}, nil
 	})
 }
 
@@ -2645,6 +2703,13 @@ func (s *Service) DeletePrivateHistory(ctx context.Context, req DeletePrivateHis
 // MaxAccountAvatarBytes bounds both reading (AccountAvatar) and writing
 // (SetAccountAvatar) a user's profile photo through the admin console.
 const MaxAccountAvatarBytes = 4 << 20
+
+// MaxAccountAvatarVideoBytes bounds SetAccountAvatarVideo uploads. Video
+// avatars are official Telegram's short (~a few seconds) looping clips, so
+// their encoded size runs well above a static photo's while still being
+// bounded -- a real duration/dimension cap would need decoding the video,
+// which the admin console deliberately does not do.
+const MaxAccountAvatarVideoBytes = 10 << 20
 
 // AccountAvatar returns an account's current profile photo bytes and detected
 // MIME type, mirroring internal/web's public avatar serving (same size

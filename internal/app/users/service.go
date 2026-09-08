@@ -193,6 +193,12 @@ func (s *Service) PrivacyBaseUsers(ctx context.Context, userIDs []int64) ([]doma
 	return s.loadBaseUsersByIDs(ctx, userIDs)
 }
 
+// BaseUsersByIDs returns viewer-independent identities for bounded write/read
+// validation paths without constructing full viewer projections.
+func (s *Service) BaseUsersByIDs(ctx context.Context, userIDs []int64) ([]domain.User, error) {
+	return s.loadBaseUsersByIDs(ctx, userIDs)
+}
+
 // ByIDs 批量返回指定用户。调用方必须已登录；缺失用户不会出现在结果中。
 func (s *Service) ByIDs(ctx context.Context, currentUserID int64, userIDs []int64) ([]domain.User, error) {
 	if currentUserID == 0 {

@@ -1,10 +1,42 @@
 package store
 
 import (
+	"bytes"
 	"testing"
 
 	"telesrv/internal/domain"
 )
+
+func TestPrivateSendSnapshotRejectsInvalidExternalReply(t *testing.T) {
+	message := domain.Message{ID: 7, UID: 8, RandomID: 9, OwnerUserID: 10, Pts: 11,
+		ReplyTo: &domain.MessageReply{MessageID: 1, External: &domain.MessageReplyExternal{
+			From: domain.MessageForward{From: domain.Peer{Type: domain.PeerTypeUser, ID: 10}, Date: 12}, Text: "source",
+		}},
+	}
+	raw, err := EncodePrivateSendSnapshot(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := DecodePrivateSendSnapshot(raw); err != nil || got.ReplyTo.External.Text != "source" {
+		t.Fatalf("valid external replay: %+v %v", got, err)
+	}
+	for _, mutation := range [][2][]byte{
+		{[]byte(`"Date":12`), []byte(`"Date":0`)},
+		{[]byte(`"text":"source"`), []byte(`"text":"source","unexpected":true`)},
+	} {
+		corrupt := bytes.Replace(raw, mutation[0], mutation[1], 1)
+		if bytes.Equal(corrupt, raw) {
+			t.Fatalf("mutation did not match %s", mutation[0])
+		}
+		if _, err := DecodePrivateSendSnapshot(corrupt); err == nil {
+			t.Fatal("corrupt external receipt accepted")
+		}
+	}
+	message.ReplyTo.External.From.Date = 0
+	if _, err := EncodePrivateSendSnapshot(message); err == nil {
+		t.Fatal("invalid external receipt written")
+	}
+}
 
 func TestPrivateSendSnapshotIsDeepAndVersioned(t *testing.T) {
 	message := domain.Message{

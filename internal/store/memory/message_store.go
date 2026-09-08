@@ -21,6 +21,7 @@ type MessageStore struct {
 	loginCodeDeliveries map[[32]byte]loginCodeDeliveryRecord
 	albumGroups         map[albumGroupKey]albumGroupRecord
 	dialogs             *DialogStore
+	updateEvents        *UpdateEventStore
 	// polls 是共享 poll 权威（投票校验与读路径 enrichment）；nil 时 poll 链路按未接入处理。
 	polls *PollStore
 	// savedPins 是收藏夹子会话置顶顺序（下标即 pinned_order，越小越前）。
@@ -35,6 +36,10 @@ type MessageStore struct {
 // AttachPollStore 注入共享 poll 权威（与 ChannelStore 共用同一实例）。
 func (s *MessageStore) AttachPollStore(polls *PollStore) {
 	s.polls = polls
+}
+
+func (s *MessageStore) AttachUpdateEventStore(events *UpdateEventStore) {
+	s.updateEvents = events
 }
 
 type readOutboxDateKey struct {
@@ -60,6 +65,7 @@ func NewMessageStore(dialogs ...*DialogStore) *MessageStore {
 		savedPins:                 make(map[int64][]domain.Peer),
 		privateNoForwards:         make(map[privateNoForwardsPair]domain.PrivateNoForwardsState),
 		privateNoForwardsRequests: make(map[int64]memoryNoForwardsRequest),
+		updateEvents:              NewUpdateEventStore(),
 	}
 	if len(dialogs) > 0 {
 		s.dialogs = dialogs[0]

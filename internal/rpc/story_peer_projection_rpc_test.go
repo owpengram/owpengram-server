@@ -782,6 +782,7 @@ func TestMessagesHistoryAndSearchProjectStoriesMaxID(t *testing.T) {
 	}}
 	r := New(Config{}, Deps{
 		Messages: messages,
+		Users:    mapUsersService{users: map[int64]domain.User{owner.ID: owner, viewer.ID: viewer}},
 		Stories:  appstories.NewService(storyStore),
 	}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 	peer := &tg.InputPeerUser{UserID: owner.ID, AccessHash: owner.AccessHash}

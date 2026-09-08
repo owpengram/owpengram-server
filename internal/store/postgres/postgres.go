@@ -21,6 +21,14 @@ import (
 
 const defaultMinConns = 16
 
+const (
+	phoneIdentityPredecessorVersion = uint(181)
+	phoneIdentityMigrationVersion   = uint(182)
+	// "phone182" as a signed PostgreSQL advisory-lock key. The lock spans the
+	// two-stage 0181 -> identity audit -> 0182 transition across new binaries.
+	phoneIdentityMigrationLockKey = int64(0x70686f6e65313832)
+)
+
 // MigrationStatus 是启动迁移后的 schema 状态。
 type MigrationStatus struct {
 	Version uint
@@ -73,6 +81,9 @@ func Open(ctx context.Context, dsn string, opts ...PoolOption) (*pgxpool.Pool, e
 		}
 	}
 	cfg.ConnConfig.Tracer = queryStatsTracer{}
+	if err := installPostgresConnectionAdmission(ctx, cfg, dsn); err != nil {
+		return nil, fmt.Errorf("initialize PostgreSQL connection admission: %w", err)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool new: %w", err)
@@ -142,6 +153,19 @@ func Migrate(dsn string) error {
 
 // MigrateAndStatus 用嵌入迁移脚本迁移数据库，并返回迁移后的 schema 版本。
 func MigrateAndStatus(dsn string) (MigrationStatus, error) {
+	ctx := context.Background()
+	lockConn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return MigrationStatus{}, fmt.Errorf("connect migration lock: %w", err)
+	}
+	defer lockConn.Close(ctx)
+	if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, phoneIdentityMigrationLockKey); err != nil {
+		return MigrationStatus{}, fmt.Errorf("lock migrations: %w", err)
+	}
+	defer func() {
+		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, phoneIdentityMigrationLockKey)
+	}()
+
 	src, err := iofs.New(deploy.Migrations, "migrations")
 	if err != nil {
 		return MigrationStatus{}, fmt.Errorf("iofs source: %w", err)
@@ -151,9 +175,37 @@ func MigrateAndStatus(dsn string) (MigrationStatus, error) {
 		return MigrationStatus{}, fmt.Errorf("migrate new: %w", err)
 	}
 	defer m.Close()
+	status, err := migrationStatus(m)
+	if err != nil {
+		return MigrationStatus{}, err
+	}
+	if status.Dirty {
+		return MigrationStatus{}, fmt.Errorf("migrate version %d is dirty", status.Version)
+	}
+	if status.Empty || status.Version < phoneIdentityPredecessorVersion {
+		if err := m.Migrate(phoneIdentityPredecessorVersion); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+			return MigrationStatus{}, fmt.Errorf("migrate to phone identity predecessor: %w", err)
+		}
+		status, err = migrationStatus(m)
+		if err != nil {
+			return MigrationStatus{}, err
+		}
+		if status.Dirty || status.Empty || status.Version != phoneIdentityPredecessorVersion {
+			return MigrationStatus{}, fmt.Errorf("phone identity predecessor status = %+v", status)
+		}
+	}
+	if status.Version < phoneIdentityMigrationVersion {
+		if err := canonicalizeStoredPhoneIdentities(ctx, lockConn); err != nil {
+			return MigrationStatus{}, fmt.Errorf("migrate phone identities: %w", err)
+		}
+	}
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return MigrationStatus{}, fmt.Errorf("migrate up: %w", err)
 	}
+	return migrationStatus(m)
+}
+
+func migrationStatus(m *migrate.Migrate) (MigrationStatus, error) {
 	version, dirty, err := m.Version()
 	if errors.Is(err, migrate.ErrNilVersion) {
 		return MigrationStatus{Empty: true}, nil

@@ -377,6 +377,7 @@ type savedDialogTopRowFields struct {
 	QuoteText            string
 	QuoteEntitiesJson    string
 	QuoteOffset          int32
+	ReplyExternalJson    string
 	FwdFromPeerType      string
 	FwdFromPeerID        int64
 	FwdFromName          string
@@ -401,11 +402,11 @@ type savedDialogTopRowFields struct {
 func savedDialogRowFields[T sqlcgen.ListSavedDialogTopsRow | sqlcgen.ListPinnedSavedDialogTopsRow | sqlcgen.ListSavedDialogTopsByPeersRow](row T) savedDialogTopRowFields {
 	switch r := any(row).(type) {
 	case sqlcgen.ListSavedDialogTopsRow:
-		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
+		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.ReplyExternalJson, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
 	case sqlcgen.ListPinnedSavedDialogTopsRow:
-		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
+		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.ReplyExternalJson, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
 	case sqlcgen.ListSavedDialogTopsByPeersRow:
-		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
+		return savedDialogTopRowFields{r.BoxID, r.PrivateMessageID, r.OwnerUserID, r.PeerType, r.PeerID, r.FromUserID, r.MessageDate, r.TtlPeriod, r.ExpiresAt, r.EditDate, r.HideEdited, r.Outgoing, r.Body, r.EntitiesJson, r.Silent, r.Noforwards, r.ReplyToMsgID, r.ReplyToPeerType, r.ReplyToPeerID, r.ReplyToTopID, r.ReplyToStoryID, r.QuoteText, r.QuoteEntitiesJson, r.QuoteOffset, r.ReplyExternalJson, r.FwdFromPeerType, r.FwdFromPeerID, r.FwdFromName, r.FwdDate, r.FwdSavedFromPeerType, r.FwdSavedFromPeerID, r.FwdSavedFromMsgID, r.SavedPeerType, r.SavedPeerID, r.Pts, r.MediaJson, r.MediaUnread, r.ReactionUnread, r.ViaBotID, r.GroupedID, r.Effect, r.ReplyMarkupJson, r.RichMessageJson, r.Pinned}
 	}
 	return savedDialogTopRowFields{}
 }
@@ -426,6 +427,7 @@ func messageFromSavedDialogRow(row savedDialogTopRowFields) (domain.Message, err
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,

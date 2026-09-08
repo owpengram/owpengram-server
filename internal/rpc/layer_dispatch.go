@@ -12,11 +12,47 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/observability/dbtrace"
+	"telesrv/internal/rpcresult"
 )
 
 type layerWrappersAppliedKey struct{}
 type layerAdmissionSequenceKey struct{}
 type layerRPCProfileEvidenceFreshKey struct{}
+
+type immutableLayerRPCReplaySource struct {
+	call   tlprofile.Call
+	source rpcresult.ValueSource
+}
+
+func (s *immutableLayerRPCReplaySource) EncodeInner(ctx context.Context, out *bin.Buffer) error {
+	if s == nil || s.source == nil {
+		return fmt.Errorf("immutable layer RPC replay source is unavailable")
+	}
+	value, err := s.source.Value(ctx)
+	if err != nil {
+		return err
+	}
+	return s.call.EncodeResult(value, out)
+}
+
+func (s *immutableLayerRPCReplaySource) RetainedBytes() int {
+	if s == nil || s.source == nil {
+		return 0
+	}
+	return s.source.RetainedBytes() + 128
+}
+
+type immutableLayerRPCResult struct {
+	tlprofile.Result
+	source rpcresult.ReplaySource
+}
+
+func (r *immutableLayerRPCResult) ExactReplaySource() rpcresult.ReplaySource {
+	if r == nil {
+		return nil
+	}
+	return r.source
+}
 
 // WithLayerRPCProfileEvidenceFresh records whether an admitted request's
 // explicit selector is inside MTProto's mutable msg_id freshness window. A
@@ -278,7 +314,16 @@ func (r *Router) DispatchAdmitted(
 	}
 	dbBefore := dbtrace.SnapshotFromContext(ctx)
 	start := time.Now()
-	result, err := r.dispatchGeneratedSafely(ctx, method, request)
+	dispatchCtx, replayCapture := rpcresult.WithCapture(ctx)
+	result, err := r.dispatchGeneratedSafely(dispatchCtx, method, request)
+	if err == nil && result != nil {
+		if valueSource := replayCapture.Take(); valueSource != nil {
+			result = &immutableLayerRPCResult{
+				Result: result,
+				source: &immutableLayerRPCReplaySource{call: call, source: valueSource},
+			}
+		}
+	}
 	dur := time.Since(start)
 	dbDelta := dbtrace.SnapshotFromContext(ctx).Sub(dbBefore)
 	fields := append([]zap.Field{

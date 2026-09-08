@@ -3,13 +3,33 @@ package postgres
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"telesrv/internal/domain"
+	obsmetrics "telesrv/internal/observability/metrics"
 )
+
+func TestBatchedBootstrapUpdateJobStoreExportsIdlePending(t *testing.T) {
+	registry := obsmetrics.New()
+	backend := &fakeBootstrapReadyBackend{}
+	batcher, err := newBatchedBootstrapUpdateJobStore(backend, BootstrapReadyBatchConfig{
+		MaxSize: 1, MaxWait: time.Millisecond, QueueSize: 1, QueryTimeout: time.Second, Metrics: registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(batcher.Close)
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(recorder.Body.String(), "telesrv_bootstrap_ready_pending 0\n") || backend.calls.Load() != 0 {
+		t.Fatalf("idle owner must expose zero pending without a readiness query: %s", recorder.Body.String())
+	}
+}
 
 func TestSelectDistinctBootstrapReadyBatchDefersSameFence(t *testing.T) {
 	first := bootstrapReadyBatchRequest{userID: 1, authKeyID: [8]byte{1}, sessionID: 10}

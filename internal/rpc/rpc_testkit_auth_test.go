@@ -315,6 +315,9 @@ func (s *captureAuthService) UpdateAuthKeyClientInfo(_ context.Context, authKeyI
 	if info.AppVersion != "" {
 		current.AppVersion = info.AppVersion
 	}
+	if info.IP != "" {
+		current.IP = info.IP
+	}
 	s.authKeyClientInfos[authKeyID] = current
 	for i := range s.authorizations {
 		if s.authorizations[i].AuthKeyID != authKeyID {
@@ -334,6 +337,9 @@ func (s *captureAuthService) UpdateAuthKeyClientInfo(_ context.Context, authKeyI
 		}
 		if info.AppVersion != "" {
 			s.authorizations[i].AppVersion = info.AppVersion
+		}
+		if info.IP != "" {
+			s.authorizations[i].IP = info.IP
 		}
 	}
 	return nil

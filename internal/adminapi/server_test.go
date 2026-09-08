@@ -364,6 +364,10 @@ func (fakeService) SetAccountAvatar(_ context.Context, req admin.SetAccountAvata
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) SetAccountAvatarVideo(_ context.Context, req admin.SetAccountAvatarVideoRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) ChannelAvatar(_ context.Context, _ int64) ([]byte, string, bool, error) {
 	return nil, "", false, nil
 }

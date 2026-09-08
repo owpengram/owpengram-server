@@ -49,7 +49,8 @@ func (c MediaCategoryCounts) CountAny(categories []MediaCategory) int {
 
 // MediaSearchRequest 是共享媒体标签页分页查询的入参（messages.search 媒体过滤分支）。
 // Categories 是该标签页映射到的基础类别并集（PhotoVideo→[Photo,Video]、RoundVoice→[Voice,RoundVideo]）。
-// 分页对齐历史语义：OffsetID 为游标（返回 id 严格小于它）、AddOffset 为额外偏移、MaxID/MinID 为闭区间。
+// OffsetID 定位第一条严格更旧的消息；负 AddOffset 向更新侧取数（可含游标本身）。
+// MaxID/MinID、MaxDate/MinDate 均为开区间；计数忽略分页偏移。
 type MediaSearchRequest struct {
 	Categories     []MediaCategory
 	Query          string

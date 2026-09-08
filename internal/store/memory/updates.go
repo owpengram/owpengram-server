@@ -16,8 +16,15 @@ type UpdateStateStore struct {
 
 // UpdateEventStore 是 store.UpdateEventStore 的内存实现。
 type UpdateEventStore struct {
-	mu     sync.RWMutex
-	events map[int64][]domain.UpdateEvent
+	mu         sync.RWMutex
+	events     map[int64][]domain.UpdateEvent
+	dispatches map[int64][]memoryUpdateDispatch
+}
+
+type memoryUpdateDispatch struct {
+	Pts              int
+	ExcludeAuthKeyID [8]byte
+	ExcludeSessionID int64
 }
 
 type updateStateKey struct {
@@ -27,29 +34,46 @@ type updateStateKey struct {
 
 // NewUpdateEventStore 创建内存 UpdateEventStore。
 func NewUpdateEventStore() *UpdateEventStore {
-	return &UpdateEventStore{events: make(map[int64][]domain.UpdateEvent)}
+	return &UpdateEventStore{
+		events:     make(map[int64][]domain.UpdateEvent),
+		dispatches: make(map[int64][]memoryUpdateDispatch),
+	}
 }
 
 func (s *UpdateEventStore) Append(_ context.Context, userID int64, event domain.UpdateEvent) error {
-	_, err := s.append(userID, event, false)
+	_, err := s.append(userID, event, false, false, [8]byte{}, 0)
 	return err
 }
 
 func (s *UpdateEventStore) AppendAllocated(_ context.Context, userID int64, event domain.UpdateEvent) (domain.UpdateEvent, error) {
-	return s.append(userID, event, true)
+	return s.append(userID, event, true, false, [8]byte{}, 0)
 }
 
-func (s *UpdateEventStore) AppendAllocatedWithDispatch(_ context.Context, userID int64, event domain.UpdateEvent, _ [8]byte, _ int64) (domain.UpdateEvent, error) {
-	return s.append(userID, event, true)
+func (s *UpdateEventStore) AppendAllocatedWithDispatch(_ context.Context, userID int64, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, error) {
+	return s.append(userID, event, true, true, excludeAuthKeyID, excludeSessionID)
 }
 
-func (s *UpdateEventStore) append(userID int64, event domain.UpdateEvent, allocate bool) (domain.UpdateEvent, error) {
+func (s *UpdateEventStore) append(userID int64, event domain.UpdateEvent, allocate, withDispatch bool, excludeAuthKeyID [8]byte, excludeSessionID int64) (domain.UpdateEvent, error) {
+	if withDispatch && (excludeAuthKeyID == ([8]byte{})) != (excludeSessionID == 0) {
+		return domain.UpdateEvent{}, fmt.Errorf("update dispatch exclusion requires both raw auth key and session id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	event = s.appendLocked(userID, event, allocate)
+	if withDispatch {
+		s.dispatches[userID] = append(s.dispatches[userID], memoryUpdateDispatch{
+			Pts: event.Pts, ExcludeAuthKeyID: excludeAuthKeyID, ExcludeSessionID: excludeSessionID,
+		})
+	}
+	return event, nil
+}
+
+func (s *UpdateEventStore) appendLocked(userID int64, event domain.UpdateEvent, allocate bool) domain.UpdateEvent {
 	if event.PtsCount <= 0 {
 		event.PtsCount = 1
 	}
 	event.UserID = userID
 	event = cloneUpdateEvent(event)
-	s.mu.Lock()
 	if allocate {
 		current := 0
 		for _, item := range s.events[userID] {
@@ -60,8 +84,7 @@ func (s *UpdateEventStore) append(userID int64, event domain.UpdateEvent, alloca
 		event.Pts = current + event.PtsCount
 	}
 	s.events[userID] = append(s.events[userID], event)
-	s.mu.Unlock()
-	return event, nil
+	return event
 }
 
 func (s *UpdateEventStore) ListAfter(_ context.Context, userID int64, pts, limit int) ([]domain.UpdateEvent, error) {

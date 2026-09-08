@@ -29,11 +29,55 @@ func mediaSearchPaging(req domain.MediaSearchRequest) (limit, offset int) {
 	if limit < 0 || limit > mediaSearchPageLimit {
 		limit = mediaSearchPageLimit
 	}
-	offset = req.AddOffset
-	if offset < 0 {
-		offset = 0
-	}
+	offset = domain.ClampMessageHistoryAddOffset(req.AddOffset)
 	return limit, offset
+}
+
+// mediaSearchIDs keeps both sides of the anchor bounded before hydration. The
+// forward side includes offset_id; the backward side is strictly older. An
+// absent side stays empty rather than moving the requested window. This
+// covers add_offset's negative range (Telegram lets a caller ask for items
+// straddling offset_id, e.g. "some before and some after") which the older
+// offset>=0-only OFFSET/LIMIT query could not express -- a negative
+// add_offset used to just get clamped to 0.
+func mediaSearchIDs(ctx context.Context, db interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, column, base string, baseArgs []any, req domain.MediaSearchRequest) ([]int, error) {
+	limit, add := mediaSearchPaging(req)
+	args := append([]any(nil), baseArgs...)
+	older, newer := "", " AND FALSE"
+	if req.OffsetID > 0 {
+		args = append(args, pgInt32NonNegative(req.OffsetID))
+		older = fmt.Sprintf(" AND %s < $%d", column, len(args))
+		newer = fmt.Sprintf(" AND %s >= $%d", column, len(args))
+	}
+	part := func(anchor, direction string, offset, n int) string {
+		args = append(args, offset, n)
+		return fmt.Sprintf("(SELECT DISTINCT %s AS id%s%s ORDER BY id %s OFFSET $%d LIMIT $%d)", column, base, anchor, direction, len(args)-1, len(args))
+	}
+	var query string
+	switch {
+	case add >= 0:
+		query = part(older, "DESC", add, limit)
+	case add+limit <= 0:
+		query = part(newer, "ASC", -add-limit, limit)
+	default:
+		query = part(newer, "ASC", 0, -add) + " UNION ALL " + part(older, "DESC", 0, limit+add)
+	}
+	rows, err := db.Query(ctx, "SELECT id FROM ("+query+") page ORDER BY id DESC", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]int, 0, limit)
+	for rows.Next() {
+		var id int32
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, int(id))
+	}
+	return ids, rows.Err()
 }
 
 type mediaSearchQueryer interface {
@@ -88,10 +132,10 @@ WHERE mi.owner_user_id = $1 AND mi.peer_id = $2 AND mi.category = ANY($3::smalli
 		where += fmt.Sprintf(clause, len(args))
 	}
 	if req.MaxID > 0 {
-		add(" AND mi.box_id <= $%d", pgInt32NonNegative(req.MaxID))
+		add(" AND mi.box_id < $%d", pgInt32NonNegative(req.MaxID))
 	}
 	if req.MinID > 0 {
-		add(" AND mi.box_id >= $%d", pgInt32NonNegative(req.MinID))
+		add(" AND mi.box_id > $%d", pgInt32NonNegative(req.MinID))
 	}
 	if req.Query != "" {
 		add(" AND mb.body ILIKE '%%' || $%d || '%%'", req.Query)
@@ -152,10 +196,10 @@ WHERE mi.channel_id = $1 AND mi.category = ANY($2::smallint[])
 		}
 	}
 	if req.MaxID > 0 {
-		add(" AND mi.id <= $%d", pgInt32NonNegative(req.MaxID))
+		add(" AND mi.id < $%d", pgInt32NonNegative(req.MaxID))
 	}
 	if req.MinID > 0 {
-		add(" AND mi.id >= $%d", pgInt32NonNegative(req.MinID))
+		add(" AND mi.id > $%d", pgInt32NonNegative(req.MinID))
 	}
 	if req.Query != "" {
 		add(" AND m.body ILIKE '%%' || $%d || '%%'", req.Query)
@@ -182,7 +226,7 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 	if ownerUserID == 0 || peerID == 0 || len(cats) == 0 {
 		return domain.MessageList{}, nil
 	}
-	limit, offset := mediaSearchPaging(req)
+	limit, _ := mediaSearchPaging(req)
 	base, baseArgs := privateMediaSearchBase(ownerUserID, peerID, cats, req)
 
 	count := req.KnownCount
@@ -196,28 +240,9 @@ func (s *MessageStore) SearchPrivateMedia(ctx context.Context, ownerUserID, peer
 	if limit == 0 {
 		return domain.MessageList{Count: count}, nil
 	}
-	args := append([]any(nil), baseArgs...)
-	if req.OffsetID > 0 {
-		args = append(args, pgInt32NonNegative(req.OffsetID))
-		base += fmt.Sprintf(" AND mi.box_id < $%d", len(args))
-	}
-	args = append(args, offset, limit)
-	rows, err := s.db.Query(ctx, "SELECT DISTINCT mi.box_id"+base+
-		fmt.Sprintf(" ORDER BY mi.box_id DESC OFFSET $%d LIMIT $%d", len(args)-1, len(args)), args...)
+	ids, err := mediaSearchIDs(ctx, s.db, "mi.box_id", base, baseArgs, req)
 	if err != nil {
-		return domain.MessageList{}, fmt.Errorf("list private media ids: %w", err)
-	}
-	defer rows.Close()
-	ids := make([]int, 0, limit)
-	for rows.Next() {
-		var id int32
-		if err := rows.Scan(&id); err != nil {
-			return domain.MessageList{}, fmt.Errorf("scan private media id: %w", err)
-		}
-		ids = append(ids, int(id))
-	}
-	if err := rows.Err(); err != nil {
-		return domain.MessageList{}, fmt.Errorf("iterate private media ids: %w", err)
+		return domain.MessageList{}, fmt.Errorf("list media ids: %w", err)
 	}
 
 	list, err := s.GetByIDs(ctx, ownerUserID, ids)
@@ -263,7 +288,7 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 	if viewerUserID == 0 || channelID == 0 || len(cats) == 0 {
 		return domain.ChannelHistory{}, nil
 	}
-	limit, offset := mediaSearchPaging(req)
+	limit, _ := mediaSearchPaging(req)
 
 	channel, member, err := s.getChannelForMember(ctx, s.db, viewerUserID, channelID)
 	if err != nil {
@@ -281,28 +306,9 @@ func (s *ChannelStore) SearchChannelMedia(ctx context.Context, viewerUserID, cha
 	if limit == 0 {
 		return domain.ChannelHistory{Channel: channel, Self: member, Count: count}, nil
 	}
-	args := append([]any(nil), baseArgs...)
-	if req.OffsetID > 0 {
-		args = append(args, pgInt32NonNegative(req.OffsetID))
-		base += fmt.Sprintf(" AND mi.id < $%d", len(args))
-	}
-	args = append(args, offset, limit)
-	rows, err := s.db.Query(ctx, "SELECT DISTINCT mi.id"+base+
-		fmt.Sprintf(" ORDER BY mi.id DESC OFFSET $%d LIMIT $%d", len(args)-1, len(args)), args...)
+	ids, err := mediaSearchIDs(ctx, s.db, "mi.id", base, baseArgs, req)
 	if err != nil {
-		return domain.ChannelHistory{}, fmt.Errorf("list channel media ids: %w", err)
-	}
-	defer rows.Close()
-	ids := make([]int, 0, limit)
-	for rows.Next() {
-		var id int32
-		if err := rows.Scan(&id); err != nil {
-			return domain.ChannelHistory{}, fmt.Errorf("scan channel media id: %w", err)
-		}
-		ids = append(ids, int(id))
-	}
-	if err := rows.Err(); err != nil {
-		return domain.ChannelHistory{}, fmt.Errorf("iterate channel media ids: %w", err)
+		return domain.ChannelHistory{}, fmt.Errorf("list media ids: %w", err)
 	}
 
 	hist, err := s.getChannelMessagesForMember(ctx, viewerUserID, channel, member, ids)

@@ -3,12 +3,33 @@ package postgres
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	obsmetrics "telesrv/internal/observability/metrics"
 )
+
+func TestActiveChannelIDsPageBatcherExportsIdlePending(t *testing.T) {
+	registry := obsmetrics.New()
+	backend := &fakeActiveChannelIDsBatchBackend{}
+	batcher, err := newActiveChannelIDsPageBatcher(backend, ActiveChannelIDsBatchConfig{
+		MaxSize: 1, MaxWait: time.Millisecond, QueueSize: 1, QueryTimeout: time.Second, Metrics: registry,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(batcher.Close)
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(recorder.Body.String(), "telesrv_active_channel_ids_pending 0\n") || backend.calls.Load() != 0 {
+		t.Fatalf("idle owner must expose zero pending without loading a page: %s", recorder.Body.String())
+	}
+}
 
 func TestSelectDistinctActiveChannelIDsBatchDefersDuplicate(t *testing.T) {
 	selector := activeChannelIDsSelector{userID: 1, limit: 1000}

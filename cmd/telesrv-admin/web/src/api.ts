@@ -242,6 +242,7 @@ export const api = {
 	gifCatalogDocumentPreviewURL: (documentID: string) => `/api/gif-catalog/documents/${encodeURIComponent(documentID)}/preview`,
 	createStickerSet: (form: FormData) => request<CommandResult>("/api/actions/create-sticker-set", { method: "POST", body: form }),
 	setAccountAvatar: (form: FormData) => request<CommandResult>("/api/actions/set-account-avatar", { method: "POST", body: form }),
+	setAccountAvatarVideo: (form: FormData) => request<CommandResult>("/api/actions/set-account-avatar-video", { method: "POST", body: form }),
 	setChannelAvatar: (form: FormData) => request<CommandResult>("/api/actions/set-channel-avatar", { method: "POST", body: form }),
 	addStickerToSet: (form: FormData) => request<CommandResult>("/api/actions/add-sticker-to-set", { method: "POST", body: form }),
 	gifCatalog: () => request<GifCatalogListResponse>("/api/gif-catalog"),

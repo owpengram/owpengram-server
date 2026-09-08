@@ -51,7 +51,9 @@ type presenceTracker struct {
 	byUser    map[int64]map[presenceSessionKey]domain.UserStatus
 	// offlineTimers 跟踪每个 user 挂起的 offline 广播去抖定时器，使重新上线能取消它，
 	// 避免断连风暴下 O(N) 个裸 time.AfterFunc 在 runtime timer heap 长期堆积。
-	offlineTimers map[int64]*time.Timer
+	offlineTimers         map[int64]*time.Timer
+	offlineRunning        int64
+	lastSeenDirectRunning int64
 }
 
 func newPresenceTracker() *presenceTracker {
@@ -62,8 +64,8 @@ func newPresenceTracker() *presenceTracker {
 	}
 }
 
-// armOfflineTimer 安排（或重置）某 user 的 offline 广播去抖定时器。定时器触发时先把自己
-// 从 map 移除再执行 fire（fire 内部会查在线态做最终去抖），全程不持 p.mu 调用 fire。
+// armOfflineTimer replaces the user's pending grace timer. Stop cannot join
+// an already-started AfterFunc; the callback must still prove timer ownership.
 func (p *presenceTracker) armOfflineTimer(userID int64, d time.Duration, fire func()) {
 	if p == nil || userID == 0 {
 		return
@@ -75,12 +77,24 @@ func (p *presenceTracker) armOfflineTimer(userID int64, d time.Duration, fire fu
 	if old := p.offlineTimers[userID]; old != nil {
 		old.Stop()
 	}
-	p.offlineTimers[userID] = time.AfterFunc(d, func() {
+	var timer *time.Timer
+	timer = time.AfterFunc(d, func() {
 		p.mu.Lock()
+		if p.offlineTimers[userID] != timer {
+			p.mu.Unlock()
+			return
+		}
 		delete(p.offlineTimers, userID)
+		p.offlineRunning++
 		p.mu.Unlock()
+		defer func() {
+			p.mu.Lock()
+			p.offlineRunning--
+			p.mu.Unlock()
+		}()
 		fire()
 	})
+	p.offlineTimers[userID] = timer
 	p.mu.Unlock()
 }
 
@@ -419,8 +433,13 @@ func (r *Router) persistReservedLastSeenAsync(
 	lastSeenAt int,
 ) {
 	bgCtx, cancel := r.presenceBackgroundContext(ctx, 10*time.Second)
+	// Keep the direct overflow write visible after its parent callback returns.
+	// The production batch normally handles this work; admission errors retain
+	// their existing explicit log and authoritative write behavior.
+	r.presence.changeDirectLastSeenRunning(1)
 	go func() {
 		defer cancel()
+		defer r.presence.changeDirectLastSeenRunning(-1)
 		defer func() {
 			if rec := recover(); rec != nil {
 				r.log.Error("Update user last seen panicked", zap.Int64("user_id", userID), zap.Any("panic", rec))
@@ -488,6 +507,12 @@ func (r *Router) presenceBackgroundContext(ctx context.Context, timeout time.Dur
 // 去抖宽限后在后台带超时执行——连接关闭发生在 serveConn 退出路径上，同步做
 // DB 写与逐 peer 查询会在断连风暴时放大 DB 压力并拖住 goroutine 退出。
 func (r *Router) SessionOffline(rawAuthKeyID [8]byte, sessionID, userID int64, lastForUser bool) {
+	r.SessionOfflineAt(rawAuthKeyID, sessionID, userID, lastForUser, int(r.clock.Now().Unix()))
+}
+
+// SessionOfflineAt preserves the observed disconnect time and is idempotent
+// for repeated physical-session departure reports.
+func (r *Router) SessionOfflineAt(rawAuthKeyID [8]byte, sessionID, userID int64, lastForUser bool, disconnectedAt int) {
 	r.forgetClientSessionInfo(rawAuthKeyID, sessionID)
 	if userID == 0 {
 		return
@@ -497,7 +522,9 @@ func (r *Router) SessionOffline(rawAuthKeyID [8]byte, sessionID, userID int64, l
 	if !lastForUser {
 		return
 	}
-	disconnectedAt := int(r.clock.Now().Unix())
+	if disconnectedAt <= 0 {
+		disconnectedAt = int(r.clock.Now().Unix())
+	}
 	// 用可跟踪的定时器，重新上线时能取消（见 cancelOfflineTimer），避免断连风暴堆积。
 	r.presence.armOfflineTimer(userID, offlineAnnounceGrace, func() {
 		r.announceUserOfflineIfStillGone(rawAuthKeyID, sessionID, userID, disconnectedAt)

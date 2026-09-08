@@ -210,6 +210,11 @@ func EncodePrivateSendSnapshot(msg domain.Message) ([]byte, error) {
 	if msg.ID <= 0 || msg.UID <= 0 || msg.RandomID == 0 || msg.OwnerUserID == 0 || msg.Pts <= 0 {
 		return nil, fmt.Errorf("private send snapshot: invalid id=%d uid=%d random_id=%d owner=%d pts=%d", msg.ID, msg.UID, msg.RandomID, msg.OwnerUserID, msg.Pts)
 	}
+	if msg.ReplyTo != nil && msg.ReplyTo.External != nil {
+		if _, err := domain.EncodeMessageReplyExternal(msg.ReplyTo.External); err != nil {
+			return nil, fmt.Errorf("private send snapshot reply: %w", err)
+		}
+	}
 	raw, err := json.Marshal(privateSendSnapshotEnvelope{Version: sendSnapshotVersion, Message: msg})
 	if err != nil {
 		return nil, fmt.Errorf("marshal private send snapshot: %w", err)
@@ -227,6 +232,11 @@ func DecodePrivateSendSnapshot(raw []byte) (domain.Message, error) {
 	msg := envelope.Message
 	if envelope.Version != sendSnapshotVersion || msg.ID <= 0 || msg.UID <= 0 || msg.RandomID == 0 || msg.OwnerUserID == 0 || msg.Pts <= 0 {
 		return domain.Message{}, fmt.Errorf("private send snapshot: invalid version=%d id=%d uid=%d random_id=%d owner=%d pts=%d", envelope.Version, msg.ID, msg.UID, msg.RandomID, msg.OwnerUserID, msg.Pts)
+	}
+	if msg.ReplyTo != nil && msg.ReplyTo.External != nil {
+		if _, err := domain.EncodeMessageReplyExternal(msg.ReplyTo.External); err != nil {
+			return domain.Message{}, fmt.Errorf("private send snapshot reply: %w", err)
+		}
 	}
 	return msg, nil
 }

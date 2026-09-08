@@ -188,11 +188,51 @@ func (s *Service) CreateAvatarVideoMarkupFromUpload(ctx context.Context, file do
 	return s.createAvatarVideoFromUpload(ctx, file, videoStartTs, []domain.PhotoSize{markup})
 }
 
+// CreateAvatarVideoFromBytes stores already-in-hand animated-video bytes as an
+// avatar Photo, for callers that skip the chunked upload.saveFilePart
+// transfer regular clients use (e.g. the admin console, which already has the
+// full file from a browser upload) -- the video counterpart of
+// CreateAvatarFromBytes.
+func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, ownerUserID int64, videoStartTs float64) (domain.Photo, error) {
+	if len(data) == 0 {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
+	objectKey, size, sha256sum, err := s.blobs.PutReader(ctx, bytes.NewReader(data))
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if size == 0 {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
+	body := assembledUploadBlob{ObjectKey: objectKey, Size: size, SHA256: sha256sum}
+	return s.createAvatarVideoFromBlob(ctx, body, ownerUserID, videoStartTs, nil)
+}
+
 func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, extraSizes []domain.PhotoSize) (domain.Photo, error) {
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
 		return domain.Photo{}, err
 	}
+	photo, err := s.createAvatarVideoFromBlob(ctx, body, file.OwnerUserID, videoStartTs, extraSizes)
+	if err != nil {
+		return domain.Photo{}, err
+	}
+	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
+		s.log.Warn("cleanup assembled avatar video upload parts failed",
+			zap.Int64("owner_user_id", file.OwnerUserID),
+			zap.Int64("file_id", file.FileID),
+			zap.Int64("photo_id", photo.ID),
+			zap.Error(err))
+	}
+	return photo, nil
+}
+
+// createAvatarVideoFromBlob turns an already-durable video blob (from either
+// the chunked-upload assembly path or a direct in-hand byte slice) into an
+// avatar Photo. Shared by createAvatarVideoFromUpload and
+// CreateAvatarVideoFromBytes so the still-frame extraction and photo/blob
+// record construction stay in exactly one place.
+func (s *Service) createAvatarVideoFromBlob(ctx context.Context, body assembledUploadBlob, ownerUserID int64, videoStartTs float64, extraSizes []domain.PhotoSize) (domain.Photo, error) {
 	if body.Size == 0 {
 		return domain.Photo{}, domain.ErrPhotoInvalid
 	}
@@ -230,17 +270,10 @@ func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.U
 		Date:          int(time.Now().Unix()),
 		DCID:          s.dc,
 		Sizes:         sizes,
-		OwnerUserID:   file.OwnerUserID,
+		OwnerUserID:   ownerUserID,
 	}
 	if err := s.media.PutPhoto(ctx, photo); err != nil {
 		return domain.Photo{}, err
-	}
-	if err := s.cleanupUploadParts(ctx, file.OwnerUserID, file.FileID); err != nil {
-		s.log.Warn("cleanup assembled avatar video upload parts failed",
-			zap.Int64("owner_user_id", file.OwnerUserID),
-			zap.Int64("file_id", file.FileID),
-			zap.Int64("photo_id", photoID),
-			zap.Error(err))
 	}
 	return photo, nil
 }

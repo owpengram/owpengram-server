@@ -6,18 +6,28 @@ package redisstore
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// Open 按地址建立 Redis 连接并 ping 验证。
+const defaultOpenPingTimeout = 5 * time.Second
+
+// Open 按地址建立 Redis 连接并用有界 PING 验证；返回的客户端继续保留 go-redis 默认重试策略。
 func Open(ctx context.Context, addr, password string, db int) (*redis.Client, error) {
+	return open(ctx, addr, password, db, defaultOpenPingTimeout)
+}
+
+func open(ctx context.Context, addr, password string, db int, pingTimeout time.Duration) (*redis.Client, error) {
 	c := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
+		Addr:                  addr,
+		Password:              password,
+		DB:                    db,
+		ContextTimeoutEnabled: true,
 	})
-	if err := c.Ping(ctx).Err(); err != nil {
+	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+	if err := c.Ping(pingCtx).Err(); err != nil {
 		_ = c.Close()
 		return nil, fmt.Errorf("redis ping %s: %w", addr, err)
 	}

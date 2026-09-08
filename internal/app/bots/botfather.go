@@ -51,7 +51,7 @@ const (
 )
 
 func botFatherHelpText() string {
-	return `I can help you create and manage ` + branding.ProductName + ` bots.
+	return `I can help you create and manage ` + branding.ProductName() + ` bots.
 
 You can control me by sending these commands:
 

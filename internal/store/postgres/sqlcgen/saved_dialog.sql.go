@@ -274,6 +274,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -332,6 +333,7 @@ type ListPinnedSavedDialogTopsRow struct {
 	QuoteText            string
 	QuoteEntitiesJson    string
 	QuoteOffset          int32
+	ReplyExternalJson    string
 	FwdFromPeerType      string
 	FwdFromPeerID        int64
 	FwdFromName          string
@@ -390,6 +392,7 @@ func (q *Queries) ListPinnedSavedDialogTops(ctx context.Context, ownerUserID int
 			&i.QuoteText,
 			&i.QuoteEntitiesJson,
 			&i.QuoteOffset,
+			&i.ReplyExternalJson,
 			&i.FwdFromPeerType,
 			&i.FwdFromPeerID,
 			&i.FwdFromName,
@@ -460,6 +463,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -528,6 +532,7 @@ type ListSavedDialogTopsRow struct {
 	QuoteText            string
 	QuoteEntitiesJson    string
 	QuoteOffset          int32
+	ReplyExternalJson    string
 	FwdFromPeerType      string
 	FwdFromPeerID        int64
 	FwdFromName          string
@@ -595,6 +600,7 @@ func (q *Queries) ListSavedDialogTops(ctx context.Context, arg ListSavedDialogTo
 			&i.QuoteText,
 			&i.QuoteEntitiesJson,
 			&i.QuoteOffset,
+			&i.ReplyExternalJson,
 			&i.FwdFromPeerType,
 			&i.FwdFromPeerID,
 			&i.FwdFromName,
@@ -673,6 +679,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -737,6 +744,7 @@ type ListSavedDialogTopsByPeersRow struct {
 	QuoteText            string
 	QuoteEntitiesJson    string
 	QuoteOffset          int32
+	ReplyExternalJson    string
 	FwdFromPeerType      string
 	FwdFromPeerID        int64
 	FwdFromName          string
@@ -795,6 +803,7 @@ func (q *Queries) ListSavedDialogTopsByPeers(ctx context.Context, arg ListSavedD
 			&i.QuoteText,
 			&i.QuoteEntitiesJson,
 			&i.QuoteOffset,
+			&i.ReplyExternalJson,
 			&i.FwdFromPeerType,
 			&i.FwdFromPeerID,
 			&i.FwdFromName,

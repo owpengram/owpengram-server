@@ -35,7 +35,7 @@ const (
 	// MaxMessageReplyQuoteLength matches TDesktop's quote_length_max app config default.
 	MaxMessageReplyQuoteLength = 1024
 	// MaxMessageReplyQuoteOffset bounds quote_offset, which is an offset inside message text, not a message id.
-	MaxMessageReplyQuoteOffset = MaxMessageTextLength
+	MaxMessageReplyQuoteOffset = 2 * MaxMessageTextLength // UTF-16 units, including surrogate pairs.
 	// MaxMessageEntityCount limits styled text entity vectors in message text and quotes.
 	MaxMessageEntityCount = 256
 	// MaxMessageBoxID 是 TL int / PostgreSQL int4 可安全表达的最大 message id。
@@ -81,7 +81,7 @@ func ValidateMessageReplyBounds(reply *MessageReply) error {
 		return ErrReplyMessageIDInvalid
 	}
 	// story 回复（StoryID>0）不携带 MessageID/TopMessageID；普通回复至少有其一。
-	if reply.MessageID == 0 && reply.TopMessageID == 0 && reply.StoryID == 0 {
+	if reply.MessageID == 0 && reply.TopMessageID == 0 && reply.StoryID == 0 && reply.External == nil {
 		return ErrReplyMessageIDInvalid
 	}
 	if reply.QuoteOffset < 0 || reply.QuoteOffset > MaxMessageReplyQuoteOffset {
@@ -250,6 +250,9 @@ type MessageReply struct {
 	QuoteText     string
 	QuoteEntities []MessageEntity
 	QuoteOffset   int
+	// External is an immutable source snapshot resolved by the owning store.
+	// It is not client input and does not authorize a source message lookup.
+	External *MessageReplyExternal `json:",omitempty"`
 	// StoryID > 0 表示这是一条对 story 的回复（评论）：MessageID 为 0，Peer 为 story 作者，
 	// 投影为 messageReplyStoryHeader 而非普通 messageReplyHeader。
 	StoryID int
@@ -287,6 +290,11 @@ type MessageFilter struct {
 	MaxID      int
 	MinID      int
 	Hash       int64
+	// SenderUserID intersects all other predicates; zero means no sender filter.
+	SenderUserID int64
+	// CountOnly ignores pagination and returns the exact filtered total without
+	// loading message payloads or users. History's default limit is separate.
+	CountOnly bool
 	// PinnedOnly 仅返回置顶消息（messages.search filterPinned 与
 	// userFull.pinned_msg_id 的查询路径）。
 	PinnedOnly     bool
@@ -716,11 +724,13 @@ type PinPrivateMessageRequest struct {
 	Pinned      bool
 	// PmOneside 仅置顶在本侧（官方私聊置顶框"同时为对方置顶"未勾选时），
 	// 不向对端翻转、不生成服务消息。unpin 无此语义，恒双侧清除。
-	PmOneside       bool
-	Silent          bool
-	Date            int
-	OriginAuthKeyID [8]byte
-	OriginSessionID int64
+	PmOneside bool
+	Silent    bool
+	// RecipientBlocked applies the normal private-service delivery policy.
+	RecipientBlocked bool
+	Date             int
+	OriginAuthKeyID  [8]byte
+	OriginSessionID  int64
 }
 
 // PinnedMessagesForUser 描述置顶状态变化对某个 owner 视角的影响。

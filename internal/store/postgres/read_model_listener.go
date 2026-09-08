@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
@@ -227,7 +226,7 @@ func (l *ReadModelChangeListener) Run(ctx context.Context) {
 }
 
 func (l *ReadModelChangeListener) listenAndConsume(ctx context.Context) error {
-	conn, err := pgx.Connect(ctx, l.dsn)
+	conn, err := connectPostgresAdmitted(ctx, l.dsn)
 	if err != nil {
 		return err
 	}

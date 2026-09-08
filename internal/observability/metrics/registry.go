@@ -227,9 +227,12 @@ func (r *Registry) add(name string, value uint64, labels ...Label) {
 }
 
 func (r *Registry) addGauge(name string, delta int64, labels ...Label) {
-	if r == nil || delta == 0 {
+	if r == nil {
 		return
 	}
+	// A zero delta still touches the series: callers use it to declare an
+	// idle gauge exists (e.g. XxxPending(0) at startup) so /metrics exposes
+	// "0" immediately instead of omitting the line until first activity.
 	r.gauge(newSeriesKey(name, labels...)).value.Add(delta)
 }
 

@@ -346,7 +346,7 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 		}
 		return &tg.MessageReplyStoryHeader{Peer: peer, StoryID: m.ReplyTo.StoryID}
 	}
-	if m.ReplyTo.MessageID <= 0 && m.ReplyTo.TopMessageID <= 0 {
+	if m.ReplyTo.MessageID <= 0 && m.ReplyTo.TopMessageID <= 0 && m.ReplyTo.External == nil {
 		return nil
 	}
 	header := &tg.MessageReplyHeader{}
@@ -362,6 +362,18 @@ func tgMessageReplyHeader(m domain.Message) tg.MessageReplyHeaderClass {
 	if m.ReplyTo.Peer.ID != 0 && m.ReplyTo.Peer != m.Peer {
 		if peer := tgPeer(m.ReplyTo.Peer); peer != nil {
 			header.SetReplyToPeerID(peer)
+		}
+	}
+	if external := m.ReplyTo.External; external != nil {
+		if from := tgMessageFwdHeader(&external.From); from != nil {
+			header.SetReplyFrom(*from)
+		}
+		if !external.Media.IsZero() {
+			header.SetReplyMedia(tgMessageMedia(external.Media))
+		}
+		if m.ReplyTo.QuoteText == "" && external.Text != "" {
+			header.SetQuoteText(external.Text)
+			header.SetQuoteEntities(tgMessageEntities(external.Entities))
 		}
 	}
 	if m.ReplyTo.QuoteText != "" {

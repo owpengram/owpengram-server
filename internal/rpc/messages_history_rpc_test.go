@@ -580,7 +580,7 @@ func TestMessagesGetHistoryReturnsStoredMessages(t *testing.T) {
 			Hash:     99,
 		},
 	}
-	r := New(Config{}, Deps{Messages: messages}, zaptest.NewLogger(t), clock.System)
+	r := New(Config{}, Deps{Messages: messages, Users: mapUsersService{users: map[int64]domain.User{domain.OfficialSystemUserID: domain.OfficialSystemUser()}}}, zaptest.NewLogger(t), clock.System)
 	req := &tg.MessagesGetHistoryRequest{
 		Peer:      &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash},
 		Limit:     20,

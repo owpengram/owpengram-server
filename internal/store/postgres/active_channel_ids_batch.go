@@ -95,6 +95,9 @@ func newActiveChannelIDsPageBatcher(
 		queue: make(chan activeChannelIDsBatchRequest, cfg.QueueSize),
 		stop:  make(chan struct{}), done: make(chan struct{}), cancel: cancel,
 	}
+	if cfg.Metrics != nil {
+		cfg.Metrics.ActiveChannelIDsPending(0)
+	}
 	go b.run(workerCtx)
 	return b, nil
 }

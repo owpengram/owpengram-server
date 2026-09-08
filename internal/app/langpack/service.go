@@ -54,7 +54,7 @@ func newServiceWithCacheLimits(packs store.LangPackStore, maxBytes int64, maxEnt
 		packs:         packs,
 		packCache:     newLangPackCache(maxBytes, maxEntries),
 		languageCache: newLanguageListCache(languageEntries),
-		publicBaseURL: branding.DefaultPublicURL,
+		publicBaseURL: branding.PublicBaseURL(),
 	}
 }
 

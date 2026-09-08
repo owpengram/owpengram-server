@@ -1135,5 +1135,5 @@ func (s *Server) publishRewrappedRPCResult(
 	s.log.Info("RPC init rewrap result replay delivered",
 		zap.String("method", method), zap.Int64("req_msg_id", reqMsgID),
 		zap.String("auth_key_id", c.authKeyHex), zap.Int64("session_id", c.sessionID),
-		zap.Int("wire_bytes", len(encoded.body)))
+		zap.Int("wire_bytes", encoded.wireSize()))
 }

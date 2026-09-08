@@ -174,6 +174,7 @@ SELECT
   COALESCE(m.quote_text, '')::text AS quote_text,
   COALESCE(m.quote_entities::text, '[]')::text AS quote_entities_json,
   COALESCE(m.quote_offset, 0)::int AS quote_offset,
+  COALESCE(m.reply_external, '{}'::jsonb)::text AS reply_external_json,
   COALESCE(m.fwd_from_peer_type, '')::text AS fwd_from_peer_type,
   COALESCE(m.fwd_from_peer_id, 0)::bigint AS fwd_from_peer_id,
   COALESCE(m.fwd_from_name, '')::text AS fwd_from_name,
@@ -313,6 +314,7 @@ type BatchListDispatchEventsRow struct {
 	QuoteText                      string
 	QuoteEntitiesJson              string
 	QuoteOffset                    int32
+	ReplyExternalJson              string
 	FwdFromPeerType                string
 	FwdFromPeerID                  int64
 	FwdFromName                    string
@@ -450,6 +452,7 @@ func (q *Queries) BatchListDispatchEvents(ctx context.Context, arg BatchListDisp
 			&i.QuoteText,
 			&i.QuoteEntitiesJson,
 			&i.QuoteOffset,
+			&i.ReplyExternalJson,
 			&i.FwdFromPeerType,
 			&i.FwdFromPeerID,
 			&i.FwdFromName,
@@ -833,6 +836,7 @@ SELECT
   COALESCE(m.quote_text, '')::text AS quote_text,
   COALESCE(m.quote_entities::text, '[]')::text AS quote_entities_json,
   COALESCE(m.quote_offset, 0)::int AS quote_offset,
+  COALESCE(m.reply_external, '{}'::jsonb)::text AS reply_external_json,
   COALESCE(m.fwd_from_peer_type, '')::text AS fwd_from_peer_type,
   COALESCE(m.fwd_from_peer_id, 0)::bigint AS fwd_from_peer_id,
   COALESCE(m.fwd_from_name, '')::text AS fwd_from_name,
@@ -975,6 +979,7 @@ type ListUserUpdateEventsAfterRow struct {
 	QuoteText                      string
 	QuoteEntitiesJson              string
 	QuoteOffset                    int32
+	ReplyExternalJson              string
 	FwdFromPeerType                string
 	FwdFromPeerID                  int64
 	FwdFromName                    string
@@ -1110,6 +1115,7 @@ func (q *Queries) ListUserUpdateEventsAfter(ctx context.Context, arg ListUserUpd
 			&i.QuoteText,
 			&i.QuoteEntitiesJson,
 			&i.QuoteOffset,
+			&i.ReplyExternalJson,
 			&i.FwdFromPeerType,
 			&i.FwdFromPeerID,
 			&i.FwdFromName,

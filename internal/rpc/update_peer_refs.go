@@ -343,6 +343,10 @@ func collectMessagePeerRefs(msg domain.Message, currentChannelID int64, userIDs,
 	if msg.ReplyTo != nil {
 		addDomainPeerRef(msg.ReplyTo.Peer, currentChannelID, userIDs, channelIDs)
 		collectMessageEntityUserRefs(msg.ReplyTo.QuoteEntities, userIDs)
+		if external := msg.ReplyTo.External; external != nil {
+			addDomainPeerRef(external.From.From, currentChannelID, userIDs, channelIDs)
+			collectMessagePeerRefs(domain.Message{Media: external.Media, Entities: external.Entities}, currentChannelID, userIDs, channelIDs)
+		}
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}
@@ -429,6 +433,10 @@ func collectChannelMessagePeerRefs(msg domain.ChannelMessage, currentChannelID i
 	if msg.ReplyTo != nil {
 		addDomainPeerRef(msg.ReplyTo.Peer, currentChannelID, userIDs, channelIDs)
 		collectMessageEntityUserRefs(msg.ReplyTo.QuoteEntities, userIDs)
+		if external := msg.ReplyTo.External; external != nil {
+			addDomainPeerRef(external.From.From, currentChannelID, userIDs, channelIDs)
+			collectMessagePeerRefs(domain.Message{Media: external.Media, Entities: external.Entities}, currentChannelID, userIDs, channelIDs)
+		}
 	}
 	if msg.Media != nil && msg.Media.Contact != nil && msg.Media.Contact.UserID != 0 {
 		userIDs[msg.Media.Contact.UserID] = struct{}{}

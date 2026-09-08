@@ -56,6 +56,7 @@ type Service interface {
 	SetPhone(ctx context.Context, req admin.SetPhoneRequest) (admin.CommandResult, error)
 	SetLoginEmail(ctx context.Context, req admin.SetLoginEmailRequest) (admin.CommandResult, error)
 	SetAccountAvatar(ctx context.Context, req admin.SetAccountAvatarRequest) (admin.CommandResult, error)
+	SetAccountAvatarVideo(ctx context.Context, req admin.SetAccountAvatarVideoRequest) (admin.CommandResult, error)
 	ChannelAvatar(ctx context.Context, channelID int64) ([]byte, string, bool, error)
 	SetChannelAvatar(ctx context.Context, req admin.SetChannelAvatarRequest) (admin.CommandResult, error)
 	SetUserColor(ctx context.Context, req admin.SetUserColorRequest) (admin.CommandResult, error)
@@ -188,6 +189,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-phone", s.authenticated(s.handleSetPhone))
 	mux.HandleFunc("POST /v1/accounts/set-login-email", s.authenticated(s.handleSetLoginEmail))
 	mux.HandleFunc("POST /v1/accounts/set-avatar", s.authenticated(s.handleSetAccountAvatar))
+	mux.HandleFunc("POST /v1/accounts/set-avatar-video", s.authenticated(s.handleSetAccountAvatarVideo))
 	mux.HandleFunc("POST /v1/accounts/set-color", s.authenticated(s.handleSetUserColor))
 	mux.HandleFunc("POST /v1/accounts/set-emoji-status", s.authenticated(s.handleSetUserEmojiStatus))
 	mux.HandleFunc("POST /v1/accounts/revoke-sessions", s.authenticated(s.handleRevokeSessions))
@@ -393,13 +395,25 @@ func (s *Server) handleSetLoginEmail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetAccountAvatar(w http.ResponseWriter, r *http.Request) {
 	var req admin.SetAccountAvatarRequest
-	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data) {
+	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data, admin.MaxAccountAvatarBytes) {
 		return
 	}
 	if !decodeMultipartMetadata(w, r, &req) {
 		return
 	}
 	result, err := s.svc.SetAccountAvatar(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetAccountAvatarVideo(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetAccountAvatarVideoRequest
+	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data, admin.MaxAccountAvatarVideoBytes) {
+		return
+	}
+	if !decodeMultipartMetadata(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetAccountAvatarVideo(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
@@ -427,7 +441,7 @@ func (s *Server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSetChannelAvatar(w http.ResponseWriter, r *http.Request) {
 	var req admin.SetChannelAvatarRequest
-	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data) {
+	if !s.decodeAvatarUpload(w, r, &req.FileName, &req.Data, admin.MaxAccountAvatarBytes) {
 		return
 	}
 	if !decodeMultipartMetadata(w, r, &req) {
@@ -439,8 +453,10 @@ func (s *Server) handleSetChannelAvatar(w http.ResponseWriter, r *http.Request) 
 
 // decodeAvatarUpload parses a multipart avatar-upload form shared by the
 // account and channel avatar endpoints, reading the uploaded file into data.
-func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, fileName *string, data *[]byte) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxAccountAvatarBytes+(1<<20))
+// maxBytes is the caller's own ceiling (MaxAccountAvatarBytes for a static
+// image, the larger MaxAccountAvatarVideoBytes for a video avatar).
+func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, fileName *string, data *[]byte, maxBytes int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
 		return false
@@ -454,8 +470,8 @@ func (s *Server) decodeAvatarUpload(w http.ResponseWriter, r *http.Request, file
 		return false
 	}
 	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarBytes+1))
-	if err != nil || len(raw) == 0 || int64(len(raw)) > admin.MaxAccountAvatarBytes {
+	raw, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil || len(raw) == 0 || int64(len(raw)) > maxBytes {
 		writeError(w, http.StatusBadRequest, "avatar file is empty or too large")
 		return false
 	}

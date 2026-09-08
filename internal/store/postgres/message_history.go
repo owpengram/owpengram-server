@@ -73,10 +73,18 @@ func (s *MessageStore) GetByUID(ctx context.Context, userID, uid int64) (domain.
 	if _, err := decodeReplyMarkup(row.ReplyMarkupJson); err != nil {
 		return domain.Message{}, false, fmt.Errorf("get message by uid reply markup: %w", err)
 	}
-	return messageFromGetBoxRow(row), true, nil
+	msg, err := messageFromGetBoxRow(row)
+	return msg, err == nil, err
 }
 
 func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter domain.MessageFilter) (domain.MessageList, error) {
+	if filter.CountOnly {
+		total, err := s.countMessagesByUser(ctx, userID, filter)
+		if err != nil {
+			return domain.MessageList{}, fmt.Errorf("count messages: %w", err)
+		}
+		return domain.MessageList{Count: int(total)}, nil
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
@@ -99,13 +107,14 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 	savedReactionKeys := postgresSavedReactionKeys(filter.SavedReactions)
 	// add_offset>=0 是 backward 热路径(初始加载/上滑翻页,占 getHistory 绝大多数)。
 	// 走扁平静态查询 ListMessagesBackward:规划仅单 index scan + 2 LEFT JOIN,避免
-	// ListMessagesByUser 大 CTE 把 4 个分支+total 全树规划(6.7ms→~1ms)。与 CTE
+	// ListMessagesByUser 大 CTE 把 4 个分支全树规划(6.7ms→~1ms)。与 CTE
 	// 的 backward 分支逐位等价。around/forward(add_offset<0,锚点跳转,较罕见)仍走
-	// 原 CTE,逻辑零改动。total 在 backward 路径由 CountMessagesByUser 独立提供。
+	// CTE。total 始终由 CountMessagesByUser 独立提供，不依附消息行（空页仍有总数）。
 	var rows []sqlcgen.ListMessagesByUserRow
 	if addOffset >= 0 {
 		bw, err := s.q.ListMessagesBackward(ctx, sqlcgen.ListMessagesBackwardParams{
 			OwnerUserID:          userID,
+			SenderUserID:         filter.SenderUserID,
 			HasPeer:              filter.HasPeer,
 			PeerType:             string(filter.Peer.Type),
 			PeerID:               filter.Peer.ID,
@@ -135,40 +144,12 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 		for i := range bw {
 			rows[i] = backwardRowToByUserRow(bw[i])
 		}
-		if filter.NeedTotalCount {
-			total, err := s.q.CountMessagesByUser(ctx, sqlcgen.CountMessagesByUserParams{
-				OwnerUserID:          userID,
-				HasPeer:              filter.HasPeer,
-				PeerType:             string(filter.Peer.Type),
-				PeerID:               filter.Peer.ID,
-				RestrictPeerIds:      filter.RestrictPeerIDs,
-				PeerIds:              filter.PeerIDs,
-				Query:                filter.Query,
-				MinDate:              pgInt32NonNegative(filter.MinDate),
-				MaxDate:              pgInt32NonNegative(filter.MaxDate),
-				MaxID:                pgInt32NonNegative(filter.MaxID),
-				MinID:                pgInt32NonNegative(filter.MinID),
-				PinnedOnly:           filter.PinnedOnly,
-				MusicOnly:            filter.MusicOnly,
-				PhoneCallsOnly:       filter.PhoneCallsOnly,
-				MissedPhoneCallsOnly: filter.MissedPhoneCallsOnly,
-				SavedPeerType:        savedPeerType,
-				SavedPeerID:          savedPeerID,
-				SavedReactionKeys:    savedReactionKeys,
-			})
-			if err != nil {
-				return domain.MessageList{}, fmt.Errorf("count messages: %w", err)
-			}
-			// 镜像原 CTE 的 CROSS JOIN total 语义:total_count 只随结果行下发,
-			// paged 为空时不产出(out.Count 保持 0),故仅在有行时附着。
-			for i := range rows {
-				rows[i].TotalCount = total
-			}
-		}
+
 	} else {
 		var err error
 		rows, err = s.q.ListMessagesByUser(ctx, sqlcgen.ListMessagesByUserParams{
 			OwnerUserID:          userID,
+			SenderUserID:         filter.SenderUserID,
 			HasPeer:              filter.HasPeer,
 			PeerType:             string(filter.Peer.Type),
 			PeerID:               filter.Peer.ID,
@@ -187,7 +168,6 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 			MusicOnly:            filter.MusicOnly,
 			PhoneCallsOnly:       filter.PhoneCallsOnly,
 			MissedPhoneCallsOnly: filter.MissedPhoneCallsOnly,
-			NeedTotalCount:       filter.NeedTotalCount,
 			SavedPeerType:        savedPeerType,
 			SavedPeerID:          savedPeerID,
 			SavedReactionKeys:    savedReactionKeys,
@@ -222,6 +202,7 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 			row.QuoteText,
 			row.QuoteEntitiesJson,
 			row.QuoteOffset,
+			row.ReplyExternalJson,
 			row.FwdFromPeerType,
 			row.FwdFromPeerID,
 			row.FwdFromName,
@@ -275,12 +256,15 @@ func (s *MessageStore) ListByUser(ctx context.Context, userID int64, filter doma
 			Pinned:         row.Pinned,
 			SavedPeer:      savedPeerFromFields(row.SavedPeerType, row.SavedPeerID),
 		})
-		if filter.NeedTotalCount && out.Count == 0 {
-			out.Count = int(row.TotalCount)
-		}
 		appendUserFromMessageRow(&out, seenUsers, row)
 	}
-	if !filter.NeedTotalCount {
+	if filter.NeedTotalCount {
+		total, err := s.countMessagesByUser(ctx, userID, filter)
+		if err != nil {
+			return domain.MessageList{}, fmt.Errorf("count messages: %w", err)
+		}
+		out.Count = int(total)
+	} else {
 		out.Count = len(out.Messages)
 		if hasMore {
 			out.Count++
@@ -666,12 +650,24 @@ func (s *MessageStore) DeleteHistory(ctx context.Context, req domain.DeleteHisto
 	return res, nil
 }
 
-func messageFromBoxRow(row sqlcgen.CreateMessageBoxRow) domain.Message {
-	entities, _ := decodeMessageEntities(row.EntitiesJson)
-	media, _ := decodeMessageMedia(row.MediaJson)
-	markup, _ := decodeReplyMarkup(row.ReplyMarkupJson)
-	rich, _ := decodeRichMessage(row.RichMessageJson)
-	silent, noforwards, reply, forward, _ := messageMetadataFromFields(
+func messageFromBoxRow(row sqlcgen.CreateMessageBoxRow) (domain.Message, error) {
+	entities, err := decodeMessageEntities(row.EntitiesJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	media, err := decodeMessageMedia(row.MediaJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	markup, err := decodeReplyMarkup(row.ReplyMarkupJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	rich, err := decodeRichMessage(row.RichMessageJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	silent, noforwards, reply, forward, err := messageMetadataFromFields(
 		row.Silent,
 		row.Noforwards,
 		row.ReplyToMsgID,
@@ -682,6 +678,7 @@ func messageFromBoxRow(row sqlcgen.CreateMessageBoxRow) domain.Message {
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,
@@ -690,6 +687,9 @@ func messageFromBoxRow(row sqlcgen.CreateMessageBoxRow) domain.Message {
 		row.FwdSavedFromPeerID,
 		row.FwdSavedFromMsgID,
 	)
+	if err != nil {
+		return domain.Message{}, err
+	}
 	return domain.Message{
 		Media:          media,
 		ReplyMarkup:    markup,
@@ -719,15 +719,27 @@ func messageFromBoxRow(row sqlcgen.CreateMessageBoxRow) domain.Message {
 		Effect:         row.Effect,
 		Pinned:         row.Pinned,
 		SavedPeer:      savedPeerFromFields(row.SavedPeerType, row.SavedPeerID),
-	}
+	}, nil
 }
 
-func messageFromGetBoxRow(row sqlcgen.GetMessageBoxByPrivateMessageRow) domain.Message {
-	entities, _ := decodeMessageEntities(row.EntitiesJson)
-	media, _ := decodeMessageMedia(row.MediaJson)
-	markup, _ := decodeReplyMarkup(row.ReplyMarkupJson)
-	rich, _ := decodeRichMessage(row.RichMessageJson)
-	silent, noforwards, reply, forward, _ := messageMetadataFromFields(
+func messageFromGetBoxRow(row sqlcgen.GetMessageBoxByPrivateMessageRow) (domain.Message, error) {
+	entities, err := decodeMessageEntities(row.EntitiesJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	media, err := decodeMessageMedia(row.MediaJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	markup, err := decodeReplyMarkup(row.ReplyMarkupJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	rich, err := decodeRichMessage(row.RichMessageJson)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	silent, noforwards, reply, forward, err := messageMetadataFromFields(
 		row.Silent,
 		row.Noforwards,
 		row.ReplyToMsgID,
@@ -738,6 +750,7 @@ func messageFromGetBoxRow(row sqlcgen.GetMessageBoxByPrivateMessageRow) domain.M
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,
@@ -746,6 +759,9 @@ func messageFromGetBoxRow(row sqlcgen.GetMessageBoxByPrivateMessageRow) domain.M
 		row.FwdSavedFromPeerID,
 		row.FwdSavedFromMsgID,
 	)
+	if err != nil {
+		return domain.Message{}, err
+	}
 	return domain.Message{
 		Media:          media,
 		ReplyMarkup:    markup,
@@ -775,7 +791,7 @@ func messageFromGetBoxRow(row sqlcgen.GetMessageBoxByPrivateMessageRow) domain.M
 		Effect:         row.Effect,
 		Pinned:         row.Pinned,
 		SavedPeer:      savedPeerFromFields(row.SavedPeerType, row.SavedPeerID),
-	}
+	}, nil
 }
 
 func messageFromVisibleBoxRow(row sqlcgen.ListVisibleMessageBoxesByPrivateMessageRow) (domain.Message, error) {
@@ -794,6 +810,7 @@ func messageFromVisibleBoxRow(row sqlcgen.ListVisibleMessageBoxesByPrivateMessag
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,
@@ -865,6 +882,7 @@ func messageFromUpdateEditRow(row sqlcgen.UpdateMessageBoxEditRow) (domain.Messa
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,
@@ -936,6 +954,7 @@ func messageFromIDRow(row sqlcgen.GetMessageBoxesByIDsRow) (domain.Message, erro
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,
@@ -1004,7 +1023,7 @@ func eventFromMessage(msg domain.Message) domain.UpdateEvent {
 
 // backwardRowToByUserRow 把 ListMessagesBackward(扁平 backward 热路径)的行适配为
 // ListMessagesByUserRow,从而复用 ListByUser 既有的解码/用户收集下游逻辑。两者列与
-// base 完全一致,仅缺 TotalCount(由调用方按 NeedTotalCount 单独填,默认 0)。
+// base 完全一致；总数由调用方在 NeedTotalCount 时独立查询。
 func backwardRowToByUserRow(r sqlcgen.ListMessagesBackwardRow) sqlcgen.ListMessagesByUserRow {
 	return sqlcgen.ListMessagesByUserRow{
 		BoxID:                         r.BoxID,
@@ -1031,6 +1050,7 @@ func backwardRowToByUserRow(r sqlcgen.ListMessagesBackwardRow) sqlcgen.ListMessa
 		QuoteText:                     r.QuoteText,
 		QuoteEntitiesJson:             r.QuoteEntitiesJson,
 		QuoteOffset:                   r.QuoteOffset,
+		ReplyExternalJson:             r.ReplyExternalJson,
 		FwdFromPeerType:               r.FwdFromPeerType,
 		FwdFromPeerID:                 r.FwdFromPeerID,
 		FwdFromName:                   r.FwdFromName,
@@ -1175,4 +1195,36 @@ func appendMessageUsers(out *domain.MessageList, seen map[int64]struct{}, users 
 	for _, user := range users {
 		add(user)
 	}
+}
+
+// countMessagesByUser shares page predicates but intentionally excludes page anchors.
+func (s *MessageStore) countMessagesByUser(ctx context.Context, userID int64, filter domain.MessageFilter) (int32, error) {
+	savedPeerType := ""
+	var savedPeerID int64
+	if filter.SavedPeer.ID != 0 {
+		savedPeerType = string(filter.SavedPeer.Type)
+		savedPeerID = filter.SavedPeer.ID
+	}
+	savedReactionKeys := postgresSavedReactionKeys(filter.SavedReactions)
+	return s.q.CountMessagesByUser(ctx, sqlcgen.CountMessagesByUserParams{
+		SenderUserID:         filter.SenderUserID,
+		OwnerUserID:          userID,
+		HasPeer:              filter.HasPeer,
+		PeerType:             string(filter.Peer.Type),
+		PeerID:               filter.Peer.ID,
+		RestrictPeerIds:      filter.RestrictPeerIDs,
+		PeerIds:              filter.PeerIDs,
+		Query:                filter.Query,
+		MinDate:              pgInt32NonNegative(filter.MinDate),
+		MaxDate:              pgInt32NonNegative(filter.MaxDate),
+		MaxID:                pgInt32NonNegative(filter.MaxID),
+		MinID:                pgInt32NonNegative(filter.MinID),
+		PinnedOnly:           filter.PinnedOnly,
+		MusicOnly:            filter.MusicOnly,
+		PhoneCallsOnly:       filter.PhoneCallsOnly,
+		MissedPhoneCallsOnly: filter.MissedPhoneCallsOnly,
+		SavedPeerType:        savedPeerType,
+		SavedPeerID:          savedPeerID,
+		SavedReactionKeys:    savedReactionKeys,
+	})
 }

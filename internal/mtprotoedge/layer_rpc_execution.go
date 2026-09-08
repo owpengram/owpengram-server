@@ -13,6 +13,7 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/postresponse"
+	"telesrv/internal/rpcresult"
 )
 
 // layerRPCResultEncoder keeps the generated result bound to the immutable
@@ -22,6 +23,8 @@ import (
 type layerRPCResultEncoder struct {
 	call   tlprofile.Call
 	result tlprofile.Result
+	source rpcresult.ReplaySource
+	bulk   *outboundBulkCredit
 }
 
 func (e *layerRPCResultEncoder) Encode(b *bin.Buffer) error {
@@ -43,6 +46,20 @@ func (e *layerRPCResultEncoder) exactLayerRPCResultBinding() outboundLayerBindin
 		wireInvariant: e.call.WireInvariant(),
 		kind:          outboundLayerBindingRequest,
 	}
+}
+
+func (e *layerRPCResultEncoder) exactRPCReplaySource() rpcresult.ReplaySource {
+	if e == nil {
+		return nil
+	}
+	return e.source
+}
+
+func (e *layerRPCResultEncoder) exactRPCBulkCredit() *outboundBulkCredit {
+	if e == nil {
+		return nil
+	}
+	return e.bulk
 }
 
 type exactLayerRPCResultEncoder interface {
@@ -90,7 +107,11 @@ func bindAdmittedLayerRPCResult(request tlprofile.Admission, result tlprofile.Re
 	if result.Prepared().Identity() != request.Prepared().Identity() {
 		return nil, errLayerRPCResultIdentityMismatch
 	}
-	return &layerRPCResultEncoder{call: request.Call(), result: result}, nil
+	var source rpcresult.ReplaySource
+	if carrier, ok := result.(rpcresult.Carrier); ok {
+		source = carrier.ExactReplaySource()
+	}
+	return &layerRPCResultEncoder{call: request.Call(), result: result, source: source}, nil
 }
 
 func (s *Server) newInboundLayerRPCTask(
@@ -104,7 +125,15 @@ func (s *Server) newInboundLayerRPCTask(
 	owner *rpcResultOwnerLease,
 ) inboundRPC {
 	wireSize := request.Prepared().WireSize()
-	gate := newLayerRPCExecutionGate(c, dependencies)
+	var bulkLease *outboundBulkCreditLease
+	var bulkExecution *bulkRPCAdmission
+	if method == "upload.getFile" && c != nil && c.outboundState != nil {
+		bulkLease = c.outboundState.reserveBulkCredit()
+		if s.bulkRPCScheduler != nil {
+			bulkExecution = newBulkRPCAdmission(s.bulkRPCScheduler)
+		}
+	}
+	gate := newLayerRPCExecutionGate(c, dependencies, bulkLease, bulkExecution)
 	timeoutResponse := func() {
 		writeTimeout := c.writeTimeout
 		if writeTimeout <= 0 || writeTimeout > 5*time.Second {
@@ -126,6 +155,8 @@ func (s *Server) newInboundLayerRPCTask(
 		size:      wireSize,
 		onTimeout: timeoutResponse,
 		release: func() {
+			bulkExecution.release()
+			bulkLease.releaseIfOwned()
 			if owner != nil && owner.Abort() {
 				c.fenceUndeliveredRPCResult()
 			}
@@ -137,7 +168,7 @@ func (s *Server) newInboundLayerRPCTask(
 					ErrorCode: 500, ErrorMessage: "MSG_WAIT_FAILED",
 				}, nil)
 			}
-			if err := s.handleAdmittedLayerRPC(s.withLayerRPCProfileEvidenceFresh(taskCtx, profileEvidenceFresh), c, msgID, admissionSeq, method, request, owner); err != nil {
+			if err := s.handleAdmittedLayerRPC(s.withLayerRPCProfileEvidenceFresh(taskCtx, profileEvidenceFresh), c, msgID, admissionSeq, method, request, owner, bulkLease); err != nil {
 				fields := []zap.Field{
 					zap.Int64("msg_id", msgID), zap.String("auth_key_id", c.authKeyHex),
 					zap.Int64("session_id", c.sessionID), zap.Error(err),
@@ -161,11 +192,15 @@ func layerRPCTimeoutMessage(gate *inboundRPCGate) string {
 	return "RPC_TIMEOUT"
 }
 
-func newLayerRPCExecutionGate(c *Conn, dependencies layerRPCDependencySet) *inboundRPCGate {
-	if len(dependencies.waiters) == 0 && !dependencies.failed {
+func newLayerRPCExecutionGate(c *Conn, dependencies layerRPCDependencySet, bulk *outboundBulkCreditLease, execution *bulkRPCAdmission) *inboundRPCGate {
+	if len(dependencies.waiters) == 0 && !dependencies.failed && bulk == nil && execution == nil {
 		return nil
 	}
-	gate := newInboundRPCGate(len(dependencies.waiters), c.wakeInboundRPC)
+	prerequisites := len(dependencies.waiters)
+	if bulk != nil {
+		prerequisites++
+	}
+	gate := newInboundRPCGate(prerequisites, c.wakeInboundRPC)
 	if dependencies.failed {
 		gate.failed.Store(true)
 	}
@@ -173,6 +208,11 @@ func newLayerRPCExecutionGate(c *Conn, dependencies layerRPCDependencySet) *inbo
 		if err := waiter.SubscribeExecution(gate.resolve); err != nil {
 			gate.resolve(false)
 		}
+	}
+	if bulk != nil && bulk.credit != nil && execution != nil {
+		execution.subscribeAfter(bulk.credit, gate.resolve)
+	} else if bulk != nil && bulk.credit != nil {
+		bulk.credit.subscribe(gate.resolve)
 	}
 	// Release the subscriber-installation sentinel.
 	gate.resolve(true)
@@ -202,6 +242,7 @@ func (s *Server) handleAdmittedLayerRPC(
 	method string,
 	request tlprofile.Admission,
 	owner *rpcResultOwnerLease,
+	bulkLease *outboundBulkCreditLease,
 ) error {
 	if s.layerRPC == nil {
 		return s.publishAdmittedLayerRPCResult(c, msgID, method, owner, false, &mt.RPCError{
@@ -219,6 +260,9 @@ func (s *Server) handleAdmittedLayerRPC(
 	var exact *layerRPCResultEncoder
 	if err == nil && result != nil {
 		exact, err = bindAdmittedLayerRPCResult(request, result)
+		if err == nil && exact != nil && bulkLease != nil {
+			exact.bulk = bulkLease.transfer()
+		}
 	}
 	dur := s.clock.Now().Sub(start)
 	s.metrics.RPCHandled(effectiveMethod, dur, err)

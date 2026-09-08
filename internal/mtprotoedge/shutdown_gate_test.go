@@ -22,8 +22,8 @@ func TestTerminalFailurePathsCloseGatesBeforeBlockingTransportClose(t *testing.T
 			c := &Conn{
 				transport:       tr,
 				metrics:         NopMetrics{},
-				outbound:        make(chan outboundOp, 1),
-				outboundControl: make(chan outboundOp, 1),
+				outbound:        make(chan *outboundOp, 1),
+				outboundControl: make(chan *outboundOp, 1),
 				outboundStop:    make(chan struct{}),
 			}
 			c.startInboundRPCScheduler(scheduler, 1, 1, time.Second)

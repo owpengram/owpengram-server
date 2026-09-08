@@ -569,7 +569,7 @@ func TestMessageStoreListByUserSupportsForwardAndAroundHistoryOffsets(t *testing
 	if err != nil {
 		t.Fatalf("around history: %v", err)
 	}
-	if got := messageIDs(around.Messages); !sameInts(got, []int{6, 5, 4, 3, 2, 1}) {
+	if got := messageIDs(around.Messages); !sameInts(got, []int{5, 4, 3, 2, 1}) {
 		t.Fatalf("around ids = %v, want unread/newer side plus older context", got)
 	}
 
@@ -583,8 +583,8 @@ func TestMessageStoreListByUserSupportsForwardAndAroundHistoryOffsets(t *testing
 	if err != nil {
 		t.Fatalf("forward history: %v", err)
 	}
-	if got := messageIDs(forward.Messages); !sameInts(got, []int{6, 5, 4}) {
-		t.Fatalf("forward ids = %v, want messages newer than offset", got)
+	if got := messageIDs(forward.Messages); !sameInts(got, []int{5, 4, 3}) {
+		t.Fatalf("forward ids = %v, want forward window including offset anchor", got)
 	}
 
 	hugePositive, err := messages.ListByUser(ctx, bobID, domain.MessageFilter{
@@ -610,8 +610,8 @@ func TestMessageStoreListByUserSupportsForwardAndAroundHistoryOffsets(t *testing
 	if err != nil {
 		t.Fatalf("huge negative add_offset history: %v", err)
 	}
-	if got := messageIDs(hugeNegative.Messages); !sameInts(got, []int{6, 5, 4}) {
-		t.Fatalf("huge negative add_offset ids = %v, want clamped forward page", got)
+	if got := messageIDs(hugeNegative.Messages); !sameInts(got, nil) {
+		t.Fatalf("huge negative add_offset ids = %v, want empty page after clamped forward gap", got)
 	}
 }
 

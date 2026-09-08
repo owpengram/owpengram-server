@@ -22,8 +22,8 @@ func TestPushSkipsConnReboundToOtherUser(t *testing.T) {
 		c := &Conn{
 			sessionID:       sid,
 			authKeyID:       [8]byte{authKey},
-			outbound:        make(chan outboundOp, 4),
-			outboundControl: make(chan outboundOp, 4),
+			outbound:        make(chan *outboundOp, 4),
+			outboundControl: make(chan *outboundOp, 4),
 			outboundStop:    make(chan struct{}),
 		}
 		c.userID.Store(userA)

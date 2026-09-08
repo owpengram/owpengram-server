@@ -62,6 +62,8 @@ func peersListEmptyErr() error { return tgerr.New(400, "PEERS_LIST_EMPTY") }
 // peerIDInvalidErr 表示目标 peer 不存在或当前阶段不支持。
 func peerIDInvalidErr() error { return tgerr.New(400, "PEER_ID_INVALID") }
 
+func fromPeerInvalidErr() error { return tgerr.New(400, "FROM_PEER_INVALID") }
+
 func parentPeerInvalidErr() error { return tgerr.New(400, "PARENT_PEER_INVALID") }
 
 func sendAsPeerInvalidErr() error { return tgerr.New(400, "SEND_AS_PEER_INVALID") }
@@ -441,6 +443,8 @@ func chatIDInvalidErr() error             { return tgerr.New(400, "CHAT_ID_INVAL
 func dhGAInvalidErr() error               { return tgerr.New(400, "DH_G_A_INVALID") }
 func maxDateInvalidErr() error            { return tgerr.New(400, "MAX_DATE_INVALID") }
 func fileEmptyErr() error                 { return tgerr.New(400, "FILE_EMPTY") }
+
+func quoteTextInvalidErr() error { return tgerr.New(400, "QUOTE_TEXT_INVALID") }
 
 // signInErr 把登录业务错误映射为客户端可识别的 rpc_error。
 func signInErr(err error) error {

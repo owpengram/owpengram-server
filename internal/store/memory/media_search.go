@@ -67,30 +67,16 @@ func pageMediaIDs(ids []int, req domain.MediaSearchRequest) ([]int, int) {
 	sort.Sort(sort.Reverse(sort.IntSlice(ids)))
 	inRange := make([]int, 0, len(ids))
 	for _, id := range ids {
-		if req.MaxID != 0 && id > req.MaxID {
+		if req.MaxID != 0 && id >= req.MaxID {
 			continue
 		}
-		if req.MinID != 0 && id < req.MinID {
+		if req.MinID != 0 && id <= req.MinID {
 			continue
 		}
 		inRange = append(inRange, id)
 	}
 	count := len(inRange)
-	page := make([]int, 0, len(inRange))
-	for _, id := range inRange {
-		if req.OffsetID != 0 && id >= req.OffsetID {
-			continue
-		}
-		page = append(page, id)
-	}
-	off := req.AddOffset
-	if off < 0 {
-		off = 0
-	}
-	if off > len(page) {
-		off = len(page)
-	}
-	page = page[off:]
+
 	limit := req.Limit
 	if limit == 0 {
 		return nil, count
@@ -98,9 +84,15 @@ func pageMediaIDs(ids []int, req domain.MediaSearchRequest) ([]int, int) {
 	if limit < 0 || limit > 100 {
 		limit = 100
 	}
-	if len(page) > limit {
-		page = page[:limit]
+	pivot := 0
+	if req.OffsetID > 0 {
+		pivot = sort.Search(len(inRange), func(i int) bool { return inRange[i] < req.OffsetID })
 	}
+	start := pivot + domain.ClampMessageHistoryAddOffset(req.AddOffset)
+	end := start + limit
+	start = min(max(start, 0), len(inRange))
+	end = min(max(end, start), len(inRange))
+	page := inRange[start:end]
 	return page, count
 }
 

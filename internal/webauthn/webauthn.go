@@ -101,7 +101,7 @@ func BuildRegistrationOptions(p RegistrationParams) ([]byte, error) {
 		exclude = append(exclude, map[string]any{"type": "public-key", "id": b64.EncodeToString(id)})
 	}
 	pub := map[string]any{
-		"rp":        map[string]any{"id": p.RPID, "name": orDefault(p.RPName, branding.ProductName)},
+		"rp":        map[string]any{"id": p.RPID, "name": orDefault(p.RPName, branding.ProductName())},
 		"user":      map[string]any{"id": b64.EncodeToString(p.UserID), "name": p.UserName, "displayName": orDefault(p.UserDisplay, p.UserName)},
 		"challenge": b64.EncodeToString(p.Challenge),
 		"pubKeyCredParams": []map[string]any{

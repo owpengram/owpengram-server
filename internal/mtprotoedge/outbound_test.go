@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/iamxvbaba/td/bin"
 	"github.com/iamxvbaba/td/crypto"
@@ -19,6 +22,17 @@ import (
 	"github.com/iamxvbaba/td/tlprofile"
 	"github.com/iamxvbaba/td/transport"
 )
+
+type staticRPCReplaySource struct {
+	inner []byte
+}
+
+func (s *staticRPCReplaySource) EncodeInner(_ context.Context, out *bin.Buffer) error {
+	out.Put(s.inner)
+	return nil
+}
+
+func (*staticRPCReplaySource) RetainedBytes() int { return 128 }
 
 type failAfterTransport struct {
 	failAt atomic.Int32
@@ -448,6 +462,9 @@ func newOutboundTestConn(t *testing.T, tr transport.Conn, budget *outboundTracke
 }
 
 func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
+	if slot, wide := unsafe.Sizeof((*outboundOp)(nil)), unsafe.Sizeof(outboundOp{}); slot >= wide {
+		t.Fatalf("indirect queue slot = %d bytes, wide outbound op = %d bytes", slot, wide)
+	}
 	t.Run("defaults", func(t *testing.T) {
 		c := &Conn{metrics: NopMetrics{}}
 		c.startOutbound()
@@ -477,6 +494,64 @@ func TestOutboundQueueBackingUsesSmallConfigurableBounds(t *testing.T) {
 	})
 }
 
+func TestOutboundOpPoolClearsReferencesAndBoundsIdle(t *testing.T) {
+	pool := newOutboundOpPool(1)
+	op := pool.acquire()
+	op.ctx = context.Background()
+	op.msg = &mt.PingRequest{PingID: 1}
+	op.encoded = &encodedOutboundMessage{body: []byte("payload")}
+	op.ids = []int64{1, 2, 3}
+	op.done = make(chan outboundResult, 1)
+	op.terminal = func(error) {}
+	pool.release(op)
+
+	reused := pool.acquire()
+	if reused != op {
+		t.Fatal("idle outbound op was not reused")
+	}
+	if reused.ctx != nil || reused.msg != nil || reused.encoded != nil || reused.ids != nil || reused.done != nil || reused.terminal != nil {
+		t.Fatalf("reused outbound op retained references: %+v", reused)
+	}
+	pool.release(reused)
+	pool.release(&outboundOp{})
+	if got := len(pool.idle); got != 1 {
+		t.Fatalf("idle outbound op count = %d, want bounded 1", got)
+	}
+}
+
+func BenchmarkOutboundOpPool(b *testing.B) {
+	pool := newOutboundOpPool(1)
+	b.ReportAllocs()
+	for b.Loop() {
+		op := pool.acquire()
+		op.kind = outboundSend
+		pool.release(op)
+	}
+}
+
+func TestOutboundAckHistoryUsesStableCircularBacking(t *testing.T) {
+	state := newOutboundState(newOutboundTrackedBudget(1 << 20))
+	for id := int64(1); id <= maxTrackedAckedMsgIDs; id++ {
+		state.markAcked(id)
+	}
+	if len(state.ackOrder) != maxTrackedAckedMsgIDs || len(state.acked) != maxTrackedAckedMsgIDs {
+		t.Fatalf("initial ack history = order:%d map:%d", len(state.ackOrder), len(state.acked))
+	}
+	backing := &state.ackOrder[0]
+	for id := int64(maxTrackedAckedMsgIDs + 1); id <= 4*maxTrackedAckedMsgIDs; id++ {
+		state.markAcked(id)
+	}
+	if &state.ackOrder[0] != backing {
+		t.Fatal("full ack history replaced its circular backing")
+	}
+	if len(state.ackOrder) != maxTrackedAckedMsgIDs || len(state.acked) != maxTrackedAckedMsgIDs {
+		t.Fatalf("steady ack history = order:%d map:%d", len(state.ackOrder), len(state.acked))
+	}
+	if state.isKnown(1) || !state.isKnown(4*maxTrackedAckedMsgIDs) {
+		t.Fatal("ack history did not evict oldest and retain newest IDs")
+	}
+}
+
 func TestOutboundOptionsDefaults(t *testing.T) {
 	opts := Options{}
 	opts.setDefaults()
@@ -486,13 +561,17 @@ func TestOutboundOptionsDefaults(t *testing.T) {
 	if opts.OutboundTrackedGlobalMaxBytes != 512<<20 {
 		t.Fatalf("outbound tracked default = %d, want %d", opts.OutboundTrackedGlobalMaxBytes, 512<<20)
 	}
+	if opts.OutboundCriticalGlobalMaxBytes != 64<<20 {
+		t.Fatalf("outbound critical default = %d, want %d", opts.OutboundCriticalGlobalMaxBytes, 64<<20)
+	}
 }
 
 func TestServerNewConnectionsShareOutboundBudgetAndQueueLimits(t *testing.T) {
 	srv := New(Options{
-		OutboundQueueSize:             7,
-		OutboundControlQueueSize:      3,
-		OutboundTrackedGlobalMaxBytes: 20,
+		OutboundQueueSize:              7,
+		OutboundControlQueueSize:       3,
+		OutboundTrackedGlobalMaxBytes:  20,
+		OutboundCriticalGlobalMaxBytes: 30,
 	})
 	var rawKey crypto.Key
 	key := rawKey.WithID()
@@ -512,6 +591,12 @@ func TestServerNewConnectionsShareOutboundBudgetAndQueueLimits(t *testing.T) {
 	}
 	if got := srv.outboundTrackedBudget.maxBytes; got != 20 {
 		t.Fatalf("server outbound tracked max = %d, want 20", got)
+	}
+	if c1.outboundCriticalTrackedBudget != srv.outboundCriticalBudget || c2.outboundCriticalTrackedBudget != srv.outboundCriticalBudget {
+		t.Fatal("server connections did not receive the shared critical tracking budget")
+	}
+	if got := srv.outboundCriticalBudget.maxBytes; got != 30 {
+		t.Fatalf("server outbound critical max = %d, want 30", got)
 	}
 }
 
@@ -909,6 +994,162 @@ func TestOutboundTrackedBudgetWriteFailureReturnsReservation(t *testing.T) {
 	}
 }
 
+func TestOutboundStateCompactsImmutableRPCResultAndReplaysExactBody(t *testing.T) {
+	budget := newOutboundTrackedBudget(1 << 20)
+	state := newOutboundStateWithLimits(budget, 64, 1<<20)
+	inner := bytes.Repeat([]byte{0x5a}, 4096)
+	var body bin.Buffer
+	body.PutID(proto.ResultTypeID)
+	body.PutLong(7001)
+	body.Put(inner)
+	wire := body.Raw()
+	if !budget.reserve(len(wire)) {
+		t.Fatal("reserve first-write body")
+	}
+	frame := &outboundFrame{
+		msgID:             9001,
+		seqNo:             1,
+		typeID:            proto.ResultTypeID,
+		body:              wire,
+		reservedBytes:     len(wire),
+		reservationBudget: budget,
+		reqMsgID:          7001,
+		replaySource:      &staticRPCReplaySource{inner: append([]byte(nil), inner...)},
+		innerDigest:       sha256.Sum256(inner),
+		uncompressedBytes: len(inner),
+		logicalBytes:      len(wire),
+	}
+	if err := state.admitReserved(frame); err != nil {
+		t.Fatalf("admit frame: %v", err)
+	}
+	if !state.compactImmutableFrame(frame) {
+		t.Fatal("immutable frame was not compacted")
+	}
+	if frame.body != nil {
+		t.Fatal("compacted frame retained full body")
+	}
+	if got := budget.snapshot(); got != outboundReplayDescriptorCharge {
+		t.Fatalf("retained bytes = %d, want descriptor charge %d", got, outboundReplayDescriptorCharge)
+	}
+	replay, ok := state.rpcResult(7001)
+	if !ok || replay.replaySource == nil || len(replay.body) != 0 {
+		t.Fatalf("replay descriptor = %+v ok=%v", replay, ok)
+	}
+	materialized, err := replay.materializeRPCResultBody(context.Background(), 7001)
+	if err != nil {
+		t.Fatalf("materialize replay: %v", err)
+	}
+	if !bytes.Equal(materialized, wire) {
+		t.Fatal("materialized replay differs from first-write body")
+	}
+	state.ack([]int64{9001})
+	if got := budget.snapshot(); got != 0 {
+		t.Fatalf("retained bytes after ACK = %d, want 0", got)
+	}
+}
+
+func TestImmutableRPCResultMaterializesDirectlyIntoScratch(t *testing.T) {
+	inner := bytes.Repeat([]byte{0x6b}, 1<<20)
+	logicalBytes := 12 + len(inner)
+	replay := &encodedOutboundMessage{
+		typeID:            proto.ResultTypeID,
+		reqMsgID:          7101,
+		replaySource:      &staticRPCReplaySource{inner: inner},
+		innerDigest:       sha256.Sum256(inner),
+		uncompressedBytes: len(inner),
+		logicalBytes:      logicalBytes,
+	}
+	pool := newOutboundReplayBodyPool([]outboundReplayBodyClassSpec{{size: logicalBytes, maxIdle: 1}})
+	scratch, class := pool.acquire(logicalBytes)
+	body, usedScratch, err := replay.materializeRPCResultBodyInto(context.Background(), replay.reqMsgID, scratch)
+	if err != nil {
+		t.Fatalf("materialize replay: %v", err)
+	}
+	if !usedScratch {
+		t.Fatal("descriptor replay did not use the supplied scratch buffer")
+	}
+	if len(body) != logicalBytes || &body[0] != &scratch[:cap(scratch)][0] {
+		t.Fatal("materialized body does not alias the supplied scratch buffer")
+	}
+	if got := int64(binary.LittleEndian.Uint64(body[4:12])); got != replay.reqMsgID {
+		t.Fatalf("materialized req_msg_id = %d, want %d", got, replay.reqMsgID)
+	}
+	pool.release(class, body)
+	if got := len(pool.classes[class].idle); got != 1 {
+		t.Fatalf("idle pooled bodies = %d, want 1", got)
+	}
+}
+
+func TestOutboundReplayBodyPoolBoundsIdleBuffers(t *testing.T) {
+	pool := newOutboundReplayBodyPool([]outboundReplayBodyClassSpec{{size: 4096, maxIdle: 1}})
+	first, firstClass := pool.acquire(4000)
+	second, secondClass := pool.acquire(4000)
+	if firstClass != 0 || secondClass != 0 || cap(first) != 4096 || cap(second) != 4096 {
+		t.Fatalf("acquired classes/capacities = (%d,%d) (%d,%d)", firstClass, cap(first), secondClass, cap(second))
+	}
+	pool.release(firstClass, first)
+	pool.release(secondClass, second)
+	if got := len(pool.classes[0].idle); got != 1 {
+		t.Fatalf("idle pooled bodies = %d, want bounded at 1", got)
+	}
+	oversized, class := pool.acquire(4097)
+	if oversized != nil || class != -1 {
+		t.Fatalf("oversized acquisition = len:%d class:%d, want GC-owned nil/-1", len(oversized), class)
+	}
+}
+
+func BenchmarkImmutableRPCResultMaterializePooled(b *testing.B) {
+	inner := bytes.Repeat([]byte{0x6b}, 1<<20)
+	logicalBytes := 12 + len(inner)
+	replay := &encodedOutboundMessage{
+		typeID:            proto.ResultTypeID,
+		reqMsgID:          7101,
+		replaySource:      &staticRPCReplaySource{inner: inner},
+		innerDigest:       sha256.Sum256(inner),
+		uncompressedBytes: len(inner),
+		logicalBytes:      logicalBytes,
+	}
+	pool := newOutboundReplayBodyPool([]outboundReplayBodyClassSpec{{size: logicalBytes, maxIdle: 1}})
+	b.ReportAllocs()
+	b.SetBytes(int64(logicalBytes))
+	b.ResetTimer()
+	for range b.N {
+		scratch, class := pool.acquire(logicalBytes)
+		body, usedScratch, err := replay.materializeRPCResultBodyInto(context.Background(), replay.reqMsgID, scratch)
+		if err != nil || !usedScratch {
+			b.Fatalf("materialize replay: used=%v err=%v", usedScratch, err)
+		}
+		pool.release(class, body)
+	}
+}
+
+func TestOutboundBulkACKWindowWakesNextWaiter(t *testing.T) {
+	state := newOutboundStateWithLimits(newOutboundTrackedBudget(1<<20), 128, 1<<20)
+	leasing := make([]*outboundBulkCreditLease, 0, defaultBulkACKWindow+1)
+	for range defaultBulkACKWindow + 1 {
+		leasing = append(leasing, state.reserveBulkCredit())
+	}
+	woken := make(chan bool, 1)
+	leasing[len(leasing)-1].credit.subscribe(func(success bool) { woken <- success })
+	select {
+	case <-woken:
+		t.Fatal("window overflow waiter woke before ACK credit release")
+	default:
+	}
+	leasing[0].releaseIfOwned()
+	select {
+	case success := <-woken:
+		if !success {
+			t.Fatal("window waiter was canceled instead of granted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("window waiter did not wake after credit release")
+	}
+	for _, lease := range leasing[1:] {
+		lease.releaseIfOwned()
+	}
+}
+
 func TestOutboundStateEvictionReturnsTrackedBudget(t *testing.T) {
 	budget := newOutboundTrackedBudget(64)
 	state := newOutboundStateWithLimits(budget, 2, 8)
@@ -991,11 +1232,11 @@ func TestOutboundStateReleasesMixedBodyAndControlBudgets(t *testing.T) {
 
 func TestSendBestEffortQueueFullBehavior(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}, outboundTrackedBudget: newOutboundTrackedBudget(1 << 20)}
-	c.outbound = make(chan outboundOp, 1)
-	c.outboundControl = make(chan outboundOp, 1)
+	c.outbound = make(chan *outboundOp, 1)
+	c.outboundControl = make(chan *outboundOp, 1)
 	c.outboundStop = make(chan struct{})
 	// 占满普通队列，模拟出站拥塞。
-	c.outbound <- outboundOp{}
+	c.outbound <- &outboundOp{}
 
 	if err := c.SendBestEffort(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}, 0); err != ErrOutboundQueueFull {
 		t.Fatalf("timeout=0 on full queue: err = %v, want ErrOutboundQueueFull", err)
@@ -1027,10 +1268,10 @@ func TestSendBestEffortQueueFullBehavior(t *testing.T) {
 
 func TestSendAsyncControlQueueBoundary(t *testing.T) {
 	c := &Conn{metrics: NopMetrics{}, outboundTrackedBudget: newOutboundTrackedBudget(1 << 20)}
-	c.outbound = make(chan outboundOp, 1)
-	c.outboundControl = make(chan outboundOp, 1)
+	c.outbound = make(chan *outboundOp, 1)
+	c.outboundControl = make(chan *outboundOp, 1)
 	c.outboundStop = make(chan struct{})
-	c.outboundControl <- outboundOp{kind: outboundAck}
+	c.outboundControl <- &outboundOp{kind: outboundAck}
 
 	if err := c.SendAsync(context.Background(), proto.MessageFromServer, &mt.MsgsAck{}); err != nil {
 		t.Fatalf("SendAsync on full control queue: %v", err)

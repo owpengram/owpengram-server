@@ -1,6 +1,11 @@
 package files
 
-import "sync/atomic"
+import (
+	"io"
+	"sync/atomic"
+
+	"telesrv/internal/domain"
+)
 
 // SpaceGuard bounds how much more may be written to the permanent blob
 // backend. LocalDiskSpaceGuard checks real OS free disk bytes;
@@ -23,6 +28,41 @@ type NoopSpaceGuard struct{}
 
 func (NoopSpaceGuard) Allow(int64) (bool, error)  { return true, nil }
 func (NoopSpaceGuard) Usage() (int64, int64, bool) { return 0, 0, false }
+
+// requireSpace maps a SpaceGuard rejection to domain.ErrStorageFull. A nil
+// guard always allows the write.
+func requireSpace(guard SpaceGuard, additional int64) error {
+	if guard == nil {
+		return nil
+	}
+	ok, err := guard.Allow(additional)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return domain.ErrStorageFull
+	}
+	return nil
+}
+
+// capacityReader stops a streaming permanent write before the backend can
+// publish an object larger than the current capacity snapshot permits.
+type capacityReader struct {
+	src   io.Reader
+	guard SpaceGuard
+	total int64
+}
+
+func (r *capacityReader) Read(p []byte) (int, error) {
+	n, err := r.src.Read(p)
+	if n > 0 {
+		if guardErr := requireSpace(r.guard, r.total+int64(n)); guardErr != nil {
+			return 0, guardErr
+		}
+		r.total += int64(n)
+	}
+	return n, err
+}
 
 // LocalDiskSpaceGuard rejects writes once cached free disk bytes fall below
 // minFreeBytes (<=0 disables the check). The free-bytes figure is

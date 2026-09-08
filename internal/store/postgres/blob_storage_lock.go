@@ -27,7 +27,7 @@ func AcquireBlobMigrationLock(ctx context.Context, dsn string) (*BlobStorageLock
 }
 
 func acquireBlobStorageLock(ctx context.Context, dsn string, shared bool) (*BlobStorageLock, error) {
-	conn, err := pgx.Connect(ctx, dsn)
+	conn, err := connectPostgresAdmitted(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect for blob storage lock: %w", err)
 	}

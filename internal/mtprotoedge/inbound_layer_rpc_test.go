@@ -2098,7 +2098,7 @@ func TestLayerRPCDependencyGateUsesBusinessOutcome(t *testing.T) {
 			if dependencies.failed || len(dependencies.waiters) != 1 {
 				t.Fatalf("dependencies before completion = %+v", dependencies)
 			}
-			gate := newLayerRPCExecutionGate(c, dependencies)
+			gate := newLayerRPCExecutionGate(c, dependencies, nil, nil)
 			if gate == nil || gate.runnable() {
 				t.Fatal("dependency gate was runnable before business completion")
 			}
@@ -2123,7 +2123,7 @@ func TestLayerRPCDependencyGateUsesBusinessOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	dependencies := s.layerRPCDependencies(c, 304, missing)
-	gate := newLayerRPCExecutionGate(c, dependencies)
+	gate := newLayerRPCExecutionGate(c, dependencies, nil, nil)
 	if !dependencies.failed || gate == nil || !gate.runnable() || gate.success() {
 		t.Fatalf("missing dependency gate = deps:%+v runnable:%v success:%v", dependencies, gate.runnable(), gate.success())
 	}

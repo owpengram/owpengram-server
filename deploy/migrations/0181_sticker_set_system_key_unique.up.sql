@@ -1,0 +1,12 @@
+-- No-op placeholder. This migration's real content (sticker_sets.system_key
+-- uniqueness) already applies via 20260901000006_sticker_set_system_key_unique
+-- (identical SQL, applied earlier under our fork's own timestamp-based
+-- migration numbering). The version number 181 itself must still exist as a
+-- migration, though: internal/store/postgres/postgres.go's Migrate() calls
+-- m.Migrate(phoneIdentityPredecessorVersion) (=181) to step a fresh database
+-- to exactly this version before running the Go-side phone-identity
+-- canonicalization pass, and golang-migrate requires that version to be a
+-- real, reachable migration file. Do not reapply the sticker_sets change here
+-- -- 20260901000006 already owns it, and repeating it would fail on an
+-- already-unique index for any install that runs both.
+SELECT 1;

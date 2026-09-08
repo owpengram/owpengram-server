@@ -104,6 +104,30 @@ func TestEncodeRPCResultReservedChargesBodyBeforeReturning(t *testing.T) {
 	}
 }
 
+func TestCriticalRPCResultUsesIndependentRetainedBudget(t *testing.T) {
+	ordinary := newOutboundTrackedBudget(1)
+	critical := newOutboundTrackedBudget(1 << 20)
+	c := legacyCanonicalTestConn(t, &Conn{
+		metrics:                       NopMetrics{},
+		outboundTrackedBudget:         ordinary,
+		outboundCriticalTrackedBudget: critical,
+	})
+	s := New(Options{})
+	encoded, reserved, retained, err := s.encodeRPCResultReservedWithPriorityAndHandoffContext(
+		context.Background(), c, 791, exactTestRPCResult(&tg.DataJSON{Data: "bootstrap"}), outboundPriorityCritical, nil,
+	)
+	if err != nil || retained || encoded == nil || reserved == nil {
+		t.Fatalf("critical encode encoded=%p reserved=%p retained=%v err=%v", encoded, reserved, retained, err)
+	}
+	if got := ordinary.snapshot(); got != 0 {
+		t.Fatalf("ordinary budget used by critical result = %d", got)
+	}
+	if got, want := critical.snapshot(), int64(len(encoded.body)); got != want {
+		t.Fatalf("critical budget = %d, want %d", got, want)
+	}
+	reserved.release()
+}
+
 func TestEncodeRPCResultReservedDropsBodyOnBudgetTimeout(t *testing.T) {
 	const maxBytes = 1 << 20
 	budget := newOutboundTrackedBudget(maxBytes)

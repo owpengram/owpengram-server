@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 )
 
@@ -66,7 +65,7 @@ func (l *ChannelChangeListener) Run(ctx context.Context) {
 // listenAndConsume 建立一条连接、LISTEN、flush，然后消费通知直到出错或 ctx 取消。
 // 成功消费到通知前不重置退避，由 Run 控制重连节奏。
 func (l *ChannelChangeListener) listenAndConsume(ctx context.Context) error {
-	conn, err := pgx.Connect(ctx, l.dsn)
+	conn, err := connectPostgresAdmitted(ctx, l.dsn)
 	if err != nil {
 		return err
 	}

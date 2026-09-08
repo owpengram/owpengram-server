@@ -215,13 +215,13 @@ func TestSendRequiredControlQueueDeadlineTerminatesAndReturnsBudget(t *testing.T
 		writeTimeout:                 time.Second,
 		outboundTrackedBudget:        newOutboundTrackedBudget(1 << 20),
 		outboundControlTrackedBudget: controlBudget,
-		outbound:                     make(chan outboundOp, 1),
-		outboundControl:              make(chan outboundOp, 1),
+		outbound:                     make(chan *outboundOp, 1),
+		outboundControl:              make(chan *outboundOp, 1),
 		outboundStop:                 make(chan struct{}),
 	}
 	// No actor is running and the bounded control queue is full, so the parent
 	// deadline must cover queue admission and make the failure terminal.
-	c.outboundControl <- outboundOp{kind: outboundAck}
+	c.outboundControl <- &outboundOp{kind: outboundAck}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 

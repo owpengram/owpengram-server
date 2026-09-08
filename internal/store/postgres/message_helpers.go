@@ -12,12 +12,7 @@ import (
 )
 
 func cloneMessageReply(reply *domain.MessageReply) *domain.MessageReply {
-	if reply == nil {
-		return nil
-	}
-	clone := *reply
-	clone.QuoteEntities = append([]domain.MessageEntity(nil), reply.QuoteEntities...)
-	return &clone
+	return domain.CloneMessageReply(reply)
 }
 
 func cloneChannelMessageAction(action *domain.ChannelMessageAction) *domain.ChannelMessageAction {
@@ -117,6 +112,7 @@ type messageMetadataParams struct {
 	QuoteText            string
 	QuoteEntitiesJSON    []byte
 	QuoteOffset          int32
+	ReplyExternalJSON    []byte
 	FwdFromPeerType      string
 	FwdFromPeerID        int64
 	FwdFromName          string
@@ -135,6 +131,7 @@ func messageMetadataParamsFrom(silent, noforwards bool, reply *domain.MessageRep
 		Silent:            silent,
 		Noforwards:        noforwards,
 		QuoteEntitiesJSON: []byte("[]"),
+		ReplyExternalJSON: []byte("{}"),
 	}
 	if reply != nil {
 		if err := domain.ValidateMessageReplyBounds(reply); err != nil {
@@ -152,6 +149,10 @@ func messageMetadataParamsFrom(silent, noforwards bool, reply *domain.MessageRep
 		meta.QuoteText = reply.QuoteText
 		meta.QuoteEntitiesJSON = quoteEntities
 		meta.QuoteOffset = int32(reply.QuoteOffset)
+		meta.ReplyExternalJSON, err = domain.EncodeMessageReplyExternal(reply.External)
+		if err != nil {
+			return messageMetadataParams{}, err
+		}
 	}
 	if forward != nil {
 		if forward.Date < 0 {
@@ -170,9 +171,13 @@ func messageMetadataParamsFrom(silent, noforwards bool, reply *domain.MessageRep
 	return meta, nil
 }
 
-func messageMetadataFromFields(silent, noforwards bool, replyToMsgID int32, replyToPeerType string, replyToPeerID int64, replyToTopID int32, replyToStoryID int32, quoteText, quoteEntitiesJSON string, quoteOffset int32, fwdFromPeerType string, fwdFromPeerID int64, fwdFromName string, fwdDate int32, fwdSavedFromPeerType string, fwdSavedFromPeerID int64, fwdSavedFromMsgID int32) (bool, bool, *domain.MessageReply, *domain.MessageForward, error) {
+func messageMetadataFromFields(silent, noforwards bool, replyToMsgID int32, replyToPeerType string, replyToPeerID int64, replyToTopID int32, replyToStoryID int32, quoteText, quoteEntitiesJSON string, quoteOffset int32, replyExternalJSON string, fwdFromPeerType string, fwdFromPeerID int64, fwdFromName string, fwdDate int32, fwdSavedFromPeerType string, fwdSavedFromPeerID int64, fwdSavedFromMsgID int32) (bool, bool, *domain.MessageReply, *domain.MessageForward, error) {
 	var reply *domain.MessageReply
-	if replyToMsgID > 0 || replyToStoryID > 0 {
+	external, err := domain.DecodeMessageReplyExternal([]byte(replyExternalJSON))
+	if err != nil {
+		return false, false, nil, nil, err
+	}
+	if replyToMsgID > 0 || replyToStoryID > 0 || external != nil {
 		quoteEntities, err := decodeMessageEntities(quoteEntitiesJSON)
 		if err != nil {
 			return false, false, nil, nil, err
@@ -185,6 +190,7 @@ func messageMetadataFromFields(silent, noforwards bool, replyToMsgID int32, repl
 			QuoteText:     quoteText,
 			QuoteEntities: quoteEntities,
 			QuoteOffset:   int(quoteOffset),
+			External:      external,
 		}
 	}
 	var forward *domain.MessageForward

@@ -21,8 +21,8 @@ func TestPushTransientSkipsNotReadySession(t *testing.T) {
 	c := &Conn{
 		sessionID:       7,
 		authKeyID:       [8]byte{7},
-		outbound:        make(chan outboundOp, 4),
-		outboundControl: make(chan outboundOp, 4),
+		outbound:        make(chan *outboundOp, 4),
+		outboundControl: make(chan *outboundOp, 4),
 		outboundStop:    make(chan struct{}),
 	}
 	c.userID.Store(userID)
@@ -63,7 +63,7 @@ func TestPushTransientCompatibleSkipsUnavailableAndUnknownProfiles(t *testing.T)
 	makeConn := func(sessionID int64, profile tlprofile.Profile, known bool) *Conn {
 		c := &Conn{
 			sessionID: sessionID, authKeyID: [8]byte{byte(sessionID)},
-			outbound: make(chan outboundOp, 2), outboundControl: make(chan outboundOp, 2),
+			outbound: make(chan *outboundOp, 2), outboundControl: make(chan *outboundOp, 2),
 			outboundStop: make(chan struct{}),
 		}
 		c.userID.Store(userID)

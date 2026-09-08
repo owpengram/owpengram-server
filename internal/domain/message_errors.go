@@ -26,6 +26,7 @@ var (
 	// undisclosed delivery and make a retry impossible to reconcile.
 	ErrLoginCodeDeliveryCommitAmbiguous = errors.New("login code delivery commit ambiguous")
 	ErrReplyMessageIDInvalid            = errors.New("reply message id invalid")
+	ErrQuoteTextInvalid                 = errors.New("quote text invalid")
 	ErrChatForwardsRestricted           = errors.New("chat forwards restricted")
 	ErrNoForwardsRequestExpired         = errors.New("no forwards request expired")
 	// ErrPinnedSavedDialogsTooMuch 映射 PINNED_TOO_MUCH：收藏夹子会话置顶

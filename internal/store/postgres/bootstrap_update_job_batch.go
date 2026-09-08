@@ -99,6 +99,9 @@ func newBatchedBootstrapUpdateJobStore(
 		queue: make(chan bootstrapReadyBatchRequest, cfg.QueueSize),
 		stop:  make(chan struct{}), done: make(chan struct{}), cancel: cancel,
 	}
+	if cfg.Metrics != nil {
+		cfg.Metrics.BootstrapReadyPending(0)
+	}
 	go s.run(workerCtx)
 	return s, nil
 }

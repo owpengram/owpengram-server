@@ -611,9 +611,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err != nil {
 			return nil, internalErr()
 		}
-		filter, ok := r.messageFilterFromHistoryRequest(userID, req)
-		if !ok {
-			return messagesNotModifiedOrEmpty(req.Hash), nil
+		filter, err := r.messageFilterFromHistoryRequest(ctx, userID, req)
+		if err != nil {
+			return nil, err
 		}
 		if filter.Peer.Type == domain.PeerTypeChannel {
 			if r.deps.Channels == nil {

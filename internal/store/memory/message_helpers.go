@@ -186,12 +186,7 @@ func richMessagesEqual(a, b *domain.MessageRichMessage) bool {
 }
 
 func cloneMessageReply(reply *domain.MessageReply) *domain.MessageReply {
-	if reply == nil {
-		return nil
-	}
-	clone := *reply
-	clone.QuoteEntities = append([]domain.MessageEntity(nil), reply.QuoteEntities...)
-	return &clone
+	return domain.CloneMessageReply(reply)
 }
 
 func cloneMessageForward(forward *domain.MessageForward) *domain.MessageForward {

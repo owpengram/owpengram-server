@@ -42,7 +42,7 @@ func (s *Service) SeedDefaultVerifier(ctx context.Context) (bool, error) {
 	if _, err := s.GrantVerifier(ctx, domain.BotVerifierSettings{
 		BotID:                      domain.VerifierBotUserID,
 		IconDocumentID:             icon.DocumentID,
-		CompanyName:                branding.ProductName,
+		CompanyName:                branding.ProductName(),
 		DefaultDescription:         "Bundled reference verifier -- auto-granted on first boot.",
 		CanModifyCustomDescription: false,
 		Enabled:                    true,

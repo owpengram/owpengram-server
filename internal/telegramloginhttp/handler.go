@@ -71,7 +71,7 @@ func NewHandler(cfg Config) (*Handler, error) {
 		return nil, errors.New("telegram login HTTP dependencies are incomplete")
 	}
 	if strings.TrimSpace(cfg.AppName) == "" {
-		cfg.AppName = branding.ProductName
+		cfg.AppName = branding.ProductName()
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = zap.NewNop()

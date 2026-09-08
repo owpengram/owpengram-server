@@ -9,6 +9,9 @@ import (
 const (
 	// OfficialSystemUserID 是 Telegram 兼容客户端识别的官方系统账号。
 	OfficialSystemUserID int64 = 777000
+	// OfficialSystemPhone is a reserved service identity, not an ordinary E.164
+	// login number. Auth must recognize and reject it before account lookup.
+	OfficialSystemPhone = "42777"
 	// OfficialSystemUserPhotoID/AccessHash 是该账号头像 photo 的固定 id，
 	// 与 files.Service.SeedOfficialSystemAvatar 种子写入的行保持一致，
 	// 确保跨重启后 OfficialSystemUser() 引用的 photo id 稳定不变。
@@ -108,7 +111,7 @@ func SetOfficialSystemUserAvatar(dcID int, stripped []byte) {
 }
 
 // officialSystemUserDisplayName overrides OfficialSystemUser's FirstName --
-// empty means "use branding.ProductName" (the compile-time default), set
+// empty means "use branding.ProductName()" (the compile-time default), set
 // once at startup from the operator's Server Settings -> Server identity
 // name, if any. Deliberately only the display name, not Username: the
 // account's @username is a stable, addressable identifier other things may
@@ -118,7 +121,7 @@ var officialSystemUserDisplayName string
 // SetOfficialSystemUserDisplayName records the operator's custom server
 // name for the official system account (777000), read once at startup from
 // Server Settings -> Server identity. Pass "" to fall back to
-// branding.ProductName -- the same "unset -> default" contract the avatar
+// branding.ProductName() -- the same "unset -> default" contract the avatar
 // override above uses.
 func SetOfficialSystemUserDisplayName(name string) {
 	officialSystemUserDisplayName = strings.TrimSpace(name)
@@ -126,7 +129,7 @@ func SetOfficialSystemUserDisplayName(name string) {
 
 // officialSystemDisplayName returns the official system account's current
 // effective display name: the operator's custom override if set via
-// SetOfficialSystemUserDisplayName, else branding.ProductName. Shared by
+// SetOfficialSystemUserDisplayName, else branding.ProductName(). Shared by
 // OfficialSystemUser (777000's FirstName) and the login-welcome-message
 // {{server_name}} placeholder (see login_welcome_template.go) so both stay
 // consistent with each other.
@@ -134,7 +137,7 @@ func officialSystemDisplayName() string {
 	if officialSystemUserDisplayName != "" {
 		return officialSystemUserDisplayName
 	}
-	return branding.ProductName
+	return branding.ProductName()
 }
 
 // botFatherPhotoDCID/Stripped 由 files.Service.SeedBotFatherAvatar 在启动时
@@ -223,11 +226,11 @@ func OfficialSystemUser() User {
 // only the default snapshot; startup reconciliation and the memory backend use
 // these helpers so custom deployments do not expose stale "telesrv" text.
 func ChatBotDescription() string {
-	return "Chat with the configured " + branding.ProductName + " AI provider."
+	return "Chat with the configured " + branding.ProductName() + " AI provider."
 }
 
 func StickersBotDescription() string {
-	return "Create custom sticker and emoji packs for " + branding.ProductName + "."
+	return "Create custom sticker and emoji packs for " + branding.ProductName() + "."
 }
 
 // BotFatherUser 返回内置 BotFather 账号。username 不以 bot 结尾属种子例外（与官方一致）。

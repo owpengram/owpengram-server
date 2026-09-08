@@ -3,6 +3,8 @@ package rpc
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,8 +12,26 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
+	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/store"
 )
+
+func TestPresenceLastSeenBatchExportsIdlePending(t *testing.T) {
+	registry := obsmetrics.New()
+	updater := &capturePresenceLastSeenUpdater{}
+	d := newPresenceLastSeenBatchDispatcher(updater, presenceLastSeenBatchConfig{}, zaptest.NewLogger(t), registry)
+	if d == nil {
+		t.Fatal("presence owner was not constructed")
+	}
+	recorder := httptest.NewRecorder()
+	registry.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(recorder.Body.String(), "telesrv_presence_last_seen_pending 0\n") || len(updater.snapshot()) != 0 {
+		t.Fatalf("idle owner must expose zero pending without a last-seen write: %s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "telesrv_presence_last_seen_submitted_total") {
+		t.Fatal("idle registration fabricated a last-seen submission")
+	}
+}
 
 type capturePresenceLastSeenUpdater struct {
 	mu        sync.Mutex

@@ -224,8 +224,8 @@ func TestContainerInvalidSequenceTailIsAtomic(t *testing.T) {
 	cs := newConnState()
 	c := &Conn{
 		metrics:         NopMetrics{},
-		outbound:        make(chan outboundOp, 4),
-		outboundControl: make(chan outboundOp, 4),
+		outbound:        make(chan *outboundOp, 4),
+		outboundControl: make(chan *outboundOp, 4),
 		outboundStop:    make(chan struct{}),
 	}
 	var acks []int64

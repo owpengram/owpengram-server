@@ -173,7 +173,10 @@ func (s *MessageStore) DeliverLoginCodeMessage(ctx context.Context, req domain.L
 	if err != nil {
 		return domain.LoginCodeDeliveryResult{}, fmt.Errorf("create login code recipient box: %w", err)
 	}
-	msg := messageFromBoxRow(boxRow)
+	msg, err := messageFromBoxRow(boxRow)
+	if err != nil {
+		return domain.LoginCodeDeliveryResult{}, err
+	}
 
 	if err := qtx.UpsertInboxDialog(ctx, sqlcgen.UpsertInboxDialogParams{
 		UserID:         req.UserID,

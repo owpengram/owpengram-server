@@ -219,8 +219,8 @@ func TestSessionManagerBestEffortFanoutPreparesOncePerProfile(t *testing.T) {
 		c := &Conn{
 			sessionID:       int64(i + 1),
 			authKeyID:       [8]byte{byte(i + 1)},
-			outbound:        make(chan outboundOp, 1),
-			outboundControl: make(chan outboundOp, 1),
+			outbound:        make(chan *outboundOp, 1),
+			outboundControl: make(chan *outboundOp, 1),
 			outboundStop:    make(chan struct{}),
 			metrics:         NopMetrics{},
 		}
@@ -270,8 +270,8 @@ func TestSessionManagerMixedLayerFanoutUsesProfileBoundBodies(t *testing.T) {
 		c := &Conn{
 			sessionID:       int64(profile),
 			authKeyID:       authKeyID,
-			outbound:        make(chan outboundOp, 1),
-			outboundControl: make(chan outboundOp, 1),
+			outbound:        make(chan *outboundOp, 1),
+			outboundControl: make(chan *outboundOp, 1),
 			outboundStop:    make(chan struct{}),
 			metrics:         NopMetrics{},
 		}
@@ -390,11 +390,11 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 			authKeyID:       [8]byte{byte(i + 1)},
 			transport:       tr,
 			metrics:         NopMetrics{},
-			outbound:        make(chan outboundOp, 1),
-			outboundControl: make(chan outboundOp, 1),
+			outbound:        make(chan *outboundOp, 1),
+			outboundControl: make(chan *outboundOp, 1),
 			outboundStop:    make(chan struct{}),
 		}
-		c.outbound <- outboundOp{}
+		c.outbound <- &outboundOp{}
 		c.userID.Store(userID)
 		c.userIDResolved.Store(true)
 		c.receivesUpdates.Store(true)
@@ -409,8 +409,8 @@ func TestSessionManagerBestEffortFanoutUsesOneBudgetAndDropsOnlySlowConsumers(t 
 		sessionID:       99,
 		authKeyID:       [8]byte{99},
 		metrics:         NopMetrics{},
-		outbound:        make(chan outboundOp, 1),
-		outboundControl: make(chan outboundOp, 1),
+		outbound:        make(chan *outboundOp, 1),
+		outboundControl: make(chan *outboundOp, 1),
 		outboundStop:    make(chan struct{}),
 	}
 	healthy.userID.Store(userID)
@@ -656,8 +656,8 @@ func TestForceCloseBatchTimeoutStillClosesProducerAndRPCGates(t *testing.T) {
 		c := &Conn{
 			transport:       tr,
 			metrics:         NopMetrics{},
-			outbound:        make(chan outboundOp, 1),
-			outboundControl: make(chan outboundOp, 1),
+			outbound:        make(chan *outboundOp, 1),
+			outboundControl: make(chan *outboundOp, 1),
 			outboundStop:    make(chan struct{}),
 		}
 		c.startInboundRPCScheduler(scheduler, 1, 1, time.Second)
@@ -743,8 +743,8 @@ func TestPushToUserAuthKeyUsesOneDeadlineAndDropsOnlySlowPFSConnections(t *testi
 			sessionID:       sessionID,
 			metrics:         NopMetrics{},
 			transport:       transport,
-			outbound:        make(chan outboundOp, 1),
-			outboundControl: make(chan outboundOp, 1),
+			outbound:        make(chan *outboundOp, 1),
+			outboundControl: make(chan *outboundOp, 1),
 			outboundStop:    make(chan struct{}),
 		}
 		c.receivesUpdates.Store(true)
@@ -752,7 +752,7 @@ func TestPushToUserAuthKeyUsesOneDeadlineAndDropsOnlySlowPFSConnections(t *testi
 			t.Fatalf("freeze profile: %v", err)
 		}
 		if queueFull {
-			c.outbound <- outboundOp{}
+			c.outbound <- &outboundOp{}
 		}
 		sm.Register(c)
 		sm.BindAuthKeyForSession(raw, sessionID, business)
@@ -961,8 +961,8 @@ func TestPushToSessionForAuthKeyImmediateBypassesReadinessQueue(t *testing.T) {
 	c := &Conn{
 		sessionID:       42,
 		authKeyID:       raw,
-		outbound:        make(chan outboundOp, 1),
-		outboundControl: make(chan outboundOp, 1),
+		outbound:        make(chan *outboundOp, 1),
+		outboundControl: make(chan *outboundOp, 1),
 		outboundStop:    make(chan struct{}),
 	}
 	if err := c.FreezeLayerProfile(tlprofile.Profile227); err != nil {
@@ -1006,8 +1006,8 @@ func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) 
 	c := &Conn{
 		authKeyID:             key.authKeyID,
 		sessionID:             key.sessionID,
-		outbound:              make(chan outboundOp, 1),
-		outboundControl:       make(chan outboundOp, 1),
+		outbound:              make(chan *outboundOp, 1),
+		outboundControl:       make(chan *outboundOp, 1),
 		outboundStop:          make(chan struct{}),
 		metrics:               NopMetrics{},
 		outboundTrackedBudget: newOutboundTrackedBudget(1 << 20),
@@ -1049,7 +1049,7 @@ func TestSessionManagerWithholdsUpdatesReadinessUntilExactProfile(t *testing.T) 
 	}
 	c.membershipsSynced.Store(true)
 	sm.SetReceivesUpdatesForAuthKey(key.authKeyID, key.sessionID, true)
-	var op outboundOp
+	var op *outboundOp
 	select {
 	case op = <-c.outbound:
 	case <-time.After(time.Second):
@@ -1210,8 +1210,8 @@ func TestPendingFlushGlobalBodyPressureDoesNotTerminateHealthyConnection(t *test
 	c := &Conn{
 		authKeyID:             key.authKeyID,
 		sessionID:             key.sessionID,
-		outbound:              make(chan outboundOp, 1),
-		outboundControl:       make(chan outboundOp, 1),
+		outbound:              make(chan *outboundOp, 1),
+		outboundControl:       make(chan *outboundOp, 1),
 		outboundStop:          make(chan struct{}),
 		metrics:               NopMetrics{},
 		outboundTrackedBudget: newOutboundTrackedBudget(1),

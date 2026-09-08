@@ -119,6 +119,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-account-profile", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetProfileAPI)))
 	mux.Handle("POST /api/actions/set-account-phone", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetPhoneAPI)))
 	mux.Handle("POST /api/actions/set-account-avatar", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarAPI)))
+	mux.Handle("POST /api/actions/set-account-avatar-video", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountAvatarVideoAPI)))
 	mux.Handle("POST /api/actions/set-account-login-email", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetLoginEmailAPI)))
 	mux.Handle("POST /api/actions/set-account-color", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserColorAPI)))
 	mux.Handle("POST /api/actions/set-account-emoji-status", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetUserEmojiStatusAPI)))
@@ -1524,6 +1525,52 @@ func (s *server) handleSetAccountAvatarAPI(w http.ResponseWriter, r *http.Reques
 		FileName:    header.Filename,
 	}
 	result, err := s.callAdminMultipart(r.Context(), "/v1/accounts/set-avatar", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
+}
+
+type setAccountAvatarVideoAPIRequest struct {
+	CommandID    string  `json:"command_id"`
+	Reason       string  `json:"reason"`
+	Confirm      bool    `json:"confirm"`
+	UserID       int64   `json:"user_id"`
+	VideoStartTs float64 `json:"video_start_ts"`
+}
+
+func (s *server) handleSetAccountAvatarVideoAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, admin.MaxAccountAvatarVideoBytes+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body setAccountAvatarVideoAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "avatar video file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, admin.MaxAccountAvatarVideoBytes+1))
+	if err != nil || len(data) == 0 || int64(len(data)) > admin.MaxAccountAvatarVideoBytes {
+		writeAPIError(w, http.StatusBadRequest, "avatar video file is empty or too large")
+		return
+	}
+	req := admin.SetAccountAvatarVideoRequest{
+		CommandMeta:  s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "set-avatar-video"),
+		UserID:       body.UserID,
+		FileName:     header.Filename,
+		VideoStartTs: body.VideoStartTs,
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/accounts/set-avatar-video", req, header.Filename, data)
 	writeCommandResultAPI(w, result, err)
 }
 

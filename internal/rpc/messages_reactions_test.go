@@ -206,7 +206,7 @@ func TestSavedReactionTagHashMatchesClientShape(t *testing.T) {
 
 func TestMessageFilterFromSearchRequestParsesSavedTagsAndPeer(t *testing.T) {
 	const userID = int64(1000000001)
-	r := New(Config{}, Deps{}, zaptest.NewLogger(t), clock.System)
+	r := New(Config{}, Deps{Users: mapUsersService{users: map[int64]domain.User{userID + 1: {ID: userID + 1, AccessHash: 1}}}}, zaptest.NewLogger(t), clock.System)
 	req := &tg.MessagesSearchRequest{
 		Peer:    &tg.InputPeerSelf{},
 		Q:       "needle",

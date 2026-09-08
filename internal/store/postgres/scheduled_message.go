@@ -578,7 +578,7 @@ func scanScheduledMessage(scanner interface{ Scan(...any) error }) (domain.Sched
 	_, _, reply, forward, err := messageMetadataFromFields(
 		msg.Silent, msg.NoForwards, replyToMsgID, replyToPeerType, replyToPeerID, replyToTopID,
 		0, // scheduled_messages 不持久化 story 回复（定时回复 story 是边角，恒 0）
-		quoteText, quoteEntitiesJSON, quoteOffset,
+		quoteText, quoteEntitiesJSON, quoteOffset, "{}",
 		fwdFromPeerType, fwdFromPeerID, fwdFromName, fwdDate,
 		"", 0, 0,
 	)

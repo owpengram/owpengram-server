@@ -189,7 +189,9 @@ func (c *blobBytesCache) get(key string) ([]byte, bool) {
 	if el, ok := c.m[key]; ok {
 		c.ll.MoveToFront(el)
 		entry := el.Value.(*blobBytesEntry)
-		return append([]byte(nil), entry.bytes...), true
+		// Cache entries are immutable after publication. GetFile returns a
+		// capacity-clipped read-only view of the requested range.
+		return entry.bytes, true
 	}
 	return nil, false
 }

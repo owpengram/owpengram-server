@@ -41,8 +41,18 @@ func (r *Router) onUpdatesGetChannelDifference(ctx context.Context, req *tg.Upda
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrPersistentTimestamp) {
+			r.log.Debug("channel difference cursor rejected",
+				zap.Int64("viewer_user_id", userID),
+				zap.Int64("channel_id", channelID),
+				zap.Int("request_pts", req.Pts))
 			return nil, persistentTimestampInvalidErr()
 		}
+		r.log.Warn("load channel difference failed",
+			zap.Int64("viewer_user_id", userID),
+			zap.Int64("channel_id", channelID),
+			zap.Int("request_pts", req.Pts),
+			zap.Int("limit", req.Limit),
+			zap.Error(err))
 		return nil, channelInvalidErr(err)
 	}
 	diff, err = r.enrichChannelDifferenceStrict(ctx, userID, diff)

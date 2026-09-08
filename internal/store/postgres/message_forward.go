@@ -132,6 +132,7 @@ func messageFromForwardRow(row sqlcgen.GetMessageBoxesForForwardRow) (domain.Mes
 		row.QuoteText,
 		row.QuoteEntitiesJson,
 		row.QuoteOffset,
+		row.ReplyExternalJson,
 		row.FwdFromPeerType,
 		row.FwdFromPeerID,
 		row.FwdFromName,

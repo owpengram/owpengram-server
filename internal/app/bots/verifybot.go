@@ -115,7 +115,7 @@ const (
 )
 
 func verifyBotStartText() string {
-	return `I collect applications for official ` + branding.ProductName + ` verification: the badge shown next to the name of a channel, supergroup or bot whose identity has been confirmed.
+	return `I collect applications for official ` + branding.ProductName() + ` verification: the badge shown next to the name of a channel, supergroup or bot whose identity has been confirmed.
 
 Before you apply, check that the subject of the application:
 - is a channel, supergroup or bot with a public @username;
@@ -129,7 +129,7 @@ Tap the button below, or send /new, to start. Send /help for the full list of co
 }
 
 func verifyBotHelpText() string {
-	return `I collect official ` + branding.ProductName + ` verification applications.
+	return `I collect official ` + branding.ProductName() + ` verification applications.
 
 /new - file a verification application
 /status - list your applications and their status

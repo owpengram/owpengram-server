@@ -325,16 +325,24 @@ func encodeAdaptiveRPCResultInner(ctx context.Context, stop <-chan struct{}, inn
 // Android. These bootstrap barriers must pass background prefetch regardless of
 // platform or their own encoded size.
 func rpcResultPriority(method string, encoded *encodedOutboundMessage) outboundPriority {
+	if priority := rpcMethodPriority(method); priority != outboundPriorityNormal {
+		return priority
+	}
+	return classifyOutboundPriority(encoded, false)
+}
+
+func rpcMethodPriority(method string) outboundPriority {
 	base := method
 	if i := strings.IndexByte(base, '#'); i >= 0 {
 		base = base[:i]
 	}
 	switch base {
 	case "updates.getDifference", "updates.getChannelDifference", "updates.getState",
-		"messages.getDialogs", "messages.getPinnedDialogs":
+		"messages.getDialogs", "messages.getPinnedDialogs",
+		"auth.bindTempAuthKey", "help.getConfig", "users.getUsers":
 		return outboundPriorityCritical
 	}
-	return classifyOutboundPriority(encoded, false)
+	return outboundPriorityNormal
 }
 
 func (p outboundPriority) String() string {

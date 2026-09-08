@@ -18,9 +18,11 @@ import (
 // 强制重新拉取 p/g，而不是信任本地缓存。用于失效任何账号本地可能缓存的陈旧/错误
 // p/g（例如账号早年间对接过其它后端、缓存版本号恰好等于当时的 DHConfigVersion，
 // 此后再也不会刷新——版本号是纯常量，服务端自己永远不会主动使旧缓存过期）。
-// 本次从 1→2 是为诊断一例「A 拨 B 接通即断（key fingerprint/Ga hash 不合）」而提升，
-// 与本次通话 bug 排查同批次的服务端改动一起看。
-const DHConfigVersion = 2
+// 早先从 1→2 是为诊断一例「A 拨 B 接通即断（key fingerprint/Ga hash 不合）」而提升。
+// 上游又发现了同类问题的另一诱因：私有 DC 客户端若带着同为某个旧 version、但来自
+// 另一配置 profile 的缓存，服务端错误返回 NotModified 会让密聊两端用不同 p/g；
+// 这里直接取上游更新、更高的版本号，一次性使两类陈旧缓存都失效。
+const DHConfigVersion = 20260811
 
 // DHG 是 DH generator。与官方一致取 3：TDesktop MTP::IsPrimeAndGood 对
 // 「官方 2048-bit prime + g∈{3,4,5,7}」有白名单快速通过路径，DrKLO native 同。

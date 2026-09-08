@@ -223,18 +223,6 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 		return domain.SendPrivateTextResult{}, fmt.Errorf("wait private send actor lanes: %w", err)
 	}
 	defer releaseLanes()
-	senderReply, recipientReply, err := s.resolvePrivateSendReply(ctx, req)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
-	senderMeta, err := messageMetadataParamsFrom(req.Silent, req.NoForwards, senderReply, req.Forward)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
-	recipientMeta, err := messageMetadataParamsFrom(req.Silent, req.NoForwards, recipientReply, req.Forward)
-	if err != nil {
-		return domain.SendPrivateTextResult{}, err
-	}
 	beginner, ok := s.db.(txBeginner)
 	if !ok {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("send private text: db does not support transactions")
@@ -243,11 +231,6 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	var senderBoxID, recipientBoxID, recipientPts int
 	selfMessage := req.RecipientUserID == req.SenderUserID
 	deliverRecipient := !selfMessage && !req.RecipientBlocked
-	if selfMessage {
-		savedPeer := domain.SavedPeerForSelfChat(req.SenderUserID, req.Forward)
-		senderMeta.SavedPeerType = string(savedPeer.Type)
-		senderMeta.SavedPeerID = savedPeer.ID
-	}
 	// Box ids allow gaps. Allocate them before borrowing a PostgreSQL connection
 	// so Redis latency never extends the database transaction's lock lifetime.
 	if plainHotPath {
@@ -283,6 +266,36 @@ func (s *MessageStore) sendPrivateTextOnce(ctx context.Context, req domain.SendP
 	}
 	if err := lockDispatchOutboxAppendFences(ctx, tx, []int64{req.SenderUserID, req.RecipientUserID}); err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("lock send dispatch append fences: %w", err)
+	}
+	if hooks.before != nil || req.ReplyTo != nil {
+		// The preflight above cannot observe another first request until it commits.
+		// Recheck after the per-user transaction lock so aggregate-backed sends
+		// replay the committed message before their hook runs a second time, and
+		// so an external-reply source deleted between the preflight and here is
+		// resolved against the committed state, not a stale read.
+		if duplicate, found, err := s.duplicateSendResult(ctx, qtx, req, requestFingerprint); err != nil {
+			return domain.SendPrivateTextResult{}, err
+		} else if found {
+			duplicate.Duplicate = true
+			return duplicate, nil
+		}
+	}
+	senderReply, recipientReply, err := s.resolvePrivateSendReply(ctx, tx, qtx, req)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	senderMeta, err := messageMetadataParamsFrom(req.Silent, req.NoForwards, senderReply, req.Forward)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	recipientMeta, err := messageMetadataParamsFrom(req.Silent, req.NoForwards, recipientReply, req.Forward)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, err
+	}
+	if selfMessage {
+		savedPeer := domain.SavedPeerForSelfChat(req.SenderUserID, req.Forward)
+		senderMeta.SavedPeerType = string(savedPeer.Type)
+		senderMeta.SavedPeerID = savedPeer.ID
 	}
 	if hooks.before != nil {
 		if err := hooks.before(ctx, tx, &req); err != nil {
@@ -486,7 +499,10 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 	if err != nil {
 		return domain.SendPrivateTextResult{}, fmt.Errorf("create sender box: %w", err)
 	}
-	sender := messageFromBoxRow(senderRow)
+	sender, err := messageFromBoxRow(senderRow)
+	if err != nil {
+		return domain.SendPrivateTextResult{}, fmt.Errorf("decode sender box: %w", err)
+	}
 	sender.RandomID = req.RandomID
 	// 共享媒体索引(0118):发送者侧 box 按媒体类别建索引(peer=收件人)。
 	if err := insertMessageBoxMediaIndexTx(ctx, tx, req.SenderUserID, req.RecipientUserID, int(senderBoxID), req.Date, media.Sender, req.Entities); err != nil {
@@ -557,7 +573,10 @@ WHERE sender_user_id=$1 AND id=$2`, req.SenderUserID, pm.ID, sharedMediaJSON)
 		if err != nil {
 			return domain.SendPrivateTextResult{}, fmt.Errorf("create recipient box: %w", err)
 		}
-		recipient = messageFromBoxRow(recipientRow)
+		recipient, err = messageFromBoxRow(recipientRow)
+		if err != nil {
+			return domain.SendPrivateTextResult{}, fmt.Errorf("decode recipient box: %w", err)
+		}
 		recipient.RandomID = req.RandomID
 		// 共享媒体索引(0118):收件人侧 box 按媒体类别建索引(peer=发送者)。
 		if err := insertMessageBoxMediaIndexTx(ctx, tx, req.RecipientUserID, req.SenderUserID, int(recipientBoxID), req.Date, media.Recipient, req.Entities); err != nil {
@@ -727,7 +746,10 @@ func (s *MessageStore) duplicateSendResult(ctx context.Context, q *sqlcgen.Queri
 		PrivateMessageID: pm.ID,
 	})
 	if currentErr == nil {
-		sender = messageFromGetBoxRow(currentRow)
+		sender, currentErr = messageFromGetBoxRow(currentRow)
+		if currentErr != nil {
+			return domain.SendPrivateTextResult{}, false, fmt.Errorf("decode duplicate private message %d current sender box: %w", pm.ID, currentErr)
+		}
 		sender.RandomID = pm.RandomID
 	} else if !errors.Is(currentErr, pgx.ErrNoRows) {
 		return domain.SendPrivateTextResult{}, false, fmt.Errorf("get current duplicate private message %d sender box: %w", pm.ID, currentErr)
@@ -783,9 +805,15 @@ func (s *MessageStore) duplicateSendResult(ctx context.Context, q *sqlcgen.Queri
 	}, true, nil
 }
 
-func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.SendPrivateTextRequest) (*domain.MessageReply, *domain.MessageReply, error) {
+func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, db sqlcgen.DBTX, q *sqlcgen.Queries, req domain.SendPrivateTextRequest) (*domain.MessageReply, *domain.MessageReply, error) {
 	if req.ReplyTo == nil {
 		return nil, nil, nil
+	}
+	if req.ReplyTo.External != nil {
+		// External is a server-computed snapshot (see below); a client sending
+		// one is either a replay of our own wire encoding sent back to us, or a
+		// forged value, neither of which should be trusted as-is.
+		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
 	if req.ReplyTo.StoryID > 0 {
 		// story 回复（评论）：无源消息可查；story 作者就是会话对端（recipient），双盒同持。
@@ -816,7 +844,7 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.S
 		reply.Peer = peer
 		return reply, cloneMessageReply(reply), nil
 	}
-	source, err := s.q.GetMessageBoxForReply(ctx, sqlcgen.GetMessageBoxForReplyParams{
+	source, err := q.GetMessageBoxForReply(ctx, sqlcgen.GetMessageBoxForReplyParams{
 		OwnerUserID: req.SenderUserID,
 		PeerType:    string(peer.Type),
 		PeerID:      peer.ID,
@@ -831,17 +859,49 @@ func (s *MessageStore) resolvePrivateSendReply(ctx context.Context, req domain.S
 	senderReply := cloneMessageReply(req.ReplyTo)
 	senderReply.MessageID = int(source.BoxID)
 	senderReply.Peer = peer
+	if peer.ID != req.RecipientUserID {
+		// A cross-dialog reply references the sender's source box, which has no
+		// corresponding row in the destination dialog to remap to. Both sides
+		// therefore carry an immutable External snapshot of the source instead
+		// of a live, re-resolvable message reference.
+		entities, err := decodeMessageEntities(source.EntitiesJson)
+		if err != nil {
+			return nil, nil, err
+		}
+		media, err := decodeMessageMedia(source.MediaJson)
+		if err != nil {
+			return nil, nil, err
+		}
+		protected := source.Noforwards || (media != nil && media.TTLSeconds > 0)
+		if low, high, ok := pgNoForwardsPair(req.SenderUserID, peer.ID); ok {
+			var pairProtected bool
+			if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM private_no_forwards_chats WHERE user_low_id=$1 AND user_high_id=$2 AND COALESCE(enabled_by_user_id,0)<>0)`, low, high).Scan(&pairProtected); err != nil {
+				return nil, nil, fmt.Errorf("read reply source protection: %w", err)
+			}
+			protected = protected || pairProtected
+		}
+		if protected {
+			return nil, nil, domain.ErrChatForwardsRestricted
+		}
+		if err := domain.ValidateExternalReplyQuote(req.ReplyTo, source.Body); err != nil {
+			return nil, nil, err
+		}
+		senderReply.External, err = domain.NewMessageReplyExternal(domain.Message{From: domain.Peer{Type: domain.PeerTypeUser, ID: source.FromUserID}, Date: int(source.MessageDate), Body: source.Body, Entities: entities, Media: media})
+		if err != nil {
+			return nil, nil, err
+		}
+		recipientReply := cloneMessageReply(senderReply)
+		if req.SenderUserID != req.RecipientUserID {
+			recipientReply.MessageID = 0
+			recipientReply.TopMessageID = 0
+		}
+		return senderReply, recipientReply, nil
+	}
 	if req.SenderUserID == req.RecipientUserID {
 		return senderReply, cloneMessageReply(senderReply), nil
 	}
-	if peer.ID != req.RecipientUserID {
-		// A cross-dialog reply references the sender's source box. There is no
-		// corresponding row in the destination dialog to remap to; both sides
-		// therefore receive the explicit source peer/message pair.
-		return senderReply, cloneMessageReply(senderReply), nil
-	}
 
-	recipientRow, err := s.q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
+	recipientRow, err := q.GetMessageBoxByPrivateMessage(ctx, sqlcgen.GetMessageBoxByPrivateMessageParams{
 		OwnerUserID:      req.RecipientUserID,
 		PrivateMessageID: source.PrivateMessageID,
 	})
@@ -931,6 +991,7 @@ func applyCreatePrivateMessageMetadata(arg *sqlcgen.CreatePrivateMessageParams, 
 	arg.QuoteText = meta.QuoteText
 	arg.QuoteEntitiesJson = meta.QuoteEntitiesJSON
 	arg.QuoteOffset = meta.QuoteOffset
+	arg.ReplyExternalJson = meta.ReplyExternalJSON
 	arg.FwdFromPeerType = meta.FwdFromPeerType
 	arg.FwdFromPeerID = meta.FwdFromPeerID
 	arg.FwdFromName = meta.FwdFromName
@@ -948,6 +1009,7 @@ func applyCreateMessageBoxMetadata(arg *sqlcgen.CreateMessageBoxParams, meta mes
 	arg.QuoteText = meta.QuoteText
 	arg.QuoteEntitiesJson = meta.QuoteEntitiesJSON
 	arg.QuoteOffset = meta.QuoteOffset
+	arg.ReplyExternalJson = meta.ReplyExternalJSON
 	arg.FwdFromPeerType = meta.FwdFromPeerType
 	arg.FwdFromPeerID = meta.FwdFromPeerID
 	arg.FwdFromName = meta.FwdFromName

@@ -101,7 +101,7 @@ func TestProjectionFailureCachesInternalWithoutRepeatingBusiness(t *testing.T) {
 	}
 	if err := s.handleAdmittedLayerRPC(
 		context.Background(), c, reqMsgID, claim.admissionSeq,
-		"help.getConfig", request, claim.owner,
+		"help.getConfig", request, claim.owner, nil,
 	); err != nil {
 		t.Fatalf("publish projection failure: %v", err)
 	}

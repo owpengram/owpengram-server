@@ -159,11 +159,6 @@ func clonePeerPtr(in *domain.Peer) *domain.Peer {
 	return &out
 }
 
-func cloneMessageReply(in *domain.MessageReply) *domain.MessageReply {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	out.QuoteEntities = append([]domain.MessageEntity(nil), in.QuoteEntities...)
-	return &out
+func cloneMessageReply(reply *domain.MessageReply) *domain.MessageReply {
+	return domain.CloneMessageReply(reply)
 }

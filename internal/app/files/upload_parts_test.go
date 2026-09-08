@@ -256,12 +256,24 @@ func TestMaxUploadFileBytesUnlimitedByDefault(t *testing.T) {
 
 type countingUploadPartBackend struct {
 	*LocalFS
-	getUploadPartCalls int
+	getUploadPartCalls    int
+	putUploadPartCalls    int
+	deleteUploadPartCalls int
 }
 
 func (c *countingUploadPartBackend) GetUploadPart(ctx context.Context, objectKey string) ([]byte, error) {
 	c.getUploadPartCalls++
 	return c.LocalFS.GetUploadPart(ctx, objectKey)
+}
+
+func (c *countingUploadPartBackend) PutUploadPart(ctx context.Context, ownerUserID, fileID int64, part int, data []byte) (uploadPartObject, error) {
+	c.putUploadPartCalls++
+	return c.LocalFS.PutUploadPart(ctx, ownerUserID, fileID, part, data)
+}
+
+func (c *countingUploadPartBackend) DeleteUploadPart(ctx context.Context, objectKey string) error {
+	c.deleteUploadPartCalls++
+	return c.LocalFS.DeleteUploadPart(ctx, objectKey)
 }
 
 func newUploadPartTestService(t *testing.T, media *fakeMediaStore, quota domain.UploadPartQuota) (*Service, *LocalFS) {

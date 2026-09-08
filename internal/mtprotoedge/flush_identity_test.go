@@ -19,8 +19,8 @@ func TestRunFlushDiscardsBatchOnIdentitySwitch(t *testing.T) {
 	c := &Conn{
 		sessionID:       sessionID,
 		authKeyID:       raw,
-		outbound:        make(chan outboundOp, 4),
-		outboundControl: make(chan outboundOp, 4),
+		outbound:        make(chan *outboundOp, 4),
+		outboundControl: make(chan *outboundOp, 4),
 		outboundStop:    make(chan struct{}),
 	}
 	sm.Register(c)

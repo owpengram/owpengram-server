@@ -25,7 +25,7 @@ func (r *Router) registerHelp(d *tlprofile.Dispatcher) {
 		}, nil
 	})
 	registerRPC[*tg.HelpGetInviteTextRequest](d, tlprofile.SemanticMethodHelpGetInviteText, func(ctx context.Context, layerRequest *tg.HelpGetInviteTextRequest) (any, error) {
-		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName + "."}, nil
+		return &tg.HelpInviteText{Message: "Join me on " + branding.ProductName() + "."}, nil
 	})
 	registerRPC[*tg.HelpSaveAppLogRequest](d, tlprofile.SemanticMethodHelpSaveAppLog, func(ctx context.Context, _ *tg.HelpSaveAppLogRequest) (any, error) {
 		return r.onHelpSaveAppLog(ctx)
@@ -178,7 +178,7 @@ func (r *Router) onHelpDismissSuggestion(ctx context.Context, req *tg.HelpDismis
 // dead payment URLs. All six TL fields are mandatory.
 func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumPromo, error) {
 	promo := &tg.HelpPremiumPromo{
-		StatusText:     branding.PremiumName + " is not active on this account.",
+		StatusText:     branding.PremiumName() + " is not active on this account.",
 		StatusEntities: []tg.MessageEntityClass{},
 		VideoSections:  []string{},
 		Videos:         []tg.DocumentClass{},
@@ -207,7 +207,7 @@ func (r *Router) onHelpGetPremiumPromo(ctx context.Context) (*tg.HelpPremiumProm
 	}
 	if u.PremiumActiveAt(r.clock.Now().Unix()) {
 		until := time.Unix(int64(u.PremiumUntil), 0)
-		promo.StatusText = branding.PremiumName + " is active until " + until.Format("2006-01-02") + "."
+		promo.StatusText = branding.PremiumName() + " is active until " + until.Format("2006-01-02") + "."
 	}
 	if r.deps.PremiumPromo != nil {
 		catalog, found, err := r.deps.PremiumPromo.PremiumPromo(ctx)

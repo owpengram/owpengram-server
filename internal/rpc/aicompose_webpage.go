@@ -43,7 +43,7 @@ func (r *Router) resolveAIComposeStyleWebPage(ctx context.Context, rawURL string
 		Hash:               aiComposeToneWebPageHash(tone),
 		Date:               int(now.Unix()),
 		Type:               aiComposeToneWebPageType,
-		SiteName:           branding.ProductName,
+		SiteName:           branding.ProductName(),
 		Title:              tone.Title,
 		Description:        tone.Prompt,
 		ComposeToneEmojiID: tone.EmojiID,

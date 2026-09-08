@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/iamxvbaba/td/tg"
+	"github.com/iamxvbaba/td/tgerr"
 
 	"telesrv/internal/domain"
 )
@@ -273,6 +274,10 @@ func messageSendErr(err error) error {
 		return randomIDDuplicateErr()
 	case errors.Is(err, domain.ErrMessageEmpty):
 		return messageEmptyErr()
+	case errors.Is(err, domain.ErrChatForwardsRestricted):
+		return chatForwardsRestrictedErr()
+	case errors.Is(err, domain.ErrQuoteTextInvalid):
+		return quoteTextInvalidErr()
 	default:
 		return internalErr()
 	}
@@ -330,8 +335,11 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 	}
 	replyPeer := peer
 	if inputPeer, ok := reply.GetReplyToPeerID(); ok {
-		parsed, err := r.checkedDomainPeerFromInputPeer(ctx, userID, inputPeer)
+		parsed, err := r.checkedMessageReadPeer(ctx, userID, inputPeer, false)
 		if err != nil {
+			if tgerr.Is(err, "INTERNAL_SERVER_ERROR") {
+				return nil, err
+			}
 			return nil, replyMessageIDInvalidErr()
 		}
 		replyPeer = parsed

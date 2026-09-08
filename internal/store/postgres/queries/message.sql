@@ -115,6 +115,7 @@ INSERT INTO private_messages (
   quote_text,
   quote_entities,
   quote_offset,
+  reply_external,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -139,6 +140,7 @@ INSERT INTO private_messages (
   sqlc.arg(quote_text)::text,
   sqlc.arg(quote_entities_json)::jsonb,
   sqlc.arg(quote_offset)::int,
+  COALESCE(sqlc.arg(reply_external_json)::jsonb, '{}'::jsonb),
   sqlc.arg(fwd_from_peer_type)::text,
   sqlc.arg(fwd_from_peer_id)::bigint,
   sqlc.arg(fwd_from_name)::text,
@@ -216,6 +218,7 @@ INSERT INTO message_boxes (
   quote_text,
   quote_entities,
   quote_offset,
+  reply_external,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -249,6 +252,7 @@ INSERT INTO message_boxes (
   sqlc.arg(quote_text)::text,
   sqlc.arg(quote_entities_json)::jsonb,
   sqlc.arg(quote_offset)::int,
+  COALESCE(sqlc.arg(reply_external_json)::jsonb, '{}'::jsonb),
   sqlc.arg(fwd_from_peer_type)::text,
   sqlc.arg(fwd_from_peer_id)::bigint,
   sqlc.arg(fwd_from_name)::text,
@@ -293,6 +297,7 @@ RETURNING
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -339,6 +344,7 @@ SELECT
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -367,7 +373,9 @@ WHERE owner_user_id = $1
 SELECT
   box_id,
   private_message_id,
-  message_sender_id
+  message_sender_id,
+  from_user_id, message_date, body, entities::text AS entities_json,
+  media::text AS media_json, noforwards
 FROM message_boxes
 WHERE owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND peer_type = sqlc.arg(peer_type)::text
@@ -410,6 +418,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -479,6 +488,7 @@ base AS NOT MATERIALIZED (
     m.quote_text,
     m.quote_entities::text AS quote_entities_json,
     m.quote_offset,
+    m.reply_external::text AS reply_external_json,
     m.fwd_from_peer_type,
     m.fwd_from_peer_id,
     m.fwd_from_name,
@@ -533,6 +543,7 @@ base AS NOT MATERIALIZED (
   LEFT JOIN users from_u ON from_u.id = m.from_user_id
   WHERE m.owner_user_id = $1
     AND NOT m.deleted
+    AND (sqlc.arg(sender_user_id)::bigint = 0 OR m.from_user_id = sqlc.arg(sender_user_id)::bigint)
     AND (
       NOT sqlc.arg(has_peer)::boolean
       OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
@@ -590,11 +601,6 @@ base AS NOT MATERIALIZED (
       )
     )
 ),
-total AS (
-  SELECT count(*)::int AS total_count
-  FROM base
-  WHERE sqlc.arg(need_total_count)::boolean
-),
 backward AS (
   SELECT b.*
   FROM base b
@@ -617,7 +623,7 @@ around_forward AS (
     WHERE p.load_type = 'around'
       AND (
         (p.offset_date > 0 AND b.message_date >= p.offset_date)
-        OR (p.offset_date <= 0 AND p.offset_id > 0 AND b.box_id > p.offset_id)
+        OR (p.offset_date <= 0 AND p.offset_id > 0 AND b.box_id >= p.offset_id)
       )
     ORDER BY b.box_id ASC
     LIMIT LEAST(-(SELECT add_offset FROM load_params), (SELECT limit_count FROM load_params))
@@ -630,7 +636,7 @@ around_backward AS (
   WHERE p.load_type = 'around'
     AND (
       (p.offset_date > 0 AND b.message_date < p.offset_date)
-      OR (p.offset_date <= 0 AND (p.offset_id <= 0 OR b.box_id <= p.offset_id))
+      OR (p.offset_date <= 0 AND (p.offset_id <= 0 OR b.box_id < p.offset_id))
     )
   ORDER BY b.box_id DESC
   LIMIT GREATEST((SELECT limit_count + add_offset FROM load_params), 0)
@@ -644,9 +650,10 @@ forward AS (
     WHERE p.load_type = 'forward'
       AND (
         (p.offset_date > 0 AND b.message_date >= p.offset_date)
-        OR (p.offset_date <= 0 AND p.offset_id > 0 AND b.box_id > p.offset_id)
+        OR (p.offset_date <= 0 AND p.offset_id > 0 AND b.box_id >= p.offset_id)
       )
     ORDER BY b.box_id ASC
+    OFFSET GREATEST((SELECT -add_offset - limit_count FROM load_params), 0)
     LIMIT (SELECT limit_count FROM load_params)
   ) f
 ),
@@ -684,6 +691,7 @@ SELECT
   quote_text,
   quote_entities_json,
   quote_offset,
+  reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -732,17 +740,15 @@ SELECT
   from_user_premium_until,
   from_user_emoji_status_document_id,
   from_user_emoji_status_until,
-  from_user_last_seen_at,
-  COALESCE(total.total_count, 0)::int AS total_count
+  from_user_last_seen_at
 FROM paged
-CROSS JOIN total
 ORDER BY box_id DESC;
 
 -- name: ListMessagesBackward :many
 -- backward 热路径(add_offset>=0:初始加载/上滑翻页)的扁平静态查询。
 -- 与 ListMessagesByUser 的 backward 分支逐位等价(相同 base 过滤 + 相同 anchor +
 -- ORDER BY box_id DESC + OFFSET GREATEST(add_offset,0) + LIMIT),但只规划单次
--- index scan + 2 LEFT JOIN,避免大 CTE 把 4 个分支+total 全树规划。total 走
+-- index scan + 2 LEFT JOIN,避免大 CTE 把 4 个分支全树规划。total 走
 -- 独立 CountMessagesByUser,仅 NeedTotalCount 时发。
 SELECT
   m.box_id,
@@ -769,6 +775,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -823,6 +830,7 @@ LEFT JOIN users peer_u ON m.peer_type = 'user' AND peer_u.id = m.peer_id
 LEFT JOIN users from_u ON from_u.id = m.from_user_id
 WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND NOT m.deleted
+  AND (sqlc.arg(sender_user_id)::bigint = 0 OR m.from_user_id = sqlc.arg(sender_user_id)::bigint)
   AND (
     NOT sqlc.arg(has_peer)::boolean
     OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
@@ -894,6 +902,7 @@ SELECT count(*)::int AS total_count
 FROM message_boxes m
 WHERE m.owner_user_id = sqlc.arg(owner_user_id)::bigint
   AND NOT m.deleted
+  AND (sqlc.arg(sender_user_id)::bigint = 0 OR m.from_user_id = sqlc.arg(sender_user_id)::bigint)
   AND (
     NOT sqlc.arg(has_peer)::boolean
     OR (m.peer_type = sqlc.arg(peer_type)::text AND m.peer_id = sqlc.arg(peer_id)::bigint)
@@ -978,6 +987,7 @@ SELECT
   m.quote_text,
   m.quote_entities::text AS quote_entities_json,
   m.quote_offset,
+  m.reply_external::text AS reply_external_json,
   m.fwd_from_peer_type,
   m.fwd_from_peer_id,
   m.fwd_from_name,
@@ -1063,6 +1073,7 @@ SELECT
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -1118,6 +1129,7 @@ SELECT
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -1206,6 +1218,7 @@ RETURNING
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,
@@ -1507,6 +1520,7 @@ SELECT
   quote_text,
   quote_entities::text AS quote_entities_json,
   quote_offset,
+  reply_external::text AS reply_external_json,
   fwd_from_peer_type,
   fwd_from_peer_id,
   fwd_from_name,

@@ -38,6 +38,8 @@ type RuntimeSnapshot struct {
 	OutboundTrackedMaxBytes        int64
 	OutboundControlBytes           int64
 	OutboundControlMaxBytes        int64
+	OutboundCriticalBytes          int64
+	OutboundCriticalMaxBytes       int64
 	OutboundWriteBytes             int64
 	OutboundWriteMaxBytes          int64
 	RPCExecutionOwners             int64
@@ -189,6 +191,10 @@ func (s *Server) RuntimeSnapshot() RuntimeSnapshot {
 	if s.outboundControlBudget != nil {
 		result.OutboundControlBytes = s.outboundControlBudget.snapshot()
 		result.OutboundControlMaxBytes = s.outboundControlBudget.maxBytes
+	}
+	if s.outboundCriticalBudget != nil {
+		result.OutboundCriticalBytes = s.outboundCriticalBudget.snapshot()
+		result.OutboundCriticalMaxBytes = s.outboundCriticalBudget.maxBytes
 	}
 	if s.outboundScratchPool != nil && s.outboundScratchPool.budget != nil {
 		result.OutboundWriteBytes = s.outboundScratchPool.snapshot()

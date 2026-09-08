@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,12 +82,12 @@ type Conn struct {
 	salt             int64
 	key              crypto.AuthKey
 
-	outbound        chan outboundOp
-	outboundControl chan outboundOp
+	outbound        chan *outboundOp
+	outboundControl chan *outboundOp
 	// Critical RPC results (session/difference convergence) and large bulk
 	// responses have independent bounded lanes. The actor remains the sole writer.
-	outboundCritical chan outboundOp
-	outboundBulk     chan outboundOp
+	outboundCritical chan *outboundOp
+	outboundBulk     chan *outboundOp
 	outboundStop     chan struct{}
 	outboundDone     chan struct{}
 	outboundClose    sync.Once
@@ -104,10 +105,14 @@ type Conn struct {
 	// Encoded MTProto service frames and control vectors use independent headroom: pong,
 	// new_session_created, bad_msg and msgs_ack must remain admissible when the body budget is
 	// full. Content-related control frames keep this budget while pending for resend.
-	outboundControlTrackedBudget *outboundTrackedBudget
-	outboundControlBudgetOnce    sync.Once
-	outboundScratchPool          *outboundScratchPool
-	outboundScratchOnce          sync.Once
+	outboundControlTrackedBudget  *outboundTrackedBudget
+	outboundControlBudgetOnce     sync.Once
+	outboundCriticalTrackedBudget *outboundTrackedBudget
+	outboundCriticalBudgetOnce    sync.Once
+	outboundScratchPool           *outboundScratchPool
+	outboundScratchOnce           sync.Once
+	outboundOpPool                *outboundOpPool
+	outboundReplayBodyPool        *outboundReplayBodyPool
 	// outboundState outlives this physical Conn generation. A replacement
 	// physical connection for the same auth key/session reuses it.
 	outboundState *outboundState
@@ -160,6 +165,9 @@ type Conn struct {
 	// 单连接只保留并发配额；实际 worker 来自 Server 共享池，避免每连接预留 goroutine。
 	rpcRootCtx     context.Context
 	rpcMaxInflight int
+	// remoteAddr 是 MTProto 连接的对端地址（来自 net.Conn.RemoteAddr），仅保留 host
+	// 部分；绑定设备授权时写入 authorizations.ip，便于在 admin 面板看到登录 IP。
+	remoteAddr string
 
 	// sentContentMessages is retained only for standalone construction tests.
 	// Server connections allocate seq_no from logical-session outboundState.
@@ -419,3 +427,21 @@ func (c *Conn) ReceivesUpdates() bool { return c.receivesUpdates.Load() }
 // SetReceivesUpdates 设置该连接是否接收主动推送的 updates。
 // 登录后的主连接在 updates.getState/getDifference 建立同步基线后置为 true。
 func (c *Conn) SetReceivesUpdates(v bool) { c.receivesUpdates.Store(v) }
+
+// setRemoteAddrStr 记录 MTProto 连接的对端地址（remote 形如 host:port）。
+// 只保留 host 部分（去掉端口），用于绑定设备授权时写入 authorizations.ip。
+func (c *Conn) setRemoteAddrStr(remote string) {
+	if remote == "" {
+		return
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		// 已经是纯 host（例如 unix socket 或 IPv6 无端口形式）。
+		c.remoteAddr = remote
+		return
+	}
+	c.remoteAddr = host
+}
+
+// clientIP 返回连接的对端 IP（host 部分），未设置时为空字符串。
+func (c *Conn) clientIP() string { return c.remoteAddr }

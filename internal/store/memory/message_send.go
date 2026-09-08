@@ -52,8 +52,26 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
+	// Match TogglePrivateNoForwards lock order; only external private-source
+	// replies read pair protection while holding the message mutation lock.
+	if r := req.ReplyTo; r != nil && r.Peer.Type == domain.PeerTypeUser && r.Peer.ID > 0 && r.Peer.ID != req.RecipientUserID {
+		s.noForwardsMu.Lock()
+		defer s.noForwardsMu.Unlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.sendPrivateTextLocked(req, fingerprint, nil)
+}
+
+// A prefix stages related state events before the message. apply is infallible
+// and only runs after all validation and receipt encoding have succeeded.
+type memoryPrivateSendPrefix struct {
+	events []domain.UpdateEvent
+	apply  func([]domain.UpdateEvent)
+}
+
+// Caller holds s.mu; this helper owns the dialog/event locks through commit.
+func (s *MessageStore) sendPrivateTextLocked(req domain.SendPrivateTextRequest, fingerprint []byte, prefix *memoryPrivateSendPrefix) (domain.SendPrivateTextResult, error) {
 	if replay, found, err := s.lookupPrivateSendReplayLocked(domain.PrivateSendReplayRequest{
 		SenderUserID:           req.SenderUserID,
 		RecipientUserID:        req.RecipientUserID,
@@ -69,10 +87,37 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 	if err != nil {
 		return domain.SendPrivateTextResult{}, err
 	}
+	events := s.updateEvents
+	if events == nil {
+		return domain.SendPrivateTextResult{}, store.ErrDeliveryOutboxRequired
+	}
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	// Stage counters as well as the message: failed encoding cannot consume PTS.
+	allocatedPTS := make(map[int64]int)
+	nextPTS := func(userID int64) int {
+		current, ok := allocatedPTS[userID]
+		if !ok {
+			current = s.nextPts[userID]
+			for _, event := range events.events[userID] {
+				if event.Pts > current {
+					current = event.Pts
+				}
+			}
+		}
+		allocatedPTS[userID] = current + 1
+		return current + 1
+	}
+	var prefixEvents []domain.UpdateEvent
+	if prefix != nil {
+		for _, event := range prefix.events {
+			event.Pts = nextPTS(event.UserID)
+			prefixEvents = append(prefixEvents, event)
+		}
+	}
 	uid := s.nextUID
-	s.nextUID++
 	sender := domain.Message{
-		ID:          s.nextBoxIDLocked(req.SenderUserID),
+		ID:          s.nextBox[req.SenderUserID] + 1,
 		UID:         uid,
 		RandomID:    req.RandomID,
 		OwnerUserID: req.SenderUserID,
@@ -92,7 +137,7 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		RichMessage: cloneRichMessage(req.RichMessage),
 		ReplyTo:     cloneMessageReply(senderReply),
 		Forward:     cloneMessageForward(req.Forward),
-		Pts:         s.nextPtsLocked(req.SenderUserID),
+		Pts:         nextPTS(req.SenderUserID),
 		// voice/round 在发送者副本上同样保持"未听"，由对端内容已读清除。
 		MediaUnread: req.Media.HasUnreadPayload() && req.SenderUserID != req.RecipientUserID,
 	}
@@ -105,7 +150,7 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 	}
 	if req.SenderUserID != req.RecipientUserID && !req.RecipientBlocked {
 		recipient = sender
-		recipient.ID = s.nextBoxIDLocked(req.RecipientUserID)
+		recipient.ID = s.nextBox[req.RecipientUserID] + 1
 		recipient.OwnerUserID = req.RecipientUserID
 		recipient.Peer = domain.Peer{Type: domain.PeerTypeUser, ID: req.SenderUserID}
 		recipient.Out = false
@@ -115,7 +160,7 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		// 让双盒各持独立快照（与 postgres 每盒独立 decode 对齐，I3/I2）。
 		recipient.ReplyMarkup = cloneReplyMarkup(sender.ReplyMarkup)
 		recipient.RichMessage = cloneRichMessage(sender.RichMessage)
-		recipient.Pts = s.nextPtsLocked(req.RecipientUserID)
+		recipient.Pts = nextPTS(req.RecipientUserID)
 		recipient.MediaUnread = req.Media.HasUnreadPayload()
 	}
 	var senderSnapshot []byte
@@ -124,6 +169,25 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 		if err != nil {
 			return domain.SendPrivateTextResult{}, err
 		}
+	}
+	// No fallible work follows: publish the prefix and message under all locks.
+	if prefix != nil {
+		prefix.apply(prefixEvents)
+	}
+	for _, event := range prefixEvents {
+		auth, session := [8]byte{}, int64(0)
+		if event.UserID == req.SenderUserID {
+			auth, session = req.OriginAuthKeyID, req.OriginSessionID
+		}
+		appendMemorySendEventLocked(events, event.UserID, event, auth, session)
+	}
+	s.nextUID++
+	s.nextBox[req.SenderUserID] = sender.ID
+	if recipient.ID != 0 {
+		s.nextBox[recipient.OwnerUserID] = recipient.ID
+	}
+	for userID, pts := range allocatedPTS {
+		s.nextPts[userID] = pts
 	}
 	s.m[req.SenderUserID] = append(s.m[req.SenderUserID], sender)
 	if req.SenderUserID != req.RecipientUserID && !req.RecipientBlocked {
@@ -144,12 +208,47 @@ func (s *MessageStore) SendPrivateText(_ context.Context, req domain.SendPrivate
 			s.upsertMemoryDialogsLocked(sender, sender)
 		}
 	}
+	originUserID := req.OriginUserID
+	if originUserID == 0 {
+		originUserID = req.SenderUserID
+	}
+	senderExcludeAuthKeyID, senderExcludeSessionID := [8]byte{}, int64(0)
+	if originUserID == req.SenderUserID {
+		senderExcludeAuthKeyID, senderExcludeSessionID = req.OriginAuthKeyID, req.OriginSessionID
+	}
+	appendMemorySendEventLocked(events, req.SenderUserID, newMessageEvent(sender), senderExcludeAuthKeyID, senderExcludeSessionID)
+	if recipient.ID != 0 && recipient.OwnerUserID != sender.OwnerUserID {
+		recipientExcludeAuthKeyID, recipientExcludeSessionID := [8]byte{}, int64(0)
+		if originUserID == req.RecipientUserID {
+			recipientExcludeAuthKeyID, recipientExcludeSessionID = req.OriginAuthKeyID, req.OriginSessionID
+		}
+		appendMemorySendEventLocked(events, req.RecipientUserID, newMessageEvent(recipient), recipientExcludeAuthKeyID, recipientExcludeSessionID)
+	}
 	return domain.SendPrivateTextResult{
 		SenderMessage:    cloneMessage(sender),
 		RecipientMessage: cloneMessage(recipient),
 		SenderEvent:      newMessageEvent(sender),
 		RecipientEvent:   newMessageEvent(recipient),
 	}, nil
+}
+
+func (s *MessageStore) nextPtsWithEventsLocked(events *UpdateEventStore, userID int64) int {
+	current := s.nextPts[userID]
+	for _, event := range events.events[userID] {
+		if event.Pts > current {
+			current = event.Pts
+		}
+	}
+	current++
+	s.nextPts[userID] = current
+	return current
+}
+
+func appendMemorySendEventLocked(events *UpdateEventStore, userID int64, event domain.UpdateEvent, excludeAuthKeyID [8]byte, excludeSessionID int64) {
+	event = events.appendLocked(userID, event, false)
+	events.dispatches[userID] = append(events.dispatches[userID], memoryUpdateDispatch{
+		Pts: event.Pts, ExcludeAuthKeyID: excludeAuthKeyID, ExcludeSessionID: excludeSessionID,
+	})
 }
 
 // LookupPrivateSendReplay returns an existing immutable/current replay receipt without running
@@ -246,7 +345,7 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 	if peer.ID == 0 {
 		peer = domain.Peer{Type: domain.PeerTypeUser, ID: req.RecipientUserID}
 	}
-	if peer.Type != domain.PeerTypeUser || peer.ID != req.RecipientUserID {
+	if peer.Type != domain.PeerTypeUser || req.ReplyTo.External != nil {
 		return nil, nil, domain.ErrReplyMessageIDInvalid
 	}
 	var target domain.Message
@@ -262,6 +361,29 @@ func (s *MessageStore) resolveMemoryReplyLocked(req domain.SendPrivateTextReques
 	senderReply := cloneMessageReply(req.ReplyTo)
 	senderReply.MessageID = target.ID
 	senderReply.Peer = peer
+	if peer.ID != req.RecipientUserID {
+		protected := target.NoForwards || (target.Media != nil && target.Media.TTLSeconds > 0)
+		if pair, ok := noForwardsPair(req.SenderUserID, peer.ID); ok {
+			protected = protected || s.privateNoForwards[pair].Enabled()
+		}
+		if protected {
+			return nil, nil, domain.ErrChatForwardsRestricted
+		}
+		if err := domain.ValidateExternalReplyQuote(req.ReplyTo, target.Body); err != nil {
+			return nil, nil, err
+		}
+		var err error
+		senderReply.External, err = domain.NewMessageReplyExternal(target)
+		if err != nil {
+			return nil, nil, err
+		}
+		recipientReply := cloneMessageReply(senderReply)
+		if req.SenderUserID != req.RecipientUserID {
+			recipientReply.MessageID = 0
+			recipientReply.TopMessageID = 0
+		}
+		return senderReply, recipientReply, nil
+	}
 	if req.SenderUserID == req.RecipientUserID {
 		return senderReply, cloneMessageReply(senderReply), nil
 	}

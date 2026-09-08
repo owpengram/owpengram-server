@@ -147,6 +147,11 @@ type AccountSetting struct {
 	SensitiveContentEnabled          bool
 	ContactSignupSilent              bool
 	UpdatedAt                        pgtype.Timestamptz
+	DisallowUnlimitedStargifts       bool
+	DisallowLimitedStargifts         bool
+	DisallowUniqueStargifts          bool
+	DisallowPremiumGifts             bool
+	DisallowStargiftsFromChannels    bool
 }
 
 type AdminAuditLog struct {
@@ -181,6 +186,18 @@ type AdminCommand struct {
 	Error          string
 	CreatedAt      pgtype.Timestamptz
 	CompletedAt    pgtype.Timestamptz
+}
+
+type AdminConsoleUser struct {
+	ID           int64
+	Username     string
+	PasswordHash string
+	Permissions  []string
+	Enabled      bool
+	TokenEpoch   int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	LastLoginAt  pgtype.Timestamptz
 }
 
 type AiComposeTone struct {
@@ -503,6 +520,39 @@ type BotVerifierSetting struct {
 	CreatedAt                  pgtype.Timestamptz
 	UpdatedAt                  pgtype.Timestamptz
 	Version                    int64
+}
+
+type Broadcast struct {
+	ID                      int64
+	Message                 string
+	TargetMode              string
+	TargetCount             int64
+	CreatedBy               string
+	CreatedAt               pgtype.Timestamptz
+	Entities                []byte
+	SnapshotMaxUserID       int64
+	EnumerationCursorUserID int64
+	EnumerationDone         bool
+	MaterializedCount       int64
+	SentCount               int64
+	FailedCount             int64
+}
+
+type BroadcastRecipient struct {
+	ID               int64
+	BroadcastID      int64
+	UserID           int64
+	Status           string
+	Attempts         int32
+	LastError        string
+	SentAt           pgtype.Timestamptz
+	NextAttemptAt    pgtype.Timestamptz
+	LeaseToken       string
+	LeaseUntil       pgtype.Timestamptz
+	PrivateMessageID int64
+	MessageBoxID     int32
+	Pts              int32
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type BusinessAutomationDelivery struct {
@@ -1324,6 +1374,19 @@ type FileBlob struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type GifCatalog struct {
+	ID             int64
+	Title          string
+	DocumentID     int64
+	Enabled        bool
+	SortOrder      int32
+	CreatedBy      string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	SourceFilename string
+	Category       string
+}
+
 type GroupCall struct {
 	CallID                  int64
 	AccessHash              int64
@@ -1499,6 +1562,7 @@ type MessageBox struct {
 	ReplyToStoryID       int32
 	Effect               int64
 	HideEdited           bool
+	ReplyExternal        []byte
 }
 
 type MessageBoxMedium struct {
@@ -1796,6 +1860,7 @@ type PrivateMessage struct {
 	SenderDeletePtsCount   int32
 	SenderDeleteDate       int32
 	SenderDeleteMessageIds []byte
+	ReplyExternal          []byte
 }
 
 type PrivateMessageReaction struct {
@@ -2642,6 +2707,15 @@ type SuggestedPostApproval struct {
 	FinalServiceMessageID    int32
 	CreatedAt                int32
 	UpdatedAt                int32
+	LifecycleAttempts        int32
+	NextAttemptAt            int32
+	LastLifecycleError       string
+}
+
+type SuggestedPostLifecycleWakeup struct {
+	MonoforumID         int64
+	SuggestionMessageID int32
+	CreatedAt           int32
 }
 
 type TelegramLoginCode struct {
@@ -3124,4 +3198,44 @@ type WebviewRequestedButton struct {
 	NameRequested     bool
 	UsernameRequested bool
 	PhotoRequested    bool
+}
+
+type WelcomeMessage struct {
+	ChannelID         int64
+	ID                int32
+	CreatorUserID     int64
+	Date              int32
+	EditDate          int32
+	RandomID          int64
+	Content           []byte
+	CreateFingerprint []byte
+	Version           int64
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type WelcomeMessageDelivery struct {
+	ID             int64
+	JoinEventID    int64
+	ChannelID      int64
+	TargetUserID   int64
+	TemplateID     int32
+	EphemeralID    *int32
+	JoinedAt       int32
+	Content        []byte
+	AttemptCount   int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeaseOwner     *string
+	LeaseExpiresAt pgtype.Timestamptz
+	DeliveredAt    pgtype.Timestamptz
+	LastError      string
+	CreatedAt      pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+}
+
+type WelcomeMessagePeer struct {
+	ChannelID int64
+	NextID    int32
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
 }

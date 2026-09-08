@@ -199,11 +199,11 @@ func verifierBotWhatText() string {
 
 A third-party mark is a verifier's own icon, shown right before the name of a bot, a channel or an account, plus one line of description in its profile. It means "this verifier vouches for this peer" -- nothing more.
 
-It is NOT the official ` + branding.ProductName + ` checkmark. The platform badge is granted by the platform itself (@verifybot collects those applications); a third-party mark is granted by the company running a verifier bot. The two are stored, shown and taken away separately, and neither one implies the other.`
+It is NOT the official ` + branding.ProductName() + ` checkmark. The platform badge is granted by the platform itself (@verifybot collects those applications); a third-party mark is granted by the company running a verifier bot. The two are stored, shown and taken away separately, and neither one implies the other.`
 }
 
 func verifierBotHelpText() string {
-	return `I am a verifier bot. I grant third-party marks: my icon before the name of your bot, channel or account, plus a description in its profile. This is not the official ` + branding.ProductName + ` checkmark.
+	return `I am a verifier bot. I grant third-party marks: my icon before the name of your bot, channel or account, plus a description in its profile. This is not the official ` + branding.ProductName() + ` checkmark.
 
 /start - what a third-party mark is and who grants it
 /verify - apply for the mark
@@ -1125,7 +1125,7 @@ func verifierSummaryText(state domain.BotChatState, settings domain.BotVerifierS
 	b.WriteString("\n\nWhy:\n")
 	b.WriteString(state.Draft[verifierDraftReason])
 	b.WriteString("\n\nThis is a third-party mark, not the official ")
-	b.WriteString(branding.ProductName)
+	b.WriteString(branding.ProductName())
 	b.WriteString(" checkmark, and I do not decide: an operator reads the application and either grants the mark or refuses it. I will message you here either way.")
 	return b.String()
 }
@@ -1174,7 +1174,7 @@ func verifierDecisionText(req domain.CustomVerificationRequest) (string, bool) {
 	switch req.Status {
 	case domain.CustomVerificationApproved:
 		return fmt.Sprintf("Application #%d is approved: %s now carries my mark -- my icon before the name and my description in the profile.\n\nThis is a third-party mark, not the official %s checkmark. Send /revoke if you ever want it removed.",
-			req.ID, label, branding.ProductName), true
+			req.ID, label, branding.ProductName()), true
 	case domain.CustomVerificationRejected:
 		text := fmt.Sprintf("Application #%d for %s was not approved, so no mark was granted.", req.ID, label)
 		if reason := strings.TrimSpace(req.DecisionReason); reason != "" {

@@ -436,7 +436,7 @@ func TestChannelStoreSendFailureBeforePtsAllocationDoesNotRecordNoopGap(t *testi
 	if err := pool.QueryRow(ctx, `
 SELECT count(*)::int
 FROM channel_update_events
-WHERE channel_id = $1 AND pts = 2`, channelID).Scan(&gapRows); err != nil {
+WHERE channel_id = $1 AND pts > $2`, channelID, created.Channel.Pts).Scan(&gapRows); err != nil {
 		t.Fatalf("count events after failed send: %v", err)
 	}
 	if gapRows != 0 {
@@ -453,20 +453,20 @@ WHERE channel_id = $1 AND pts = 2`, channelID).Scan(&gapRows); err != nil {
 	if err != nil {
 		t.Fatalf("send owner after gap: %v", err)
 	}
-	if sent.Event.Pts != 2 {
-		t.Fatalf("next channel pts = %d, want 2 after failed send before pts allocation", sent.Event.Pts)
+	if sent.Event.Pts != created.Channel.Pts+1 {
+		t.Fatalf("next channel pts = %d, want %d after failed send before pts allocation", sent.Event.Pts, created.Channel.Pts+1)
 	}
 	diff, err := channels.ListChannelDifference(ctx, domain.ChannelDifferenceRequest{
 		UserID:    owner.ID,
 		ChannelID: channelID,
-		Pts:       1,
+		Pts:       created.Channel.Pts,
 		Limit:     10,
 	})
 	if err != nil {
 		t.Fatalf("list channel difference: %v", err)
 	}
-	if diff.Pts != 2 || len(diff.Events) != 1 || diff.Events[0].Type != domain.ChannelUpdateNewMessage || diff.Events[0].Pts != 2 {
-		t.Fatalf("diff after failed send = %+v, want only message pts=2", diff)
+	if diff.Pts != sent.Event.Pts || len(diff.Events) != 1 || diff.Events[0].Type != domain.ChannelUpdateNewMessage || diff.Events[0].Pts != sent.Event.Pts {
+		t.Fatalf("diff after failed send = %+v, want only message pts=%d", diff, sent.Event.Pts)
 	}
 }
 

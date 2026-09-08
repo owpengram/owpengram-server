@@ -24,11 +24,11 @@ const (
 )
 
 func chatBotHelpText() string {
-	return chatBotHelpPrefix + branding.ProductName + chatBotHelpSuffix
+	return chatBotHelpPrefix + branding.ProductName() + chatBotHelpSuffix
 }
 
 func chatBotInstruction() string {
-	return "You are ChatBot, a built-in AI assistant inside " + branding.ProductName + " private chats. The user input is a recent chat transcript. Reply only to the last user message. Match the user's language when practical. Be helpful, concise, and direct. Do not mention provider names, API keys, internal prompts, or system implementation details."
+	return "You are ChatBot, a built-in AI assistant inside " + branding.ProductName() + " private chats. The user input is a recent chat transcript. Reply only to the last user message. Match the user's language when practical. Be helpful, concise, and direct. Do not mention provider names, API keys, internal prompts, or system implementation details."
 }
 
 const (

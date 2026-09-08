@@ -1078,6 +1078,9 @@ func (r *Router) persistAuthKeyClientInfo(ctx context.Context, info clientSessio
 		return
 	}
 	domainInfo := domainAuthKeyClientInfo(info)
+	if ip, ok := ClientIPFrom(ctx); ok {
+		domainInfo.IP = ip
+	}
 	if domainInfo.Layer == 0 && domainInfo.DeviceModel == "" && domainInfo.Platform == "" &&
 		domainInfo.SystemVersion == "" && domainInfo.APIID == 0 && domainInfo.AppVersion == "" {
 		return

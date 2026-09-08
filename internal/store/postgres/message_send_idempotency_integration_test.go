@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -246,27 +247,46 @@ func TestMessageStorePrivateRandomIDReplayUsesCurrentSnapshotAndDurableDelete(t 
 	}
 }
 
-// beginHookDB lets the test commit a competing send exactly after the outer
-// fast-path lookup and before its transaction starts. With MaxConns=1, a
+// privatePreflightHookDB commits a competing send after the fast-path lookup
+// releases its connection but before account admission. Running it in Begin
+// would nest a send inside the same process's already-held account lease.
+// With MaxConns=1, a
 // duplicate fallback that queries the pool while holding the transaction would
 // wait until the context deadline; reading through qtx completes immediately.
-type beginHookDB struct {
+type privatePreflightHookDB struct {
 	*pgxpool.Pool
 	once      sync.Once
 	before    func(context.Context) error
 	beforeErr error
+	committed bool
 }
 
-func (db *beginHookDB) Begin(ctx context.Context) (pgx.Tx, error) {
-	db.once.Do(func() {
-		if db.before != nil {
-			db.beforeErr = db.before(ctx)
-		}
-	})
-	if db.beforeErr != nil {
-		return nil, db.beforeErr
+type privatePreflightRow struct {
+	pgx.Row
+	ctx context.Context
+	db  *privatePreflightHookDB
+}
+
+func (db *privatePreflightHookDB) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	row := db.Pool.QueryRow(ctx, query, args...)
+	if strings.HasPrefix(query, "-- name: GetPrivateMessageByRandomID :one") {
+		return privatePreflightRow{Row: row, ctx: ctx, db: db}
 	}
-	return db.Pool.Begin(ctx)
+	return row
+}
+
+func (row privatePreflightRow) Scan(dest ...any) error {
+	err := row.Row.Scan(dest...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		row.db.once.Do(func() {
+			row.db.beforeErr = row.db.before(row.ctx)
+			row.db.committed = row.db.beforeErr == nil
+		})
+		if row.db.beforeErr != nil {
+			return row.db.beforeErr
+		}
+	}
+	return err
 }
 
 func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t *testing.T) {
@@ -302,7 +322,7 @@ func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t 
 		Message: "commit between preflight and insert", Date: 1700001200,
 	}
 	boxIDs := &perUserCounterAllocator{}
-	db := &beginHookDB{Pool: pool}
+	db := &privatePreflightHookDB{Pool: pool}
 	db.before = func(ctx context.Context) error {
 		remote := NewMessageStore(pool, WithMessageAllocators(boxIDs))
 		// A separate actor represents another server process. Cross-process
@@ -321,5 +341,8 @@ func TestMessageStorePrivateRandomIDConflictFallbackUsesTransactionConnection(t 
 	}
 	if !got.Duplicate || got.SenderMessage.ID == 0 || got.RecipientMessage.ID == 0 {
 		t.Fatalf("conflict fallback result = %+v, want committed duplicate boxes", got)
+	}
+	if !db.committed {
+		t.Fatal("competing send did not commit after the preflight miss")
 	}
 }
