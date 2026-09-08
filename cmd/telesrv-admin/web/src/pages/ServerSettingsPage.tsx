@@ -636,11 +636,13 @@ const LIVE_POLL_MS = 4000;
 
 // UpdateButton is a two-state control: "Check updates" (a plain git fetch +
 // commit count, no side effects) until a check finds the branch behind its
-// upstream, at which point it becomes "Update (<N>)" -- a second click runs
-// the real git pull + rebuild + restart (via the existing update-server
-// action, called directly with confirm:true since the check step already
-// serves as the "are you sure" gate). Auto-checks once on mount so the
-// button reflects reality without an operator having to click twice.
+// upstream, at which point it becomes "Update (<N>)" -- an ActionButton
+// running the real git pull + rebuild + restart through the same
+// reason/dry-run/confirm flow as Restart beside it. The check is not the
+// gate: it only reports how far behind the branch is, and pulling somebody
+// else's commits and relaunching the deployment deserves the same recorded
+// reason as every other action here. Auto-checks once on mount so the button
+// reflects reality without an operator having to click twice.
 function UpdateButton({ onUpdateStarted }: { onUpdateStarted: (overlayLabel: string) => void }) {
   const [behind, setBehind] = useState<number | null>(null);
   const [message, setMessage] = useState("");
@@ -666,39 +668,35 @@ function UpdateButton({ onUpdateStarted }: { onUpdateStarted: (overlayLabel: str
 
   useEffect(() => { void check(); }, [check]);
 
-  async function runUpdate() {
-    const commits = behind ?? 0;
-    if (!window.confirm(`Pull ${commits} commit(s), rebuild, and restart owpengram-server and the admin panel?`)) {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const result = await api.action("/api/actions/update-server", { command_id: "", reason: "Update via Services tab", confirm: true });
-      if (result.error) {
-        setError(result.error);
-        setBusy(false);
-        return;
-      }
-      onUpdateStarted(`Pulled ${commits} commit${commits === 1 ? "" : "s"} -- rebuilding and restarting owpengram-server and the admin panel...`);
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
+  const commits = behind ?? 0;
+  const hasUpdates = commits > 0;
 
-  const hasUpdates = (behind ?? 0) > 0;
+  if (hasUpdates) {
+    return (
+      <ActionButton
+        compact
+        tone="danger"
+        icon={<Download size={15} />}
+        label={`Update (${commits})`}
+        path="/api/actions/update-server"
+        payload={() => ({})}
+        onDone={() => {
+          onUpdateStarted(`Pulled ${commits} commit${commits === 1 ? "" : "s"} -- rebuilding and restarting owpengram-server and the admin panel...`);
+        }}
+      />
+    );
+  }
 
   return (
     <button
-      className={`btn compact-btn icon-text ${hasUpdates ? "danger" : ""}`}
+      className="btn compact-btn icon-text"
       type="button"
       disabled={busy}
       title={error || message || undefined}
-      onClick={() => void (hasUpdates ? runUpdate() : check())}
+      onClick={() => void check()}
     >
-      {busy ? <Loader2 className="spin" size={15} /> : hasUpdates ? <Download size={15} /> : <RefreshCw size={15} />}
-      {hasUpdates ? `Update (${behind})` : "Check updates"}
+      {busy ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+      {"Check updates"}
     </button>
   );
 }
