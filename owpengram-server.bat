@@ -2,10 +2,17 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-rem Checks prerequisites (Go, Python 3, and its packages), then launches the
-rem interactive server-panel TUI (tui-panel\server-panel.py). Run this instead
-rem of the TUI directly so missing prerequisites get a clear message instead
-rem of a Python traceback.
+rem Checks prerequisites (Go, Python 3, and its packages), then hands off to
+rem tui-panel\server-panel.py. Run this instead of that script directly so
+rem missing prerequisites get a clear message instead of a Python traceback.
+rem
+rem   owpengram-server.bat         bootstraps .env on a fresh install, starts
+rem                                everything, prints the admin panel URL,
+rem                                and exits -- no prompts. First-time setup
+rem                                (branding, SMTP, the admin password) then
+rem                                happens in that web panel, not here.
+rem   owpengram-server.bat panel   the interactive TUI instead -- stop/
+rem                                restart/logs/.env editing from a menu.
 
 echo == Checking prerequisites ==
 
@@ -71,6 +78,6 @@ if "%PROBLEMS%"=="1" (
 )
 
 echo.
-echo [cfg] All prerequisites OK, launching server panel...
+echo [cfg] All prerequisites OK.
 echo.
 !PYTHON! tui-panel\server-panel.py %*

@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Checks prerequisites (Go, Python 3, and its packages), then launches the
-# interactive server-panel TUI (tui-panel/server-panel.py). Run this instead
-# of the TUI directly so missing prerequisites get a clear message instead of
-# a Python traceback.
+# Checks prerequisites (Go, Python 3, and its packages), then hands off to
+# tui-panel/server-panel.py. Run this instead of that script directly so
+# missing prerequisites get a clear message instead of a Python traceback.
+#
+#   ./owpengram-server.sh         bootstraps .env on a fresh install, starts
+#                                  everything, prints the admin panel URL,
+#                                  and exits -- no prompts. First-time setup
+#                                  (branding, SMTP, the admin password) then
+#                                  happens in that web panel, not here.
+#   ./owpengram-server.sh panel   the interactive TUI instead -- stop/
+#                                  restart/logs/.env editing from a menu.
 set -uo pipefail
 cd "$(dirname "$0")"
 
@@ -83,6 +90,6 @@ if [[ "$PROBLEMS" -ne 0 ]]; then
 fi
 
 echo
-echo "[cfg] All prerequisites OK, launching server panel..."
+echo "[cfg] All prerequisites OK."
 echo
 exec "$PYTHON" tui-panel/server-panel.py "$@"

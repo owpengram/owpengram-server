@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Interactive TUI control panel for the OwpenGram server.
+"""Control panel for the OwpenGram server: a non-interactive quickstart mode
+and an interactive TUI, both built on the same ServerManager.
 
-Wraps the same operations as start-server.sh / start-server.bat (Docker
-naming migration, Postgres naming migration, docker compose up, Go build,
-launching owpengram-server / owpengram-admin-panel) behind a menu you can
-navigate instead of re-running a script from scratch each time.
+With no arguments (the default `owpengram-server.sh` / .bat invocation),
+quickstart() bootstraps .env on a fresh install (generating the one secret
+that has no safe default -- the admin panel password -- instead of asking
+for it), brings up Docker, builds, launches both binaries, and prints the
+admin panel URL. No prompts; first-time configuration (branding, SMTP,
+changing that password) happens afterward in the web panel instead of here.
+
+The `panel` argument instead opens the interactive TUI below: Docker naming
+migration, Postgres naming migration, docker compose up, Go build, launching
+owpengram-server / owpengram-admin-panel, all behind a menu, for anyone who
+wants stop/restart/logs/.env editing from the terminal.
 
 Starting the server launches both binaries as fully detached background
 processes and writes their PIDs to .server_panel.json next to .env; closing
@@ -607,6 +615,126 @@ def server_public_key_pem() -> str | None:
         return public_pem.decode("ascii").strip()
     except Exception:  # noqa: BLE001 - any parse/format issue just means "unavailable"
         return None
+
+
+# --- quickstart (non-interactive: bootstrap .env, start, print the URL) ----
+#
+# The interactive Setup screen asks for four things a human has an opinion
+# on (advertise IP, public URL, app scheme, admin password) plus two pure
+# secrets it already generates without asking (TELESRV_ADMIN_API_TOKEN,
+# TELESRV_ADMIN_SESSION_KEY). Of the four, three already have a working
+# .env.example default (loopback/localhost) -- editable later from the web
+# panel's Server Settings, which parses the same .env.example groups this
+# does. The fourth, the admin password, is the one thing telesrv-admin
+# refuses to boot without and can't default to something public, so
+# quickstart generates that one too instead of blocking on terminal input.
+
+
+def bootstrap_env() -> str | None:
+    """Creates .env from .env.example if this is a fresh install. Returns
+    the freshly generated admin password, or None if .env already existed
+    (nothing was generated or touched -- an existing password is never read
+    back for display, generated or not)."""
+    if is_initialized():
+        return None
+    values = current_env_values(parse_env_template())
+    admin_password = secrets.token_urlsafe(12)
+    values["TELESRV_ADMIN_API_TOKEN"] = secrets.token_hex(32)
+    values["TELESRV_ADMIN_SESSION_KEY"] = secrets.token_urlsafe(32)
+    values["TELESRV_ADMIN_UI_PASSWORD"] = admin_password
+    save_env(values)
+    return admin_password
+
+
+def _run_naming_helper(cmd: list[str]) -> str:
+    """Runs a Docker/DB naming-migration helper directly against the real
+    console. StartupProgressScreen's equivalent (_run_interactive) goes
+    through self.app.suspend() because Textual owns the terminal at that
+    point; quickstart never starts Textual, so there is nothing to suspend.
+    Safe to call unconditionally, even on a first-ever run: both scripts
+    only prompt when they find pre-existing 'telesrv_*' Docker state to
+    migrate, and fall back cleanly rather than hang when stdin isn't a real
+    terminal -- see their own doc comments."""
+    proc = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE, text=True)
+    return proc.stdout or ""
+
+
+def resolve_naming_headless() -> tuple[str, str]:
+    cached = MANAGER.cached_docker_naming()
+    if cached is not None:
+        project, prefix = cached, cached
+    else:
+        project, prefix = MANAGER.resolve_docker_naming(_run_naming_helper)
+    if prefix == "owpengram" and MANAGER.cached_db_naming() is None:
+        MANAGER.resolve_db_naming(_run_naming_helper, f"{prefix}-postgres")
+    return project, prefix
+
+
+def quickstart() -> int:
+    """The default entry point: bootstrap, start, print where to go, exit --
+    no menu, no prompts. First-run configuration (branding, SMTP, the admin
+    password itself) all happens afterward in the web admin panel instead
+    of here; the interactive TUI (stop/restart/logs/.env editing) is still
+    available with the 'panel' argument for anyone who wants it. Returns a
+    process exit code."""
+    generated_password = bootstrap_env()
+
+    status = MANAGER.status()
+    if status.running:
+        print("[ok] Already running.")
+    else:
+        print("== Starting OwpenGram ==")
+        print()
+        try:
+            project, prefix = resolve_naming_headless()
+        except Exception as exc:  # noqa: BLE001 - report and exit, no traceback
+            print(f"[ERROR] Docker naming resolution failed: {exc}")
+            return 1
+
+        print("[..] Starting Docker infrastructure...")
+        ok, out = MANAGER.docker_compose_up(project, prefix)
+        if not ok:
+            print(f"[ERROR] docker compose up failed:\n{out.strip()}")
+            return 1
+        print("[ok] Docker infrastructure up.")
+
+        print("[..] Waiting for PostgreSQL...")
+        if not MANAGER.wait_postgres(prefix):
+            print("[ERROR] PostgreSQL did not become ready within 60s.")
+            return 1
+        print("[ok] PostgreSQL ready.")
+
+        print("[..] Building binaries (go build)...")
+        ok, out = MANAGER.build()
+        if not ok:
+            print(f"[ERROR] Build failed:\n{out.strip()}")
+            return 1
+        print("[ok] Build complete.")
+
+        print("[..] Launching owpengram-server and owpengram-admin-panel...")
+        server_pid = MANAGER.launch(SERVER_EXE, SERVER_LOG)
+        admin_pid = MANAGER.launch(ADMIN_EXE, ADMIN_LOG)
+        save_state({
+            "server_pid": server_pid,
+            "admin_pid": admin_pid,
+            "docker_project": project,
+            "docker_prefix": prefix,
+        })
+        print("[ok] Launched.")
+
+    print()
+    info = admin_ui_info()
+    if info is None:
+        print("[WARN] TELESRV_ADMIN_UI_ADDR is not set -- can't show the admin panel URL.")
+    else:
+        url, _ = info
+        print(f"Open {url} to finish setting up your server.")
+        if generated_password:
+            print(f"Initial admin password: {generated_password}")
+            print("(create a named operator account, or change this one, from Operators in the admin panel)")
+    print()
+    print("For stop/restart/logs/.env editing from the terminal instead: owpengram-server.bat panel")
+    return 0
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -1731,7 +1859,14 @@ class ServerPanelApp(App):
 
 
 if __name__ == "__main__":
-    app = ServerPanelApp()
-    app.run()
-    if app.request_restart:
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+    # No argument (the normal `owpengram-server.bat` / .sh invocation):
+    # quickstart -- bootstrap, start, print the admin panel URL, exit.
+    # `panel`: the interactive TUI this file used to always open, still
+    # available for stop/restart/logs/.env editing from the terminal.
+    if len(sys.argv) > 1 and sys.argv[1] == "panel":
+        app = ServerPanelApp()
+        app.run()
+        if app.request_restart:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        sys.exit(quickstart())
