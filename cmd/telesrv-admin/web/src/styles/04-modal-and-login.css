@@ -476,6 +476,83 @@
   }
 }
 
+/* First-run setup wizard (components/SetupWizard.tsx) -- built on the same
+   .login-page/.login-panel shell as the sign-in screen, just wider: this one
+   holds a name+description+icon row and env fields, not two single inputs. */
+.setup-wizard-panel {
+  width: min(640px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow-y: auto;
+}
+
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wizard-steps .command-step {
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 12.5px;
+}
+
+.wizard-steps .command-step strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-step-body {
+  display: grid;
+  gap: 14px;
+}
+
+.wizard-step-body > p {
+  margin: 0;
+  color: var(--text-soft);
+}
+
+.wizard-step-body > p.wizard-step-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.wizard-step-body > p.wizard-welcome-greeting {
+  color: var(--heading);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.wizard-identity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.wizard-identity-row .server-identity-fields {
+  flex: 1 1 auto;
+  display: grid;
+  gap: 10px;
+}
+
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .wizard-steps .command-step strong {
+    display: none;
+  }
+  .wizard-identity-row {
+    flex-direction: column;
+  }
+}
+
 .boot-screen {
   display: grid;
   min-height: 100vh;

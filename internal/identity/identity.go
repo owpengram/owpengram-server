@@ -9,6 +9,7 @@
 package identity
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,29 @@ import (
 const (
 	metaFileName = "identity.json"
 	iconBaseName = "icon"
+	// setupPendingFileName marks an install as not yet through the
+	// first-run wizard. Deliberately a sentinel file next to identity.json,
+	// not a field inside it: identity.json's own content changes *during*
+	// the wizard -- the Identity step saves a name well before Done is ever
+	// reached -- so a signal derived from that content (e.g. "name is set")
+	// flips to "done" the moment that one step is saved, not when the
+	// wizard actually finishes. This file is created once, by quickstart's
+	// bootstrap_env() the moment it creates a fresh .env (see
+	// tui-panel/server-panel.py), and removed once, by MarkSetupComplete --
+	// nothing in between (including a server restart mid-wizard) touches
+	// it, so "still pending" survives every step until Done really is
+	// reached.
+	setupPendingFileName = ".setup_pending"
+	// passwordTemporaryFileName holds the exact value of the password
+	// quickstart's bootstrap_env() generated for the very first login on a
+	// fresh install (see tui-panel/server-panel.py) -- created alongside
+	// setupPendingFileName, never on its own. Storing the value itself
+	// (rather than just the file's existence) is what lets
+	// TemporaryPasswordMatches tell "still the generated one" apart from
+	// "an operator has since set their own", however that happened -- a
+	// manually typed .env edit included, since that never goes through this
+	// package at all.
+	passwordTemporaryFileName = ".admin_password_temporary"
 )
 
 // Info is the editable identity shown to clients.
@@ -69,6 +93,49 @@ func (s *Store) metaPath() string {
 
 func (s *Store) iconPath(ext string) string {
 	return filepath.Join(s.dir, iconBaseName+ext)
+}
+
+func (s *Store) setupPendingPath() string {
+	return filepath.Join(s.dir, setupPendingFileName)
+}
+
+func (s *Store) passwordTemporaryPath() string {
+	return filepath.Join(s.dir, passwordTemporaryFileName)
+}
+
+// SetupPending reports whether the first-run wizard still has work to do.
+// A deployment that predates this feature (upgraded from an older admin
+// binary, or one that was never bootstrapped through quickstart at all)
+// never had this file created for it, so it reads as "not pending" --
+// already done, no wizard -- regardless of what its identity.json happens
+// to contain. A nil Store (a minimal test fixture, say) reads the same way
+// -- "not pending" is the answer that costs nothing if it's wrong.
+func (s *Store) SetupPending() bool {
+	if s == nil {
+		return false
+	}
+	_, err := os.Stat(s.setupPendingPath())
+	return err == nil
+}
+
+// TemporaryPasswordMatches reports whether password is exactly the value
+// quickstart auto-generated for the very first login. cmd/telesrv-admin's
+// validSecret pairs this with SetupPending: the generated password
+// authenticates only until the wizard finishes, so a string that was
+// printed once to a terminal and never chosen by anyone doesn't go on
+// being a standing credential forever. It never matches a password an
+// operator set themselves, at any point -- there's no file to fool it
+// with, only an exact value comparison. A nil Store never matches, same
+// reasoning as SetupPending.
+func (s *Store) TemporaryPasswordMatches(password string) bool {
+	if s == nil || password == "" {
+		return false
+	}
+	stored, err := os.ReadFile(s.passwordTemporaryPath())
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare(stored, []byte(password)) == 1
 }
 
 // Get reads the current identity. A missing file is not an error -- it just
@@ -134,6 +201,25 @@ func (s *Store) SetLoginCodeMessageTemplate(template string) error {
 	}
 	info.LoginCodeMessageTemplate = strings.TrimSpace(template)
 	return s.save(info)
+}
+
+// MarkSetupComplete removes the pending marker so SetupPending reads false
+// from here on. Idempotent -- calling it again once the marker is already
+// gone is a no-op, not an error.
+//
+// Deliberately leaves the temporary-password marker in place: validSecret
+// needs TemporaryPasswordMatches to keep recognizing that exact value
+// *after* setup completes, which is the whole mechanism that retires it --
+// deleting the marker here would make that check quietly stop matching and
+// the password would keep working forever, the opposite of the point.
+// Nothing about leaving it costs anything: it never matches a different
+// password (an operator's real one, whenever they set it), and this
+// package's only reader of it is that one comparison.
+func (s *Store) MarkSetupComplete() error {
+	if err := os.Remove(s.setupPendingPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("identity: remove setup-pending marker: %w", err)
+	}
+	return nil
 }
 
 // SetIcon replaces the icon file (removing any previous one under a

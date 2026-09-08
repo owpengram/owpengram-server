@@ -2,10 +2,14 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"telesrv/internal/identity"
 )
 
 func TestValidateAdminPassword(t *testing.T) {
@@ -200,6 +204,57 @@ func TestBreakGlassUsernameIsCaseInsensitive(t *testing.T) {
 	}
 	if _, ok := s.authenticateLogin(t.Context(), loginRequest{Username: breakGlassUsername, Secret: "wrong"}); ok {
 		t.Fatal("the break-glass operator authenticated with the wrong secret")
+	}
+}
+
+// The break-glass password quickstart generates for the very first login
+// must stop authenticating once the first-run wizard is done, but a
+// password an operator actually chose -- even one that happens to still be
+// sitting in .env from before the wizard finished -- must never be
+// affected by that. This is the actual integration point between
+// validSecret and identity.Store; the package's own tests cover
+// SetupPending/TemporaryPasswordMatches in isolation.
+func TestValidSecretRetiresOnlyTheGeneratedPassword(t *testing.T) {
+	dir := t.TempDir()
+	store := identity.NewStore(dir)
+	s := &server{cfg: uiConfig{Password: "generated-once", Permissions: []string{permissionAll}}, identity: store}
+
+	// No marker written at all yet (identity.Store's zero state) -- the
+	// password behaves like an ordinary one an operator set.
+	if !s.validSecret("generated-once") {
+		t.Fatal("password should authenticate before any wizard marker exists")
+	}
+
+	// Bootstrap-style: the setup-pending marker plus the matching
+	// temporary-password marker, exactly as tui-panel/server-panel.py's
+	// bootstrap_env() writes them on a fresh install.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".setup_pending"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".admin_password_temporary"), []byte("generated-once"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !s.validSecret("generated-once") {
+		t.Fatal("the generated password must keep working while the wizard is still pending")
+	}
+
+	// Wizard finishes: MarkSetupComplete removes both markers.
+	if err := store.MarkSetupComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if s.validSecret("generated-once") {
+		t.Fatal("the generated password must stop authenticating once setup is complete")
+	}
+
+	// An operator-chosen password behaves normally regardless: setting a
+	// new .env value (this test's stand-in for that) authenticates whether
+	// or not a wizard ever ran, because it never matches either marker.
+	s.cfg.Password = "an-operator-actually-chose-this"
+	if !s.validSecret("an-operator-actually-chose-this") {
+		t.Fatal("an operator-chosen password must authenticate after setup completion, same as always")
 	}
 }
 

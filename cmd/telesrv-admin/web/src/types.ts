@@ -580,6 +580,11 @@ export type AdminSession = {
   // 404, so this is a UI convenience on top of a real enforcement, not the
   // enforcement itself.
   hide_third_party_verification?: boolean;
+  // False until the first-run setup wizard has been finished -- see
+  // identity.Store.SetupPending. Missing/undefined is treated as true (an
+  // admin binary older than this field never gates on it), so only an
+  // explicit false shows the wizard.
+  setup_completed?: boolean;
   // Random per admin-process-start value -- see the Go handler's doc
   // comment. Used by Server Settings' Restart/Update flow to detect a
   // genuinely new admin process after asking it to bounce.

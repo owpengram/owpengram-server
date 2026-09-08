@@ -290,6 +290,35 @@ func (s *server) handleRemoveServerIconAPI(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.remove_icon", err, "server icon removed", nil))
 }
 
+// --- first-run setup wizard ----------------------------------------------
+
+type completeSetupAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+}
+
+// handleCompleteSetupAPI is the wizard's last step: removes the
+// identity.Store setup-pending marker so /api/session stops telling the
+// frontend to show it. Everything the wizard actually configures (identity,
+// .env, the operator account) is already saved as the operator moves
+// through it via the same actions Server Settings/Operators use outside the
+// wizard -- this action only marks that the walkthrough happened, so it
+// never fails partway through something worth retrying.
+func (s *server) handleCompleteSetupAPI(w http.ResponseWriter, r *http.Request) {
+	var body completeSetupAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "complete-setup")
+	if meta.DryRun {
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.complete_setup", nil, "setup completion validated", nil))
+		return
+	}
+	err := s.identity.MarkSetupComplete()
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.complete_setup", err, "setup marked complete", nil))
+}
+
 // --- .env editing --------------------------------------------------------
 
 func (s *server) handleServerEnvAPI(w http.ResponseWriter, r *http.Request) {

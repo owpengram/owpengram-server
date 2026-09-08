@@ -290,10 +290,14 @@ function LoginNotificationsSection() {
   );
 }
 
-function ServerIconModal({ hasIcon, onClose, onDone }: { hasIcon: boolean; onClose: () => void; onDone: () => void }) {
+// autoReason skips the "why is this changing" prompt in favor of a fixed
+// reason -- for the first-run wizard, where there is no prior state to
+// justify changing away from and no one else's icon to be overwriting.
+export function ServerIconModal({ hasIcon, onClose, onDone, autoReason }: { hasIcon: boolean; onClose: () => void; onDone: () => void; autoReason?: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [previewURL, setPreviewURL] = useState("");
-  const [reason, setReason] = useState("");
+  const [typedReason, setTypedReason] = useState("");
+  const reason = autoReason ?? typedReason;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -375,7 +379,9 @@ function ServerIconModal({ hasIcon, onClose, onDone }: { hasIcon: boolean; onClo
             <span className="gift-file-copy"><span className="gift-field-label">{"New icon"}</span><strong>{file ? file.name : "Choose a PNG, JPEG, WebP, or GIF image"}</strong></span>
             <span className="gift-file-action">{file ? "Change file" : "Choose file"}</span>
           </label>
-          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={reason} placeholder={"Briefly describe why the server icon is changing"} onChange={(event) => setReason(event.target.value)} /></label>
+          {autoReason === undefined && (
+            <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={typedReason} placeholder={"Briefly describe why the server icon is changing"} onChange={(event) => setTypedReason(event.target.value)} /></label>
+          )}
           {error && <Alert>{error}</Alert>}
         </div>
         <div className="modal-actions">
@@ -495,12 +501,12 @@ function sleep(ms: number): Promise<void> {
 // process is up, not just that the old one is still slow -- then reloading
 // the page. A timeout surfaces as a message with a manual reload button
 // instead of spinning forever if something went wrong server-side.
-function useAdminRestartWatcher() {
+export function useAdminRestartWatcher() {
   const [waiting, setWaiting] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const cancelled = useRef(false);
 
-  const watch = useCallback(async (timeoutMs = 150000) => {
+  const watch = useCallback(async (timeoutMs = 150000, options?: { beforeReload?: () => Promise<void> | void }) => {
     cancelled.current = false;
     setTimedOut(false);
     setWaiting(true);
@@ -518,6 +524,12 @@ function useAdminRestartWatcher() {
       try {
         const session = await api.session();
         if (session.boot_id && session.boot_id !== baseline) {
+          // beforeReload runs against the new process (this session read
+          // already proved it's up) and can't fail the reload -- a reload
+          // an operator is staring at a spinner for shouldn't hang on it.
+          if (options?.beforeReload) {
+            await Promise.resolve(options.beforeReload()).catch(() => undefined);
+          }
           window.location.reload();
           return;
         }
@@ -539,7 +551,7 @@ function useAdminRestartWatcher() {
   return { waiting, timedOut, watch, dismiss };
 }
 
-function RestartOverlay({ label, timedOut, onDismiss }: { label: string; timedOut: boolean; onDismiss: () => void }) {
+export function RestartOverlay({ label, timedOut, onDismiss }: { label: string; timedOut: boolean; onDismiss: () => void }) {
   return createPortal(
     <div className="modal-backdrop" role="presentation">
       <section className="modal command-modal restart-overlay" role="dialog" aria-modal="true" aria-label={label}>

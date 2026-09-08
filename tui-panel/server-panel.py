@@ -51,6 +51,13 @@ from textual.widgets.option_list import Option
 
 IS_WINDOWS = platform.system() == "Windows"
 
+# Mirrors breakGlassUsername in cmd/telesrv-admin/adminauth.go -- the fixed
+# name authenticateLogin resolves against TELESRV_ADMIN_UI_PASSWORD/_TOKEN
+# rather than a named operator row, i.e. whatever quickstart just generated
+# a password for. Printed alongside that password so "log in with what" has
+# an answer -- the login form itself has no default filled in.
+ADMIN_BREAK_GLASS_USERNAME = "owpengram"
+
 # psutil.cpu_percent()'s first call always returns a meaningless 0.0 baseline
 # (it measures against process start); priming it once here means the first
 # real reading in the stats timer is already a proper since-last-call delta.
@@ -64,6 +71,21 @@ ENV_FILE = ROOT / ".env"
 ENV_EXAMPLE_FILE = ROOT / ".env.example"
 COMPOSE_FILE = DEPLOY_DIR / "docker-compose.yml"
 STATE_FILE = ROOT / ".server_panel.json"
+# Matches .env.example's TELESRV_IDENTITY_DIR default -- reliable at
+# bootstrap time specifically because .env doesn't exist yet, so nothing
+# could have overridden it. See SETUP_PENDING_FILE below.
+IDENTITY_DIR = ROOT / "data" / "identity"
+# Marks an install as not yet through the first-run wizard -- see
+# internal/identity.Store.SetupPending's doc comment for the full reasoning
+# (identity.json's own content changes mid-wizard, well before Done, so it
+# can't be the signal). bootstrap_env() creates this file; the wizard's own
+# complete-setup action (identity.Store.MarkSetupComplete) removes it.
+SETUP_PENDING_FILE = IDENTITY_DIR / ".setup_pending"
+# Holds the exact value of the password bootstrap_env() generates below, so
+# identity.Store.TemporaryPasswordMatches can tell it apart from a password
+# an operator actually chose -- see that method's doc comment. Written with
+# no trailing newline; the Go side compares raw bytes.
+PASSWORD_TEMPORARY_FILE = IDENTITY_DIR / ".admin_password_temporary"
 
 SERVER_EXE = BIN_DIR / ("owpengram-server.exe" if IS_WINDOWS else "owpengram-server")
 ADMIN_EXE = BIN_DIR / ("owpengram-admin-panel.exe" if IS_WINDOWS else "owpengram-admin-panel")
@@ -631,19 +653,77 @@ def server_public_key_pem() -> str | None:
 
 
 def bootstrap_env() -> str | None:
-    """Creates .env from .env.example if this is a fresh install. Returns
-    the freshly generated admin password, or None if .env already existed
-    (nothing was generated or touched -- an existing password is never read
-    back for display, generated or not)."""
-    if is_initialized():
-        return None
+    """Creates .env from .env.example on a fresh install, or -- just as
+    important -- patches in whichever of the three secrets telesrv-admin
+    refuses to boot without (TELESRV_ADMIN_API_TOKEN,
+    TELESRV_ADMIN_SESSION_KEY, and a password/token pair) are missing from
+    an .env that already exists. That second case is not hypothetical: an
+    .env can predate these fields entirely (hand-written before this admin
+    binary existed, or missing them for any other reason), and until this
+    ran, quickstart's own "already exists, nothing to do" check skipped
+    them forever -- the admin panel would launch and immediately exit on
+    main.go's "TELESRV_ADMIN_UI_PASSWORD or TELESRV_ADMIN_UI_TOKEN is
+    required", with quickstart none the wiser (launch() doesn't check the
+    child's exit code) and "Launched." printed anyway.
+
+    Also fills in TELESRV_ADMIN_API_ADDR when it's blank, matching
+    cmd/telesrv-admin/main.go's own defaultAdminAPIAddr (127.0.0.1:2599):
+    that's owpengram-server's *internal* admin API -- the one the admin
+    panel calls into for anything the read-only Postgres connection can't
+    serve on its own, e.g. proxying an account's live avatar bytes, or any
+    of the domain mutations (freeze, grant premium, ...). .env.example
+    ships it blank on purpose, so admin-panel functionality that depends on
+    it silently no-ops (an <img> just falls back to initials; a mutation
+    action surfaces a "connection refused") until someone notices and sets
+    it -- there's no reason to make a self-hoster running both binaries
+    together, which is exactly what quickstart does, discover and fix that
+    by hand.
+
+    Returns the freshly generated admin password if one was generated
+    (fresh install, or an existing .env that had neither a password nor a
+    token), or None if nothing needed generating -- an existing password is
+    never read back for display either way.
+
+    SETUP_PENDING_FILE (which gates the first-run wizard) and
+    PASSWORD_TEMPORARY_FILE (which makes that generated password stop
+    working once the wizard finishes -- see
+    identity.Store.TemporaryPasswordMatches) are only ever written on the
+    fresh-install branch. Patching secrets into an .env that was already
+    there isn't a first run -- there is likely already a real identity,
+    real data, real users behind it -- so it must never force that install
+    through the wizard, and a password generated to plug that gap has to
+    go on working indefinitely (nothing will ever run MarkSetupComplete to
+    retire it, since SetupPending was never true for it in the first
+    place)."""
+    fresh_install = not is_initialized()
     values = current_env_values(parse_env_template())
-    admin_password = secrets.token_urlsafe(12)
-    values["TELESRV_ADMIN_API_TOKEN"] = secrets.token_hex(32)
-    values["TELESRV_ADMIN_SESSION_KEY"] = secrets.token_urlsafe(32)
-    values["TELESRV_ADMIN_UI_PASSWORD"] = admin_password
+
+    generated_password = None
+    changed = False
+    if not values.get("TELESRV_ADMIN_UI_PASSWORD") and not values.get("TELESRV_ADMIN_UI_TOKEN"):
+        generated_password = secrets.token_urlsafe(12)
+        values["TELESRV_ADMIN_UI_PASSWORD"] = generated_password
+        changed = True
+    if not values.get("TELESRV_ADMIN_API_TOKEN"):
+        values["TELESRV_ADMIN_API_TOKEN"] = secrets.token_hex(32)
+        changed = True
+    if not values.get("TELESRV_ADMIN_SESSION_KEY"):
+        values["TELESRV_ADMIN_SESSION_KEY"] = secrets.token_urlsafe(32)
+        changed = True
+    if not values.get("TELESRV_ADMIN_API_ADDR"):
+        values["TELESRV_ADMIN_API_ADDR"] = "127.0.0.1:2599"
+        changed = True
+
+    if not fresh_install and not changed:
+        return None  # existing .env, and every required secret was already set
+
     save_env(values)
-    return admin_password
+    if fresh_install:
+        IDENTITY_DIR.mkdir(parents=True, exist_ok=True)
+        SETUP_PENDING_FILE.touch()
+        if generated_password:
+            PASSWORD_TEMPORARY_FILE.write_text(generated_password)
+    return generated_password
 
 
 def _run_naming_helper(cmd: list[str]) -> str:
@@ -730,8 +810,8 @@ def quickstart() -> int:
         url, _ = info
         print(f"Open {url} to finish setting up your server.")
         if generated_password:
+            print(f"Login: {ADMIN_BREAK_GLASS_USERNAME}")
             print(f"Initial admin password: {generated_password}")
-            print("(create a named operator account, or change this one, from Operators in the admin panel)")
     print()
     print("For stop/restart/logs/.env editing from the terminal instead: owpengram-server.bat panel")
     return 0

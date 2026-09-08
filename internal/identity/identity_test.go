@@ -197,3 +197,98 @@ func TestStoreWelcomeMessageTemplatesPreservedAcrossTextEdits(t *testing.T) {
 		t.Fatalf("welcome message templates lost after unrelated SetText: %+v", info)
 	}
 }
+
+// TestStoreSetupPendingSurvivesIdentityWrites is the regression case for the
+// bug where "setup complete" was inferred from identity.json's own content
+// (a non-empty name): the wizard's own Identity step calls SetText well
+// before Done is ever reached, which made that content-based check flip to
+// "done" mid-wizard -- a restart-and-reload partway through skipped
+// straight to the normal shell. SetupPending must stay true across any
+// number of unrelated identity writes and clear only via MarkSetupComplete.
+func TestStoreSetupPendingSurvivesIdentityWrites(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	// Not pending at all until something (quickstart's bootstrap_env, in
+	// production) creates the marker -- an install this store never saw
+	// bootstrapped is treated as predating the wizard, not as mid-wizard.
+	if s.SetupPending() {
+		t.Fatal("expected SetupPending() == false before the marker file exists")
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, setupPendingFileName), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !s.SetupPending() {
+		t.Fatal("expected SetupPending() == true once the marker file exists")
+	}
+
+	// The Identity step's save, and everything else short of Done.
+	if err := s.SetText("Demo Server", "A test server"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetIcon([]byte{1, 2, 3}, ".png"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.SetupPending() {
+		t.Fatal("expected SetupPending() to stay true after unrelated identity writes")
+	}
+
+	if err := s.MarkSetupComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if s.SetupPending() {
+		t.Fatal("expected SetupPending() == false after MarkSetupComplete")
+	}
+
+	// Idempotent: calling it again once already gone is not an error.
+	if err := s.MarkSetupComplete(); err != nil {
+		t.Fatalf("MarkSetupComplete should be idempotent, got: %v", err)
+	}
+}
+
+// TestStoreTemporaryPasswordMatches covers the one-time-login password
+// quickstart generates: it must match only its own exact value, never an
+// operator-chosen one. MarkSetupComplete deliberately does NOT erase this
+// marker (see that method's doc comment) -- retiring the password is
+// validSecret's job, combining this with SetupPending; on its own,
+// TemporaryPasswordMatches keeps recognizing the same stored value even
+// after the wizard finishes, which is exactly what lets that combination
+// work at every login from then on, not just the first one after Done.
+func TestStoreTemporaryPasswordMatches(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	if s.TemporaryPasswordMatches("anything") {
+		t.Fatal("expected no match before the marker file exists")
+	}
+	if s.TemporaryPasswordMatches("") {
+		t.Fatal("an empty password must never match")
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, passwordTemporaryFileName), []byte("generated-pw-123"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TemporaryPasswordMatches("generated-pw-123") {
+		t.Fatal("expected a match against the exact stored value")
+	}
+	if s.TemporaryPasswordMatches("something-an-operator-typed") {
+		t.Fatal("a different password must never match the marker")
+	}
+
+	if err := s.MarkSetupComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TemporaryPasswordMatches("generated-pw-123") {
+		t.Fatal("expected the match to survive MarkSetupComplete -- see its doc comment for why")
+	}
+	if s.SetupPending() {
+		t.Fatal("expected SetupPending() == false after MarkSetupComplete regardless")
+	}
+}

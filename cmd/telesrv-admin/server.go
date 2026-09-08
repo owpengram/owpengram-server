@@ -202,6 +202,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-login-code-message-template", s.serverManage(s.handleSetLoginCodeMessageTemplateAPI))
 	mux.Handle("POST /api/actions/upload-server-icon", s.serverManage(s.handleUploadServerIconAPI))
 	mux.Handle("POST /api/actions/remove-server-icon", s.serverManage(s.handleRemoveServerIconAPI))
+	mux.Handle("POST /api/actions/complete-setup", s.serverManage(s.handleCompleteSetupAPI))
 	mux.Handle("GET /api/server/env", s.serverManage(s.handleServerEnvAPI))
 	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
 	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
@@ -314,6 +315,16 @@ func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) validSecret(secret string) bool {
 	if s.cfg.Password != "" && subtle.ConstantTimeCompare([]byte(secret), []byte(s.cfg.Password)) == 1 {
+		// The password quickstart auto-generates for the very first login
+		// (see identity.Store.TemporaryPasswordMatches) is only good until
+		// the first-run wizard finishes -- one login's worth of "how do I
+		// even get in", not a credential anyone actually chose to keep
+		// around. A password an operator set on purpose, whether by saving
+		// one from Server Settings or editing .env by hand, never matches
+		// the stored generated value, so this never touches it.
+		if s.identity.TemporaryPasswordMatches(s.cfg.Password) && !s.identity.SetupPending() {
+			return false
+		}
 		return true
 	}
 	if s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(secret), []byte(s.cfg.Token)) == 1 {
@@ -352,6 +363,10 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"actor":                         actorFromContext(r.Context()),
 		"permissions":                   permissionsFromContext(r.Context()).List(),
 		"hide_third_party_verification": s.cfg.HideThirdPartyVerification,
+		// setup_completed gates the first-run wizard -- see
+		// identity.Store.SetupPending's doc comment for why this reads a
+		// sentinel file rather than anything in identity.json itself.
+		"setup_completed": !s.identity.SetupPending(),
 		// boot_id is random per process start (see main.go) -- Server
 		// Settings' Restart/Update flow polls this after triggering an
 		// action and reloads the page once it changes, which is how it

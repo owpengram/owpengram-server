@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { BootScreen, Shell } from "./components/Layout";
+import { SetupWizard } from "./components/SetupWizard";
 import { LoginPage } from "./pages/LoginPage";
-import { PermissionsProvider } from "./permissions";
+import { permissionAll, permissionServerManage, PermissionsProvider } from "./permissions";
 import { Routes } from "./pages/Routes";
 import { currentRoute, type RouteState } from "./routing";
 import type { AdminSession } from "./types";
@@ -53,6 +54,18 @@ export function App() {
         }}
       />
     );
+  }
+
+  // The wizard only ever shows to whoever can actually act on it -- a
+  // limited operator signing in before setup is finished just sees the
+  // normal (mostly empty) shell instead of a wizard whose every step would
+  // 403. setup_completed undefined (an admin binary old enough to predate
+  // the field) reads as "done", same convention as the type's doc comment.
+  const canRunSetupWizard = (session.permissions ?? []).some(
+    (permission) => permission === permissionAll || permission === permissionServerManage
+  );
+  if (session.setup_completed === false && canRunSetupWizard) {
+    return <SetupWizard />;
   }
 
   return (
