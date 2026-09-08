@@ -413,6 +413,45 @@
   width: 100%;
 }
 
+/* Login form: username and password are two panels of equal width, slid
+   horizontally by translateX on the track rather than shown/hidden, so
+   moving between them reads as one continuous field instead of a page
+   swap. The clipping .login-wizard is what makes the off-screen step
+   invisible; aria-hidden + tabIndex={-1} in the component keep it out of
+   the tab order and screen readers while it's off-screen. */
+.login-wizard {
+  overflow: hidden;
+}
+
+.login-wizard-track {
+  display: flex;
+  transition: transform 220ms ease;
+}
+
+.login-wizard-step {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+/* Back sits beside Log in rather than squeezed against the "Password"
+   label -- as a normal-height text+icon button it has a real click target
+   and room to breathe, instead of a 22px icon crowding the label above a
+   400px-wide field. */
+.login-wizard-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.login-wizard-actions .btn.primary {
+  flex: 1 1 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-wizard-track {
+    transition: none;
+  }
+}
+
 .boot-screen {
   display: grid;
   min-height: 100vh;
