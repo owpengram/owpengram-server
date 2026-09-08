@@ -109,10 +109,6 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
             <ThemeSwitch />
           </div>
         </div>
-        <div className="login-copy">
-          <h1>{"Operations Admin"}</h1>
-          <p>{"Enter credentials to open the console."}</p>
-        </div>
         {error && <Alert>{error}</Alert>}
         <form className="form-stack" onSubmit={submit}>
           <div className="login-wizard">

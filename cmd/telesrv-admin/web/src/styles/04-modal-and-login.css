@@ -388,17 +388,6 @@
   font-size: 12px;
 }
 
-.login-copy h1 {
-  margin: 0;
-  color: var(--heading);
-  font-size: 22px;
-}
-
-.login-copy p {
-  margin: 8px 0 0;
-  color: var(--muted);
-}
-
 .form-stack {
   display: grid;
   gap: 12px;
