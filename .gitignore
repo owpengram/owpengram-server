@@ -35,6 +35,10 @@ tmp/
 .db_naming
 .server_panel.json
 
+# Local-only destructive dev tool (deletes .env, data/, Docker volumes) --
+# never belongs in the repo.
+/wipe-server.bat
+
 # IDE
 .idea/
 .vscode/
