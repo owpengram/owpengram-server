@@ -142,6 +142,23 @@ fi
 
 needs() { local x; for x in "${NEEDED[@]}"; do [[ "$x" == "$1" ]] && return 0; done; return 1; }
 
+# Tools this script itself leans on, installed before anything tries to use
+# them. A minimal Ubuntu has no curl, and the Go tarball download would die on
+# its first call -- after root was already taken and the first package was
+# already installed, which is the worst place to stop. Arch's base always has
+# curl (pacman links against it), so in practice this is the Debian path.
+ensure_installer_tools() {
+  local wanted=()
+  have curl || wanted+=("curl")
+  # Without the CA bundle every https download fails certificate verification.
+  if [[ "$FAMILY" == "debian" && ! -e /etc/ssl/certs/ca-certificates.crt ]]; then
+    wanted+=("ca-certificates")
+  fi
+  [[ ${#wanted[@]} -eq 0 ]] && return 0
+  info "Installing what this script needs first: ${wanted[*]}"
+  pkg_install "${wanted[@]}"
+}
+
 # --- package manager ---------------------------------------------------------
 APT_UPDATED=0
 apt_update_once() {
@@ -156,6 +173,8 @@ pkg_install() {
     debian) apt_update_once; $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
   esac
 }
+
+ensure_installer_tools
 
 # --- Python + OpenSSL --------------------------------------------------------
 if needs python; then
@@ -283,6 +302,19 @@ fi
 # into it (PEP 668), and owpengram-server.sh already prefers ./.venv when present.
 if needs pydeps; then
   info "Installing the panel's Python packages into ./.venv"
+  # Debian/Ubuntu ship venv separately from python3, so an interpreter that was
+  # already installed (and therefore skipped the Python step above) can still be
+  # missing ensurepip -- `python3 -m venv` then fails halfway through, leaving a
+  # broken .venv behind. The package is named for the interpreter's version;
+  # the unversioned metapackage is the fallback for Debian releases that have it.
+  if [[ "$FAMILY" == "debian" ]] && ! python3 -c 'import ensurepip' 2>/dev/null; then
+    PYVER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    info "Installing python${PYVER}-venv"
+    pkg_install "python${PYVER}-venv" 2>/dev/null || pkg_install python3-venv
+  fi
+  # A previous failed attempt leaves a .venv without an interpreter; starting
+  # over is the only way out of that, and it costs nothing when it is absent.
+  [[ -x "$(venv_python)" ]] || rm -rf "$REPO_ROOT/.venv"
   [[ -x "$(venv_python)" ]] || python3 -m venv "$REPO_ROOT/.venv"
   "$(venv_python)" -m pip install --quiet --upgrade pip
   "$(venv_python)" -m pip install --quiet -r tui-panel/requirements-panel.txt
