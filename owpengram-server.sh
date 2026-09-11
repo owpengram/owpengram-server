@@ -86,7 +86,28 @@ fi
 
 if [[ "$PROBLEMS" -ne 0 ]]; then
   echo
-  die "missing prerequisites above -- install them and re-run this script"
+  # Hand off to the installer rather than stopping at a shopping list. It asks
+  # for confirmation once, takes root once, and installs only what is missing.
+  # The re-exec is what makes the freshly installed tools count: this shell
+  # resolved `go`/`python3` before any of them existed. OWPENGRAM_PREREQS_TRIED
+  # bounds it to a single retry, so a package that still will not install ends
+  # in a message instead of a loop.
+  if [[ -n "${OWPENGRAM_PREREQS_TRIED:-}" ]]; then
+    die "prerequisites are still missing after the install attempt -- see the messages above"
+  fi
+  if [[ ! -x scripts/install-prereqs.sh ]]; then
+    die "missing prerequisites above -- install them and re-run this script"
+  fi
+  echo "== Installing the missing prerequisites =="
+  if ! scripts/install-prereqs.sh; then
+    die "could not install the prerequisites -- see the messages above"
+  fi
+  # /etc/profile.d/go.sh only applies to shells started later, and the venv is
+  # not on PATH at all; both are picked up by the re-exec below because the
+  # re-check looks for .venv/bin/python first.
+  [[ -d /usr/local/go/bin ]] && export PATH="$PATH:/usr/local/go/bin"
+  echo
+  OWPENGRAM_PREREQS_TRIED=1 exec "$0" "$@"
 fi
 
 echo

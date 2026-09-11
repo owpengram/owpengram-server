@@ -71,10 +71,38 @@ if defined PYTHON (
 )
 
 if "%PROBLEMS%"=="1" (
+  rem Hand off to the winget installer rather than stopping at a shopping list.
+  rem OWPENGRAM_PREREQS_TRIED bounds this to a single retry, so something that
+  rem will not install ends in a message instead of a loop.
+  if defined OWPENGRAM_PREREQS_TRIED (
+    echo.
+    echo [ERROR] prerequisites are still missing after the install attempt -- see the messages above
+    pause
+    exit /b 1
+  )
+  if not exist "scripts\install-prereqs.ps1" (
+    echo.
+    echo [ERROR] missing prerequisites above -- install them and re-run this script
+    pause
+    exit /b 1
+  )
   echo.
-  echo [ERROR] missing prerequisites above -- install them and re-run this script
-  pause
-  exit /b 1
+  echo == Installing the missing prerequisites ==
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\install-prereqs.ps1"
+  if errorlevel 1 (
+    echo.
+    echo [ERROR] could not install the prerequisites -- see the messages above
+    pause
+    exit /b 1
+  )
+  rem winget writes the new PATH to the registry, but this console still holds
+  rem the one it started with -- reload it so the re-check below can see what
+  rem was just installed instead of asking for a fresh terminal.
+  for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
+  set "OWPENGRAM_PREREQS_TRIED=1"
+  echo.
+  call "%~f0" %*
+  exit /b !errorlevel!
 )
 
 echo.

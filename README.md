@@ -144,6 +144,16 @@ re-run commands from scratch every time.
 Both launchers check prerequisites first (Go, Python 3, and the panel's own
 dependencies via `tui-panel/requirements-panel.txt`), then start the panel.
 
+Anything missing is installed for you rather than listed: the launcher hands off
+to `scripts/install-prereqs.sh` (Arch and Ubuntu/Debian — asks for root once,
+then installs Go, Python, Docker and OpenSSL) or `scripts/install-prereqs.ps1`
+(Windows, via winget). Run either directly with `--dry-run` to see what it would
+install without touching anything.
+
+Docker on Windows is the one exception: its containers are Linux images, so the
+daemon needs Docker Desktop's WSL2 backend — an install with a reboot and its own
+licence terms. The script reports it with a link instead of starting it.
+
 What it does:
 
 - 🧙 **First-run setup wizard** — walks through the required `.env` values
