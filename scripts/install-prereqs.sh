@@ -312,10 +312,17 @@ if needs pydeps; then
     info "Installing python${PYVER}-venv"
     pkg_install "python${PYVER}-venv" 2>/dev/null || pkg_install python3-venv
   fi
-  # A previous failed attempt leaves a .venv without an interpreter; starting
-  # over is the only way out of that, and it costs nothing when it is absent.
-  [[ -x "$(venv_python)" ]] || rm -rf "$REPO_ROOT/.venv"
-  [[ -x "$(venv_python)" ]] || python3 -m venv "$REPO_ROOT/.venv"
+  # A venv built while ensurepip was missing still has a working interpreter --
+  # it is pip that is absent, so "is there a python in there" answers yes and
+  # the repair never happens. Usable means pip runs; anything else gets thrown
+  # away and rebuilt, which costs nothing when there was nothing there.
+  venv_ok() {
+    local py
+    py="$(venv_python)"
+    [[ -x "$py" ]] && "$py" -m pip --version >/dev/null 2>&1
+  }
+  venv_ok || rm -rf "$REPO_ROOT/.venv"
+  venv_ok || python3 -m venv "$REPO_ROOT/.venv"
   "$(venv_python)" -m pip install --quiet --upgrade pip
   "$(venv_python)" -m pip install --quiet -r tui-panel/requirements-panel.txt
   ok "Python packages installed"
