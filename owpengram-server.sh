@@ -124,8 +124,11 @@ if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev
      getent group docker 2>/dev/null | grep -qE "[:,]${USER}(,|$)"; then
     # The marker travels inside the command rather than the environment: sg and
     # newgrp are setgid and may sanitise what they pass on, and losing it is the
-    # one failure that would loop instead of stopping.
-    RELAUNCH="OWPENGRAM_SG_DOCKER=1 $(printf '%q ' "$0" "$@")"
+    # one failure that would loop instead of stopping. It goes through env
+    # because the newgrp branch below runs this after `exec`, and exec takes no
+    # assignment prefix -- it would look for a command called
+    # "OWPENGRAM_SG_DOCKER=1".
+    RELAUNCH="$(printf '%q ' env OWPENGRAM_SG_DOCKER=1 "$0" "$@")"
     if command -v sg >/dev/null 2>&1; then
       echo "[..] Applying your new 'docker' group membership for this run"
       exec sg docker -c "$RELAUNCH"
