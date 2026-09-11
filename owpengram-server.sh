@@ -110,6 +110,29 @@ if [[ "$PROBLEMS" -ne 0 ]]; then
   OWPENGRAM_PREREQS_TRIED=1 exec "$0" "$@"
 fi
 
+# --- Docker group ------------------------------------------------------------
+# usermod -aG docker only changes what a *new* login gets: the shell that just
+# ran the installer still has the old group set, so the panel's first
+# `docker compose up` dies with "permission denied while trying to connect to
+# the docker API at unix:///var/run/docker.sock". sg re-enters this script with
+# the group applied and needs no logout, so the install-then-start run works in
+# one go. Matched on the exact symptom -- a daemon that is simply not running is
+# a different problem and must not be swallowed here.
+if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev/null 2>&1; then
+  DOCKER_ERR="$(docker version 2>&1 >/dev/null || true)"
+  if [[ "$DOCKER_ERR" == *"permission denied"* ]] &&
+     getent group docker 2>/dev/null | grep -qE "[:,]${USER}(,|$)"; then
+    if command -v sg >/dev/null 2>&1; then
+      echo "[..] Applying your new 'docker' group membership for this run"
+      export OWPENGRAM_SG_DOCKER=1
+      exec sg docker -c "$(printf '%q ' "$0" "$@")"
+    fi
+    echo
+    die "you were added to the 'docker' group, but this shell still has the old one --
+       log out and back in (or run 'newgrp docker'), then re-run this script"
+  fi
+fi
+
 echo
 echo "[cfg] All prerequisites OK."
 echo

@@ -114,6 +114,12 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 if [[ "$ASSUME_YES" -ne 1 ]]; then
+  # Without a terminal there is nobody to answer, and `read` would block for as
+  # long as the caller is willing to wait -- which for a CI job or a wrapping
+  # script is forever. Say so instead of hanging.
+  if [[ ! -t 0 ]]; then
+    die "no terminal to confirm on -- re-run with --yes to install without asking, or --dry-run to only look"
+  fi
   read -r -p "Install these now? This needs root. [Y/n] " answer
   case "${answer:-y}" in
     [Yy]|[Yy][Ee][Ss]|"") ;;
@@ -290,7 +296,8 @@ if [[ "$GO_NEEDS_NEW_SHELL" -eq 1 ]]; then
   echo "       export PATH=\$PATH:/usr/local/go/bin"
 fi
 if [[ "$DOCKER_NEEDS_RELOGIN" -eq 1 ]]; then
-  echo "     You were added to the 'docker' group. Log out and back in (or run"
-  echo "     'newgrp docker') before docker works without sudo."
+  echo "     You were added to the 'docker' group. Already-running shells keep the"
+  echo "     old one -- owpengram-server.sh re-enters itself with 'sg docker' so this"
+  echo "     run works anyway, but log out and back in before using docker elsewhere."
 fi
 echo "     Then start the server with: ./owpengram-server.sh"

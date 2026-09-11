@@ -136,6 +136,13 @@ if ($DryRun) {
 }
 
 if ($needed.Count -gt 0 -and -not $Yes) {
+    # Without a console there is nobody to answer, and Read-Host would block for
+    # as long as the caller is willing to wait -- forever, for a CI job or a
+    # wrapping script. Say so instead of hanging.
+    if ([Console]::IsInputRedirected) {
+        Write-Err 'no console to confirm on -- re-run with -Yes to install without asking, or -DryRun to only look'
+        exit 1
+    }
     $answer = Read-Host 'Install these now? [Y/n]'
     if ($answer -and $answer -notmatch '^(y|yes)$') {
         Write-Err 'cancelled'
