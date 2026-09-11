@@ -122,10 +122,21 @@ if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev
   DOCKER_ERR="$(docker version 2>&1 >/dev/null || true)"
   if [[ "$DOCKER_ERR" == *"permission denied"* ]] &&
      getent group docker 2>/dev/null | grep -qE "[:,]${USER}(,|$)"; then
+    # The marker travels inside the command rather than the environment: sg and
+    # newgrp are setgid and may sanitise what they pass on, and losing it is the
+    # one failure that would loop instead of stopping.
+    RELAUNCH="OWPENGRAM_SG_DOCKER=1 $(printf '%q ' "$0" "$@")"
     if command -v sg >/dev/null 2>&1; then
       echo "[..] Applying your new 'docker' group membership for this run"
-      export OWPENGRAM_SG_DOCKER=1
-      exec sg docker -c "$(printf '%q ' "$0" "$@")"
+      exec sg docker -c "$RELAUNCH"
+    fi
+    # Arch ships newgrp but not sg. newgrp takes no command: it execs a shell
+    # that reads stdin, so the command has to arrive that way -- which leaves
+    # stdin a pipe, and the panel is a full-screen TUI that needs a terminal.
+    # Reopening /dev/tty inside hands it back a real one.
+    if command -v newgrp >/dev/null 2>&1 && [[ -e /dev/tty ]]; then
+      echo "[..] Applying your new 'docker' group membership for this run"
+      exec newgrp docker <<< "exec ${RELAUNCH} < /dev/tty"
     fi
     echo
     die "you were added to the 'docker' group, but this shell still has the old one --
