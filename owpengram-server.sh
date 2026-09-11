@@ -141,9 +141,16 @@ if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev
       echo "[..] Applying your new 'docker' group membership for this run"
       exec newgrp docker <<< "exec ${RELAUNCH} < /dev/tty"
     fi
+    # Neither helper is guaranteed: Arch has no sg at all, and Ubuntu moved it
+    # into util-linux-extra. Logging out is the one instruction that always
+    # works, so lead with it and only mention newgrp when it is actually there.
     echo
-    die "you were added to the 'docker' group, but this shell still has the old one --
+    if command -v newgrp >/dev/null 2>&1; then
+      die "you were added to the 'docker' group, but this shell still has the old one --
        log out and back in (or run 'newgrp docker'), then re-run this script"
+    fi
+    die "you were added to the 'docker' group, but this shell still has the old one --
+       log out and back in, then re-run this script"
   fi
 fi
 
