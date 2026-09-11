@@ -27,13 +27,14 @@ import { Alert } from "./ui";
 // you naming your own server" is friction with no audit value.
 const WIZARD_REASON = "Set from the first-run setup wizard";
 
-type StepId = "welcome" | "identity" | "network" | "account" | "done";
+type StepId = "welcome" | "identity" | "network" | "botapi" | "account" | "done";
 
-const STEP_ORDER: StepId[] = ["welcome", "identity", "network", "account", "done"];
+const STEP_ORDER: StepId[] = ["welcome", "identity", "network", "botapi", "account", "done"];
 const STEP_LABEL: Record<StepId, string> = {
   welcome: "Welcome",
   identity: "Identity",
   network: "Network",
+  botapi: "Bot API",
   account: "Account",
   done: "Done"
 };
@@ -82,7 +83,8 @@ export function SetupWizard() {
 
         {step === "welcome" && <WelcomeStep onNext={() => goTo("identity")} />}
         {step === "identity" && <IdentityStep onNext={() => goTo("network")} />}
-        {step === "network" && <NetworkStep onNext={() => goTo("account")} />}
+        {step === "network" && <NetworkStep onNext={() => goTo("botapi")} />}
+        {step === "botapi" && <BotApiStep onNext={() => goTo("account")} />}
         {step === "account" && <AccountStep onNext={() => goTo("done")} />}
         {step === "done" && <DoneStep />}
       </section>
@@ -284,6 +286,121 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
   );
 }
 
+const BOT_API_KEY = "TELESRV_BOT_API_ADDR";
+const BOT_API_DEFAULT_ADDR = "127.0.0.1:2500";
+
+// An empty TELESRV_BOT_API_ADDR is what disables the gateway: botapi.Start
+// returns early on a blank address. A malformed or already-taken one is worth
+// catching here rather than server-side, because cmd/telesrv/main.go turns a
+// failed botapi.Start into a fatal "start bot api" error -- and the step that
+// applies this is the wizard's own restart, so a typo would leave the operator
+// staring at a server that never comes back.
+function botApiAddrError(addr: string): string {
+  const value = addr.trim();
+  if (value === "") return "Enter an address like " + BOT_API_DEFAULT_ADDR + ".";
+  const colon = value.lastIndexOf(":");
+  if (colon < 0) return "Include a port, for example " + BOT_API_DEFAULT_ADDR + ".";
+  const port = Number(value.slice(colon + 1));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return "Port must be a whole number between 1 and 65535.";
+  return "";
+}
+
+function BotApiStep({ onNext }: { onNext: () => void }) {
+  const [enabled, setEnabled] = useState(false);
+  const [addr, setAddr] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    api.serverEnv()
+      .then((groups) => {
+        if (cancelled) return;
+        for (const group of groups) {
+          for (const field of group.fields) {
+            if (field.key !== BOT_API_KEY) continue;
+            setEnabled(field.value.trim() !== "");
+            setAddr(field.value.trim());
+          }
+        }
+        setLoaded(true);
+      })
+      .catch((err) => { if (!cancelled) { setError(errorMessage(err)); setLoaded(true); } });
+    return () => { cancelled = true; };
+  }, []);
+
+  const addrError = enabled ? botApiAddrError(addr) : "";
+
+  async function submit() {
+    if (addrError) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.action("/api/actions/update-server-env", {
+        command_id: "", reason: WIZARD_REASON, confirm: true,
+        values: { [BOT_API_KEY]: enabled ? addr.trim() : "" }
+      });
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      onNext();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="wizard-step-body">
+      <p className="wizard-step-hint">
+        {"An HTTP gateway that lets bot libraries -- python-telegram-bot, aiogram and friends -- "}
+        {"talk to this server. Leave it off if you are not running bots; you can turn it on later in Server Settings."}
+      </p>
+      {error && <Alert>{error}</Alert>}
+      <label className="checkline">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={!loaded}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setEnabled(next);
+            if (next && addr.trim() === "") setAddr(BOT_API_DEFAULT_ADDR);
+          }}
+        />
+        {" Enable the Bot API gateway"}
+      </label>
+      {enabled && (
+        <label className="form-field env-field">
+          <span>{"Listen address"}</span>
+          <span className="env-field-desc">
+            {"Keep 127.0.0.1 to accept only local bots; use 0.0.0.0 to expose it. "}
+            {"The server will refuse to start if this port is already taken."}
+          </span>
+          <input
+            value={addr}
+            placeholder={BOT_API_DEFAULT_ADDR}
+            disabled={!loaded}
+            spellCheck={false}
+            autoCapitalize="none"
+            onChange={(event) => setAddr(event.target.value)}
+          />
+          {addrError && <span className="env-field-desc">{addrError}</span>}
+        </label>
+      )}
+      <WizardActions>
+        <button className="btn primary icon-text" type="button" disabled={busy || !loaded || addrError !== ""} onClick={() => void submit()}>
+          {busy ? <Loader2 className="spin" size={15} /> : <ArrowRight size={15} />}
+          {"Continue"}
+        </button>
+      </WizardActions>
+    </div>
+  );
+}
+
 function AccountStep({ onNext }: { onNext: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -375,8 +492,8 @@ function DoneStep() {
   return (
     <div className="wizard-step-body">
       <p>
-        {"That's the essentials. Finishing restarts the server so the network settings from the previous "}
-        {"step take effect. Everything here stays editable from Server Settings and Operators any time."}
+        {"That's the essentials. Finishing restarts the server so the network and Bot API settings from "}
+        {"the earlier steps take effect. Everything here stays editable from Server Settings and Operators any time."}
       </p>
       {error && <Alert>{error}</Alert>}
       <WizardActions>
