@@ -94,6 +94,15 @@ Some items are compatibility-first or experimental, but they are real open
 server code, not hidden product-only features.
 </details>
 
+## 🚀 Want to see it first?
+
+You do not have to run a server to try OwpenGram. We keep a **public server
+live**, and it ships inside both clients as a ready-made entry — install a
+client, pick **OwpenGram** on the server-selection screen, sign in. Nothing to
+configure.
+
+Come back here when you want that server to be yours.
+
 ## ⚡ Quick Start
 
 **1. Clone the repository**
@@ -425,6 +434,8 @@ the public routes to it with HTTPS.
 
 Use the OwpenGram clients, which have a built-in **Add Server** option on the
 server-selection screen at login — no source patching or custom build needed.
+They also ship with our public server already in that list, so a client is
+useful the moment it is installed, with or without a server of your own.
 Both are forks of the official apps, kept on the same TL layer as the server and
 rebased on the upstream release that introduced it:
 

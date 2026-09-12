@@ -10,6 +10,9 @@ node_modules/
 __pycache__/
 *.py[cod]
 *$py.class
+# install-prereqs.sh / owpengram-server.sh create this for the panel's packages.
+# Untracked and unignored, it was one `git clean -fd` away from being deleted.
+/.venv/
 
 # 本地环境 / 密钥（server RSA private key 必须持久化，但禁止入库）
 .env

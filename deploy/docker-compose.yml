@@ -70,7 +70,12 @@ services:
   # 桶由 telesrv 自己在启动时按需创建（internal/app/files/blobs3.go 的 NewS3FS），
   # 这里不需要额外的 mc 初始化容器。控制台（9001）仅用于本地调试查看已存对象。
   minio:
-    image: minio/minio:latest
+    # quay.io, not Docker Hub: MinIO stopped serving minio/minio to anonymous
+    # pulls there, so `docker compose up` failed on a fresh machine with
+    # "pull access denied ... or may require 'docker login'" -- for every tag,
+    # not just latest. quay.io/minio/minio is MinIO's own registry and needs
+    # no login.
+    image: quay.io/minio/minio:latest
     container_name: ${TELESRV_DOCKER_PREFIX:-owpengram}-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
