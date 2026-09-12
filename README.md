@@ -8,8 +8,8 @@
 
 The protocol stack is built on the published
 [`github.com/iamxvbaba/td`](https://github.com/iamxvbaba/td) module
-(`v1.1.0`), using a canonical Layer 228 schema with sparse `tlprofile`
-exact Layer 225-228 compatibility profiles.
+(`v1.3.2`), using a canonical Layer 229 schema with sparse `tlprofile`
+exact Layer 225-229 compatibility profiles.
 
 If you are looking for a **Telegram server**, **MTProto server**,
 **Telegram backend**, **Telegram clone server**, or **self-hosted
@@ -21,7 +21,10 @@ in Go. Run it on your own network for a private, closed setup, or on a VPS to
 be reachable anywhere in the world. Your data, your keys, your rules — no
 cloud, no lock-in, no censorship.
 
-> 🔗 Implements **MTProto API layer 228**.
+> 🔗 Implements **MTProto API layers 225-229** — a client is admitted on the
+> exact layer it announces, so older builds keep working after the server moves
+> forward. The running server reports its version, the layers it accepts, and
+> its build in the admin panel sidebar.
 
 `OwpenGram Server` is independent and unofficial. It is not affiliated with, endorsed by,
 or sponsored by Telegram or the official Telegram team.
@@ -36,6 +39,9 @@ or sponsored by Telegram or the official Telegram team.
 - 🛡️ **Censorship-resistant** — no central authority can shut you down.
 - ⚙️ **Single binary** — one Go program prepares keys, runs migrations, serves
   MTProto, and dispatches updates and background workers.
+- 📦 **One command to install** — the launcher installs the prerequisites
+  it needs (Go, Python, Docker, OpenSSL), brings the stack up, and hands you
+  a browser setup wizard.
 - 🆓 **Free & open source** — Apache-2.0, audit and extend it freely.
 
 ## 🎯 What works today
@@ -50,6 +56,15 @@ or sponsored by Telegram or the official Telegram team.
 - 🔑 Self-hosted "Log in with Telegram" (OpenID Connect) and passkey sign-in
 - 🌐 Message translation and AI-assisted compose
 - 📇 Contacts, dialogs sync, chat folders, public link landing pages
+- 🔎 **Self-configuring clients** — "Add Server" needs only `host:port`; the
+  server publishes its DC id, RSA key and identity over a well-known HTTP path
+- 👥 **Multi-operator admin panel** — named operator accounts with scoped
+  permissions, instead of one shared password
+- 🗄️ **Storage management** — usage breakdown, retention rules, and guarded
+  purge of orphaned or expired media
+- 👋 Welcome messages and login-code templates you can edit from the panel
+- 🧙 **First-run web setup wizard** — server identity, public address, Bot API
+  and your operator account, then a restart, all from the browser
 - 🖥️ Admin API and web UI for operations, plus a TUI server panel to run it all
 
 <details>
@@ -57,7 +72,7 @@ or sponsored by Telegram or the official Telegram team.
 
 | Status | Feature | What works today |
 |---|---|---|
-| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 228, and sparse exact Layer 225-228 compatibility profiles. |
+| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 229, sparse exact Layer 225-229 compatibility profiles, and a same-port HTTP side that serves WebSocket transport plus the `/owpengram/server-info` and `/owpengram/server-icon` self-configuration endpoints. |
 | ✅ | Login and accounts | Development login code, configurable external code delivery (SMS webhook or SMTP), login email as a second factor, email-as-identity sign-up (no phone number needed), sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, WebAuthn passkey sign-in, and a self-hosted Telegram Login (OpenID Connect) provider for third-party sites. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
@@ -72,7 +87,7 @@ or sponsored by Telegram or the official Telegram team.
 | ✅ | Collectible usernames and verification | Fragment-style NFT/collectible usernames (mint, transfer, activate/deactivate), the official platform-checkmark flow (`@verifybot`), and a third-party bot-verification mark mechanism (`@marksbot`, icon + description before a name) — the latter is experimental and hidden by default. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
-| ✅ | Admin and operations | Admin API/UI backend, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, load-test helpers, and a bundled TUI server panel (setup wizard, start/stop/restart, one-click update via `git pull` + rebuild, live logs, `.env` editor) as an alternative to manual builds. |
+| ✅ | Admin and operations | Admin API/UI backend, a first-run web setup wizard (server identity, public network fields, optional Bot API gateway, first operator account), named operator accounts with per-section permissions and a wildcard "full access" grant, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), editable welcome and login-code message templates, storage management (usage breakdown, retention rules, guarded purge), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, load-test helpers, one-click update with a dry run before it applies, and a bundled TUI server panel as an alternative to the web UI. |
 | ✅ | Desktop, Android, iOS, and Web focus | Telegram Desktop is the primary target, with Android, iOS, and Web compatibility paths actively covered by the same server. |
 
 Some items are compatibility-first or experimental, but they are real open
@@ -81,12 +96,6 @@ server code, not hidden product-only features.
 
 ## ⚡ Quick Start
 
-Requirements:
-
-- **Go 1.25+**
-- **Docker** (or Docker Desktop), for PostgreSQL and Redis
-- OpenSSL, to export the server's RSA public key for the client's "Add Server" dialog
-
 **1. Clone the repository**
 
 ```bash
@@ -94,13 +103,56 @@ git clone https://github.com/owpengram/owpengram-server.git
 cd owpengram-server
 ```
 
-**2. Start the infrastructure** (PostgreSQL + Redis)
+**2. Run the launcher**
+
+```bash
+./owpengram-server.sh     # Linux
+```
+```powershell
+.\owpengram-server.bat    # Windows
+```
+
+The launcher checks what the server needs — Go 1.25+, Python 3, Docker,
+OpenSSL — and **installs whatever is missing** instead of handing you a
+shopping list: `scripts/install-prereqs.sh` on Arch and Ubuntu/Debian (asks for
+root once, then works unattended) or `scripts/install-prereqs.ps1` on Windows
+via winget. Run either directly with `--dry-run` to see what it would install
+without touching anything.
+
+> Docker on Windows is the one thing the script will not install for you: its
+> containers are Linux images, so the daemon needs Docker Desktop's WSL2
+> backend. The launcher reports it with a link instead of starting it.
+
+**3. Answer the first-run form**
+
+With the prerequisites in place the launcher opens the server panel. On a fresh
+clone it shows a short form instead of the menu — only the values that need a
+human decision, with `.env.example` defaults for everything else; the admin API
+token and session key are generated for you. Confirm it and the panel writes
+`.env`, starts PostgreSQL/Redis, builds both binaries, runs them, and shows the
+admin panel address and password ready to copy.
+
+**4. Finish setup in the browser**
+
+Open that address. On a fresh install the panel opens a **web setup wizard**
+that walks through the server name, description and icon, the public address
+clients will connect to, the optional Bot API gateway, and your own operator
+account — then restarts the server so it all takes effect. Nothing has to be
+hand-edited to get going.
+
+<details>
+<summary><b>🔧 Prefer to do it manually? (click to expand)</b></summary>
+
+Requirements: **Go 1.25+**, **Docker** (or Docker Desktop) for PostgreSQL and
+Redis, and OpenSSL.
+
+**Start the infrastructure** (PostgreSQL + Redis)
 
 ```powershell
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-**3. Build and run the server**
+**Build and run the server**
 
 Windows (PowerShell):
 
@@ -123,51 +175,85 @@ workers in the same process.
 
 > **Default local login code:** `12345` — change it before any real use!
 
-> 💡 **Prefer a menu over the command line?** Steps 2 and 3 above (Docker
-> infrastructure, build, run) can be done through the bundled **TUI server
-> panel** instead — see "🖥️ Server Panel" right below.
+Without the web wizard you also have to fill in `.env` yourself; see
+"⚙️ Configuration" below and [`.env.example`](.env.example).
 
-### 🖥️ Server Panel (optional)
+</details>
 
-A cross-platform interactive TUI wraps the steps above — Docker naming
-migration, `docker compose up`, `go build`, and launching both
-`owpengram-server` and `owpengram-admin-panel` — behind a menu, so you don't
-re-run commands from scratch every time.
+### 🖥️ Server Panel
 
-```bash
-./owpengram-server.sh     # Linux/macOS
-```
-```powershell
-.\owpengram-server.bat    # Windows
-```
-
-Both launchers check prerequisites first (Go, Python 3, and the panel's own
-dependencies via `tui-panel/requirements-panel.txt`), then start the panel.
-
-Anything missing is installed for you rather than listed: the launcher hands off
-to `scripts/install-prereqs.sh` (Arch and Ubuntu/Debian — asks for root once,
-then installs Go, Python, Docker and OpenSSL) or `scripts/install-prereqs.ps1`
-(Windows, via winget). Run either directly with `--dry-run` to see what it would
-install without touching anything.
-
-Docker on Windows is the one exception: its containers are Linux images, so the
-daemon needs Docker Desktop's WSL2 backend — an install with a reboot and its own
-licence terms. The script reports it with a link instead of starting it.
+The launcher from step 2 is also a cross-platform interactive TUI: once the
+prerequisites are in place it drops into a menu that wraps everything above —
+Docker naming migration, `docker compose up`, `go build`, and launching both
+`owpengram-server` and `owpengram-admin-panel` — so you don't re-run commands
+from scratch every time.
 
 What it does:
 
-- 🧙 **First-run setup wizard** — walks through the required `.env` values
-  before the first start.
+- 🧙 **First-run setup** — the short `.env` form from step 3. It is the
+  only thing the panel offers on a fresh clone; once `.env` exists the menu
+  below replaces it, and later changes go through the `.env` editor.
 - ▶️ **Start / Stop / Restart** — launches `owpengram-server` and
   `owpengram-admin-panel` as detached background processes; closing the panel
   does **not** stop them, only "Stop" does. Reopening the panel later picks
   the same processes back up and reports live status.
 - ⬆️ **Update** — `git pull --ff-only`, rebuilds both binaries, restarts them,
   and re-execs the panel itself so it also picks up any change to its own
-  code — one menu action instead of a manual pull/build/restart sequence.
+  code — one menu action instead of a manual pull/build/restart sequence. The
+  web panel has the same action, with a dry run that reports what an update
+  would do before anything is applied.
 - 📜 **Live log viewer** — tail either binary's log, or both in a split view.
 - ⚙️ **`.env` editor** — edit configuration from inside the panel, grouped by
   feature, without hand-editing the file.
+
+### 🏷️ Version and build
+
+The admin panel's sidebar footer identifies exactly what is running:
+
+```text
+Version: O7
+API layers: 225-229
+Build: 7ad68c3
+```
+
+- **Version** — the OwpenGram server release line (`O7`).
+- **API layers** — every MTProto TL schema layer this binary can talk, read
+  straight from the compatibility profiles rather than hardcoded.
+- **Build** — the short commit the binary was built from, stamped
+  automatically by Go's VCS info (no special build flags needed); a trailing
+  `+` means it was built from a working tree with uncommitted changes. Hover
+  it for the full hash.
+
+Quote the `Version` / `Build` pair in bug reports — it pins the exact code,
+which a release tag alone does not.
+
+### 👥 Operators and permissions
+
+The panel is no longer one shared password. Its **Operators** page creates
+named accounts, each with its own login and an explicit set of permissions,
+granted per section and per level — for example `accounts.read`
+vs `accounts.manage`, `storage.read` vs `storage.manage`, `broadcasts.send`,
+`moderation.review`, `server.manage`, `admins.manage`. An operator only sees
+the sections they hold a permission for; reaching anything else lands on a
+clear 403 screen instead of an empty page.
+
+A **Full access** checkbox at the top of the permission grid grants the `*`
+wildcard — everything, including permissions added by future releases. It is
+deliberately separate from the grid (which is disabled while it is on), so
+"this person is a full admin" and "this person may do these six things" never
+get confused.
+
+The one thing the panel will not let you do is lock yourself out: removing
+`admins.manage` from the last enabled operator who holds it — by editing,
+disabling, or deleting them — is refused, whether the grant is explicit or via
+the wildcard. There is always someone left who can manage operators.
+
+Your first operator is created by the web setup wizard. Before it exists, the
+panel lets you in with a password it generates for that one purpose — and stops
+accepting that generated password the moment the wizard finishes. A password you
+set yourself (in Server Settings, or `TELESRV_ADMIN_UI_PASSWORD` in `.env`)
+keeps working as a full-access break-glass login alongside the operator
+accounts, so leave it unset or treat it like a root password.
 
 ### ⚙️ Configuration
 
@@ -266,6 +352,17 @@ Related toggles (defaults in `.env.example`'s Advanced section): a low-space
 guard that rejects new uploads once storage nears full, and automatic
 cleanup of media no longer referenced by any message.
 
+**Storage management in the panel.** The admin panel's Storage page puts the
+rest of this behind a UI: a usage breakdown per media type, an upload size cap
+(`TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES`, validated against the protocol's own
+upload ceiling), retention rules that can expire media globally or per type
+(`TELESRV_STORAGE_RETENTION_MODE` and the `TELESRV_STORAGE_RETENTION_MAX_AGE*`
+family), and a "danger zone" for manual purges by media category and age.
+
+Destructive panel actions — purge, update, restart — all go through the same
+three-step flow: type a reason, run a **dry run** that reports exactly what
+would happen, then confirm. Nothing irreversible fires on a single click.
+
 ## 🔌 Ports to open
 
 When deploying on a public server, open the following according to the
@@ -327,37 +424,45 @@ the public routes to it with HTTPS.
 ## 📱 Connect a client
 
 Use the OwpenGram clients, which have a built-in **Add Server** option on the
-server-selection screen at login — no source patching or custom build needed:
+server-selection screen at login — no source patching or custom build needed.
+Both are forks of the official apps, kept on the same TL layer as the server and
+rebased on the upstream release that introduced it:
 
-- 🤖 [Android client](https://github.com/owpengram/owpengram-android-client)
-- 💻 [Desktop client](https://github.com/owpengram/owpengram-desktop-client)
+| Client | Upstream base | Upstream commit | TL layer |
+|---|---|---|---|
+| 💻 [Desktop](https://github.com/owpengram/owpengram-desktop-client) | Telegram Desktop `v7.2.2` | `7b4481b6941212bb9dbf08e533adea97947b0f44` | 229 |
+| 🤖 [Android](https://github.com/owpengram/owpengram-android-client) | Telegram for Android `v12.10.1` | `62b56a07ca7e30e39f7fd00a6728d6bbd716ca1c` | 229 |
 
 A stock Telegram client will not connect, since it only trusts Telegram's own
-DC list and RSA keys.
+DC list and RSA keys. The server's canonical layer is 229, with exact
+compatibility profiles for layers 225-229 — so an older fork build keeps
+working after the server moves forward. Locally that server is
+`127.0.0.1:2398`, DC id `2`.
 
-- Telegram Desktop commit: `9caf32dffc90ddd9bb08ad5777b865f729fa167b`
-- Canonical TL layer: 228
-- Exact compatibility profiles: Layer 225-228
-- Local DC: `127.0.0.1:2398`, DC id `2`
+**All you need is `host:port`.** On the login screen open server selection →
+**Add Server** and type the address (e.g. `chat.example.com:2398`, or
+`192.168.1.50:2398`). The client fetches `/owpengram/server-info` from the same
+port and fills in the rest by itself — RSA public key, DC id, and the server's
+name, description and icon as you set them in the setup wizard. No
+`openssl`, no PEM copy-paste.
 
-**1. Export your server's public key**
+The RSA key and DC id are still there under **Advanced** if you want to check
+or override them. To get the key by hand — for an air-gapped machine, or to
+verify what the client fetched — export it from the server's private key:
 
-After the server generates `data/server_rsa.pem`, export the matching public
-key as PEM:
-
-```powershell
+```bash
 openssl rsa -in data/server_rsa.pem -RSAPublicKey_out -out data/server_rsa.pub
 ```
 
-**2. Add the server in the client**
+or just read the JSON the client reads:
 
-On the login screen, open server selection → **Add Server**, and fill in:
+```bash
+curl http://your-server:2398/owpengram/server-info
+```
 
-- **Host** — your server's address (e.g. `192.168.1.50` or `chat.example.com`)
-- **Port** — `2398` by default
-- **Main data center** — the DC id from `TELESRV_DC` (`2` by default)
-- **RSA Public Key** — paste the full contents of `data/server_rsa.pub`
-  (the `-----BEGIN RSA PUBLIC KEY-----...` PEM block) into the key field
+> Self-configuration rides the same-port HTTP side that also serves the
+> WebSocket transport, so it needs `TELESRV_WEBSOCKET_ENABLE=true` (the
+> default) and opens no extra port. With it off, fill in **Advanced** manually.
 
 ## 🧪 Development: multi-device smoke test
 
@@ -384,16 +489,21 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 ## 📂 Repository layout
 
 ```text
+owpengram-server.sh/.bat  one-command launcher (installs prerequisites, then the panel)
+scripts/install-prereqs.* unattended prerequisite installers (Arch/Ubuntu, Windows)
 cmd/telesrv/              server entrypoint
-cmd/telesrv-admin/        admin backend and web UI
+cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
+cmd/telesrv-update/       one-click update helper used by the panels
 tui-panel/                interactive TUI server panel (setup, start/stop, update, logs, .env editor)
 deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
 data/                     bundled language packs and optional seed data
-internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend
+internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints
 internal/rpc/             TL router and client compatibility handlers
 internal/app/             domain services
 internal/domain/          protocol-independent domain models
 internal/store/           memory/postgres/redis storage backends
+internal/identity/        admin-editable server name, description, and icon
+internal/botapi/          minimal HTTP Bot API gateway
 internal/seed/            bundled seed catalog loaders
 internal/sfu/             real-time SFU experiments
 internal/turnsrv/         TURN/STUN building blocks
