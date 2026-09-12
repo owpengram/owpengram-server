@@ -293,6 +293,16 @@ if needs docker; then
   if [[ $EUID -ne 0 ]] && ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
     $SUDO usermod -aG docker "$USER"
     DOCKER_NEEDS_RELOGIN=1
+    # The new group only reaches a *new* login, so owpengram-server.sh re-enters
+    # itself with `sg docker` to make this run work without one. Debian split sg
+    # out of util-linux into util-linux-extra, and recent Ubuntu images ship
+    # neither it nor newgrp -- on those the launcher had no way back in and could
+    # only tell the user to log out. Pulling it in here is the difference between
+    # install-then-start working in one go and not.
+    if [[ "$FAMILY" == "debian" ]] && ! have sg; then
+      info "Installing util-linux-extra (provides sg)"
+      pkg_install util-linux-extra || warn "could not install util-linux-extra"
+    fi
   fi
   ok "Docker installed: $(docker --version)"
 fi
@@ -336,7 +346,7 @@ if [[ "$GO_NEEDS_NEW_SHELL" -eq 1 ]]; then
 fi
 if [[ "$DOCKER_NEEDS_RELOGIN" -eq 1 ]]; then
   echo "     You were added to the 'docker' group. Already-running shells keep the"
-  echo "     old one -- owpengram-server.sh re-enters itself with 'sg docker' so this"
-  echo "     run works anyway, but log out and back in before using docker elsewhere."
+  echo "     old one -- owpengram-server.sh re-enters itself so this run works"
+  echo "     anyway, but log out and back in before using docker elsewhere."
 fi
 echo "     Then start the server with: ./owpengram-server.sh"

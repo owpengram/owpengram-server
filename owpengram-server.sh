@@ -128,7 +128,10 @@ if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev
     # because the newgrp branch below runs this after `exec`, and exec takes no
     # assignment prefix -- it would look for a command called
     # "OWPENGRAM_SG_DOCKER=1".
-    RELAUNCH="$(printf '%q ' env OWPENGRAM_SG_DOCKER=1 "$0" "$@")"
+    # Absolute: this script cd'd to its own directory at the top, so a relative
+    # $0 that carried a directory component no longer resolves from here.
+    SELF="$PWD/$(basename "$0")"
+    RELAUNCH="$(printf '%q ' env OWPENGRAM_SG_DOCKER=1 "$SELF" "$@")"
     if command -v sg >/dev/null 2>&1; then
       echo "[..] Applying your new 'docker' group membership for this run"
       exec sg docker -c "$RELAUNCH"
@@ -141,9 +144,18 @@ if [[ -z "${OWPENGRAM_SG_DOCKER:-}" && $EUID -ne 0 ]] && command -v docker >/dev
       echo "[..] Applying your new 'docker' group membership for this run"
       exec newgrp docker <<< "exec ${RELAUNCH} < /dev/tty"
     fi
-    # Neither helper is guaranteed: Arch has no sg at all, and Ubuntu moved it
-    # into util-linux-extra. Logging out is the one instruction that always
-    # works, so lead with it and only mention newgrp when it is actually there.
+    # Neither helper is guaranteed: Arch has no sg at all, Debian moved it into
+    # util-linux-extra, and recent Ubuntu images were seen shipping neither it
+    # nor newgrp. sudo is the one thing that is certainly here by now -- the
+    # installer just used it to install Docker -- and `sudo -g` sets the group
+    # directly, with no login shell and no extra package. Last rather than first
+    # because it can prompt for a password, which sg and newgrp do not.
+    if command -v sudo >/dev/null 2>&1; then
+      echo "[..] Applying your new 'docker' group membership for this run"
+      exec sudo -u "$USER" -g docker env OWPENGRAM_SG_DOCKER=1 \
+        PATH="$PATH" "$SELF" "$@"
+    fi
+    # Nothing left to try: logging out is the one instruction that always works.
     echo
     if command -v newgrp >/dev/null 2>&1; then
       die "you were added to the 'docker' group, but this shell still has the old one --
