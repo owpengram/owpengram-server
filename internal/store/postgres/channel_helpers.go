@@ -884,7 +884,16 @@ WHERE owner_user_id=$1 AND peer_type='user' AND peer_id=$2 AND box_id=$3 AND NOT
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
+	// Outside a forum the client's top_msg_id decides nothing: the thread root is
+	// whichever thread the reply target belongs to, which reply.TopMessageID
+	// already holds, and the caller's value is discarded either way. Refusing the
+	// mismatch there only broke real clients -- stock tdesktop fills top_msg_id
+	// with ForumTopic::kGeneralId (1) when it attaches a file in a comments
+	// thread on a linked discussion group, so every media comment failed with
+	// REPLY_MESSAGE_ID_INVALID while the same comment sent as text went through.
+	// Inside a forum the value really does pick a topic, so a disagreement there
+	// is still a client error worth refusing.
+	if channel.Forum && req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
 		return nil, domain.ErrReplyMessageIDInvalid
 	}
 	if channel.Forum && reply.TopMessageID > 0 {

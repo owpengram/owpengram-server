@@ -565,7 +565,10 @@ func (s *ChannelStore) resolveChannelReplyLocked(req domain.SendChannelMessageRe
 	if target.ReplyTo != nil && target.ReplyTo.TopMessageID > 0 {
 		reply.TopMessageID = target.ReplyTo.TopMessageID
 	}
-	if req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
+	// Mirrors the postgres store: only a forum's top_msg_id selects anything, so
+	// only there is a disagreement with the computed thread root refused. See
+	// the comment on the same check in store/postgres/channel_helpers.go.
+	if channel.Forum && req.ReplyTo.TopMessageID > 0 && req.ReplyTo.TopMessageID != reply.TopMessageID {
 		return nil, domain.ErrReplyMessageIDInvalid
 	}
 	if channel.Forum && reply.TopMessageID > 0 {
