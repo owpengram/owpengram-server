@@ -607,6 +607,33 @@ def append_missing_env_fields(missing: list[tuple[str, str]]) -> None:
         f.write("\n".join(block) + "\n")
 
 
+def browsable_host_port(host_port: str) -> str:
+    """Rewrites a wildcard bind to loopback, for display only.
+
+    TELESRV_ADMIN_UI_ADDR ships as 0.0.0.0:2600 so the panel is reachable from
+    other machines. But 0.0.0.0 means "every interface" -- it is not an address
+    anyone can type into a browser, and printing http://0.0.0.0:2600 as the
+    thing to open is the first instruction a new install gives you. Swap the
+    host for loopback so the printed URL actually works; the bind itself is
+    never touched.
+    """
+    s = host_port.strip()
+    if s.startswith("["):  # bracketed IPv6: [::]:2600, [::1]:2600
+        close = s.find("]")
+        if close == -1:
+            return s
+        host, rest = s[1:close], s[close + 1:]
+        return ("[::1]" if host in ("::", "") else f"[{host}]") + rest
+    host, sep, port = s.rpartition(":")
+    if not sep:  # no port at all, nothing worth guessing about
+        return s
+    if host in ("0.0.0.0", "", "*"):
+        return f"127.0.0.1:{port}"
+    if host == "::":
+        return f"[::1]:{port}"
+    return s
+
+
 def admin_ui_info() -> tuple[str, str | None] | None:
     """Returns (url, password) for the admin UI, or None if it isn't
     configured at all. password is None when TELESRV_ADMIN_UI_PASSWORD is
@@ -614,7 +641,12 @@ def admin_ui_info() -> tuple[str, str | None] | None:
     addr = read_env_value("TELESRV_ADMIN_UI_ADDR")
     if not addr:
         return None
-    url = addr if addr.startswith(("http://", "https://")) else f"http://{addr}"
+    if addr.startswith(("http://", "https://")):
+        scheme, _, rest = addr.partition("://")
+        netloc, slash, path = rest.partition("/")
+        url = f"{scheme}://{browsable_host_port(netloc)}{slash}{path}"
+    else:
+        url = f"http://{browsable_host_port(addr)}"
     return url, (read_env_value("TELESRV_ADMIN_UI_PASSWORD") or None)
 
 
