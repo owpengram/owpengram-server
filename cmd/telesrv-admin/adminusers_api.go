@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"telesrv/internal/admin"
 )
@@ -24,6 +23,11 @@ import (
 // /api/actions/* route that takes a reason, runs as a dry run first and returns
 // an admin.CommandResult. Granting somebody the run of the console deserves the
 // same "here is what this will do, confirm it" step as freezing an account.
+//
+// Executions go through runOperatorCommand (admin_command_runner.go), which
+// binds the mutation, the admin_commands row and the audit row into one
+// transaction, makes command_id idempotent and serialises the last-manager
+// guard, so a command cannot half-land in the trail.
 
 // requireAdminsManage is the single gate for every operator-account route, so
 // none of them can be registered without it by accident.
@@ -45,97 +49,72 @@ var errLastManagerStanding = errors.New("this would leave no enabled account abl
 var errUsernameReserved = errors.New("this username is reserved for the built-in operator")
 
 // createAdminConsoleUser inserts a new operator. token_epoch starts at 1; there
-// are no sessions to invalidate yet.
+// are no sessions to invalidate yet. Kept for the store-level callers and
+// integration tests; the routed mutation executes the same write inside
+// runOperatorCommand's transaction.
 func (s *server) createAdminConsoleUser(ctx context.Context, username, password string, permissions []string, enabled bool) (AdminConsoleUser, error) {
-	if err := validateAdminUsername(username); err != nil {
-		return AdminConsoleUser{}, err
+	var q pgxRunner
+	if s != nil && s.read != nil {
+		q = s.read.pool
 	}
-	// authenticateLogin resolves this name to the environment credential before
-	// it ever reaches the table, so a row by this name could never be logged
-	// into. Refuse it rather than storing an account that silently does nothing.
-	if strings.EqualFold(strings.TrimSpace(username), breakGlassUsername) {
-		return AdminConsoleUser{}, errUsernameReserved
-	}
-	hash, err := hashAdminPassword(password)
-	if err != nil {
-		return AdminConsoleUser{}, err
-	}
-	permissions = normalisePermissions(permissions)
-
-	var u AdminConsoleUser
-	err = s.read.pool.QueryRow(ctx, `
-INSERT INTO admin_console_users (username, password_hash, permissions, enabled)
-VALUES ($1, $2, $3, $4)
-RETURNING `+adminConsoleUserColumns,
-		strings.TrimSpace(username), hash, permissions, enabled).
-		Scan(&u.ID, &u.Username, &u.Permissions, &u.Enabled, &u.TokenEpoch,
-			&u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return AdminConsoleUser{}, errAdminUsernameTaken
-	}
-	if err != nil {
-		return AdminConsoleUser{}, fmt.Errorf("create admin console user: %w", err)
-	}
-	if u.Permissions == nil {
-		u.Permissions = []string{}
-	}
-	return u, nil
+	return createAdminConsoleUserOn(ctx, q, username, password, permissions, enabled)
 }
 
-// updateAdminConsoleUser changes permissions and/or enabled state.
-//
-// It deliberately does NOT move token_epoch. currentSessionPermissions re-reads
-// this row on every request, so a narrowed permission set applies from the
-// operator's next request and a disabled account is refused outright -- both
-// without ending a session. Bumping the epoch here would only sign someone out
-// mid-task to achieve what the re-read already achieves.
-//
-// A password change is different and does bump it: the password is not
-// re-checked per request, so nothing else would retire the old sessions.
+// updateAdminConsoleUser changes permissions and/or enabled state. Kept for
+// the store-level callers and integration tests; the routed mutation executes
+// the same write inside runOperatorCommand's transaction.
 func (s *server) updateAdminConsoleUser(ctx context.Context, id int64, permissions []string, enabled bool) (AdminConsoleUser, error) {
-	permissions = normalisePermissions(permissions)
-
-	var u AdminConsoleUser
-	err := s.read.pool.QueryRow(ctx, `
-UPDATE admin_console_users
-SET permissions = $2,
-    enabled     = $3,
-    updated_at  = now()
-WHERE id = $1
-RETURNING `+adminConsoleUserColumns,
-		id, permissions, enabled).
-		Scan(&u.ID, &u.Username, &u.Permissions, &u.Enabled, &u.TokenEpoch,
-			&u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return AdminConsoleUser{}, errAdminUserNotFound
+	var q pgxRunner
+	if s != nil && s.read != nil {
+		q = s.read.pool
 	}
-	if err != nil {
-		return AdminConsoleUser{}, fmt.Errorf("update admin console user: %w", err)
-	}
-	if u.Permissions == nil {
-		u.Permissions = []string{}
-	}
-	return u, nil
+	return updateAdminConsoleUserOn(ctx, q, id, permissions, enabled)
 }
 
 // setAdminConsoleUserPassword replaces the hash and bumps the epoch, so a
-// password change signs out whoever was using the old one -- which is the
-// point of changing it after a suspected compromise.
+// password change signs out whoever was using the old one. Kept for the
+// store-level callers and integration tests; the routed mutation executes the
+// same write inside runOperatorCommand's transaction.
 func (s *server) setAdminConsoleUserPassword(ctx context.Context, id int64, password string) error {
-	hash, err := hashAdminPassword(password)
-	if err != nil {
-		return err
+	var q pgxRunner
+	if s != nil && s.read != nil {
+		q = s.read.pool
 	}
-	tag, err := s.read.pool.Exec(ctx, `
-UPDATE admin_console_users
-SET password_hash = $2, token_epoch = token_epoch + 1, updated_at = now()
-WHERE id = $1`, id, hash)
-	if err != nil {
-		return fmt.Errorf("set admin console user password: %w", err)
+	return setAdminConsoleUserPasswordOn(ctx, q, id, password)
+}
+
+// guardManagerRemoval refuses an edit that would leave nobody able to manage
+// operators. Kept for integration tests that drive it directly off the pool;
+// the routed mutation runs guardManagerRemovalTx inside the command
+// transaction instead, serialised on the advisory lock.
+func (s *server) guardManagerRemoval(ctx context.Context, id int64, permissions []string, enabled bool) error {
+	var q pgxRunner
+	if s != nil && s.read != nil {
+		q = s.read.pool
 	}
-	if tag.RowsAffected() == 0 {
-		return errAdminUserNotFound
+	return guardManagerRemovalOn(ctx, q, id, permissions, enabled)
+}
+
+// validatePermissions refuses anything outside the assignable vocabulary. The
+// wildcard is not in that list (see assignablePermissions) but is explicitly
+// allowed here too: a named operator can hold "*" the same way the
+// break-glass login does, via the "Full access" toggle in the admin panel.
+func validatePermissions(permissions []string) error {
+	assignable := assignablePermissions()
+	for _, p := range permissions {
+		if p == permissionAll {
+			continue
+		}
+		found := false
+		for _, allowed := range assignable {
+			if p == allowed {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown permission %q", p)
+		}
 	}
 	return nil
 }
@@ -215,53 +194,51 @@ func (s *server) handleCreateAdminUserAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "admin-operator-create")
+	const action = "create-admin-operator"
 	enabled := body.Enabled == nil || *body.Enabled
 	permissions := normalisePermissions(body.Permissions)
+	username := strings.TrimSpace(body.Username)
+	// Credential-free params: the password is bound into the request envelope
+	// only as the fingerprint computed by runOperatorCommand.
+	params := map[string]any{"username": username, "permissions": permissions, "enabled": enabled}
 
-	// Validate on the dry run too, so "this will fail" is discovered before the
-	// operator is asked to confirm rather than after.
-	if err := validateAdminUsername(strings.TrimSpace(body.Username)); err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: "create-admin-operator"}, err)
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(body.Username), breakGlassUsername) {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: "create-admin-operator"}, errUsernameReserved)
-		return
-	}
-	if err := validateAdminPassword(body.Password); err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: "create-admin-operator"}, err)
-		return
+	fn := func(ctx context.Context, tx pgx.Tx) (admin.CommandResult, error) {
+		// Validate on the dry run too, so "this will fail" is discovered before
+		// the operator is asked to confirm rather than after.
+		if err := validateAdminUsername(username); err != nil {
+			return admin.CommandResult{}, err
+		}
+		if strings.EqualFold(username, breakGlassUsername) {
+			return admin.CommandResult{}, errUsernameReserved
+		}
+		if err := validateAdminPassword(body.Password); err != nil {
+			return admin.CommandResult{}, err
+		}
+		if err := validatePermissions(permissions); err != nil {
+			return admin.CommandResult{}, err
+		}
+		if meta.DryRun {
+			return admin.CommandResult{
+				Status: "ok",
+				DryRun: true,
+				Message: fmt.Sprintf("Would create operator %q with %d permission(s), %s.",
+					username, len(permissions), enabledWord(enabled)),
+				Details: params,
+			}, nil
+		}
+		user, err := createAdminConsoleUserOn(ctx, tx, username, body.Password, permissions, enabled)
+		if err != nil {
+			return admin.CommandResult{}, err
+		}
+		return admin.CommandResult{
+			Status:  "ok",
+			Message: fmt.Sprintf("Created operator %q.", user.Username),
+			Details: map[string]any{"id": user.ID, "username": user.Username, "permissions": user.Permissions, "enabled": user.Enabled},
+		}, nil
 	}
 
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, admin.CommandResult{
-			CommandID: meta.CommandID,
-			Action:    "create-admin-operator",
-			Status:    "ok",
-			DryRun:    true,
-			Message: fmt.Sprintf("Would create operator %q with %d permission(s), %s.",
-				strings.TrimSpace(body.Username), len(permissions), enabledWord(enabled)),
-			Details: map[string]any{
-				"username":    strings.TrimSpace(body.Username),
-				"permissions": permissions,
-				"enabled":     enabled,
-			},
-		})
-		return
-	}
-
-	user, err := s.createAdminConsoleUser(r.Context(), body.Username, body.Password, permissions, enabled)
-	if err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: "create-admin-operator"}, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, admin.CommandResult{
-		CommandID: meta.CommandID,
-		Action:    "create-admin-operator",
-		Status:    "ok",
-		Message:   fmt.Sprintf("Created operator %q.", user.Username),
-		Details:   map[string]any{"id": user.ID, "username": user.Username, "permissions": user.Permissions, "enabled": user.Enabled},
-	})
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, body.Password, fn)
+	writeCommandResultAPI(w, result, err)
 }
 
 // handleUpdateAdminUserAPI changes rights and/or enabled state, dry run first.
@@ -274,41 +251,42 @@ func (s *server) handleUpdateAdminUserAPI(w http.ResponseWriter, r *http.Request
 	const action = "set-admin-operator-access"
 	enabled := body.Enabled == nil || *body.Enabled
 	permissions := normalisePermissions(body.Permissions)
+	params := map[string]any{"id": body.ID, "permissions": permissions, "enabled": enabled}
 
-	if body.ID <= 0 {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, errAdminUserNotFound)
-		return
-	}
-	if err := s.guardManagerRemoval(r.Context(), body.ID, permissions, enabled); err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, err)
-		return
+	fn := func(ctx context.Context, tx pgx.Tx) (admin.CommandResult, error) {
+		if body.ID <= 0 {
+			return admin.CommandResult{}, errAdminUserNotFound
+		}
+		if err := validatePermissions(permissions); err != nil {
+			return admin.CommandResult{}, err
+		}
+		// The guard runs for the dry run too, and inside the command
+		// transaction with the advisory lock when confirmed.
+		if err := guardManagerRemovalTx(ctx, tx, body.ID, permissions, enabled); err != nil {
+			return admin.CommandResult{}, err
+		}
+		if meta.DryRun {
+			return admin.CommandResult{
+				Status: "ok",
+				DryRun: true,
+				Message: fmt.Sprintf("Would set operator #%d to %d permission(s), %s. Takes effect on their next request.",
+					body.ID, len(permissions), enabledWord(enabled)),
+				Details: params,
+			}, nil
+		}
+		user, err := updateAdminConsoleUserOn(ctx, tx, body.ID, permissions, enabled)
+		if err != nil {
+			return admin.CommandResult{}, err
+		}
+		return admin.CommandResult{
+			Status:  "ok",
+			Message: fmt.Sprintf("Updated %q. The new access applies from their next request.", user.Username),
+			Details: map[string]any{"id": user.ID, "username": user.Username, "permissions": user.Permissions, "enabled": user.Enabled},
+		}, nil
 	}
 
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, admin.CommandResult{
-			CommandID: meta.CommandID,
-			Action:    action,
-			Status:    "ok",
-			DryRun:    true,
-			Message: fmt.Sprintf("Would set operator #%d to %d permission(s), %s. Takes effect on their next request.",
-				body.ID, len(permissions), enabledWord(enabled)),
-			Details: map[string]any{"id": body.ID, "permissions": permissions, "enabled": enabled},
-		})
-		return
-	}
-
-	user, err := s.updateAdminConsoleUser(r.Context(), body.ID, permissions, enabled)
-	if err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, admin.CommandResult{
-		CommandID: meta.CommandID,
-		Action:    action,
-		Status:    "ok",
-		Message:   fmt.Sprintf("Updated %q. The new access applies from their next request.", user.Username),
-		Details:   map[string]any{"id": user.ID, "username": user.Username, "permissions": user.Permissions, "enabled": user.Enabled},
-	})
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, body.Password, fn)
+	writeCommandResultAPI(w, result, err)
 }
 
 // handleSetAdminUserPasswordAPI resets a password, dry run first.
@@ -319,41 +297,37 @@ func (s *server) handleSetAdminUserPasswordAPI(w http.ResponseWriter, r *http.Re
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "admin-operator-password")
 	const action = "set-admin-operator-password"
+	// The password is never put in Details -- not even back to the operator
+	// who just typed it -- so params here carry only the target id.
+	params := map[string]any{"id": body.ID}
 
-	if body.ID <= 0 {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, errAdminUserNotFound)
-		return
-	}
-	if err := validateAdminPassword(body.Password); err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, err)
-		return
+	fn := func(ctx context.Context, tx pgx.Tx) (admin.CommandResult, error) {
+		if body.ID <= 0 {
+			return admin.CommandResult{}, errAdminUserNotFound
+		}
+		if err := validateAdminPassword(body.Password); err != nil {
+			return admin.CommandResult{}, err
+		}
+		if meta.DryRun {
+			return admin.CommandResult{
+				Status:  "ok",
+				DryRun:  true,
+				Message: fmt.Sprintf("Would set a new password for operator #%d. Their existing sessions would be signed out.", body.ID),
+				Details: params,
+			}, nil
+		}
+		if err := setAdminConsoleUserPasswordOn(ctx, tx, body.ID, body.Password); err != nil {
+			return admin.CommandResult{}, err
+		}
+		return admin.CommandResult{
+			Status:  "ok",
+			Message: fmt.Sprintf("Password changed for operator #%d. Their existing sessions are signed out.", body.ID),
+			Details: params,
+		}, nil
 	}
 
-	if meta.DryRun {
-		writeJSON(w, http.StatusOK, admin.CommandResult{
-			CommandID: meta.CommandID,
-			Action:    action,
-			Status:    "ok",
-			DryRun:    true,
-			Message:   fmt.Sprintf("Would set a new password for operator #%d. Their existing sessions would be signed out.", body.ID),
-			// The password itself is never echoed, not even back to the
-			// operator who just typed it.
-			Details: map[string]any{"id": body.ID},
-		})
-		return
-	}
-
-	if err := s.setAdminConsoleUserPassword(r.Context(), body.ID, body.Password); err != nil {
-		writeCommandResultAPI(w, admin.CommandResult{CommandID: meta.CommandID, Action: action}, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, admin.CommandResult{
-		CommandID: meta.CommandID,
-		Action:    action,
-		Status:    "ok",
-		Message:   fmt.Sprintf("Password changed for operator #%d. Their existing sessions are signed out.", body.ID),
-		Details:   map[string]any{"id": body.ID},
-	})
+	result, err := s.runOperatorCommand(r.Context(), meta, action, params, body.Password, fn)
+	writeCommandResultAPI(w, result, err)
 }
 
 // decodeAdminUserAction shares the store check, body decode and reason
@@ -379,22 +353,4 @@ func enabledWord(enabled bool) string {
 		return "enabled"
 	}
 	return "disabled"
-}
-
-// guardManagerRemoval refuses an edit that would leave nobody able to manage
-// operators. Counted over the other accounts, so demoting or disabling the
-// only remaining manager is what trips it.
-func (s *server) guardManagerRemoval(ctx context.Context, id int64, permissions []string, enabled bool) error {
-	stillManages := enabled && newPanelPermissions(permissions).Has(permissionAdminsManage)
-	if stillManages {
-		return nil
-	}
-	others, err := s.read.CountEnabledAdminConsoleUsersWith(ctx, permissionAdminsManage, id)
-	if err != nil {
-		return err
-	}
-	if others == 0 {
-		return errLastManagerStanding
-	}
-	return nil
 }

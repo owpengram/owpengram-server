@@ -104,11 +104,22 @@ export function Summary({ label, value, mono = false }: { label: string; value: 
   );
 }
 
-export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
+// showTarget renders an extra "Target" column (what/who the command acted
+// on) -- on for the global audit log page, off for the per-account/channel/
+// bot AuditLogs table embedded on those pages, since there the target is
+// already the whole page it's shown on.
+export function AuditTable({ rows, showTarget }: { rows: AuditLogRow[]; showTarget?: boolean }) {
+  const cols = showTarget ? 9 : 8;
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr><th>{"ID"}</th><th>{"Command ID"}</th><th>{"Action"}</th><th>{"Actor"}</th><th>{"Status"}</th><th>{"Dry-run"}</th><th>{"Reason"}</th><th>{"Time"}</th></tr></thead>
+        <thead>
+          <tr>
+            <th>{"ID"}</th><th>{"Command ID"}</th><th>{"Action"}</th><th>{"Actor"}</th>
+            {showTarget && <th>{"Target"}</th>}
+            <th>{"Status"}</th><th>{"Dry-run"}</th><th>{"Reason"}</th><th>{"Time"}</th>
+          </tr>
+        </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.ID}>
@@ -116,13 +127,16 @@ export function AuditTable({ rows }: { rows: AuditLogRow[] }) {
               <td className="mono">{row.CommandID}</td>
               <td>{row.Action}</td>
               <td>{row.Actor}</td>
+              {showTarget && (
+                <td className="mono">{row.TargetType ? `${row.TargetType}:${row.TargetID}` : <span className="muted-cell">{"None"}</span>}</td>
+              )}
               <td>{row.Status}</td>
               <td>{row.DryRun ? "Yes" : "No"}</td>
               <td className="truncate">{row.Reason}</td>
               <td>{formatDate(row.CreatedAt)}</td>
             </tr>
           ))}
-          {rows.length === 0 && <EmptyRow colSpan={8} />}
+          {rows.length === 0 && <EmptyRow colSpan={cols} />}
         </tbody>
       </table>
     </div>

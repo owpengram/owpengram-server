@@ -22,6 +22,7 @@ export const permissionServerManage = "server.manage";
 // is never implied by anything else -- see the constant's doc comment in
 // security.go.
 export const permissionAdminsManage = "admins.manage";
+export const permissionAuditRead = "audit.read";
 // Section rights, in read/manage pairs following the sidebar -- see the const
 // block in security.go, which these must match exactly.
 export const permissionAccountsRead = "accounts.read";
@@ -182,6 +183,7 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "botverification.manage": { title: "Appoint verifiers", hint: "Grant verifier status and curate mark icons" },
   "server.manage": { title: "Server settings", hint: "Identity, .env editing, restart and update" },
   "admins.manage": { title: "Manage operators", hint: "Create operators and decide what everyone can do" },
+  "audit.read": { title: "View the audit log", hint: "See who did what across the console" },
   "*": { title: "Full access", hint: "Every right, including future ones" }
 };
 
@@ -237,8 +239,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "The console itself",
-    hint: "The two rights that can change the deployment or hand out every other right",
-    permissions: ["server.manage", "admins.manage"]
+    hint: "The rights that can change the deployment, hand out every other right, or review the trail",
+    permissions: ["server.manage", "admins.manage", "audit.read"]
   }
 ];
 

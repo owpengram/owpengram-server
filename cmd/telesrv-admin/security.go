@@ -86,6 +86,12 @@ const (
 	permissionUsernamesRead   = "usernames.read"
 	permissionUsernamesManage = "usernames.manage"
 	permissionDashboardRead   = "dashboard.read"
+	// permissionAuditRead gates the global action trail: every admin_commands
+	// row across every target, not just the ones shown on one account/channel/
+	// bot's own detail page. Separate from those existing per-target views
+	// (which any read right for that section already exposes) because seeing
+	// everyone else's actions in one place is a meaningfully bigger grant.
+	permissionAuditRead = "audit.read"
 
 	// permissionSessionOnly marks the handful of routes that need a session but
 	// no right: reading who you are, and signing out. It is not a grantable
@@ -129,6 +135,7 @@ func assignablePermissions() []string {
 		permissionBotVerificationManage,
 		permissionServerManage,
 		permissionAdminsManage,
+		permissionAuditRead,
 	}
 }
 

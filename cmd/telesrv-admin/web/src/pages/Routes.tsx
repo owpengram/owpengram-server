@@ -17,6 +17,7 @@ import { MessagesPage } from "./MessagesPage";
 import { StickerSetsPage } from "./StickerSetsPage";
 import { GifCatalogPage } from "./GifCatalogPage";
 import { AdminUsersPage } from "./AdminUsersPage";
+import { AuditLogPage } from "./AuditLogPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
@@ -30,6 +31,7 @@ import {
   ThirdPartyVerificationHiddenGate,
   permissionAccountsRead,
   permissionAdminsManage,
+  permissionAuditRead,
   permissionBotVerificationReview,
   permissionBotsRead,
   permissionBroadcastsRead,
@@ -151,6 +153,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
         <AdminUsersPage />
       </PermissionGate>
     );
+  }
+  if (route.path === "/audit-log") {
+    return gate(permissionAuditRead, <AuditLogPage />);
   }
   if (route.path === "/server-settings") {
     return (

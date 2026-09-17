@@ -64,6 +64,15 @@ export type AuditLogRow = {
   Error: string;
   Result: string;
   CreatedAt: string;
+  // Only populated by the global listing (GET /api/audit-logs) -- the
+  // per-account/channel/bot AuditLogs arrays already know their own target
+  // from the page they're embedded in.
+  TargetType?: string;
+  TargetID?: number;
+};
+
+export type AuditLogListResponse = {
+  rows: AuditLogRow[];
 };
 
 export type AccountDetail = {

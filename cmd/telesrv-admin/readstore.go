@@ -191,6 +191,11 @@ type AuditLogRow struct {
 	Error     string
 	Result    string
 	CreatedAt time.Time
+	// TargetType/TargetID are only populated by the global listing
+	// (auditLogsGlobal) -- the per-target views (auditLogs, channelAuditLogs)
+	// already know their own target from the page they're shown on.
+	TargetType string
+	TargetID   int64
 }
 
 type ChannelRow struct {
@@ -1143,6 +1148,44 @@ LIMIT 30`, userID)
 		var result []byte
 		if err := rows.Scan(&a.ID, &a.CommandID, &a.Actor, &a.Action, &a.DryRun, &a.Reason, &a.Status, &a.Error, &result, &a.CreatedAt); err != nil {
 			return nil, err
+		}
+		a.Result = prettyJSON(result)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// auditLogsGlobal is the global counterpart of auditLogs/channelAuditLogs
+// above: it walks the whole table instead of one target's slice of it, for
+// permissionAuditRead holders who need to see the console's whole action
+// trail rather than one account/channel/bot's own history. Filters are
+// optional and combined; empty means "any".
+func (s *readStore) auditLogsGlobal(ctx context.Context, actor, action, status string, limit int) ([]AuditLogRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, command_id, actor, action, dry_run, reason, status, error, result, created_at,
+	CASE WHEN target_user_id <> 0 THEN 'user' ELSE NULLIF(target_peer_type, '') END,
+	CASE WHEN target_user_id <> 0 THEN target_user_id ELSE target_peer_id END
+FROM admin_audit_logs
+WHERE ($1 = '' OR actor = $1)
+  AND ($2 = '' OR action = $2)
+  AND ($3 = '' OR status = $3)
+ORDER BY id DESC
+LIMIT $4`, actor, action, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list global audit logs: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AuditLogRow, 0, limit)
+	for rows.Next() {
+		var a AuditLogRow
+		var result []byte
+		var targetType *string
+		if err := rows.Scan(&a.ID, &a.CommandID, &a.Actor, &a.Action, &a.DryRun, &a.Reason,
+			&a.Status, &a.Error, &result, &a.CreatedAt, &targetType, &a.TargetID); err != nil {
+			return nil, err
+		}
+		if targetType != nil {
+			a.TargetType = *targetType
 		}
 		a.Result = prettyJSON(result)
 		out = append(out, a)

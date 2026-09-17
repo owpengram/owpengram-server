@@ -82,6 +82,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-admin-operator-access", s.requireAdminsManage(http.HandlerFunc(s.handleUpdateAdminUserAPI)))
 	mux.Handle("POST /api/actions/set-admin-operator-password", s.requireAdminsManage(http.HandlerFunc(s.handleSetAdminUserPasswordAPI)))
 	mux.Handle("GET /api/dashboard", s.scopedRoute(permissionDashboardRead, http.HandlerFunc(s.handleDashboardAPI)))
+	mux.Handle("GET /api/audit-logs", s.scopedRoute(permissionAuditRead, http.HandlerFunc(s.handleAuditLogsAPI)))
 	mux.Handle("GET /api/accounts", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountsAPI)))
 	mux.Handle("GET /api/accounts/stats", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleAccountsStatsAPI)))
 	mux.Handle("GET /api/accounts/shared-devices", s.scopedRoute(permissionAccountsRead, http.HandlerFunc(s.handleSharedDeviceGroupsAPI)))

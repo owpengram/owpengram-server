@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Database,
   Film,
+  History,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -27,6 +28,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { clearAdminCache } from "../lib/cache";
 import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
+  permissionAuditRead,
   permissionAccountsRead,
   permissionChannelsRead,
   permissionBotsRead,
@@ -101,6 +103,7 @@ export function Shell({
   // the entry would only lead to a 403 (and the route itself is gated as well).
   const canReviewVerification = useCan(permissionVerificationReview);
   const canManageAdmins = useCan(permissionAdminsManage);
+  const canReadAuditLog = useCan(permissionAuditRead);
   // Each section entry is hidden without the right to open it: the route is
   // gated server-side either way, so showing it would only lead to a 403.
   const canReadAccounts = useCan(permissionAccountsRead);
@@ -313,6 +316,9 @@ export function Shell({
           )}
           {canManageAdmins && (
             <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
+          )}
+          {canReadAuditLog && (
+            <NavLink icon={<History size={16} />} href="/audit-log" route={route} navigate={navigate}>{"Audit Log"}</NavLink>
           )}
           {canManageServer && (
             <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>

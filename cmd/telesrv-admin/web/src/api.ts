@@ -5,6 +5,7 @@ import type {
   AccountListResponse,
   AccountStatsResponse,
   AccountStorageListResponse,
+  AuditLogListResponse,
   SharedDeviceGroupListResponse,
   StorageStatsResponse,
   DashboardResponse,
@@ -178,6 +179,7 @@ export const api = {
   collectibleUsername: (id: string) =>
     request<CollectibleUsernameDetail>(`/api/collectible-usernames/${encodeURIComponent(id)}`),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
+  auditLogs: (params: URLSearchParams) => request<AuditLogListResponse>(`/api/audit-logs?${params.toString()}`),
   storageStats: () => request<StorageStatsResponse>("/api/storage/stats"),
   storageAccounts: (params: URLSearchParams) =>
     request<AccountStorageListResponse>(`/api/storage/accounts?${params.toString()}`),
