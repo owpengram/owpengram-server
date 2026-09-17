@@ -482,7 +482,7 @@ function DoneStep() {
         setBusy(false);
         return;
       }
-      void restartWatcher.watch(150000, { beforeReload: async () => { await api.logout(); } });
+      void restartWatcher.watch(undefined, { beforeReload: async () => { await api.logout(); } });
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

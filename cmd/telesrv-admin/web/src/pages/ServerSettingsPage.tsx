@@ -506,7 +506,17 @@ export function useAdminRestartWatcher() {
   const [timedOut, setTimedOut] = useState(false);
   const cancelled = useRef(false);
 
-  const watch = useCallback(async (timeoutMs = 150000, options?: { beforeReload?: () => Promise<void> | void }) => {
+  // 5 minutes, not 2.5: Restart/Update run a synchronous `go build` of both
+  // binaries before the new owpengram-server process is even launched (see
+  // internal/procctl.Manager.Restart/Update), and on a cold build cache --
+  // most commonly the very first restart the setup wizard triggers -- that
+  // alone can take well past two minutes on a slower machine. The new main
+  // server then still has to apply any pending migrations and reach
+  // "serving" before it bounces the admin panel, which is what this is
+  // actually polling for. A restart that genuinely hangs still surfaces via
+  // RestartOverlay's dismiss/reload controls, so a longer timeout only costs
+  // patience, never a stuck UI.
+  const watch = useCallback(async (timeoutMs = 300000, options?: { beforeReload?: () => Promise<void> | void }) => {
     cancelled.current = false;
     setTimedOut(false);
     setWaiting(true);
