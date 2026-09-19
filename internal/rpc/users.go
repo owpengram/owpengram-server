@@ -434,10 +434,57 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 			full.SetBirthday(tgBirthday(u.Birthday))
 		}
 	}
+	r.applyAccountRatingToUserFull(ctx, currentUserID, u, &full)
 	// 个人频道（account.updatePersonalChannel）不在此落地：它按 viewer 实时解析，作为缓存后的
 	// overlay 处理（applyPersonalChannelToUserFull），避免烤进 per-(viewer,target) 投影缓存以及
 	// build/chats 两次解析同一频道。
 	return full, nil
+}
+
+// applyAccountRatingToUserFull projects the stored composite account rating
+// through the rating fields official clients already render. This is a
+// server-local policy score, not a claim that its inputs or thresholds match
+// Telegram's own service.
+//
+// The projection is built inside the existing per-(viewer,target) UserFull
+// cache, so a cache miss adds at most one primary-key read and a cache hit
+// adds none. Recompute and writes stay exclusively in the background
+// worker/admin paths.
+func (r *Router) applyAccountRatingToUserFull(ctx context.Context, viewerUserID int64, target domain.User, full *tg.UserFull) {
+	targetUserID := target.ID
+	if r.deps.AccountRatings == nil || full == nil || !domain.RatableAccount(targetUserID, target.Bot) {
+		return
+	}
+	rating, err := r.deps.AccountRatings.Rating(ctx, targetUserID)
+	if err != nil {
+		// Missing, disabled and temporarily unavailable projections all preserve
+		// the legacy wire shape instead of failing the surrounding profile read.
+		return
+	}
+	full.SetStarsRating(tgAccountRatingLevel(rating.LevelSnapshot()))
+	if viewerUserID == 0 || viewerUserID != targetUserID {
+		return
+	}
+	pending, ok := rating.PendingLevel()
+	if !ok {
+		return
+	}
+	full.SetStarsMyPendingRating(tgAccountRatingLevel(pending))
+	full.SetStarsMyPendingRatingDate(int(rating.PendingDate.Unix()))
+}
+
+// tgAccountRatingLevel maps the local level snapshot onto starsRating#1b0e4f07.
+// next_level_stars remains absent at the configured maximum local level.
+func tgAccountRatingLevel(in domain.AccountRatingLevel) tg.StarsRating {
+	out := tg.StarsRating{
+		Level:             in.Level,
+		CurrentLevelStars: in.CurrentLevelStars,
+		Stars:             in.Stars,
+	}
+	if in.HasNextLevelStars {
+		out.SetNextLevelStars(in.NextLevelStars)
+	}
+	return out
 }
 
 // userFullPrivacyVisibility evaluates every privacy-controlled UserFull field

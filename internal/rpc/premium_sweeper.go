@@ -64,6 +64,17 @@ func (r *Router) viewerPremium(ctx context.Context, userID int64) bool {
 	return ok && svc.PremiumActive(ctx, userID)
 }
 
+// viewerSupport reports whether the viewer holds the official support
+// account flag (the purchase gate for support-only gifts; best-effort: never
+// lets an ordinary buyer through when the users service is unavailable).
+func (r *Router) viewerSupport(ctx context.Context, userID int64) bool {
+	if r == nil || r.deps.Users == nil {
+		return false
+	}
+	self, err := r.deps.Users.Self(ctx, userID)
+	return err == nil && self.Support
+}
+
 // NotifyUserChanged 是 Admin 用例层可调用的 domain-only hook：账号基础事实
 // 变更后失效 RPC 投影缓存，并向本人在线 session 推 updateUser。它不把 tg.*
 // 泄漏给 admin/domain/app，协议对象只在 rpc 边界内构造。

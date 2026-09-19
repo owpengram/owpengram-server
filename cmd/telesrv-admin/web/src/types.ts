@@ -71,6 +71,87 @@ export type AuditLogRow = {
   TargetID?: number;
 };
 
+export type PremiumPlan = {
+  Months: number;
+  DurationDays: number;
+  AmountStars: number;
+  Enabled: boolean;
+  SortOrder: number;
+  Label: string;
+  ManagedBy: string;
+  Version: number;
+  UpdatedAt: number;
+};
+
+export type PremiumPlanListResponse = {
+  rows: PremiumPlan[];
+};
+
+export type AccountRatingEventKind = "stars" | "activity" | "moderation" | "manual" | "recompute";
+
+export type AccountRatingRow = {
+  UserID: string;
+  Username: string;
+  FirstName: string;
+  Level: number;
+  Stars: string;
+  CurrentLevelStars: string;
+  NextLevelStars: string;
+  HasNextLevel: boolean;
+  StarsComponent: string;
+  ActivityComponent: string;
+  PenaltyComponent: string;
+  ManualComponent: string;
+  PendingStars: string;
+  PendingDate: string;
+  ComputedAt: string;
+  UpdatedAt: string;
+  Version: string;
+  Computed: boolean;
+};
+
+export type AccountRatingListResponse = {
+  rows: AccountRatingRow[];
+  has_more: boolean;
+  next_before_id: string;
+};
+
+export type AccountRatingEventRow = {
+  ID: string;
+  UserID: string;
+  Kind: AccountRatingEventKind;
+  Amount: string;
+  Reason: string;
+  Actor: string;
+  CommandKey: string;
+  CreatedAt: string;
+};
+
+export type AccountRatingDetail = {
+  rating: AccountRatingRow;
+  events: AccountRatingEventRow[];
+};
+
+export type PremiumPaymentIntent = {
+  ID: number;
+  FormID: number;
+  BuyerUserID: number;
+  Kind: "self" | "gift";
+  RecipientUserID: number;
+  Months: number;
+  DurationDays: number;
+  AmountStars: number;
+  PlanVersion: number;
+  Status: "pending" | "paid" | "expired" | "refunded";
+  IssuedAt: number;
+  ExpiresAt: number;
+  PaidAt: number;
+  RefundedAt: number;
+  StarsTransactionID: number;
+  CreatedAt: number;
+  UpdatedAt: number;
+};
+
 export type AuditLogListResponse = {
   rows: AuditLogRow[];
 };

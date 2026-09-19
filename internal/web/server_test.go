@@ -225,7 +225,7 @@ func TestHandlerServesStickerSetLandingPage(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/addstickers/fresh_pack", nil)
 
-	newTestHandler(t, resolver, "https://telesrv.net/").ServeHTTP(rr, req)
+	newTestHandler(t, resolver, "https://owpengram.org/").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -233,8 +233,8 @@ func TestHandlerServesStickerSetLandingPage(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"Fresh Pack",
-		"https://telesrv.net/addstickers/fresh_pack",
-		"telesrv://telesrv.net/addstickers/fresh_pack",
+		"https://owpengram.org/addstickers/fresh_pack",
+		"owpg://owpengram.org/addstickers/fresh_pack",
 		"Files are still fetched by the app through MTProto.",
 	} {
 		if !strings.Contains(body, want) {
@@ -272,7 +272,7 @@ func TestHandlerServesEmojiLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"custom emoji set",
 		"https://example.test/base/addemoji/emoji_pack",
-		"telesrv://example.test/addemoji/emoji_pack",
+		"owpg://example.test/addemoji/emoji_pack",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -293,7 +293,7 @@ func TestHandlerServesChatlistLandingPage(t *testing.T) {
 	for _, want := range []string{
 		"Shared Folder",
 		"http://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
-		"telesrv://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
+		"owpg://127.0.0.1:2401/addlist/zNhytIbwRwjaC2GH",
 		"preview and add this shared folder",
 	} {
 		if !strings.Contains(body, want) {
@@ -328,11 +328,11 @@ func TestHandlerServesBotUsernameLandingPage(t *testing.T) {
 		"bot",
 		"@TetrisBot",
 		"http://127.0.0.1:2401/TetrisBot",
-		"telesrv://127.0.0.1:2401/TetrisBot",
+		"owpg://127.0.0.1:2401/TetrisBot",
 		"Start Bot",
-		"Open Telesrv to start a chat with this bot.",
+		"Open OwpenGram to start a chat with this bot.",
 		`property="og:title" content="Tetris Bot"`,
-		`property="al:android:url" content="telesrv://127.0.0.1:2401/TetrisBot"`,
+		`property="al:android:url" content="owpg://127.0.0.1:2401/TetrisBot"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
@@ -375,7 +375,7 @@ func TestHandlerUsesConfiguredClientLinksAndBrand(t *testing.T) {
 			t.Fatalf("body missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "telesrv://") || strings.Contains(body, "https://weba.telesrv.net") {
+	if strings.Contains(body, "owpg://") || strings.Contains(body, "https://weba.owpengram.org") {
 		t.Fatalf("body contains stale default client link:\n%s", body)
 	}
 	for _, tc := range []struct {
@@ -451,7 +451,7 @@ func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
 	photos := &fakePhotos{byID: map[int64]domain.Photo{
 		301: {ID: 301, Sizes: []domain.PhotoSize{{Kind: domain.PhotoSizeKindDefault, Type: "c", W: 640, H: 640, Size: 12}}},
 	}}
-	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, users, channels, nil, photos, "https://telesrv.net")
+	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, users, channels, nil, photos, "https://owpengram.org")
 
 	for _, tc := range []struct {
 		path  string
@@ -461,14 +461,14 @@ func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
 			path: "/aLiCe/",
 			wants: []string{
 				"Alice Example", "Public bio", "@Alice", "Send Message", "Verified",
-				"https://telesrv.net/Alice", "telesrv://telesrv.net/Alice",
+				"https://owpengram.org/Alice", "owpg://owpengram.org/Alice",
 			},
 		},
 		{
 			path: "/NewsRoom",
 			wants: []string{
 				"News Room", "Public channel description", "12 001 subscribers", "View Channel",
-				"https://telesrv.net/NewsRoom", "telesrv://telesrv.net/NewsRoom",
+				"https://owpengram.org/NewsRoom", "owpg://owpengram.org/NewsRoom",
 				"/_public/avatar/NewsRoom/301",
 			},
 		},
@@ -503,7 +503,7 @@ func TestHandlerServesUserChannelAndSupergroupLandingPages(t *testing.T) {
 func TestHandlerPreservesBoundedResolveQueryAndOverridesDomain(t *testing.T) {
 	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{
 		"tetrisbot": {ID: 2001, Username: "TetrisBot", FirstName: "Tetris", Bot: true},
-	}, nil, nil, nil, "https://telesrv.net")
+	}, nil, nil, nil, "https://owpengram.org")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/TetrisBot?start=hello&ref=campaign&domain=EvilBot", nil))
 	if rr.Code != http.StatusOK {
@@ -511,7 +511,7 @@ func TestHandlerPreservesBoundedResolveQueryAndOverridesDomain(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
-		"telesrv://telesrv.net/TetrisBot?ref=campaign&amp;start=hello",
+		"owpg://owpengram.org/TetrisBot?ref=campaign&amp;start=hello",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing sanitized query %q:\n%s", want, body)
@@ -552,7 +552,7 @@ func TestHandlerHonorsAnonymousAboutAndPhotoPrivacy(t *testing.T) {
 	}
 	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{
 		"alice": {ID: userID, Username: "Alice", FirstName: "Alice", About: "private biography"},
-	}, nil, privacy, photos, "https://telesrv.net")
+	}, nil, privacy, photos, "https://owpengram.org")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/Alice", nil))
 	if rr.Code != http.StatusOK {
@@ -583,7 +583,7 @@ func TestHandlerServesBoundedCurrentAvatarWithETag(t *testing.T) {
 	}
 	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{
 		"alice": {ID: userID, Username: "Alice", FirstName: "Alice"},
-	}, nil, nil, photos, "https://telesrv.net")
+	}, nil, nil, photos, "https://owpengram.org")
 
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/_public/avatar/Alice/99", nil))
@@ -616,7 +616,7 @@ func TestHandlerFailsFastForAmbiguousUsernameOwner(t *testing.T) {
 		"sharedname": {ID: 2001, Username: "SharedName", FirstName: "User"},
 	}, fakeChannels{
 		"sharedname": {ID: 3001, Username: "SharedName", Title: "Channel", Broadcast: true},
-	}, nil, nil, "https://telesrv.net")
+	}, nil, nil, "https://owpengram.org")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/SharedName", nil))
 	if rr.Code != http.StatusInternalServerError {
@@ -625,14 +625,14 @@ func TestHandlerFailsFastForAmbiguousUsernameOwner(t *testing.T) {
 }
 
 func TestHandlerReturnsTrustedUsernameNotFoundPage(t *testing.T) {
-	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{}, fakeChannels{}, nil, nil, "https://telesrv.net")
+	handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{}, fakeChannels{}, nil, nil, "https://owpengram.org")
 	for _, path := range []string{"/MissingName", "/bad-name", "/Nope"} {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "Nothing found") || !strings.Contains(rr.Body.String(), "noindex,nofollow") {
 			t.Fatalf("%s status=%d body=%s", path, rr.Code, rr.Body.String())
 		}
-		if strings.Contains(rr.Body.String(), "telesrv://resolve") {
+		if strings.Contains(rr.Body.String(), "owpg://resolve") {
 			t.Fatalf("not-found page contains a fabricated app link: %s", rr.Body.String())
 		}
 		if rr.Header().Get("Content-Security-Policy") == "" || rr.Header().Get("X-Frame-Options") != "DENY" {
@@ -663,7 +663,7 @@ func TestPublicAvatarRejectsOversizedOrUnsafeBlob(t *testing.T) {
 			}
 			handler := newTestHandlerWithPublicPeers(t, fakeResolver{}, fakeUsers{
 				"alice": {ID: userID, Username: "Alice", FirstName: "Alice"},
-			}, nil, nil, photos, "https://telesrv.net")
+			}, nil, nil, photos, "https://owpengram.org")
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/_public/avatar/Alice/99", nil))
 			if rr.Code != http.StatusNotFound {
@@ -686,12 +686,12 @@ func TestHandlerRedirectsMismatchedKindToCanonicalURL(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/addstickers/emoji_pack", nil)
 
-	newTestHandler(t, resolver, "https://telesrv.net").ServeHTTP(rr, req)
+	newTestHandler(t, resolver, "https://owpengram.org").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusPermanentRedirect {
 		t.Fatalf("status = %d, want 308; body=%s", rr.Code, rr.Body.String())
 	}
-	if got, want := rr.Header().Get("Location"), "https://telesrv.net/addemoji/emoji_pack"; got != want {
+	if got, want := rr.Header().Get("Location"), "https://owpengram.org/addemoji/emoji_pack"; got != want {
 		t.Fatalf("Location = %q, want %q", got, want)
 	}
 }
@@ -703,7 +703,7 @@ func TestHandlerNotFoundForMissingOrInvalidShortName(t *testing.T) {
 			Username:  "Alice",
 			FirstName: "Alice",
 		},
-	}, nil, nil, nil, "https://telesrv.net")
+	}, nil, nil, nil, "https://owpengram.org")
 	for _, path := range []string{
 		"/addstickers/missing_pack",
 		"/addstickers/bad-name",
@@ -727,7 +727,7 @@ func TestHandlerLookupErrorIsInternalServerError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/addstickers/fresh_pack", nil)
 
-	newTestHandler(t, errorResolver{}, "https://telesrv.net").ServeHTTP(rr, req)
+	newTestHandler(t, errorResolver{}, "https://owpengram.org").ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rr.Code)

@@ -39,6 +39,11 @@ const (
 	// the panel and the admin API page the verifier tables identically.
 	botVerificationListDefaultLimit = 50
 	botVerificationListMaxLimit     = 200
+	// Composite account rating pages. The bounds mirror app/rating, so the
+	// panel and the admin API page the leaderboard identically.
+	ratingListDefaultLimit = 50
+	ratingListMaxLimit     = 200
+	ratingEventLimit       = 50
 )
 
 // errReadNotFound reports a detail row that does not exist, so the API layer can
@@ -2901,4 +2906,299 @@ LIMIT $`+strconv.Itoa(limitArg), args...)
 		out = out[:limit]
 	}
 	return out, hasMore, nil
+}
+
+// premiumPlans lists every plan, enabled and disabled, for the plan
+// management page. Writes go through admin.Service.UpsertPremiumPlan (for
+// the optimistic-concurrency check and audit trail); this is a plain read.
+func (s *readStore) premiumPlans(ctx context.Context) ([]domain.PremiumPlan, error) {
+	rows, err := s.pool.Query(ctx, `SELECT months,duration_days,amount_stars,enabled,sort_order,label,managed_by,version,
+EXTRACT(EPOCH FROM updated_at)::bigint
+FROM premium_plans ORDER BY sort_order,months`)
+	if err != nil {
+		return nil, fmt.Errorf("list premium plans: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.PremiumPlan, 0)
+	for rows.Next() {
+		var plan domain.PremiumPlan
+		var updated int64
+		if err := rows.Scan(&plan.Months, &plan.DurationDays, &plan.AmountStars, &plan.Enabled,
+			&plan.SortOrder, &plan.Label, &plan.ManagedBy, &plan.Version, &updated); err != nil {
+			return nil, err
+		}
+		plan.UpdatedAt = int(updated)
+		out = append(out, plan)
+	}
+	return out, rows.Err()
+}
+
+// premiumPayment looks up one payment intent by id, for the refund form to
+// show what it is about to reverse before the operator confirms.
+func (s *readStore) premiumPayment(ctx context.Context, paymentIntentID int64) (domain.PremiumPaymentIntent, bool, error) {
+	var out domain.PremiumPaymentIntent
+	var kind, status string
+	var issued, expires, paid, refunded, created, updated int64
+	err := s.pool.QueryRow(ctx, `SELECT id,form_id,buyer_user_id,purchase_kind,recipient_user_id,
+months,duration_days,amount_stars,plan_version,status,
+EXTRACT(EPOCH FROM issued_at)::bigint,EXTRACT(EPOCH FROM expires_at)::bigint,
+COALESCE(EXTRACT(EPOCH FROM paid_at),0)::bigint,COALESCE(EXTRACT(EPOCH FROM refunded_at),0)::bigint,
+COALESCE(stars_transaction_id,0),
+EXTRACT(EPOCH FROM created_at)::bigint,EXTRACT(EPOCH FROM updated_at)::bigint
+FROM premium_payment_intents WHERE id=$1`, paymentIntentID).Scan(
+		&out.ID, &out.FormID, &out.BuyerUserID, &kind, &out.RecipientUserID,
+		&out.Months, &out.DurationDays, &out.AmountStars, &out.PlanVersion, &status,
+		&issued, &expires, &paid, &refunded, &out.StarsTransactionID, &created, &updated)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.PremiumPaymentIntent{}, false, nil
+	}
+	if err != nil {
+		return domain.PremiumPaymentIntent{}, false, fmt.Errorf("get premium payment: %w", err)
+	}
+	out.Kind = domain.PremiumPurchaseKind(kind)
+	out.Status = domain.PremiumPaymentStatus(status)
+	out.IssuedAt, out.ExpiresAt = int(issued), int(expires)
+	out.PaidAt, out.RefundedAt = int(paid), int(refunded)
+	out.CreatedAt, out.UpdatedAt = int(created), int(updated)
+	return out, true, nil
+}
+
+// AccountRatingRow is one user's composite rating projection with the account
+// resolved for display. The score and every component are int64 decimal strings
+// for the same exactness reason as the collectible amounts.
+type AccountRatingRow struct {
+	UserID            int64 `json:"UserID,string"`
+	Username          string
+	FirstName         string
+	Level             int
+	Stars             int64 `json:"Stars,string"`
+	CurrentLevelStars int64 `json:"CurrentLevelStars,string"`
+	NextLevelStars    int64 `json:"NextLevelStars,string"`
+	HasNextLevel      bool
+	StarsComponent    int64 `json:"StarsComponent,string"`
+	ActivityComponent int64 `json:"ActivityComponent,string"`
+	PenaltyComponent  int64 `json:"PenaltyComponent,string"`
+	ManualComponent   int64 `json:"ManualComponent,string"`
+	PendingStars      int64 `json:"PendingStars,string"`
+	PendingDate       time.Time
+	ComputedAt        time.Time
+	UpdatedAt         time.Time
+	Version           int64 `json:"Version,string"`
+	// Computed is false for an account that has no stored projection yet. The
+	// detail view still renders it, so the operator can trigger the first
+	// recompute instead of facing a dead end.
+	Computed bool
+}
+
+// AccountRatingEventRow is one contribution ledger entry.
+type AccountRatingEventRow struct {
+	ID         int64 `json:"ID,string"`
+	UserID     int64 `json:"UserID,string"`
+	Kind       string
+	Amount     int64 `json:"Amount,string"`
+	Reason     string
+	Actor      string
+	CommandKey string
+	CreatedAt  time.Time
+}
+
+// AccountRatingDetail is the projection plus the ledger that explains it.
+type AccountRatingDetail struct {
+	Rating AccountRatingRow
+	Events []AccountRatingEventRow
+}
+
+const accountRatingSelectColumns = `r.user_id,
+	COALESCE(NULLIF(u.username, ''), p.username_lower, '') AS display_username,
+	COALESCE(u.first_name, ''),
+	r.level, r.stars, r.current_level_stars, r.next_level_stars,
+	r.stars_component, r.activity_component, r.penalty_component, r.manual_component,
+	r.pending_stars, r.pending_date, r.computed_at, r.updated_at, r.version`
+
+const accountRatingJoins = `
+FROM account_rating r
+LEFT JOIN users u ON u.id = r.user_id
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = r.user_id AND p.editable`
+
+func scanAccountRatingRow(scan func(dest ...any) error, item *AccountRatingRow) error {
+	// next_level_stars and pending_date are nullable: the first is NULL at the top
+	// level, the second whenever no score is parked.
+	var nextLevelStars *int64
+	var pendingDate *time.Time
+	if err := scan(
+		&item.UserID, &item.Username, &item.FirstName,
+		&item.Level, &item.Stars, &item.CurrentLevelStars, &nextLevelStars,
+		&item.StarsComponent, &item.ActivityComponent, &item.PenaltyComponent, &item.ManualComponent,
+		&item.PendingStars, &pendingDate, &item.ComputedAt, &item.UpdatedAt, &item.Version,
+	); err != nil {
+		return err
+	}
+	// A NULL next threshold is the maxed-out level: the TL flag is omitted, so the
+	// panel must render "no next level" instead of a next level of zero.
+	item.HasNextLevel = nextLevelStars != nil
+	if nextLevelStars != nil {
+		item.NextLevelStars = *nextLevelStars
+	}
+	if pendingDate != nil {
+		item.PendingDate = pendingDate.UTC()
+	}
+	item.Computed = true
+	return nil
+}
+
+// ListAccountRatings pages the leaderboard. Ordering and the keyset predicate
+// mirror the rating store exactly -- (level DESC, stars DESC, user_id) with the
+// cursor row resolved from beforeID -- so both surfaces page identically.
+// query is a free-text operator search: it matches a username prefix (editable
+// or collectible), a first/last name prefix, and -- when the term is numeric --
+// the user id, so an operator can find an account the same way they do on the
+// accounts tab.
+func (s *readStore) ListAccountRatings(ctx context.Context, minLevel int, userID, beforeID int64, limit int, query string) ([]AccountRatingRow, bool, error) {
+	if limit <= 0 {
+		limit = ratingListDefaultLimit
+	}
+	if limit > ratingListMaxLimit {
+		limit = ratingListMaxLimit
+	}
+	if minLevel < 0 {
+		minLevel = 0
+	}
+	if minLevel > domain.MaxAccountRatingLevel {
+		minLevel = domain.MaxAccountRatingLevel
+	}
+	query = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@"))
+	pattern := ""
+	queryUserID := int64(0)
+	if query != "" {
+		pattern = strings.ToLower(escapeLikePattern(query)) + "%"
+		if parsed, err := strconv.ParseInt(query, 10, 64); err == nil && parsed > 0 {
+			queryUserID = parsed
+		}
+	}
+	rows, err := s.pool.Query(ctx, `
+WITH cursor_row AS (
+	SELECT level AS c_level, stars AS c_stars, user_id AS c_user_id
+	FROM account_rating WHERE $3::bigint <> 0 AND user_id = $3
+)
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+LEFT JOIN cursor_row c ON true
+WHERE r.level >= $1
+	AND ($2::bigint = 0 OR r.user_id = $2)
+	AND ($5::text = '' OR (
+		($6::bigint <> 0 AND r.user_id = $6)
+		OR lower(COALESCE(u.username, '')) LIKE $5
+		OR lower(COALESCE(u.first_name, '')) LIKE $5
+		OR lower(COALESCE(u.last_name, '')) LIKE $5
+		OR EXISTS (
+			SELECT 1 FROM peer_usernames pu
+			WHERE pu.peer_type = 'user' AND pu.peer_id = r.user_id
+				AND pu.username_lower LIKE $5
+		)
+	))
+	AND (
+		c.c_user_id IS NULL
+		OR r.level < c.c_level
+		OR (r.level = c.c_level AND r.stars < c.c_stars)
+		OR (r.level = c.c_level AND r.stars = c.c_stars AND r.user_id > c.c_user_id)
+	)
+ORDER BY r.level DESC, r.stars DESC, r.user_id
+LIMIT $4`, minLevel, userID, beforeID, limit+1, pattern, queryUserID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list account ratings: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingRow, 0, limit+1)
+	for rows.Next() {
+		var item AccountRatingRow
+		if err := scanAccountRatingRow(rows.Scan, &item); err != nil {
+			return nil, false, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
+}
+
+// AccountRatingDetail returns one user's projection with its contribution
+// ledger.
+//
+// An account that exists but was never computed is answered with a zero-valued
+// projection carrying Computed=false, because the recompute command lives on this
+// very page: reporting "not found" for a real account would leave the operator
+// with no way to create the first projection. Only an unknown account is a 404.
+func (s *readStore) AccountRatingDetail(ctx context.Context, userID int64) (AccountRatingDetail, error) {
+	var out AccountRatingDetail
+	row := s.pool.QueryRow(ctx, `
+SELECT `+accountRatingSelectColumns+accountRatingJoins+`
+WHERE r.user_id = $1`, userID)
+	err := scanAccountRatingRow(row.Scan, &out.Rating)
+	switch {
+	case err == nil:
+	case errors.Is(err, pgx.ErrNoRows):
+		placeholder, uncomputedErr := s.uncomputedAccountRating(ctx, userID)
+		if uncomputedErr != nil {
+			return out, uncomputedErr
+		}
+		out.Rating = placeholder
+	default:
+		return out, fmt.Errorf("get account rating: %w", err)
+	}
+	events, err := s.accountRatingEvents(ctx, userID)
+	if err != nil {
+		return out, err
+	}
+	out.Events = events
+	return out, nil
+}
+
+// uncomputedAccountRating renders the projection an account would start from,
+// derived through the same threshold policy the store persists, so the panel's
+// level maths does not have to special-case a missing row.
+func (s *readStore) uncomputedAccountRating(ctx context.Context, userID int64) (AccountRatingRow, error) {
+	var row AccountRatingRow
+	err := s.pool.QueryRow(ctx, `
+SELECT u.id, COALESCE(NULLIF(u.username, ''), p.username_lower, ''), u.first_name
+FROM users u
+LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
+WHERE u.id = $1`, userID).Scan(&row.UserID, &row.Username, &row.FirstName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return row, errReadNotFound
+		}
+		return row, fmt.Errorf("get account for rating: %w", err)
+	}
+	level, current, next, hasNext := domain.AccountRatingLevelForStars(0)
+	row.Level = level
+	row.CurrentLevelStars = current
+	row.NextLevelStars = next
+	row.HasNextLevel = hasNext
+	return row, nil
+}
+
+func (s *readStore) accountRatingEvents(ctx context.Context, userID int64) ([]AccountRatingEventRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id, user_id, kind, amount, reason, actor, COALESCE(command_key, ''), created_at
+FROM account_rating_events
+WHERE user_id = $1
+ORDER BY id DESC
+LIMIT $2`, userID, ratingEventLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list account rating events: %w", err)
+	}
+	defer rows.Close()
+	out := make([]AccountRatingEventRow, 0)
+	for rows.Next() {
+		var item AccountRatingEventRow
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Kind, &item.Amount, &item.Reason, &item.Actor, &item.CommandKey, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

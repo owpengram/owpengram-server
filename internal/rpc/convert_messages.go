@@ -148,6 +148,8 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		return &tg.MessageActionSuggestProfilePhoto{Photo: tgPhoto(*m.ServiceAction.Photo)}
 	case domain.MessageServiceActionPinMessage:
 		return &tg.MessageActionPinMessage{}
+	case domain.MessageServiceActionStarGift:
+		return tgMessageActionStarGift(m.ServiceAction.StarGift)
 	case domain.MessageServiceActionSetChatTheme:
 		return &tg.MessageActionSetChatTheme{
 			Theme: &tg.ChatTheme{Emoticon: m.ServiceAction.ChatThemeEmoticon},

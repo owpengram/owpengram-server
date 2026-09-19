@@ -50,8 +50,12 @@ import (
 	passkeyapp "telesrv/internal/app/passkey"
 	phoneapp "telesrv/internal/app/phone"
 	pollsapp "telesrv/internal/app/polls"
+	premiumapp "telesrv/internal/app/premium"
 	privacyapp "telesrv/internal/app/privacy"
+	ratingapp "telesrv/internal/app/rating"
 	secretchatapp "telesrv/internal/app/secretchat"
+	stargiftsapp "telesrv/internal/app/stargifts"
+	starsapp "telesrv/internal/app/stars"
 	storiesapp "telesrv/internal/app/stories"
 	telegramloginapp "telesrv/internal/app/telegramlogin"
 	themesapp "telesrv/internal/app/themes"
@@ -1358,6 +1362,10 @@ func run(logger *zap.Logger) error {
 	secretChatStore := postgres.NewSecretChatStore(pool)
 	encryptedQueueStore := postgres.NewEncryptedQueueStore(pool)
 	secretChatService := secretchatapp.NewService(secretChatStore, encryptedQueueStore)
+	starsStore := postgres.NewStarsStore(pool)
+	starsService := starsapp.NewService(starsStore, starsapp.WithStartingGrant(cfg.StarsStartingGrant))
+	premiumStore := postgres.NewPremiumStore(pool)
+	premiumService := premiumapp.NewService(premiumStore, starsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -1426,6 +1434,25 @@ func run(logger *zap.Logger) error {
 		messageapp.WithBotResponder(botsService),
 		messageapp.WithSendPermissionChecker(adminService),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
+	)
+	starGiftStore := postgres.NewStarGiftStore(pool)
+	starGiftUpgradeStore := postgres.NewStarGiftUpgradeStore(pool, messageStore)
+	starGiftLifecycleStore := postgres.NewStarGiftLifecycleStore(pool, messageStore, 0)
+	starGiftsService := stargiftsapp.NewService(starGiftStore, blobBackend, cfg.DC,
+		stargiftsapp.WithUpgradeStore(starGiftUpgradeStore),
+		stargiftsapp.WithLifecycleStore(starGiftLifecycleStore),
+	)
+	// The composite account rating and collectible usernames are optional read
+	// models projected at the protocol edge. The rating worker below keeps the
+	// stored projection fresh; profile reads only fetch it.
+	accountRatingStore := postgres.NewAccountRatingStore(pool)
+	ratingService := ratingapp.NewService(
+		ratingapp.WithStore(accountRatingStore),
+		ratingapp.WithEnabled(cfg.RatingEnabled),
+		ratingapp.WithWeights(cfg.AccountRatingWeights()),
+		ratingapp.WithPendingDelay(cfg.RatingPendingDelay),
+		ratingapp.WithStaleAfter(cfg.RatingStaleAfter),
+		ratingapp.WithLogger(logger.Named("app").Named("rating")),
 	)
 	// Wires the storage retention sweep's purge-notice capability now that
 	// both edit-capable app services exist -- filesService was constructed
@@ -1646,6 +1673,10 @@ func run(logger *zap.Logger) error {
 		Stories:                    storiesService,
 		Phone:                      phoneService,
 		SecretChats:                secretChatService,
+		Stars:                      starsService,
+		Premium:                    premiumService,
+		Gifts:                      starGiftsService,
+		AccountRatings:             ratingService,
 		Passkey:                    passkeyService,
 		Themes:                     themeService,
 		GroupCalls:                 groupCallsService,
@@ -1684,11 +1715,14 @@ func run(logger *zap.Logger) error {
 		UserProjectionFacts: userProjectionFacts,
 	}, logger.Named("store").Named("read-model-listener"))
 	go readModelListener.Run(ctx)
+	go ratingapp.NewRecomputeWorker(ratingService, logger.Named("rating").Named("recompute"),
+		cfg.RatingRecomputeInterval, cfg.RatingRecomputeBatch).Run(ctx)
 	activeSessions.SetLifecycleObserver(router)
 	adminService.Configure(adminapp.Dependencies{
 		Auth:                   authService,
 		Revoker:                router,
 		Users:                  usersService,
+		Premium:                premiumService,
 		UserNotifier:           router,
 		UserModerationNotifier: router,
 		FreezeNotifier:         router,
@@ -1707,6 +1741,7 @@ func run(logger *zap.Logger) error {
 		BotVerification:        botVerificationService,
 		Account:                accountService,
 		Broadcast:              broadcastService,
+		Rating:                 ratingService,
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are

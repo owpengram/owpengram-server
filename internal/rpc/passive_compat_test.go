@@ -212,7 +212,7 @@ func TestPaymentsGetStarsRevenueAdsAccountURLReturnsCompatURLAndValidatesPeer(t 
 	if !ok {
 		t.Fatalf("response type = %T, want *tg.PaymentsStarsRevenueAdsAccountURL", got)
 	}
-	if url.URL != "https://telesrv.net" {
+	if url.URL != "https://owpengram.org" {
 		t.Fatalf("url = %q, want ads compat URL", url.URL)
 	}
 

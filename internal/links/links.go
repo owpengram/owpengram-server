@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	DefaultPublicBaseURL = "https://telesrv.net"
-	DefaultWebBaseURL    = "https://weba.telesrv.net"
-	DefaultAppScheme     = "telesrv"
-	DefaultAppName       = "telesrv"
+	DefaultPublicBaseURL = "https://owpengram.org"
+	DefaultWebBaseURL    = "https://weba.owpengram.org"
+	DefaultAppScheme     = "owpg"
+	DefaultAppName       = "OwpenGram"
 	DefaultDownloadURL   = "https://owpengram.org"
 )
 const MaxChatlistSlugBytes = 128

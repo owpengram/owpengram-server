@@ -891,6 +891,9 @@ type ChannelsService interface {
 	// SetActiveCall / AppendCallServiceMessage 是群通话模块的频道侧挂接点。
 	SetActiveCall(ctx context.Context, channelID, callID, callAccessHash int64, notEmpty bool) (domain.Channel, error)
 	AppendCallServiceMessage(ctx context.Context, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error)
+	// AppendStarGiftAdminLog posts the messageActionStarGift service message
+	// for a gift a channel received.
+	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID, savedID int64, date int, action domain.ChannelMessageAction) error
 	InviteAdminMemberIDs(ctx context.Context, channelID int64, limit int) ([]int64, error)
 	FilterActiveMemberIDs(ctx context.Context, channelID int64, userIDs []int64) ([]int64, error)
 }
@@ -1189,6 +1192,110 @@ type Deps struct {
 	SecretChats                SecretChatService
 	Passkey                    PasskeyService
 	Themes                     ThemeService
+	// Stars is the local Stars ledger (grant/credit/debit/history). Nil is
+	// valid -- payments.go falls back to the zero-balance compatibility
+	// response when it is unset, same as before this ledger existed.
+	Stars StarsService
+	// Premium is the Telegram Premium purchase/gift flow settled against the
+	// Stars ledger above. Nil is valid -- payments_premium.go answers
+	// notImplementedErr()/an empty catalog instead of a real checkout, same
+	// shape as every other optional Deps port.
+	Premium PremiumService
+	// Gifts is the Star Gift catalog/purchase/save/convert flow, also settled
+	// against Stars. Nil is valid, same shape as Premium above.
+	Gifts GiftsService
+	// AccountRatings exposes the stored composite account rating projected
+	// into userFull's rating fields. Nil leaves every rating flag unset.
+	AccountRatings AccountRatingService
+}
+
+// AccountRatingService exposes the stored composite rating used by the
+// userFull rating projection.
+//
+// It is deliberately read-only at the RPC boundary: ratings are computed by
+// the bounded background worker, while profile reads only fetch the latest
+// stored projection. A nil service or a read failure leaves every rating
+// flag unset.
+type AccountRatingService interface {
+	Rating(ctx context.Context, userID int64) (domain.AccountRating, error)
+}
+
+// StarsService is the RPC layer's narrow view of app/stars.Service: reading
+// the ledger for payments.getStarsStatus/getStarsTransactions. Credit/Debit
+// live here too so paid-feature RPCs built on top of the ledger (paid
+// reactions, Premium, Star Gifts) can debit through the same Deps port
+// instead of each reaching for their own store handle.
+type StarsService interface {
+	GetBalance(ctx context.Context, userID int64) (domain.StarsBalance, error)
+	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
+	Debit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
+	ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
+}
+
+// PremiumService is the RPC layer's narrow view of app/premium.Service.
+type PremiumService interface {
+	BotUserID() int64
+	Plans(ctx context.Context) ([]domain.PremiumPlan, error)
+	Plan(ctx context.Context, months int) (domain.PremiumPlan, error)
+	IssuePaymentForm(ctx context.Context, form domain.PremiumPaymentForm) (domain.PremiumPaymentForm, error)
+	Purchase(ctx context.Context, req domain.PremiumPurchaseRequest) (domain.PremiumPurchaseResult, error)
+}
+
+// GiftsService abstracts Star Gifts (app/stargifts): catalog plus CRUD over
+// the gift instances a peer has received. Debiting/refunding and delivering
+// the notification service message are orchestrated at the rpc layer via
+// the Stars ledger above and Messages.SendPrivateText.
+type GiftsService interface {
+	Catalog(ctx context.Context) ([]domain.StarGift, error)
+	CatalogHash(ctx context.Context) (int, error)
+	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
+	GiftRevisionByID(ctx context.Context, revisionID int64) (domain.StarGift, bool, error)
+	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
+	CollectiblePreviewSample(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
+	CollectibleAvailability(ctx context.Context, giftIDs []int64) (map[int64]domain.StarGiftCollectibleAvailability, error)
+	UniqueBySlug(ctx context.Context, slug string) (domain.UniqueStarGift, bool, error)
+	UniqueByID(ctx context.Context, uniqueGiftID int64) (domain.UniqueStarGift, bool, error)
+	UniqueByIDs(ctx context.Context, uniqueGiftIDs []int64) (map[int64]domain.UniqueStarGift, error)
+	ListUniqueByOwner(ctx context.Context, owner domain.Peer, limit int) ([]domain.UniqueStarGift, error)
+	Upgrade(ctx context.Context, req domain.StarGiftUpgradeRequest) (domain.StarGiftUpgradeResult, error)
+	UpgradeReceipt(ctx context.Context, userID int64, commandKey string) (domain.StarGiftUpgradeReceipt, bool, error)
+	RecordSavedGift(ctx context.Context, gift domain.SavedStarGift) (int64, error)
+	ListSaved(ctx context.Context, owner domain.Peer, excludeUnsaved bool, offset string, limit int) (domain.SavedStarGiftPage, error)
+	ListSavedFiltered(ctx context.Context, filter domain.SavedStarGiftFilter) (domain.SavedStarGiftPage, error)
+	GetSaved(ctx context.Context, ref domain.SavedStarGiftRef) (domain.SavedStarGift, bool, error)
+	ResolveSavedIDs(ctx context.Context, owner domain.Peer, refs []domain.SavedStarGiftRef) ([]int64, error)
+	CountSaved(ctx context.Context, owner domain.Peer) (int, error)
+	ToggleSaved(ctx context.Context, ref domain.SavedStarGiftRef, unsaved bool) (bool, error)
+	ConvertAggregate(ctx context.Context, req domain.StarGiftConvertRequest) (domain.StarGiftConvertResult, error)
+	ListCollections(ctx context.Context, owner domain.Peer) ([]domain.StarGiftCollection, error)
+	CreateCollection(ctx context.Context, owner domain.Peer, title string, savedGiftIDs []int64) (domain.StarGiftCollection, error)
+	UpdateCollection(ctx context.Context, owner domain.Peer, collectionID int, patch domain.StarGiftCollectionPatch) (domain.StarGiftCollection, error)
+	DeleteCollection(ctx context.Context, owner domain.Peer, collectionID int) (bool, error)
+	ReorderCollections(ctx context.Context, owner domain.Peer, collectionIDs []int) error
+	SetPinned(ctx context.Context, owner domain.Peer, savedGiftIDs []int64) error
+	ListResale(ctx context.Context, filter domain.StarGiftResaleFilter) (domain.StarGiftResalePage, error)
+	ValueInfo(ctx context.Context, uniqueGiftID int64) (domain.StarGiftValueInfo, error)
+	SetListing(ctx context.Context, req domain.StarGiftListingRequest) (domain.UniqueStarGift, error)
+	Transfer(ctx context.Context, req domain.StarGiftTransferRequest) (domain.StarGiftTransferResult, error)
+	PurchaseResale(ctx context.Context, req domain.StarGiftResalePurchaseRequest) (domain.StarGiftTransferResult, error)
+	SendOffer(ctx context.Context, req domain.StarGiftOfferRequest) (domain.StarGiftOfferResult, error)
+	ResolveOffer(ctx context.Context, req domain.StarGiftResolveOfferRequest) (domain.StarGiftOfferResult, error)
+	ListCraft(ctx context.Context, userID, giftID int64, offset string, limit int) (domain.SavedStarGiftPage, error)
+	Craft(ctx context.Context, req domain.StarGiftCraftRequest) (domain.StarGiftCraftResult, error)
+	AuctionState(ctx context.Context, userID, giftID int64, slug string, now int) (domain.StarGiftAuction, error)
+	ActiveAuctions(ctx context.Context, userID int64, now int) ([]domain.StarGiftAuction, error)
+	AuctionAcquired(ctx context.Context, userID, giftID int64) ([]domain.StarGiftAuctionAcquired, error)
+	BidAuction(ctx context.Context, req domain.StarGiftAuctionBidRequest) (domain.StarGiftAuction, domain.StarsBalance, error)
+	PrepaidUpgradeTarget(ctx context.Context, owner domain.Peer, hash string) (domain.SavedStarGift, int64, error)
+	PrepayUpgrade(ctx context.Context, req domain.StarGiftPrepaidUpgradeRequest) (domain.StarGiftPrepaidUpgradeResult, error)
+	DropOriginalDetails(ctx context.Context, req domain.StarGiftDropOriginalDetailsRequest) (domain.StarGiftDropOriginalDetailsResult, error)
+	SetNotifications(ctx context.Context, userID, channelID int64, enabled bool) error
+	Withdraw(ctx context.Context, req domain.StarGiftWithdrawalRequest) (domain.StarGiftWithdrawal, error)
+	TonBalance(ctx context.Context, userID int64) (int64, error)
+	TonTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.TonTransactionPage, error)
+	IssuePurchaseForm(ctx context.Context, form domain.StarGiftPurchaseForm) (domain.StarGiftPurchaseForm, error)
+	ValidatePurchaseForm(ctx context.Context, req domain.StarGiftPurchaseRequest) error
+	Purchase(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error)
 }
 
 // ThemeService 抽象自定义云主题(app/themes):创建/更新/查询主题 + 维护每用户已安装列表。

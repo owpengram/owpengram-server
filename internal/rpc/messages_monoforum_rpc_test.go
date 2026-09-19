@@ -385,7 +385,7 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 		t.Fatalf("persisted monoforum draft = %+v, want suggested post content", storedDraft)
 	}
 	// TDesktop 的订阅者请求不携带 InputReplyToMonoForum;服务端必须从调用者推导 saved_peer=self。
-	subReq := &tg.MessagesSendMessageRequest{Peer: monoInput, Message: "hi from sub telesrv://resolve?domain=Owner", RandomID: 555}
+	subReq := &tg.MessagesSendMessageRequest{Peer: monoInput, Message: "hi from sub owpg://resolve?domain=Owner", RandomID: 555}
 	subReq.ClearDraft = true
 	subReq.SetAllowPaidStars(20)
 	suggestedInput := tg.SuggestedPost{}
@@ -409,7 +409,7 @@ func TestMonoforumSendMessageWritePath(t *testing.T) {
 				subPaidStars, _ = message.GetPaidMessageStars()
 				var hasAppLink bool
 				for _, entity := range message.Entities {
-					if url, ok := entity.(*tg.MessageEntityURL); ok && url.Offset == utf16CodeUnitLen("hi from sub ") && url.Length == utf16CodeUnitLen("telesrv://resolve?domain=Owner") {
+					if url, ok := entity.(*tg.MessageEntityURL); ok && url.Offset == utf16CodeUnitLen("hi from sub ") && url.Length == utf16CodeUnitLen("owpg://resolve?domain=Owner") {
 						hasAppLink = true
 					}
 				}

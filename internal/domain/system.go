@@ -93,6 +93,15 @@ const (
 	// GifBotAccessHash is fixed and double-written with the seed row in this
 	// feature's migration; the two must never drift.
 	GifBotAccessHash int64 = 7233282977235616768
+
+	// PremiumBotUserID is the built-in @premiumbot: the storefront/payment
+	// peer shown for both self-purchase (Settings -> Premium) and gifting
+	// Premium to another account. The id is reserved and stable, so a
+	// restart never re-creates the account under a different identity.
+	PremiumBotUserID int64 = 1250000017
+	// PremiumBotAccessHash is fixed and double-written with the seed row in
+	// this feature's migration; the two must never drift.
+	PremiumBotAccessHash int64 = 8117747505266431888
 )
 
 // officialSystemUserPhotoDCID/Stripped 由 files.Service.SeedOfficialSystemAvatar
@@ -348,6 +357,19 @@ func GifBotUser() User {
 	}
 }
 
+// PremiumBotUser returns the built-in Premium storefront and payment peer.
+func PremiumBotUser() User {
+	return User{
+		ID:             PremiumBotUserID,
+		AccessHash:     PremiumBotAccessHash,
+		FirstName:      "Premium Bot",
+		Username:       "premiumbot",
+		Verified:       true,
+		Bot:            true,
+		BotInfoVersion: 1,
+	}
+}
+
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。
 // 所有对 777000 的硬编码注入点统一经此函数，新增内置账号只改这里。
 func SystemUserByID(id int64) (User, bool) {
@@ -366,6 +388,8 @@ func SystemUserByID(id int64) (User, bool) {
 		return VerifierBotUser(), true
 	case GifBotUserID:
 		return GifBotUser(), true
+	case PremiumBotUserID:
+		return PremiumBotUser(), true
 	}
 	return User{}, false
 }
@@ -389,6 +413,7 @@ func SystemUserIDs() []int64 {
 		VerifyBotUserID,
 		VerifierBotUserID,
 		GifBotUserID,
+		PremiumBotUserID,
 	}
 }
 

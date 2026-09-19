@@ -25,6 +25,8 @@ import (
 const (
 	ActionSetAccountFrozen         = "account.set_frozen"
 	ActionGrantPremium             = "account.grant_premium"
+	ActionUpsertPremiumPlan        = "premium.upsert_plan"
+	ActionRefundPremium            = "premium.refund"
 	ActionSetVerified              = "account.set_verified"
 	ActionSetUserFlags             = "account.set_flags"
 	ActionSetSupport               = "account.set_support"
@@ -94,12 +96,20 @@ const (
 	ActionRejectBotVerification     = "botverification.reject"
 	ActionRevokeBotVerification     = "botverification.revoke_request"
 
+	// Composite account rating (see account_rating.go).
+	ActionRecomputeAccountRating = "rating.recompute"
+	ActionAdjustAccountRating    = "rating.adjust"
+
 	maxCommandIDLength       = 128
 	maxActorLength           = 128
 	maxReasonLength          = 1000
 	maxHistoryBatches        = 100
 	maxPremiumMonths         = 120
 	maxFreezeAppealURLLength = 2048
+	// maxAccountRatingAdjustment bounds one manual rating adjustment in
+	// either direction, so a fat-fingered admin amount cannot overflow the
+	// composite score.
+	maxAccountRatingAdjustment = 1_000_000_000
 )
 
 // Stable admin error codes for the collectible-username and account-rating
@@ -133,6 +143,10 @@ const (
 	CodeVerificationNotOwner            = "VERIFICATION_NOT_OWNER"
 	CodeVerificationUserTargetsDisabled = "VERIFICATION_USER_TARGETS_DISABLED"
 	CodeVerificationInvalid             = "VERIFICATION_INVALID"
+
+	CodeRatingNotFound          = "RATING_NOT_FOUND"
+	CodeRatingAdjustmentInvalid = "RATING_ADJUSTMENT_INVALID"
+	CodeRatingWeightsInvalid    = "RATING_WEIGHTS_INVALID"
 )
 
 // Stable admin error codes for third-party bot verification (see
@@ -324,6 +338,16 @@ type StickerSetsService interface {
 // GifCatalogService is the admin-console management surface over the
 // admin-curated GIF catalog the built-in @gif inline bot serves for the
 // client's GIF picker.
+// PremiumService is the admin-facing view of app/premium.Service: catalog
+// management and refunds. Grants and revokes stay on UsersService.GrantPremium
+// (months=0 clears it) -- Premium's own store has nothing to add there.
+type PremiumService interface {
+	Catalog(ctx context.Context) ([]domain.PremiumPlan, error)
+	UpsertPlan(ctx context.Context, req domain.PremiumPlanUpsertRequest) (domain.PremiumPlan, error)
+	Payment(ctx context.Context, paymentIntentID int64) (domain.PremiumPaymentDetails, bool, error)
+	Refund(ctx context.Context, req domain.PremiumRefundRequest) (domain.PremiumPurchaseResult, error)
+}
+
 type GifCatalogService interface {
 	// ValidateGifUpload is a pure check (no store writes) so a dry-run preview
 	// can validate an uploaded file's shape without materializing it.
@@ -411,12 +435,24 @@ type collectibleUsernameByIDLookup interface {
 	CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error)
 }
 
+// AccountRatingService is the operator-facing slice of the composite account
+// rating use cases: read the stored projection, force a recompute, adjust the
+// manual component and page the ledger that explains a level.
+type AccountRatingService interface {
+	Rating(ctx context.Context, userID int64) (domain.AccountRating, error)
+	Recompute(ctx context.Context, userID int64) (domain.AccountRating, error)
+	Adjust(ctx context.Context, req domain.AdjustAccountRatingRequest) (domain.AccountRating, bool, error)
+	List(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
+	Events(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
+}
+
 type Dependencies struct {
 	Commands               CommandRepository
 	Restrictions           RestrictionStore
 	Auth                   AuthService
 	Revoker                AuthKeyRevoker
 	Users                  UsersService
+	Premium                PremiumService
 	UserNotifier           UserNotifier
 	UserModerationNotifier UserModerationNotifier
 	FreezeNotifier         AccountFreezeNotifier
@@ -440,7 +476,10 @@ type Dependencies struct {
 	Account AccountService
 	// Broadcast is the system-broadcast (777000) create/list/get surface.
 	Broadcast BroadcastService
-	Now       func() time.Time
+	// Rating is the composite account rating use case (read/recompute/adjust/
+	// list/events).
+	Rating AccountRatingService
+	Now    func() time.Time
 }
 
 type Service struct {
@@ -449,6 +488,7 @@ type Service struct {
 	auth                   AuthService
 	revoker                AuthKeyRevoker
 	users                  UsersService
+	premium                PremiumService
 	userNotifier           UserNotifier
 	userModerationNotifier UserModerationNotifier
 	freezeNotifier         AccountFreezeNotifier
@@ -467,6 +507,7 @@ type Service struct {
 	botVerification        BotVerificationService
 	account                AccountService
 	broadcast              BroadcastService
+	rating                 AccountRatingService
 	now                    func() time.Time
 }
 
@@ -490,6 +531,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Users != nil {
 		s.users = deps.Users
+	}
+	if deps.Premium != nil {
+		s.premium = deps.Premium
 	}
 	if deps.UserNotifier != nil {
 		s.userNotifier = deps.UserNotifier
@@ -544,6 +588,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Broadcast != nil {
 		s.broadcast = deps.Broadcast
+	}
+	if deps.Rating != nil {
+		s.rating = deps.Rating
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
@@ -806,6 +853,22 @@ type GrantPremiumRequest struct {
 	CommandMeta
 	UserID int64 `json:"user_id"`
 	Months int   `json:"months"`
+}
+
+type UpsertPremiumPlanRequest struct {
+	CommandMeta
+	Months          int    `json:"months"`
+	DurationDays    int    `json:"duration_days"`
+	AmountStars     int64  `json:"amount_stars"`
+	Enabled         bool   `json:"enabled"`
+	SortOrder       int    `json:"sort_order"`
+	Label           string `json:"label"`
+	ExpectedVersion int64  `json:"expected_version"`
+}
+
+type RefundPremiumRequest struct {
+	CommandMeta
+	PaymentIntentID int64 `json:"payment_intent_id"`
 }
 
 type SetVerifiedRequest struct {
@@ -1288,6 +1351,62 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 			msg = "premium cleared"
 		}
 		return CommandResult{Message: msg, Details: details}, nil
+	})
+}
+
+// UpsertPremiumPlan creates or edits one Premium month option. It never runs
+// as a dry-run preview: there is no user-facing side effect to simulate,
+// only a price/duration/visibility change to the catalog itself.
+func (s *Service) UpsertPremiumPlan(ctx context.Context, req UpsertPremiumPlanRequest) (CommandResult, error) {
+	if s == nil || s.premium == nil {
+		return CommandResult{}, fmt.Errorf("premium dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionUpsertPremiumPlan, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		plan, err := s.premium.UpsertPlan(ctx, domain.PremiumPlanUpsertRequest{
+			Months: req.Months, DurationDays: req.DurationDays, AmountStars: req.AmountStars,
+			Enabled: req.Enabled, SortOrder: req.SortOrder, Label: req.Label,
+			ExpectedVersion: req.ExpectedVersion,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "premium plan saved", Details: map[string]any{
+			"months": plan.Months, "duration_days": plan.DurationDays, "amount_stars": plan.AmountStars,
+			"enabled": plan.Enabled, "sort_order": plan.SortOrder, "label": plan.Label, "version": plan.Version,
+		}}, nil
+	})
+}
+
+// RefundPremium reverses a paid Stars purchase: the buyer gets their Stars
+// back and the recipient's Premium entitlement from that purchase is
+// revoked. Reason (from CommandMeta) is required and shown on the buyer's
+// Stars transaction.
+func (s *Service) RefundPremium(ctx context.Context, req RefundPremiumRequest) (CommandResult, error) {
+	if req.PaymentIntentID <= 0 {
+		return CommandResult{}, fmt.Errorf("payment_intent_id is required")
+	}
+	if s == nil || s.premium == nil {
+		return CommandResult{}, fmt.Errorf("premium dependency is not configured")
+	}
+	targetUserID := int64(0)
+	if details, found, err := s.premium.Payment(ctx, req.PaymentIntentID); err == nil && found {
+		targetUserID = details.Intent.RecipientUserID
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionRefundPremium, targetUserID, domain.Peer{}, req, func() (CommandResult, error) {
+		result, err := s.premium.Refund(ctx, domain.PremiumRefundRequest{
+			PaymentIntentID: req.PaymentIntentID, Date: int(s.now().Unix()), Reason: req.CommandMeta.Reason,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.notifyUserChanged(ctx, result.User); err != nil {
+			return CommandResult{Message: "premium refunded", Details: map[string]any{
+				"buyer_balance": result.Balance.Balance, "notify_error": err.Error(),
+			}}, nil
+		}
+		return CommandResult{Message: "premium refunded", Details: map[string]any{
+			"buyer_balance": result.Balance.Balance,
+		}}, nil
 	})
 }
 

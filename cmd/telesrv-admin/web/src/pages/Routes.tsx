@@ -18,6 +18,9 @@ import { StickerSetsPage } from "./StickerSetsPage";
 import { GifCatalogPage } from "./GifCatalogPage";
 import { AdminUsersPage } from "./AdminUsersPage";
 import { AuditLogPage } from "./AuditLogPage";
+import { PremiumPlansPage } from "./PremiumPlansPage";
+import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
+import { AccountRatingsPage } from "./AccountRatingsPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
@@ -40,6 +43,8 @@ import {
   permissionDashboardRead,
   permissionMessagesRead,
   permissionModerationReview,
+  permissionPremiumManage,
+  permissionRatingsRead,
   permissionServerManage,
   permissionStorageRead,
   permissionUsernamesRead,
@@ -61,6 +66,7 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   // int64 ids stay strings so large values never lose precision.
   const collectibleUsernameID = route.path.match(/^\/collectible-usernames\/(\d+)$/)?.[1];
   const verificationID = route.path.match(/^\/verification\/(\d+)$/)?.[1];
+  const accountRatingUserID = route.path.match(/^\/account-ratings\/(\d+)$/)?.[1];
   // Third-party verification: a separate section with its own rights, matched before
   // the official one so neither prefix can shadow the other.
   const botVerificationRequestID = route.path.match(/^\/bot-verification\/(\d+)$/)?.[1];
@@ -156,6 +162,15 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/audit-log") {
     return gate(permissionAuditRead, <AuditLogPage />);
+  }
+  if (route.path === "/premium") {
+    return gate(permissionPremiumManage, <PremiumPlansPage />);
+  }
+  if (accountRatingUserID) {
+    return gate(permissionRatingsRead, <AccountRatingDetailPage userID={accountRatingUserID} navigate={navigate} />);
+  }
+  if (route.path === "/account-ratings") {
+    return gate(permissionRatingsRead, <AccountRatingsPage navigate={navigate} />);
   }
   if (route.path === "/server-settings") {
     return (

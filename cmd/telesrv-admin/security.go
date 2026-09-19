@@ -92,6 +92,10 @@ const (
 	// (which any read right for that section already exposes) because seeing
 	// everyone else's actions in one place is a meaningfully bigger grant.
 	permissionAuditRead = "audit.read"
+	// Composite account rating (see internal/app/rating). read pages the
+	// leaderboard and detail; manage recomputes and adjusts.
+	permissionRatingsRead   = "ratings.read"
+	permissionRatingsManage = "ratings.manage"
 
 	// permissionSessionOnly marks the handful of routes that need a session but
 	// no right: reading who you are, and signing out. It is not a grantable
@@ -136,6 +140,8 @@ func assignablePermissions() []string {
 		permissionServerManage,
 		permissionAdminsManage,
 		permissionAuditRead,
+		permissionRatingsRead,
+		permissionRatingsManage,
 	}
 }
 

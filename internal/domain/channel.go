@@ -638,6 +638,12 @@ const (
 	// 当前唯一用途是把 storage retention 硬回收/主动淘汰清理掉的频道消息就地
 	// 转成这条通知（见 EditChannelMessageRequest.RetentionPurge）。
 	ChannelActionCustomText ChannelMessageActionType = "custom_text"
+	// ChannelActionStarGift maps messageActionStarGift's admin-log snapshot
+	// for a gift sent to a channel.
+	ChannelActionStarGift ChannelMessageActionType = "star_gift"
+	// ChannelActionStarGiftUnique maps messageActionStarGiftUnique's
+	// admin-log snapshot for a channel-owned collectible gift.
+	ChannelActionStarGiftUnique ChannelMessageActionType = "star_gift_unique"
 )
 
 // ChannelMessageAction describes a service action without depending on tg.*.
@@ -682,6 +688,9 @@ type ChannelMessageAction struct {
 	SuggestedPostScheduleDate   int
 	SuggestedPostPrice          *SuggestedPostPrice
 	SuggestedPostPayerInitiated bool
+	// StarGift/StarGiftUnique 仅 star_gift(_unique) 服务消息使用：频道收到礼物的 admin-log 快照。
+	StarGift       *MessageStarGiftAction
+	StarGiftUnique *MessageStarGiftUniqueAction
 	// Text 仅 custom_text 服务消息使用（messageActionCustomAction.message）。
 	Text string
 }

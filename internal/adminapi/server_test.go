@@ -308,6 +308,14 @@ func (fakeService) GrantPremium(_ context.Context, req admin.GrantPremiumRequest
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) UpsertPremiumPlan(_ context.Context, req admin.UpsertPremiumPlanRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) RefundPremium(_ context.Context, req admin.RefundPremiumRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) SetVerified(_ context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
@@ -737,5 +745,25 @@ func (fakeService) CollectibleUsernameByID(context.Context, int64) (domain.Colle
 }
 
 func (fakeService) CollectibleUsernameTransfers(context.Context, int64, int) ([]domain.CollectibleUsernameTransfer, error) {
+	return nil, nil
+}
+
+func (fakeService) RecomputeAccountRating(_ context.Context, req admin.RecomputeAccountRatingRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) AdjustAccountRating(_ context.Context, req admin.AdjustAccountRatingRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) AccountRating(context.Context, int64) (domain.AccountRating, error) {
+	return domain.AccountRating{}, nil
+}
+
+func (fakeService) AccountRatings(context.Context, domain.AccountRatingFilter) ([]domain.AccountRating, error) {
+	return nil, nil
+}
+
+func (fakeService) AccountRatingEvents(context.Context, int64, int) ([]domain.AccountRatingEvent, error) {
 	return nil, nil
 }

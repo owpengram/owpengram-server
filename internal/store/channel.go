@@ -215,6 +215,9 @@ type ChannelStore interface {
 	// AppendCallServiceMessage 生成群通话服务消息（started/ended/invite，带频道
 	// pts），Recipients 为活跃成员（rpc 据此扇出 updateNewChannelMessage）。
 	AppendCallServiceMessage(ctx context.Context, channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error)
+	// AppendStarGiftAdminLog posts the messageActionStarGift service message
+	// for a gift a channel received.
+	AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID, savedID int64, date int, action domain.ChannelMessageAction) error
 }
 
 // ChannelIDAllocator allocates channel IDs.

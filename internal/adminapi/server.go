@@ -42,6 +42,8 @@ type Service interface {
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
+	UpsertPremiumPlan(ctx context.Context, req admin.UpsertPremiumPlanRequest) (admin.CommandResult, error)
+	RefundPremium(ctx context.Context, req admin.RefundPremiumRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -100,6 +102,11 @@ type Service interface {
 	CollectibleUsernames(ctx context.Context, filter domain.CollectibleUsernameFilter) ([]domain.CollectibleUsername, error)
 	CollectibleUsernameByID(ctx context.Context, id int64) (domain.CollectibleUsername, error)
 	CollectibleUsernameTransfers(ctx context.Context, collectibleID int64, limit int) ([]domain.CollectibleUsernameTransfer, error)
+	RecomputeAccountRating(ctx context.Context, req admin.RecomputeAccountRatingRequest) (admin.CommandResult, error)
+	AdjustAccountRating(ctx context.Context, req admin.AdjustAccountRatingRequest) (admin.CommandResult, error)
+	AccountRating(ctx context.Context, userID int64) (domain.AccountRating, error)
+	AccountRatings(ctx context.Context, filter domain.AccountRatingFilter) ([]domain.AccountRating, error)
+	AccountRatingEvents(ctx context.Context, userID int64, limit int) ([]domain.AccountRatingEvent, error)
 	ClaimVerification(ctx context.Context, req admin.ClaimVerificationRequest) (admin.CommandResult, error)
 	ApproveVerification(ctx context.Context, req admin.ApproveVerificationRequest) (admin.CommandResult, error)
 	RejectVerification(ctx context.Context, req admin.RejectVerificationRequest) (admin.CommandResult, error)
@@ -181,6 +188,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
 	mux.HandleFunc("GET /v1/accounts/{id}/avatar", s.authenticated(s.handleAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
+	mux.HandleFunc("POST /v1/premium/plans/upsert", s.authorized(PermissionPremiumManage, s.handleUpsertPremiumPlan))
+	mux.HandleFunc("POST /v1/premium/refund", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -238,6 +247,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/collectible-usernames/delete", s.authenticated(s.handleDeleteCollectibleUsername))
 	mux.HandleFunc("GET /v1/collectible-usernames", s.authenticated(s.handleCollectibleUsernames))
 	mux.HandleFunc("GET /v1/collectible-usernames/{id}", s.authenticated(s.handleCollectibleUsername))
+	mux.HandleFunc("POST /v1/account-ratings/recompute", s.authenticated(s.handleRecomputeAccountRating))
+	mux.HandleFunc("POST /v1/account-ratings/adjust", s.authenticated(s.handleAdjustAccountRating))
+	mux.HandleFunc("GET /v1/account-ratings", s.authenticated(s.handleAccountRatings))
+	mux.HandleFunc("GET /v1/account-ratings/{id}", s.authenticated(s.handleAccountRating))
 	// Official platform verification. Unlike every route above, these carry a
 	// named permission, so a scoped token can be given the review surface and
 	// nothing else. Revocation additionally requires verification.revoke.
@@ -309,6 +322,24 @@ func (s *Server) handleGrantPremium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.GrantPremium(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpsertPremiumPlan(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpsertPremiumPlanRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpsertPremiumPlan(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleRefundPremium(w http.ResponseWriter, r *http.Request) {
+	var req admin.RefundPremiumRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.RefundPremium(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

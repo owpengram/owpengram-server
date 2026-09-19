@@ -22,20 +22,20 @@ func TestLoadDefaultsAdvertiseIPToLoopback(t *testing.T) {
 	if cfg.AdvertiseIP != "127.0.0.1" {
 		t.Fatalf("AdvertiseIP = %q, want loopback default", cfg.AdvertiseIP)
 	}
-	if cfg.PublicBaseURL != "https://telesrv.net" {
-		t.Fatalf("PublicBaseURL = %q, want https://telesrv.net", cfg.PublicBaseURL)
+	if cfg.PublicBaseURL != "https://owpengram.org" {
+		t.Fatalf("PublicBaseURL = %q, want https://owpengram.org", cfg.PublicBaseURL)
 	}
-	if cfg.PublicAppScheme != "telesrv" {
-		t.Fatalf("PublicAppScheme = %q, want telesrv", cfg.PublicAppScheme)
+	if cfg.PublicAppScheme != "owpg" {
+		t.Fatalf("PublicAppScheme = %q, want owpg", cfg.PublicAppScheme)
 	}
 	if cfg.PublicAppLinkBase != "" {
 		t.Fatalf("PublicAppLinkBase = %q, want disabled", cfg.PublicAppLinkBase)
 	}
-	if cfg.PublicWebBaseURL != "https://weba.telesrv.net" {
-		t.Fatalf("PublicWebBaseURL = %q, want https://weba.telesrv.net", cfg.PublicWebBaseURL)
+	if cfg.PublicWebBaseURL != "https://weba.owpengram.org" {
+		t.Fatalf("PublicWebBaseURL = %q, want https://weba.owpengram.org", cfg.PublicWebBaseURL)
 	}
-	if cfg.PublicAppName != "Telesrv" {
-		t.Fatalf("PublicAppName = %q, want Telesrv", cfg.PublicAppName)
+	if cfg.PublicAppName != "OwpenGram" {
+		t.Fatalf("PublicAppName = %q, want OwpenGram", cfg.PublicAppName)
 	}
 	if cfg.CallRegistryMaxEntries != 10_000 {
 		t.Fatalf("CallRegistryMaxEntries = %d, want 10000", cfg.CallRegistryMaxEntries)

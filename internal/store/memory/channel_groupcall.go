@@ -26,6 +26,13 @@ func (s *ChannelStore) AppendCallServiceMessage(_ context.Context, channelID, se
 	return s.appendServiceMessageLocked(channelID, senderUserID, date, action)
 }
 
+// AppendStarGiftAdminLog posts the messageActionStarGift service message
+// for a gift a channel received.
+func (s *ChannelStore) AppendStarGiftAdminLog(_ context.Context, channelID, senderUserID, _ int64, date int, action domain.ChannelMessageAction) error {
+	_, err := s.appendServiceMessageLocked(channelID, senderUserID, date, action)
+	return err
+}
+
 func (s *ChannelStore) appendServiceMessageLocked(channelID, senderUserID int64, date int, action domain.ChannelMessageAction) (domain.SendChannelMessageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

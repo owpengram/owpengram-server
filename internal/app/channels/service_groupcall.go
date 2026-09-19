@@ -24,3 +24,15 @@ func (s *Service) AppendCallServiceMessage(ctx context.Context, channelID, sende
 	}
 	return s.channels.AppendCallServiceMessage(ctx, channelID, senderUserID, date, action)
 }
+
+// AppendStarGiftAdminLog posts the messageActionStarGift service message
+// for a gift a channel received.
+func (s *Service) AppendStarGiftAdminLog(ctx context.Context, channelID, senderUserID, savedID int64, date int, action domain.ChannelMessageAction) error {
+	if s == nil || s.channels == nil {
+		return domain.ErrChannelInvalid
+	}
+	if err := s.ensureCanSend(ctx, senderUserID); err != nil {
+		return err
+	}
+	return s.channels.AppendStarGiftAdminLog(ctx, channelID, senderUserID, savedID, date, action)
+}

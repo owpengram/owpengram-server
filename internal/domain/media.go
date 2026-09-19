@@ -596,6 +596,21 @@ const (
 	// 通知（当前唯一用途：storage retention 硬回收把已清理媒体的消息就地转成
 	// 这条通知）渲染成居中灰色系统气泡，而不是一次看起来像普通编辑的文本替换。
 	MessageServiceActionCustomText MessageServiceActionKind = "custom_text"
+	// MessageServiceActionStarGift maps messageActionStarGift: the receipt
+	// left in the recipient's private chat with the sender when someone buys
+	// them a gift sticker with Stars (payments.sendStarsForm on
+	// InputInvoiceStarGift). Its MessageStarGiftAction payload is the source
+	// a client renders the gift card and the save/convert buttons from.
+	MessageServiceActionStarGift MessageServiceActionKind = "star_gift"
+	// MessageServiceActionStarGiftUnique maps messageActionStarGiftUnique. The
+	// immutable collectible snapshot is carried by the service message so an
+	// exact replay/difference never depends on mutable catalog state.
+	MessageServiceActionStarGiftUnique        MessageServiceActionKind = "star_gift_unique"
+	MessageServiceActionStarGiftOffer         MessageServiceActionKind = "star_gift_offer"
+	MessageServiceActionStarGiftOfferDeclined MessageServiceActionKind = "star_gift_offer_declined"
+	// MessageServiceActionGiftPremium maps messageActionGiftPremium. Not sent
+	// yet -- see internal/app/premium's package doc.
+	MessageServiceActionGiftPremium MessageServiceActionKind = "gift_premium"
 )
 
 // MessagePhoneCallAction 是 messageActionPhoneCall 的协议中立载荷。
@@ -669,17 +684,98 @@ type MessageNoForwardsAction struct {
 
 // MessageServiceAction 是私聊服务消息动作的协议中立表示。
 type MessageServiceAction struct {
-	Kind              MessageServiceActionKind     `json:"kind"`
-	Photo             *Photo                       `json:"photo,omitempty"`
-	Call              *MessagePhoneCallAction      `json:"call,omitempty"`
-	ConferenceCall    *MessageConferenceCallAction `json:"conference_call,omitempty"`
-	BotAllowed        *MessageBotAllowedAction     `json:"bot_allowed,omitempty"`
-	WebViewData       *MessageWebViewDataAction    `json:"web_view_data,omitempty"`
-	RequestedPeer     *MessageRequestedPeerAction  `json:"requested_peer,omitempty"`
-	ChatThemeEmoticon string                       `json:"chat_theme_emoticon,omitempty"`
-	NoForwards        *MessageNoForwardsAction     `json:"no_forwards,omitempty"`
+	Kind                  MessageServiceActionKind            `json:"kind"`
+	Photo                 *Photo                              `json:"photo,omitempty"`
+	Call                  *MessagePhoneCallAction             `json:"call,omitempty"`
+	ConferenceCall        *MessageConferenceCallAction        `json:"conference_call,omitempty"`
+	BotAllowed            *MessageBotAllowedAction            `json:"bot_allowed,omitempty"`
+	WebViewData           *MessageWebViewDataAction           `json:"web_view_data,omitempty"`
+	RequestedPeer         *MessageRequestedPeerAction         `json:"requested_peer,omitempty"`
+	ChatThemeEmoticon     string                              `json:"chat_theme_emoticon,omitempty"`
+	NoForwards            *MessageNoForwardsAction            `json:"no_forwards,omitempty"`
+	StarGift              *MessageStarGiftAction              `json:"star_gift,omitempty"`
+	StarGiftUnique        *MessageStarGiftUniqueAction        `json:"star_gift_unique,omitempty"`
+	StarGiftOffer         *MessageStarGiftOfferAction         `json:"star_gift_offer,omitempty"`
+	StarGiftOfferDeclined *MessageStarGiftOfferDeclinedAction `json:"star_gift_offer_declined,omitempty"`
 	// Text 承载 MessageServiceActionCustomText 的固定通知文案（messageActionCustomAction.message）。
 	Text string `json:"text,omitempty"`
+}
+
+// MessageStarGiftOfferAction/OfferDeclined carry a resale price offer on a
+// unique gift. The negotiation surface (payments_star_gift_unique.go) is
+// copied but not wired into a running server yet.
+type MessageStarGiftOfferAction struct {
+	Gift      UniqueStarGift `json:"gift"`
+	Price     StarGiftAmount `json:"price"`
+	ExpiresAt int            `json:"expires_at"`
+	Accepted  bool           `json:"accepted,omitempty"`
+	Declined  bool           `json:"declined,omitempty"`
+}
+
+type MessageStarGiftOfferDeclinedAction struct {
+	Gift    UniqueStarGift `json:"gift"`
+	Price   StarGiftAmount `json:"price"`
+	Expired bool           `json:"expired,omitempty"`
+}
+
+// MessageStarGiftUniqueAction is the immutable collectible snapshot carried
+// by messageActionStarGiftUnique -- upgrade, transfer, offer and resale
+// surfaces (internal/store/postgres/star_gift_upgrade.go and
+// star_gift_craft_auction.go) that produce these are copied but not wired
+// into a running server yet; see the Star Gifts package doc.
+type MessageStarGiftUniqueAction struct {
+	Gift                     UniqueStarGift  `json:"gift"`
+	FromUserID               int64           `json:"from_user_id,omitempty"`
+	Peer                     Peer            `json:"peer"`
+	SavedID                  int64           `json:"saved_id,omitempty"`
+	Upgrade                  bool            `json:"upgrade,omitempty"`
+	Saved                    bool            `json:"saved,omitempty"`
+	PrepaidUpgrade           bool            `json:"prepaid_upgrade,omitempty"`
+	Transferred              bool            `json:"transferred,omitempty"`
+	Refunded                 bool            `json:"refunded,omitempty"`
+	Assigned                 bool            `json:"assigned,omitempty"`
+	FromOffer                bool            `json:"from_offer,omitempty"`
+	Craft                    bool            `json:"craft,omitempty"`
+	CanExportAt              int             `json:"can_export_at,omitempty"`
+	TransferStars            int64           `json:"transfer_stars,omitempty"`
+	ResaleAmount             *StarGiftAmount `json:"resale_amount,omitempty"`
+	CanTransferAt            int             `json:"can_transfer_at,omitempty"`
+	CanResellAt              int             `json:"can_resell_at,omitempty"`
+	DropOriginalDetailsStars int64           `json:"drop_original_details_stars,omitempty"`
+	CanCraftAt               int             `json:"can_craft_at,omitempty"`
+}
+
+// MessageStarGiftAction 是 messageActionStarGift 的协议中立载荷：内嵌礼物快照（贴纸/星价）
+// 使收礼人无需额外拉取即可渲染。PeerUserID/PeerChannelID 为收礼方；NameHidden 时下发不暴露 from。
+// Fields below GiftMsgID belong to the collectible-upgrade surface
+// (internal/store/postgres/star_gift_upgrade.go, not ported) and stay at
+// their zero value for a base, non-upgraded gift.
+type MessageStarGiftAction struct {
+	GiftID             int64           `json:"gift_id"`
+	Stars              int64           `json:"stars"`
+	ConvertStars       int64           `json:"convert_stars,omitempty"`
+	Title              string          `json:"title,omitempty"`
+	Sticker            *Document       `json:"sticker,omitempty"`
+	Message            string          `json:"message,omitempty"`
+	MessageEntities    []MessageEntity `json:"message_entities,omitempty"`
+	FromUserID         int64           `json:"from_user_id,omitempty"`
+	PeerUserID         int64           `json:"peer_user_id,omitempty"`
+	PeerChannelID      int64           `json:"peer_channel_id,omitempty"`
+	SavedID            int64           `json:"saved_id,omitempty"`
+	NameHidden         bool            `json:"name_hidden,omitempty"`
+	Saved              bool            `json:"saved,omitempty"`
+	Converted          bool            `json:"converted,omitempty"`
+	CanUpgrade         bool            `json:"can_upgrade,omitempty"`
+	PrepaidUpgrade     bool            `json:"prepaid_upgrade,omitempty"`
+	PrepaidUpgradeHash string          `json:"prepaid_upgrade_hash,omitempty"`
+	UpgradeSeparate    bool            `json:"upgrade_separate,omitempty"`
+	UpgradePriceStars  int64           `json:"upgrade_price_stars,omitempty"`
+	UpgradeStars       int64           `json:"upgrade_stars,omitempty"`
+	UpgradeMsgID       int             `json:"upgrade_msg_id,omitempty"`
+	GiftMsgID          int             `json:"gift_msg_id,omitempty"`
+	GiftNum            int             `json:"gift_num,omitempty"`
+	AuctionAcquired    bool            `json:"auction_acquired,omitempty"`
+	To                 Peer            `json:"to,omitempty"`
 }
 
 // MessageMedia 是一条消息媒体载荷的业务表示（落库为消息行上的 JSONB 快照）。

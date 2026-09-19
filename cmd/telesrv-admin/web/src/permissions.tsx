@@ -7,6 +7,8 @@ import type { Navigate } from "./routing";
 // a full-access session.
 export const permissionAll = "*";
 export const permissionPremiumManage = "premium.manage";
+export const permissionRatingsRead = "ratings.read";
+export const permissionRatingsManage = "ratings.manage";
 export const permissionBotTokenRead = "bots.token.read";
 export const permissionVerificationReview = "verification.review";
 export const permissionVerificationRevoke = "verification.revoke";
@@ -177,6 +179,8 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "storage.manage": { title: "Purge storage", hint: "Manually delete stored media" },
   "dashboard.read": { title: "View the dashboard", hint: "See the overview counters and server health" },
   "premium.manage": { title: "Manage Premium", hint: "Grant, revoke and refund Premium" },
+  "ratings.read": { title: "View account ratings", hint: "Browse the account-rating leaderboard" },
+  "ratings.manage": { title: "Adjust account ratings", hint: "Recompute ratings and apply manual corrections" },
   "verification.review": { title: "Verify accounts", hint: "Work the verification queue and grant badges" },
   "verification.revoke": { title: "Remove verification", hint: "Take a granted badge away (needs the right above too)" },
   "botverification.review": { title: "Handle third-party marks", hint: "Work the third-party verification queue" },
@@ -234,8 +238,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "Billing",
-    hint: "Premium grants and refunds",
-    permissions: ["premium.manage"]
+    hint: "Premium grants/refunds and the account-rating leaderboard",
+    permissions: ["premium.manage", "ratings.read", "ratings.manage"]
   },
   {
     title: "The console itself",

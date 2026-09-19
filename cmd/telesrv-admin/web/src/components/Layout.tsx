@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
+  Sparkles,
   UserCog,
   UserRound,
   Share2,
@@ -20,6 +21,7 @@ import {
   ShieldCheck,
   Smile,
   Stamp,
+  Trophy,
   Users,
   Zap,
 	Sticker
@@ -29,6 +31,8 @@ import { api, errorMessage } from "../api";
 import { clearAdminCache } from "../lib/cache";
 import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
   permissionAuditRead,
+  permissionPremiumManage,
+  permissionRatingsRead,
   permissionAccountsRead,
   permissionChannelsRead,
   permissionBotsRead,
@@ -104,6 +108,8 @@ export function Shell({
   const canReviewVerification = useCan(permissionVerificationReview);
   const canManageAdmins = useCan(permissionAdminsManage);
   const canReadAuditLog = useCan(permissionAuditRead);
+  const canManagePremium = useCan(permissionPremiumManage);
+  const canReadRatings = useCan(permissionRatingsRead);
   // Each section entry is hidden without the right to open it: the route is
   // gated server-side either way, so showing it would only lead to a 403.
   const canReadAccounts = useCan(permissionAccountsRead);
@@ -319,6 +325,12 @@ export function Shell({
           )}
           {canReadAuditLog && (
             <NavLink icon={<History size={16} />} href="/audit-log" route={route} navigate={navigate}>{"Audit Log"}</NavLink>
+          )}
+          {canManagePremium && (
+            <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
+          )}
+          {canReadRatings && (
+            <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
           )}
           {canManageServer && (
             <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
