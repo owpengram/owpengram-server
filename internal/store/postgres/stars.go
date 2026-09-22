@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -130,6 +131,59 @@ func (s *StarsStore) Debit(ctx context.Context, userID, amount int64, reason dom
 		return domain.StarsBalance{}, err
 	}
 	return out, nil
+}
+
+func (s *StarsStore) ClaimMonthly(ctx context.Context, userID, amount int64, date int, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error) {
+	if userID == 0 || amount <= 0 {
+		return domain.StarsBalance{}, false, time.Time{}, domain.ErrStarsInvalidAmount
+	}
+	now := time.Unix(int64(date), 0).UTC()
+	out := domain.StarsBalance{UserID: userID}
+	claimed := false
+	nextAt := now.Add(cooldown)
+	err := withTx(ctx, s.db, "claim monthly stars", func(tx pgx.Tx) error {
+		var claimedAt time.Time
+		err := tx.QueryRow(ctx, `SELECT claimed_at FROM stars_monthly_claims WHERE user_id = $1 FOR UPDATE`, userID).Scan(&claimedAt)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// Never claimed before -- eligible.
+		case err != nil:
+			return fmt.Errorf("select stars monthly claim: %w", err)
+		default:
+			nextAt = claimedAt.Add(cooldown)
+			if now.Before(nextAt) {
+				var balance int64
+				var granted bool
+				berr := tx.QueryRow(ctx, `SELECT balance, granted FROM stars_balances WHERE user_id = $1`, userID).Scan(&balance, &granted)
+				if berr != nil && !errors.Is(berr, pgx.ErrNoRows) {
+					return fmt.Errorf("select stars balance for monthly claim: %w", berr)
+				}
+				out.Balance, out.Granted = balance, granted
+				return nil
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO stars_monthly_claims (user_id, claimed_at) VALUES ($1, $2)
+ON CONFLICT (user_id) DO UPDATE SET claimed_at = EXCLUDED.claimed_at`, userID, now); err != nil {
+			return fmt.Errorf("upsert stars monthly claim: %w", err)
+		}
+		if err := tx.QueryRow(ctx, `
+INSERT INTO stars_balances (user_id, balance, updated_at) VALUES ($1, $2, now())
+ON CONFLICT (user_id) DO UPDATE SET balance = stars_balances.balance + EXCLUDED.balance, updated_at = now()
+RETURNING balance, granted`, userID, amount).Scan(&out.Balance, &out.Granted); err != nil {
+			return fmt.Errorf("credit stars balance for monthly claim: %w", err)
+		}
+		if err := insertStarsTxn(ctx, tx, userID, amount, domain.StarsReasonMonthlyClaim, domain.Peer{}, date, "Monthly Stars claim", ""); err != nil {
+			return err
+		}
+		claimed = true
+		nextAt = now.Add(cooldown)
+		return nil
+	})
+	if err != nil {
+		return domain.StarsBalance{}, false, time.Time{}, err
+	}
+	return out, claimed, nextAt, nil
 }
 
 func (s *StarsStore) ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {

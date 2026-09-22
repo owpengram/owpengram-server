@@ -96,6 +96,15 @@ func (s *Service) ListTransactions(ctx context.Context, userID int64, query doma
 	return s.store.ListTransactions(ctx, userID, query)
 }
 
+// ClaimMonthly applies the once-per-cooldown free Stars claim (see
+// store.StarsStore.ClaimMonthly for the atomic once-per-cooldown semantics).
+func (s *Service) ClaimMonthly(ctx context.Context, userID, amount int64, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error) {
+	if amount <= 0 {
+		return domain.StarsBalance{}, false, time.Time{}, domain.ErrStarsInvalidAmount
+	}
+	return s.store.ClaimMonthly(ctx, userID, amount, int(s.now().Unix()), cooldown)
+}
+
 // IssuePurchaseForm persists a short-lived, exact checkout intent.
 func (s *Service) IssuePurchaseForm(ctx context.Context, form domain.StarsPurchaseForm) (domain.StarsPurchaseForm, error) {
 	if s.purchaseStore == nil || !validPurchaseForm(form) {

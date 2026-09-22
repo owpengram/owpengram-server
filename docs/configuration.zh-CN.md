@@ -507,6 +507,8 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 |---|---|---|
 | `TELESRV_PREMIUM_GRANT_MONTHS` | int / `3` | 新注册账号默认 Premium 月数；`0` 关闭新赠送，不影响已有迁移 backfill。 |
 | `TELESRV_STARS_STARTING_GRANT` | int64 / `1000` | 对所有账号幂等惰性授予的 Stars 起始余额；`0` 关闭自动赠送。 |
+| `TELESRV_STARS_MONTHLY_CLAIM_AMOUNT` | int64 / `100` | 内置 @premiumbot 的 `/claim` 命令每 `TELESRV_STARS_MONTHLY_CLAIM_INTERVAL` 可领取一次的 Stars 数量；`<=0` 关闭该命令。 |
+| `TELESRV_STARS_MONTHLY_CLAIM_INTERVAL` | duration / `720h` | 两次成功 `/claim` 之间的冷却时长，从上次领取时刻起算。 |
 | `TELESRV_PREMIUM_SWEEP_INTERVAL` | duration / `1m` | 过期 Premium 清理/推送周期；读取路径独立即时派生到期状态。 |
 | `TELESRV_PREMIUM_SWEEP_BATCH` | int / `500` | 单次 sweep 最大处理行数。 |
 | `TELESRV_STARGIFT_SWEEP_INTERVAL` | duration / `15s` | Star Gift 报价/竞拍本地生命周期清扫周期；不会连接区块链。 |

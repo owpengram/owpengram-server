@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -28,6 +29,13 @@ type StarsStore interface {
 	// ListTransactions keyset-paginates by direction and order, returning one
 	// page of transactions plus the current balance.
 	ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error)
+	// ClaimMonthly atomically applies the once-per-cooldown free Stars claim
+	// (e.g. @premiumbot's /claim): credits amount and records the claim only
+	// when no prior claim exists or the prior one is older than cooldown,
+	// all within one transaction (SELECT ... FOR UPDATE against the claim
+	// row). claimed reports whether this call performed the credit; nextAt
+	// is when the next claim becomes available either way.
+	ClaimMonthly(ctx context.Context, userID, amount int64, date int, cooldown time.Duration) (bal domain.StarsBalance, claimed bool, nextAt time.Time, err error)
 }
 
 // StarsPurchaseStore owns fiat self-topup, friend-gift and giveaway-launch

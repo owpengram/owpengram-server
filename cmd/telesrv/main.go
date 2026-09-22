@@ -1249,7 +1249,8 @@ func run(logger *zap.Logger) error {
 		botsapp.WithTelegramLogin(telegramLoginService),
 		botsapp.WithDialogRateLimiter(rateLimiter, cfg.VerificationBotRateLimit, cfg.VerificationBotRateWindow),
 		botsapp.WithPublicBaseURL(cfg.PublicBaseURL),
-		botsapp.WithHideThirdPartyVerification(cfg.HideThirdPartyVerification))
+		botsapp.WithHideThirdPartyVerification(cfg.HideThirdPartyVerification),
+		botsapp.WithStarsMonthlyClaim(cfg.StarsMonthlyClaimAmount, cfg.StarsMonthlyClaimInterval))
 	// The built-in ChatBot and StickersBot are seeded with the default product
 	// name in their bio (users.about) and description (bots.description). Align
 	// them with the active branding on startup so the seeded "telesrv" text is
@@ -1367,6 +1368,7 @@ func run(logger *zap.Logger) error {
 	premiumStore := postgres.NewPremiumStore(pool)
 	premiumService := premiumapp.NewService(premiumStore, starsService)
 	botsService.SetPremiumSource(premiumService)
+	botsService.SetStarsSource(starsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)

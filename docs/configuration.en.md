@@ -533,6 +533,8 @@ path. `TELESRV_PUBLIC_BASE_URL` must resolve to that proxy for moderation freeze
 |---|---|---|
 | `TELESRV_PREMIUM_GRANT_MONTHS` | int / `3` | Premium months granted to newly registered users; `0` disables new grants. Existing migration backfills are unaffected. |
 | `TELESRV_STARS_STARTING_GRANT` | int64 / `1000` | Idempotent lazy starting Stars balance for all accounts; `0` disables automatic grant. |
+| `TELESRV_STARS_MONTHLY_CLAIM_AMOUNT` | int64 / `100` | Stars the built-in @premiumbot's `/claim` command grants once per `TELESRV_STARS_MONTHLY_CLAIM_INTERVAL`; `<=0` disables the command. |
+| `TELESRV_STARS_MONTHLY_CLAIM_INTERVAL` | duration / `720h` | Cooldown between successful `/claim` uses, counted from the previous claim. |
 | `TELESRV_PREMIUM_SWEEP_INTERVAL` | duration / `1m` | Expired-premium cleanup/push interval. Read paths derive expiry independently. |
 | `TELESRV_PREMIUM_SWEEP_BATCH` | int / `500` | Maximum expired premium rows processed per sweep. |
 | `TELESRV_STARGIFT_SWEEP_INTERVAL` | duration / `15s` | Local Star Gift offer/auction lifecycle sweep interval; no blockchain connection is made. |

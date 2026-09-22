@@ -117,7 +117,8 @@ const (
 	StarsReasonSuggestedPost StarsTransactionReason = "suggested_post"
 	StarsReasonPremium       StarsTransactionReason = "premium"
 	StarsReasonWithdrawal    StarsTransactionReason = "withdrawal"
-	StarsReasonAdjust        StarsTransactionReason = "adjust" // 兜底/人工调整
+	StarsReasonAdjust        StarsTransactionReason = "adjust"        // 兜底/人工调整
+	StarsReasonMonthlyClaim  StarsTransactionReason = "monthly_claim" // @premiumbot /claim 免费领取
 )
 
 // StarsTransaction 是一条账本流水。amount 带符号：贷记 > 0（含 refund/收取），借记 < 0。

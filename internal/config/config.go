@@ -649,6 +649,13 @@ type Config struct {
 	// covers both new and existing accounts without a backfill migration);
 	// 0 disables the automatic grant.
 	StarsStartingGrant int64
+	// StarsMonthlyClaimAmount is how many Stars the built-in @premiumbot's
+	// /claim command grants once per StarsMonthlyClaimInterval; <=0 disables
+	// the claim (the command answers that it's unavailable).
+	StarsMonthlyClaimAmount int64
+	// StarsMonthlyClaimInterval is the cooldown between successful /claim
+	// uses, counted from the previous successful claim.
+	StarsMonthlyClaimInterval time.Duration
 	// RatingEnabled controls the local admin-only composite account rating.
 	// Disabled keeps every local projection empty and refuses rating writes;
 	// no client-facing Telegram field changes in either mode.
@@ -1181,16 +1188,18 @@ func Load() (Config, error) {
 		CallSignalingRate:      envIntOr("TELESRV_CALL_SIGNALING_RATE", 50),
 		CallExpiryInterval:     envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
-		PremiumGrantMonths:      envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
-		DefaultStickerSetID:     envInt64Or("TELESRV_DEFAULT_STICKER_SET_ID", 0),
-		PasskeyRPID:             envOr("TELESRV_PASSKEY_RP_ID", "owpengram.org"),
-		PasskeyAllowedOrigins:   envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
-		StarsStartingGrant:      envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
-		RatingEnabled:           envBoolOr("TELESRV_RATING_ENABLED", true),
-		RatingPendingDelay:      envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
-		RatingRecomputeInterval: envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
-		RatingRecomputeBatch:    envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
-		RatingStaleAfter:        envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
+		PremiumGrantMonths:        envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
+		DefaultStickerSetID:       envInt64Or("TELESRV_DEFAULT_STICKER_SET_ID", 0),
+		PasskeyRPID:               envOr("TELESRV_PASSKEY_RP_ID", "owpengram.org"),
+		PasskeyAllowedOrigins:     envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
+		StarsStartingGrant:        envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
+		StarsMonthlyClaimAmount:   envInt64Or("TELESRV_STARS_MONTHLY_CLAIM_AMOUNT", 100),
+		StarsMonthlyClaimInterval: envDurationOr("TELESRV_STARS_MONTHLY_CLAIM_INTERVAL", 30*24*time.Hour),
+		RatingEnabled:             envBoolOr("TELESRV_RATING_ENABLED", true),
+		RatingPendingDelay:        envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
+		RatingRecomputeInterval:   envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
+		RatingRecomputeBatch:      envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
+		RatingStaleAfter:          envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
 		// Every TELESRV_RATING_WEIGHT_* default mirrors domain.DefaultAccountRatingWeights()
 		// exactly, so the shipped behaviour cannot drift from it.
 		RatingWeightStarsReceivedPermille: envInt64Or("TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", domain.DefaultAccountRatingWeights().StarsReceivedPermille),

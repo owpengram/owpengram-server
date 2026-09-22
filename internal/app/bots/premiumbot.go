@@ -18,6 +18,7 @@ func premiumBotHelpText() string {
 		"/status - check your current Premium status\n" +
 		"/history - your last Premium purchases\n" +
 		"/gift - how to gift Premium to someone\n" +
+		"/claim - claim your free monthly Stars\n" +
 		"/help - show this message"
 }
 
@@ -55,6 +56,8 @@ func (s *Service) respondAsPremium(userID int64, msg domain.Message) {
 		s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: s.premiumBotHistoryText(ctx, userID)})
 	case "gift":
 		s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: premiumBotGiftText()})
+	case "claim":
+		s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: s.premiumBotClaimText(ctx, userID)})
 	default:
 		s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: "Unrecognized command. Send /help for a list of commands."})
 	}
@@ -94,6 +97,21 @@ func (s *Service) premiumBotStatusText(ctx context.Context, userID int64) string
 		return fmt.Sprintf("You have Premium until %s (UTC).", until)
 	}
 	return "You do not have an active Premium subscription. Send /premium to see available plans."
+}
+
+func (s *Service) premiumBotClaimText(ctx context.Context, userID int64) string {
+	if s.stars == nil || s.starsMonthlyClaim <= 0 {
+		return "The free Stars claim is not available right now."
+	}
+	bal, claimed, nextAt, err := s.stars.ClaimMonthly(ctx, userID, s.starsMonthlyClaim, s.starsMonthlyClaimCooldown)
+	if err != nil {
+		return "Could not process your claim right now. Please try again later."
+	}
+	if claimed {
+		return fmt.Sprintf("You claimed %d Stars! Your balance is now %d Stars.\n\nNext claim available on %s (UTC).",
+			s.starsMonthlyClaim, bal.Balance, nextAt.UTC().Format("2006-01-02"))
+	}
+	return fmt.Sprintf("You already claimed your free Stars. Next claim available on %s (UTC).", nextAt.UTC().Format("2006-01-02"))
 }
 
 func (s *Service) premiumBotHistoryText(ctx context.Context, userID int64) string {

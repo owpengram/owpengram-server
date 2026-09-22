@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -123,6 +124,73 @@ func TestStarsLedgerPostgres(t *testing.T) {
 	for i, amount := range wantAscending {
 		if ascending.Transactions[i].Amount != amount {
 			t.Fatalf("ascending[%d].amount = %d, want %d", i, ascending.Transactions[i].Amount, amount)
+		}
+	}
+}
+
+// TestStarsMonthlyClaimPostgres 回归迁移 20260922120000：@premiumbot /claim
+// 的一次性冷却窗口对真实 PG 的原子语义——首claim 记账+写流水，冷却期内第二次
+// claim 既不重复记账也报告下次可领时刻，冷却期外第三次 claim 恢复可领。
+func TestStarsMonthlyClaimPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	st := NewStarsStore(pool)
+
+	users := NewUserStore(pool)
+	suffix := randomSuffix(t)
+	u, err := users.Create(ctx, domain.User{AccessHash: 93, Phone: "+1665" + suffix + "02", FirstName: "StarsMonthlyClaim"})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id = $1", u.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_monthly_claims WHERE user_id = $1", u.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id = $1", u.ID)
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id = $1", u.ID)
+	})
+
+	cooldown := 30 * 24 * time.Hour
+
+	// 首次 claim：记账 + 写流水，下次可领时刻 = 本次时刻 + cooldown。
+	bal, claimed, nextAt, err := st.ClaimMonthly(ctx, u.ID, 100, 1700000000, cooldown)
+	if err != nil || !claimed || bal.Balance != 100 {
+		t.Fatalf("first claim = %+v claimed=%v err=%v, want 100 claimed", bal, claimed, err)
+	}
+	wantNextAt := time.Unix(1700000000, 0).UTC().Add(cooldown)
+	if !nextAt.Equal(wantNextAt) {
+		t.Fatalf("first claim nextAt = %v, want %v", nextAt, wantNextAt)
+	}
+
+	// 冷却期内第二次 claim（1 秒后）：不记账，报告同一个下次可领时刻。
+	bal, claimed, nextAt, err = st.ClaimMonthly(ctx, u.ID, 100, 1700000001, cooldown)
+	if err != nil || claimed || bal.Balance != 100 {
+		t.Fatalf("second claim (on cooldown) = %+v claimed=%v err=%v, want 100 not claimed", bal, claimed, err)
+	}
+	if !nextAt.Equal(wantNextAt) {
+		t.Fatalf("second claim nextAt = %v, want %v (unchanged)", nextAt, wantNextAt)
+	}
+
+	// 冷却期外第三次 claim：恢复可领，余额累加。
+	afterCooldown := 1700000000 + int(cooldown.Seconds()) + 1
+	bal, claimed, nextAt, err = st.ClaimMonthly(ctx, u.ID, 100, afterCooldown, cooldown)
+	if err != nil || !claimed || bal.Balance != 200 {
+		t.Fatalf("third claim (after cooldown) = %+v claimed=%v err=%v, want 200 claimed", bal, claimed, err)
+	}
+	wantThirdNextAt := time.Unix(int64(afterCooldown), 0).UTC().Add(cooldown)
+	if !nextAt.Equal(wantThirdNextAt) {
+		t.Fatalf("third claim nextAt = %v, want %v", nextAt, wantThirdNextAt)
+	}
+
+	page, err := st.ListTransactions(ctx, u.ID, domain.StarsTransactionQuery{Limit: 10})
+	if err != nil {
+		t.Fatalf("list transactions: %v", err)
+	}
+	if len(page.Transactions) != 2 {
+		t.Fatalf("transactions = %d, want 2 (one per successful claim, cooldown-blocked claim wrote nothing)", len(page.Transactions))
+	}
+	for _, txn := range page.Transactions {
+		if txn.Reason != domain.StarsReasonMonthlyClaim || txn.Amount != 100 {
+			t.Fatalf("transaction = %+v, want +100 monthly_claim", txn)
 		}
 	}
 }

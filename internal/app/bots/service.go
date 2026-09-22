@@ -67,6 +67,15 @@ type premiumSource interface {
 	Entitlements(ctx context.Context, userID int64, limit int) ([]domain.PremiumEntitlement, error)
 }
 
+// starsClaimSource is the built-in @premiumbot's once-per-cooldown free
+// Stars claim (app/stars.Service satisfies it as-is via ClaimMonthly).
+// Wired post-construction via SetStarsSource for the same reason as
+// premiumSource above: app/stars.Service is also built after
+// app/bots.Service in cmd/telesrv/main.go.
+type starsClaimSource interface {
+	ClaimMonthly(ctx context.Context, userID, amount int64, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error)
+}
+
 // verificationApplications is the applicant-side surface of official platform
 // verification used by the built-in @verifybot (app/verification.Service
 // satisfies it as-is).
@@ -118,28 +127,31 @@ const replyLockStripes = 256
 
 // Service 提供 bot 账号业务。
 type Service struct {
-	users                 store.UserStore
-	bots                  store.BotStore
-	messages              store.MessageStore
-	blocker               blockChecker
-	channels              publicChannelUsernameResolver
-	stickers              stickerSetCreator
-	installer             userStickerSetInstaller
-	aiChat                aiChatGenerator
-	verification          verificationApplications
-	customVerification    customVerifications
-	verifierTargets       verifierBotTargets
-	gifCatalog            gifCatalogSource
-	premium               premiumSource
-	telegramLogin         *telegramloginapp.Service
-	hooks                 RouterHooks
-	textDrafts            TextDraftPusher
-	userCache             store.UserCache
-	cache                 *botProfileCache
-	log                   *zap.Logger
-	now                   func() time.Time
-	chatBotStreamThrottle time.Duration
-	publicBaseURL         string
+	users                     store.UserStore
+	bots                      store.BotStore
+	messages                  store.MessageStore
+	blocker                   blockChecker
+	channels                  publicChannelUsernameResolver
+	stickers                  stickerSetCreator
+	installer                 userStickerSetInstaller
+	aiChat                    aiChatGenerator
+	verification              verificationApplications
+	customVerification        customVerifications
+	verifierTargets           verifierBotTargets
+	gifCatalog                gifCatalogSource
+	premium                   premiumSource
+	stars                     starsClaimSource
+	starsMonthlyClaim         int64
+	starsMonthlyClaimCooldown time.Duration
+	telegramLogin             *telegramloginapp.Service
+	hooks                     RouterHooks
+	textDrafts                TextDraftPusher
+	userCache                 store.UserCache
+	cache                     *botProfileCache
+	log                       *zap.Logger
+	now                       func() time.Time
+	chatBotStreamThrottle     time.Duration
+	publicBaseURL             string
 	// hideThirdPartyVerification mirrors config.HideThirdPartyVerification: while
 	// true, HandlesBot refuses VerifierBotUserID so @marksbot never answers a
 	// message. The feature is not fully finished and defaults to hidden; see the
@@ -241,6 +253,17 @@ func WithGifCatalogSource(c gifCatalogSource) Option {
 	}
 }
 
+// WithStarsMonthlyClaim sets the amount @premiumbot's /claim grants once per
+// cooldown; amount<=0 leaves the command reporting itself unavailable (see
+// starsClaimSource/SetStarsSource -- the source dependency is wired
+// separately, post-construction).
+func WithStarsMonthlyClaim(amount int64, cooldown time.Duration) Option {
+	return func(s *Service) {
+		s.starsMonthlyClaim = amount
+		s.starsMonthlyClaimCooldown = cooldown
+	}
+}
+
 // SetPremiumSource injects the read-only Premium catalog/entitlement access
 // used by the built-in @premiumbot. A plain setter, not a With* option --
 // premiumapp.Service is constructed after botsapp.Service in
@@ -253,6 +276,18 @@ func (s *Service) SetPremiumSource(p premiumSource) {
 		return
 	}
 	s.premium = p
+}
+
+// SetStarsSource injects the once-per-cooldown free Stars claim used by the
+// built-in @premiumbot's /claim command. See starsClaimSource's doc comment
+// for why this is a post-hoc setter rather than a With* option. Without it
+// (or with WithStarsMonthlyClaim's amount left at 0), /claim answers that the
+// feature is unavailable rather than crashing.
+func (s *Service) SetStarsSource(src starsClaimSource) {
+	if s == nil || src == nil {
+		return
+	}
+	s.stars = src
 }
 
 // WithAIChatGenerator 注入内置 @ChatBot 使用的 AI 文本生成器。

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sync"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -16,9 +17,10 @@ type StarsStore struct {
 }
 
 type starsState struct {
-	balance int64
-	granted bool
-	txns    []domain.StarsTransaction // 追加序，读时倒序
+	balance   int64
+	granted   bool
+	claimedAt time.Time                 // 月度免费领取（ClaimMonthly）的上次领取时刻，零值表示从未领取
+	txns      []domain.StarsTransaction // 追加序，读时倒序
 }
 
 // NewStarsStore 创建内存 StarsStore。
@@ -91,6 +93,30 @@ func (s *StarsStore) Debit(_ context.Context, userID, amount int64, reason domai
 	st.balance -= amount
 	s.appendTxn(st, userID, -amount, reason, peer, date, title, desc)
 	return domain.StarsBalance{UserID: userID, Balance: st.balance, Granted: st.granted}, nil
+}
+
+func (s *StarsStore) ClaimMonthly(_ context.Context, userID, amount int64, date int, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error) {
+	if userID == 0 || amount <= 0 {
+		return domain.StarsBalance{}, false, time.Time{}, domain.ErrStarsInvalidAmount
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.states[userID]
+	if st == nil {
+		st = &starsState{}
+		s.states[userID] = st
+	}
+	now := time.Unix(int64(date), 0).UTC()
+	if !st.claimedAt.IsZero() {
+		nextAt := st.claimedAt.Add(cooldown)
+		if now.Before(nextAt) {
+			return domain.StarsBalance{UserID: userID, Balance: st.balance, Granted: st.granted}, false, nextAt, nil
+		}
+	}
+	st.balance += amount
+	st.claimedAt = now
+	s.appendTxn(st, userID, amount, domain.StarsReasonMonthlyClaim, domain.Peer{}, date, "Monthly Stars claim", "")
+	return domain.StarsBalance{UserID: userID, Balance: st.balance, Granted: st.granted}, true, now.Add(cooldown), nil
 }
 
 func (s *StarsStore) ListTransactions(_ context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {
