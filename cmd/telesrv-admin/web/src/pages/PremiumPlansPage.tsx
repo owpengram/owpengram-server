@@ -2,7 +2,7 @@ import { Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { Alert, Badge, EmptyRow, PageFrame, QueryPanel } from "../components/ui";
+import { Alert, Badge, EmptyRow, PageFrame } from "../components/ui";
 import type { PremiumPaymentIntent, PremiumPlan } from "../types";
 
 type PlanDraft = {
@@ -166,23 +166,20 @@ export function PremiumPlansPage() {
         </table>
       </div>
 
-      <QueryPanel>
-        <div className="toolbar">
-          <label className="searchbox">
-            <span>{"New plan — months"}</span>
-            <input type="number" min="1" max="120" value={newMonths} onChange={(event) => setNewMonths(event.target.value)} />
-          </label>
-          <label className="searchbox">
-            <span>{"Duration (days)"}</span>
-            <input type="number" value={newDraft.durationDays} onChange={(event) => setNewDraft((p) => ({ ...p, durationDays: event.target.value }))} />
-          </label>
-          <label className="searchbox">
-            <span>{"Price (Stars)"}</span>
-            <input type="number" value={newDraft.amountStars} onChange={(event) => setNewDraft((p) => ({ ...p, amountStars: event.target.value }))} />
-          </label>
-          <label className="searchbox">
-            <span>{"Label"}</span>
-            <input value={newDraft.label} onChange={(event) => setNewDraft((p) => ({ ...p, label: event.target.value }))} />
+      <section className="section-block">
+        <h2>{"Add a plan"}</h2>
+        <div className="card-body">
+          <div className="gift-fields-grid">
+            <label><span>{"Months"}</span><input type="number" min="1" max="120" value={newMonths} onChange={(event) => setNewMonths(event.target.value)} /></label>
+            <label><span>{"Duration (days)"}</span><input type="number" value={newDraft.durationDays} onChange={(event) => setNewDraft((p) => ({ ...p, durationDays: event.target.value }))} /></label>
+            <label><span>{"Price (Stars)"}</span><input type="number" value={newDraft.amountStars} onChange={(event) => setNewDraft((p) => ({ ...p, amountStars: event.target.value }))} /></label>
+            <label><span>{"Sort order"}</span><input type="number" value={newDraft.sortOrder} onChange={(event) => setNewDraft((p) => ({ ...p, sortOrder: event.target.value }))} /></label>
+          </div>
+          <label className="form-field"><span>{"Label"}</span><input value={newDraft.label} placeholder={"e.g. 3 months"} onChange={(event) => setNewDraft((p) => ({ ...p, label: event.target.value }))} /></label>
+          <label className="gift-switch">
+            <input type="checkbox" checked={newDraft.enabled} onChange={(event) => setNewDraft((p) => ({ ...p, enabled: event.target.checked }))} />
+            <span className="gift-switch-track" aria-hidden="true"><span /></span>
+            <span>{"Enabled"}</span>
           </label>
           <ActionButton
             tone="primary"
@@ -195,13 +192,13 @@ export function PremiumPlansPage() {
               amount_stars: Number(newDraft.amountStars),
               label: newDraft.label,
               sort_order: Number(newDraft.sortOrder),
-              enabled: true,
+              enabled: newDraft.enabled,
               expected_version: 0
             })}
             onDone={() => { setNewDraft(emptyDraft); void load(); }}
           />
         </div>
-      </QueryPanel>
+      </section>
 
       <RefundSection />
     </PageFrame>
