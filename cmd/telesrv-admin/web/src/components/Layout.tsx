@@ -21,6 +21,8 @@ import {
   ShieldCheck,
   Smile,
   Gift,
+  LayoutGrid,
+  Shield,
   Stamp,
   Trophy,
   Users,
@@ -278,73 +280,104 @@ export function Shell({
         <div className="sidebar-label">{"Navigation"}</div>
         <nav className="nav-list" aria-label={"Primary navigation"}>
           <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{"Overview"}</NavLink>
-          {canReadAccounts && (
-            <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
+
+          {(canReadAccounts || canReadChannels || canReadMessages) && (
+            <NavSection title={"People & Chats"} icon={<Users size={14} />} route={route} collapsed={navCollapsed}
+              paths={["/accounts", "/channels", "/messages"]}>
+              {canReadAccounts && (
+                <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
+              )}
+              {canReadChannels && (
+                <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{"Supergroups / Channels"}</NavLink>
+              )}
+              {canReadMessages && (
+                <NavLink
+                  icon={<MessageSquareText size={16} />}
+                  href="/messages/private"
+                  route={route}
+                  navigate={navigate}
+                  activeWhen={(path) => path.startsWith("/messages")}
+                >
+                  {"Messages"}
+                </NavLink>
+              )}
+            </NavSection>
           )}
-          {canReadChannels && (
-            <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{"Supergroups / Channels"}</NavLink>
-          )}
+
           {canReadBots && (
             <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{"Bots"}</NavLink>
-          )}
-          {canReviewModeration && (
-            <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
           )}
           {canReadBroadcasts && (
             <NavLink icon={<Megaphone size={16} />} href="/broadcasts" route={route} navigate={navigate}>{"Broadcasts"}</NavLink>
           )}
-          {canReviewVerification && (
-            <NavLink icon={<BadgeCheck size={16} />} href="/verification" route={route} navigate={navigate}>{"Verification"}</NavLink>
-          )}
-          {canReviewBotVerification && !thirdPartyVerificationHidden && (
-            <NavLink icon={<Stamp size={16} />} href="/bot-verification" route={route} navigate={navigate}>{"Third-party marks"}</NavLink>
-          )}
-          {canReadUsernames && (
-            <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
-          )}
           {canReadStorage && (
             <NavLink icon={<Database size={16} />} href="/storage" route={route} navigate={navigate}>{"Storage"}</NavLink>
           )}
-			{canReadContent && (
-			  <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
-			)}
-			{canReadContent && (
-			  <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
-			)}
-			{canReadContent && (
-			  <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
-			)}
-          {canReadMessages && (
-            <NavLink
-              icon={<MessageSquareText size={16} />}
-              href="/messages/private"
-              route={route}
-              navigate={navigate}
-              activeWhen={(path) => path.startsWith("/messages")}
-            >
-              {"Messages"}
-            </NavLink>
+
+          {(canReviewModeration || canReviewVerification || (canReviewBotVerification && !thirdPartyVerificationHidden)) && (
+            <NavSection title={"Moderation & Verification"} icon={<ShieldAlert size={14} />} route={route} collapsed={navCollapsed}
+              paths={["/moderation", "/verification", "/bot-verification"]}>
+              {canReviewModeration && (
+                <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
+              )}
+              {canReviewVerification && (
+                <NavLink icon={<BadgeCheck size={16} />} href="/verification" route={route} navigate={navigate}>{"Verification"}</NavLink>
+              )}
+              {canReviewBotVerification && !thirdPartyVerificationHidden && (
+                <NavLink icon={<Stamp size={16} />} href="/bot-verification" route={route} navigate={navigate}>{"Third-party marks"}</NavLink>
+              )}
+            </NavSection>
           )}
-          {canManageAdmins && (
-            <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
+
+          {(canReadContent || canReadUsernames) && (
+            <NavSection title={"Content"} icon={<LayoutGrid size={14} />} route={route} collapsed={navCollapsed}
+              paths={["/stickers", "/emoji", "/gif-catalog", "/collectible-usernames"]}>
+              {canReadContent && (
+                <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
+              )}
+              {canReadContent && (
+                <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
+              )}
+              {canReadContent && (
+                <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
+              )}
+              {canReadUsernames && (
+                <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
+              )}
+            </NavSection>
           )}
-          {canReadAuditLog && (
-            <NavLink icon={<History size={16} />} href="/audit-log" route={route} navigate={navigate}>{"Audit Log"}</NavLink>
+
+          {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts) && (
+            <NavSection title={"Billing"} icon={<Sparkles size={14} />} route={route} collapsed={navCollapsed}
+              paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts"]}>
+              {canManagePremium && (
+                <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
+              )}
+              {canReadRatings && (
+                <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
+              )}
+              {canReadStarGifts && (
+                <NavLink icon={<Gift size={16} />} href="/star-gift-catalog" route={route} navigate={navigate}>{"StarGift Catalog"}</NavLink>
+              )}
+              {canManageStarGifts && (
+                <NavLink icon={<Gift size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
+              )}
+            </NavSection>
           )}
-          {canManagePremium && (
-            <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
-          )}
-          {canReadRatings && (
-            <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
-          )}
-          {canReadStarGifts && (
-            <NavLink icon={<Gift size={16} />} href="/star-gift-catalog" route={route} navigate={navigate}>{"StarGift Catalog"}</NavLink>
-          )}
-          {canManageStarGifts && (
-            <NavLink icon={<Gift size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
-          )}
-          {canManageServer && (
-            <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
+
+          {(canManageAdmins || canReadAuditLog || canManageServer) && (
+            <NavSection title={"The Console"} icon={<Shield size={14} />} route={route} collapsed={navCollapsed}
+              paths={["/admin-users", "/audit-log", "/server-settings"]}>
+              {canManageAdmins && (
+                <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
+              )}
+              {canReadAuditLog && (
+                <NavLink icon={<History size={16} />} href="/audit-log" route={route} navigate={navigate}>{"Audit Log"}</NavLink>
+              )}
+              {canManageServer && (
+                <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
+              )}
+            </NavSection>
           )}
         </nav>
         <div className="sidebar-status">
@@ -444,5 +477,77 @@ function NavLink({
       {icon ?? <span aria-hidden="true" className="nav-dot" />}
       <span className="nav-item-label">{children}</span>
     </AppLink>
+  );
+}
+
+// NavSection groups a handful of NavLinks under a collapsible header -- the
+// sidebar outgrew a flat list once every feature area got its own entry (21
+// rows, forcing a scrollbar even on a normal window). Grouping mirrors
+// permissionGroups in ../permissions.tsx on purpose: an operator who already
+// learned that taxonomy from the Operators permission editor finds the same
+// categories here, not a second one to learn.
+//
+// Collapsed sidebar mode (icon rail) renders children directly with no
+// header/indent -- an accordion makes no sense once labels are gone anyway,
+// and this keeps that mode exactly as flat as it always was.
+function NavSection({
+  title,
+  icon,
+  route,
+  paths,
+  collapsed,
+  children
+}: {
+  title: string;
+  icon: ReactNode;
+  route: RouteState;
+  paths: string[];
+  collapsed: boolean;
+  children: ReactNode;
+}) {
+  const active = paths.some((p) => route.path === p || route.path.startsWith(`${p}/`));
+  const storageKey = `owpengram.nav.section.${title}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored !== null) return stored === "1";
+    } catch {
+      // Falls through to the default below.
+    }
+    return active;
+  });
+
+  // Landing on a route inside a collapsed section (a bookmark, a link from
+  // elsewhere) opens it -- an operator should not have to separately find
+  // "expand" before seeing where they already are.
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active]);
+
+  function toggle() {
+    setOpen((current) => {
+      const next = !current;
+      try {
+        localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        // Not being able to remember the choice is not a reason to refuse it.
+      }
+      return next;
+    });
+  }
+
+  if (collapsed) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div className={`nav-section ${active ? "active" : ""} ${open ? "open" : ""}`.trim()}>
+      <button type="button" className="nav-section-toggle" onClick={toggle} aria-expanded={open}>
+        {icon}
+        <span>{title}</span>
+        <ChevronDown size={14} className="nav-section-chevron" aria-hidden="true" />
+      </button>
+      {open && <div className="nav-children">{children}</div>}
+    </div>
   );
 }

@@ -220,6 +220,26 @@ a {
   color: var(--sidebar-text);
   background: var(--sidebar);
   border-right: 1px solid var(--sidebar-line);
+  /* Firefox: thin, muted, matches the dark sidebar instead of the OS default. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--sidebar-line) transparent;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--sidebar-line);
+  border-radius: 999px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--sidebar-muted);
 }
 
 .brand {
