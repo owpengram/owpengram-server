@@ -831,6 +831,12 @@ export type StarGiftCollectiblePreview = {
   backdrops?: StarGiftCollectibleAttributeRow[];
 };
 
+export type GiftPackSummary = {
+  title: string;
+  theme: string;
+  flags: string[];
+};
+
 export type AccountListResponse = {
   query: string;
   limit: number;

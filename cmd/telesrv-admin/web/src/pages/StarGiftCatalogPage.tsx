@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronLeft, ChevronRight, FileJson2, Gem, Loader2, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileJson2, FileArchive, Gem, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -6,7 +6,7 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { formatDate } from "../lib/format";
-import type { CommandResult, StarGiftCatalogRow } from "../types";
+import type { CommandResult, GiftPackSummary, StarGiftCatalogRow } from "../types";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
 type GiftPageSize = 10 | 20 | 50 | 100 | "all";
@@ -69,7 +69,10 @@ export function LottiePreview({ giftID, revision, compact = false }: { giftID: s
 // pool, and its storefront visibility/order. Auction and craft authoring are
 // a separate, much larger use case this deliberately does not cover -- see
 // internal/admin.StarGiftCatalogService's doc comment.
+type CatalogTab = "catalog" | "import";
+
 export function StarGiftCatalogPage() {
+  const [tab, setTab] = useState<CatalogTab>("catalog");
   const [gifts, setGifts] = useState<StarGiftCatalogRow[]>([]);
   const [query, setQuery] = useState("");
   const [importOpen, setImportOpen] = useState(false);
@@ -92,6 +95,49 @@ export function StarGiftCatalogPage() {
   const [bulkError, setBulkError] = useState("");
   const [pageSize, setPageSize] = useState<GiftPageSize>(10);
   const [page, setPage] = useState(1);
+
+  const [defaultPack, setDefaultPack] = useState<GiftPackSummary[]>([]);
+  const [defaultPackError, setDefaultPackError] = useState("");
+  const [packFile, setPackFile] = useState<File | null>(null);
+  const [packReason, setPackReason] = useState("");
+  const [packPreview, setPackPreview] = useState<CommandResult | null>(null);
+  const [packBusy, setPackBusy] = useState(false);
+  const [packError, setPackError] = useState("");
+
+  useEffect(() => {
+    if (tab !== "import") return;
+    api.defaultGiftPack().then((res) => setDefaultPack(res.gifts ?? [])).catch((err) => setDefaultPackError(errorMessage(err)));
+  }, [tab]);
+
+  function packUploadForm(confirm: boolean, commandID = "") {
+    if (!packFile) throw new Error("Choose a pack .zip file first");
+    if (!packReason.trim()) throw new Error("Please enter an operation reason");
+    const form = new FormData();
+    form.set("metadata", JSON.stringify({ command_id: commandID, reason: packReason.trim(), confirm }));
+    form.set("file", packFile, packFile.name);
+    return form;
+  }
+
+  async function validatePackImport() {
+    setPackBusy(true); setPackError(""); setPackPreview(null);
+    try {
+      setPackPreview(await api.importGiftPack(packUploadForm(false)));
+    } catch (err) {
+      setPackError(errorMessage(err));
+    } finally { setPackBusy(false); }
+  }
+
+  async function confirmPackImport() {
+    if (!packPreview) return;
+    setPackBusy(true); setPackError("");
+    try {
+      await api.importGiftPack(packUploadForm(true, packPreview.command_id));
+      setPackPreview(null); setPackFile(null); setPackReason("");
+      await load();
+    } catch (err) {
+      setPackError(errorMessage(err));
+    } finally { setPackBusy(false); }
+  }
 
   async function load() {
     setError("");
@@ -241,6 +287,15 @@ export function StarGiftCatalogPage() {
       <button className="btn primary" type="button" onClick={startImport}><Plus size={15} /> {"Add gift"}</button>
     </>}>
       {error && <Alert>{error}</Alert>}
+      <div className="toolbar" role="group" aria-label={"Star gift catalog sections"}>
+        <button className={`btn icon-text ${tab === "catalog" ? "primary" : ""}`} type="button" aria-pressed={tab === "catalog"} onClick={() => setTab("catalog")}>
+          <Gem size={15} /> {"Catalog"}
+        </button>
+        <button className={`btn icon-text ${tab === "import" ? "primary" : ""}`} type="button" aria-pressed={tab === "import"} onClick={() => setTab("import")}>
+          <PackagePlus size={15} /> {"Import Pack"}
+        </button>
+      </div>
+      {tab === "catalog" && <>
       <div className="metric-row gift-metrics">
         <Metric label={"Catalog entries"} value={String(gifts.length)} />
         <Metric label={"Enabled"} value={String(gifts.filter((gift) => gift.Enabled).length)} tone="good" />
@@ -308,6 +363,66 @@ export function StarGiftCatalogPage() {
           </button>
         </div>
       </div>}
+      </>}
+
+      {tab === "import" && <>
+      <section className="section-block">
+        <h2>{"Default pack"}</h2>
+        <div className="card-body">
+          <p className="gift-import-note"><span>{"OwpenGram's own built-in gift pack -- 7 original gifts covering every mechanic (plain purchase, standard upgrade, limited supply, craft, resale floor, birthday, premium-required, support-only, auction), safe to import on any deployment."}</span></p>
+          {defaultPackError && <Alert>{defaultPackError}</Alert>}
+          <div className="table-wrap gift-table-wrap">
+            <table className="data-table gift-table">
+              <thead><tr><th>{"Title"}</th><th>{"Flags"}</th></tr></thead>
+              <tbody>
+                {defaultPack.map((gift) => (
+                  <tr key={gift.theme}>
+                    <td><strong className="gift-table-title">{gift.title}</strong></td>
+                    <td>{(gift.flags ?? []).map((flag) => <Badge key={flag}>{flag}</Badge>)}</td>
+                  </tr>
+                ))}
+                {defaultPack.length === 0 && <EmptyRow colSpan={2} />}
+              </tbody>
+            </table>
+          </div>
+          <ActionButton
+            tone="primary"
+            label={"Import default pack"}
+            icon={<Boxes size={15} />}
+            path="/api/actions/import-default-gift-pack"
+            payload={() => ({})}
+            onDone={() => void load()}
+          />
+        </div>
+      </section>
+
+      <section className="section-block">
+        <h2>{"Upload a pack"}</h2>
+        <div className="card-body">
+          <p className="gift-import-note"><span>{"A community-authored pack: a .zip with pack.json at the root plus the .tgs/Lottie assets it references. See "}<code>{"docs/gift-packs.md"}</code>{" for the format and its rlottie caveats."}</span></p>
+          <label className={`gift-file-picker ${packFile ? "has-file" : ""}`}>
+            <input type="file" accept=".zip,application/zip" onChange={(e) => { setPackFile(e.target.files?.[0] ?? null); setPackPreview(null); }} />
+            <span className="gift-file-icon"><FileArchive size={22} /></span>
+            <span className="gift-file-copy"><span className="gift-field-label">{"Pack archive"}</span><strong>{packFile ? packFile.name : "Drop or choose a pack .zip"}</strong><small>{packFile ? formatBytes(packFile.size) : "pack.json + assets, validated before import"}</small></span>
+            <span className="gift-file-action">{packFile ? "Change file" : "Choose file"}</span>
+          </label>
+          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={packReason} placeholder={"Briefly describe why this pack is being imported"} onChange={(e) => setPackReason(e.target.value)} /></label>
+          {packError && <Alert>{packError}</Alert>}
+          {packPreview && <div className="gift-validation">
+            <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{"Validation passed"}</strong><span>{"Review what would be imported, then confirm."}</span></div></div>
+            <pre>{JSON.stringify(packPreview.details, null, 2)}</pre>
+          </div>}
+          <div className="action-stack">
+            <button className="btn" type="button" onClick={validatePackImport} disabled={packBusy}>
+              {packBusy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />} {"Dry-run validation"}
+            </button>
+            <button className="btn primary" type="button" onClick={confirmPackImport} disabled={packBusy || !packPreview}>
+              <Upload size={15} /> {"Confirm import"}
+            </button>
+          </div>
+        </div>
+      </section>
+      </>}
 
       {importOpen && createPortal(
         <div className="modal-backdrop" role="presentation">

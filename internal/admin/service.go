@@ -73,6 +73,8 @@ const (
 	ActionSetStarGiftCatalogSortOrder = "star_gift_catalog.set_sort_order"
 	ActionPublishStarGiftCollectibles = "star_gift_catalog.publish_collectibles"
 	ActionGiveStarGift                = "star_gift_catalog.give"
+	ActionImportGiftPack              = "star_gift_catalog.import_pack"
+	ActionImportDefaultGiftPack       = "star_gift_catalog.import_default_pack"
 
 	// Manual storage purge: admin-chosen categories + optional age cutoff,
 	// independent of the automatic retention sweep's config-derived
@@ -405,6 +407,13 @@ type StarGiftCatalogService interface {
 	// file's shape without materializing it.
 	PrepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
 	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
+	// Catalog and CreateCatalogBundle back the gift-pack importer
+	// (internal/app/giftpack.Import): Catalog is its by-title idempotency
+	// check, CreateCatalogBundle is the atomic gift+collectible-pool publish
+	// call a pack's upgradeable gifts need (CreateCatalogRevision alone only
+	// covers a plain gift).
+	Catalog(ctx context.Context) ([]domain.StarGift, error)
+	CreateCatalogBundle(ctx context.Context, write domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error)
 	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
 	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
 	// AnimationJSON returns the active revision's normalized Lottie JSON, for

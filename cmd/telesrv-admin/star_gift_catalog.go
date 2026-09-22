@@ -348,3 +348,74 @@ func (s *server) handleGiveStarGiftAPI(w http.ResponseWriter, r *http.Request) {
 	result, err := s.callAdminAPI(r.Context(), "/v1/star-gift-catalog/give", req)
 	writeCommandResultAPI(w, result, err)
 }
+
+const maxGiftPackZipBytes = 32 << 20
+
+type importGiftPackAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+}
+
+// handleImportGiftPackAPI forwards an uploaded pack .zip (pack.json plus its
+// referenced assets) to the real admin API unchanged -- the pack itself
+// carries every gift's authoring data, so there's nothing else to collect
+// from the operator besides the usual reason/dry-run/confirm metadata.
+func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, maxGiftPackZipBytes+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var body importGiftPackAPIRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "pack zip file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxGiftPackZipBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxGiftPackZipBytes {
+		writeAPIError(w, http.StatusBadRequest, "pack zip is empty or too large")
+		return
+	}
+	req := admin.ImportGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-gift-pack"),
+	}
+	result, err := s.callAdminMultipart(r.Context(), "/v1/star-gift-catalog/import-pack", req, header.Filename, data)
+	writeCommandResultAPI(w, result, err)
+}
+
+type importDefaultGiftPackAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+}
+
+func (s *server) handleImportDefaultGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	var body importDefaultGiftPackAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.ImportDefaultGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-default-gift-pack"),
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/star-gift-catalog/import-default-pack", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// handleDefaultGiftPackAPI proxies the built-in pack's summary (what's in
+// it, before importing anything) for the "Import Pack" tab's preview.
+func (s *server) handleDefaultGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSON(w, r, "/v1/star-gift-catalog/default-pack", 1<<20)
+}

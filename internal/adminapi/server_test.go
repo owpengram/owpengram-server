@@ -10,6 +10,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/giftpackdefault"
 )
 
 func TestAdminAPIRequiresBearerToken(t *testing.T) {
@@ -511,6 +512,16 @@ func (fakeService) PublishStarGiftCollectibles(_ context.Context, req admin.Publ
 func (fakeService) GiveStarGift(_ context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
+
+func (fakeService) ImportGiftPack(_ context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) ImportDefaultGiftPack(_ context.Context, req admin.ImportDefaultGiftPackRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DefaultGiftPack() []giftpackdefault.GiftSummary { return nil }
 
 func (fakeService) AutoCategorizeGifCatalog(_ context.Context, req admin.AutoCategorizeGifCatalogRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil

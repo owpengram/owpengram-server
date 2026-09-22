@@ -12,6 +12,7 @@ import type {
   AccountRatingDetail,
   StarGiftCatalogListResponse,
   StarGiftCollectiblePreview,
+  GiftPackSummary,
   SharedDeviceGroupListResponse,
   StorageStatsResponse,
   DashboardResponse,
@@ -268,6 +269,8 @@ export const api = {
 	giftCollectibleAnimation: (giftID: string, kind: "model" | "pattern", attributeID: string) =>
 		request<Record<string, unknown>>(`/api/star-gift-catalog/${encodeURIComponent(giftID)}/collectibles/${kind}/${encodeURIComponent(attributeID)}/animation`),
 	publishGiftCollectibles: (form: FormData) => request<CommandResult>("/api/actions/publish-star-gift-collectibles", { method: "POST", body: form }),
+	defaultGiftPack: () => request<{ gifts: GiftPackSummary[] }>("/api/star-gift-catalog/default-pack"),
+	importGiftPack: (form: FormData) => request<CommandResult>("/api/actions/import-gift-pack", { method: "POST", body: form }),
   serverIdentity: () => request<ServerIdentity>("/api/server/identity"),
   addServerLink: () => request<{ link: string }>("/api/server/add-server-link"),
   uploadServerIcon: (form: FormData) => request<CommandResult>("/api/actions/upload-server-icon", { method: "POST", body: form }),

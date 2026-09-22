@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/giftpackdefault"
 )
 
 // CreateStarGiftCatalogEntryRequest authors a new StarGift (GiftID == 0) or a
@@ -103,6 +105,81 @@ func (s *Service) CreateStarGiftCatalogEntry(ctx context.Context, req CreateStar
 		details["revision"] = entry.Revision
 		return CommandResult{Message: "star gift catalog entry created", Details: details}, nil
 	})
+}
+
+// ImportGiftPackRequest carries one uploaded pack .zip (pack.json at the
+// archive root plus the assets it references by relative path -- see
+// internal/app/giftpack's package doc). PackZip is populated server-side
+// from the multipart upload, not from the JSON body.
+type ImportGiftPackRequest struct {
+	CommandMeta
+	PackZip []byte `json:"-"`
+}
+
+// ImportGiftPack parses and imports a community-authored gift pack. Gifts
+// already present by title are skipped, not duplicated (see
+// internal/app/giftpack.Import), so re-running an import -- including a
+// pack that only adds a few new gifts to one already imported before -- is
+// always safe.
+func (s *Service) ImportGiftPack(ctx context.Context, req ImportGiftPackRequest) (CommandResult, error) {
+	if s == nil || s.starGifts == nil {
+		return CommandResult{}, domain.ErrStarGiftInvalid
+	}
+	if len(req.PackZip) == 0 {
+		return CommandResult{}, fmt.Errorf("pack zip is required")
+	}
+	assets, err := giftpack.NewZipAssetResolver(req.PackZip)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	manifestData, err := assets.Manifest()
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("pack.json: %w", err)
+	}
+	manifest, err := giftpack.ParseManifest(manifestData)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{DryRun: req.DryRun, Now: s.now})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{
+			Message: fmt.Sprintf("gift pack %q processed", manifest.PackName),
+			Details: map[string]any{"pack_name": manifest.PackName, "gifts": result.Gifts},
+		}, nil
+	})
+}
+
+type ImportDefaultGiftPackRequest struct {
+	CommandMeta
+}
+
+// ImportDefaultGiftPack imports OwpenGram's own built-in gift pack
+// (internal/seed/giftpackdefault) through the exact same path
+// ImportGiftPack uses for a community pack.
+func (s *Service) ImportDefaultGiftPack(ctx context.Context, req ImportDefaultGiftPackRequest) (CommandResult, error) {
+	if s == nil || s.starGifts == nil {
+		return CommandResult{}, domain.ErrStarGiftInvalid
+	}
+	manifest, assets := giftpackdefault.Pack()
+	return s.runCommand(ctx, req.CommandMeta, ActionImportDefaultGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{DryRun: req.DryRun, Now: s.now})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{
+			Message: "default gift pack processed",
+			Details: map[string]any{"pack_name": manifest.PackName, "gifts": result.Gifts},
+		}, nil
+	})
+}
+
+// DefaultGiftPack summarizes the built-in pack for the admin panel's preview
+// before import. A pure read of static content -- no s.starGifts dependency.
+func (s *Service) DefaultGiftPack() []giftpackdefault.GiftSummary {
+	return giftpackdefault.List()
 }
 
 func (s *Service) SetStarGiftCatalogEnabled(ctx context.Context, req SetStarGiftCatalogEnabledRequest) (CommandResult, error) {

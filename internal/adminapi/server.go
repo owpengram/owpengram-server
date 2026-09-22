@@ -17,6 +17,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/giftpackdefault"
 )
 
 type Config struct {
@@ -89,6 +90,9 @@ type Service interface {
 	StarGiftCollectibleAnimation(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	GiveStarGift(ctx context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error)
+	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
+	ImportDefaultGiftPack(ctx context.Context, req admin.ImportDefaultGiftPackRequest) (admin.CommandResult, error)
+	DefaultGiftPack() []giftpackdefault.GiftSummary
 	SetGifCatalogEnabled(ctx context.Context, req admin.SetGifCatalogEnabledRequest) (admin.CommandResult, error)
 	SetGifCatalogSortOrder(ctx context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error)
 	SetGifCatalogCategory(ctx context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error)
@@ -251,6 +255,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
 	mux.HandleFunc("POST /v1/star-gift-catalog/publish-collectibles", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/star-gift-catalog/give", s.authenticated(s.handleGiveStarGift))
+	mux.HandleFunc("POST /v1/star-gift-catalog/import-pack", s.authenticated(s.handleImportGiftPack))
+	mux.HandleFunc("POST /v1/star-gift-catalog/import-default-pack", s.authenticated(s.handleImportDefaultGiftPack))
+	mux.HandleFunc("GET /v1/star-gift-catalog/default-pack", s.authenticated(s.handleDefaultGiftPack))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
 	mux.HandleFunc("GET /v1/moderation/cases/{id}", s.authenticated(s.handleModerationCase))
@@ -1130,6 +1137,58 @@ func (s *Server) handlePublishStarGiftCollectibles(w http.ResponseWriter, r *htt
 	}
 	result, err := s.svc.PublishStarGiftCollectibles(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+// maxGiftPackZipBytes bounds one uploaded pack archive: several gifts' worth
+// of .tgs/.json assets plus pack.json, well above what a legitimate pack
+// needs (each individual asset is separately capped much lower, both by
+// giftpack.AssetResolver and by PrepareAnimation itself).
+const maxGiftPackZipBytes = 32 << 20
+
+func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, maxGiftPackZipBytes+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var req admin.ImportGiftPackRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "pack zip file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxGiftPackZipBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxGiftPackZipBytes {
+		writeError(w, http.StatusBadRequest, "pack zip is empty or too large")
+		return
+	}
+	req.PackZip = data
+	result, err := s.svc.ImportGiftPack(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleImportDefaultGiftPack(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportDefaultGiftPackRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.ImportDefaultGiftPack(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDefaultGiftPack(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"gifts": s.svc.DefaultGiftPack()})
 }
 
 func (s *Server) handleGiveStarGift(w http.ResponseWriter, r *http.Request) {
