@@ -333,27 +333,18 @@ export function Shell({
             </NavSection>
           )}
 
-          {(canReadContent || canReadUsernames) && (
+          {canReadContent && (
             <NavSection title={"Content"} icon={<LayoutGrid size={14} />} route={route} collapsed={navCollapsed}
-              paths={["/stickers", "/emoji", "/gif-catalog", "/collectible-usernames"]}>
-              {canReadContent && (
-                <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
-              )}
-              {canReadContent && (
-                <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
-              )}
-              {canReadContent && (
-                <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
-              )}
-              {canReadUsernames && (
-                <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
-              )}
+              paths={["/stickers", "/emoji", "/gif-catalog"]}>
+              <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
+              <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
+              <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
             </NavSection>
           )}
 
-          {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts) && (
+          {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
             <NavSection title={"Economy"} icon={<Landmark size={14} />} route={route} collapsed={navCollapsed}
-              paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts"]}>
+              paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts", "/collectible-usernames"]}>
               {canManagePremium && (
                 <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
               )}
@@ -365,6 +356,9 @@ export function Shell({
               )}
               {canManageStarGifts && (
                 <NavLink icon={<HandHeart size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
+              )}
+              {canReadUsernames && (
+                <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
               )}
             </NavSection>
           )}

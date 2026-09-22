@@ -222,8 +222,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "Content",
-    hint: "Sticker packs, emoji, GIFs and collectible usernames",
-    permissions: ["content.read", "content.manage", "usernames.read", "usernames.manage"]
+    hint: "Sticker packs, emoji and GIFs",
+    permissions: ["content.read", "content.manage"]
   },
   {
     title: "Bots",
@@ -242,8 +242,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "Economy",
-    hint: "Premium grants/refunds, the account-rating leaderboard, and the StarGift catalog",
-    permissions: ["premium.manage", "ratings.read", "ratings.manage", "stargifts.read", "stargifts.manage"]
+    hint: "Premium grants/refunds, the account-rating leaderboard, the StarGift catalog, and collectible usernames",
+    permissions: ["premium.manage", "ratings.read", "ratings.manage", "stargifts.read", "stargifts.manage", "usernames.read", "usernames.manage"]
   },
   {
     title: "The console itself",
