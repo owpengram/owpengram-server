@@ -56,6 +56,17 @@ type aiChatGenerator interface {
 	GenerateTextStream(ctx context.Context, req domain.AITextGenerationRequest, emit func(domain.AIComposeText) error) (domain.AIComposeText, error)
 }
 
+// premiumSource is the built-in @premiumbot's read-only view of the Premium
+// catalog and a user's own entitlement history (app/premium.Service
+// satisfies it as-is). Wired post-construction via SetPremiumSource, not a
+// With* option, because premiumapp.Service is built after botsapp.Service in
+// cmd/telesrv/main.go and neither construction order is worth disturbing
+// just to pass this one dependency earlier.
+type premiumSource interface {
+	Plans(ctx context.Context) ([]domain.PremiumPlan, error)
+	Entitlements(ctx context.Context, userID int64, limit int) ([]domain.PremiumEntitlement, error)
+}
+
 // verificationApplications is the applicant-side surface of official platform
 // verification used by the built-in @verifybot (app/verification.Service
 // satisfies it as-is).
@@ -119,6 +130,7 @@ type Service struct {
 	customVerification    customVerifications
 	verifierTargets       verifierBotTargets
 	gifCatalog            gifCatalogSource
+	premium               premiumSource
 	telegramLogin         *telegramloginapp.Service
 	hooks                 RouterHooks
 	textDrafts            TextDraftPusher
@@ -227,6 +239,20 @@ func WithGifCatalogSource(c gifCatalogSource) Option {
 			s.gifCatalog = c
 		}
 	}
+}
+
+// SetPremiumSource injects the read-only Premium catalog/entitlement access
+// used by the built-in @premiumbot. A plain setter, not a With* option --
+// premiumapp.Service is constructed after botsapp.Service in
+// cmd/telesrv/main.go, so this runs once, right after that construction,
+// rather than reordering either. Without it, HandlesBot still refuses
+// PremiumBotUserID entirely (see the switch in botfather.go), so an
+// unconfigured deployment gets a silent no-op bot rather than a crash.
+func (s *Service) SetPremiumSource(p premiumSource) {
+	if s == nil || p == nil {
+		return
+	}
+	s.premium = p
 }
 
 // WithAIChatGenerator 注入内置 @ChatBot 使用的 AI 文本生成器。

@@ -98,7 +98,7 @@ func (s *Service) HandlesBot(botUserID int64) bool {
 		// pipeline is concerned.
 		return !s.hideThirdPartyVerification
 	case domain.BotFatherUserID, domain.StickersBotUserID, domain.ChatBotUserID,
-		domain.VerifyBotUserID:
+		domain.VerifyBotUserID, domain.PremiumBotUserID:
 		return true
 	default:
 		return false
@@ -127,6 +127,8 @@ func (s *Service) OnPrivateMessage(ctx context.Context, botUserID int64, msg dom
 		go s.respondAsVerify(userID, msg)
 	case domain.VerifierBotUserID:
 		go s.respondAsVerifier(userID, msg)
+	case domain.PremiumBotUserID:
+		go s.respondAsPremium(userID, msg)
 	}
 }
 

@@ -1366,6 +1366,7 @@ func run(logger *zap.Logger) error {
 	starsService := starsapp.NewService(starsStore, starsapp.WithStartingGrant(cfg.StarsStartingGrant))
 	premiumStore := postgres.NewPremiumStore(pool)
 	premiumService := premiumapp.NewService(premiumStore, starsService)
+	botsService.SetPremiumSource(premiumService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
