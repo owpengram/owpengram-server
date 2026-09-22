@@ -93,6 +93,10 @@ const (
 	// GifBotAccessHash is fixed and double-written with the seed row in this
 	// feature's migration; the two must never drift.
 	GifBotAccessHash int64 = 7233282977235616768
+	// GifBotUserPhotoID/AccessHash are the fixed id of @gif's avatar photo,
+	// matching the row files.Service.SeedGifBotAvatar seeds.
+	GifBotUserPhotoID         int64 = 12500000150001
+	GifBotUserPhotoAccessHash int64 = 4150238967714582901
 
 	// PremiumBotUserID is the built-in @premiumbot: the storefront/payment
 	// peer shown for both self-purchase (Settings -> Premium) and gifting
@@ -102,6 +106,10 @@ const (
 	// PremiumBotAccessHash is fixed and double-written with the seed row in
 	// this feature's migration; the two must never drift.
 	PremiumBotAccessHash int64 = 8117747505266431888
+	// PremiumBotUserPhotoID/AccessHash are the fixed id of @premiumbot's
+	// avatar photo, matching the row files.Service.SeedPremiumBotAvatar seeds.
+	PremiumBotUserPhotoID         int64 = 12500000170001
+	PremiumBotUserPhotoAccessHash int64 = 6289147520938461773
 )
 
 // officialSystemUserPhotoDCID/Stripped 由 files.Service.SeedOfficialSystemAvatar
@@ -206,6 +214,40 @@ var (
 func SetVerifyBotAvatar(dcID int, stripped []byte) {
 	verifyBotPhotoDCID = dcID
 	verifyBotPhotoStripped = stripped
+}
+
+// gifBotPhotoDCID/Stripped are written once at startup by
+// files.Service.SeedGifBotAvatar via SetGifBotAvatar; before that,
+// GifBotUser() carries no photo (PhotoID==0), same as every other
+// not-yet-seeded built-in account.
+var (
+	gifBotPhotoDCID     int
+	gifBotPhotoStripped []byte
+)
+
+// SetGifBotAvatar records the DC and inline thumbnail bytes for @gif's
+// avatar. Should only be called once, at startup, after the avatar seed
+// completes.
+func SetGifBotAvatar(dcID int, stripped []byte) {
+	gifBotPhotoDCID = dcID
+	gifBotPhotoStripped = stripped
+}
+
+// premiumBotPhotoDCID/Stripped are written once at startup by
+// files.Service.SeedPremiumBotAvatar via SetPremiumBotAvatar; before that,
+// PremiumBotUser() carries no photo (PhotoID==0), same as every other
+// not-yet-seeded built-in account.
+var (
+	premiumBotPhotoDCID     int
+	premiumBotPhotoStripped []byte
+)
+
+// SetPremiumBotAvatar records the DC and inline thumbnail bytes for
+// @premiumbot's avatar. Should only be called once, at startup, after the
+// avatar seed completes.
+func SetPremiumBotAvatar(dcID int, stripped []byte) {
+	premiumBotPhotoDCID = dcID
+	premiumBotPhotoStripped = stripped
 }
 
 // OfficialSystemUser 返回第一阶段内置的官方系统账号。
@@ -346,7 +388,7 @@ func VerifierBotUser() User {
 
 // GifBotUser returns the built-in @gif account.
 func GifBotUser() User {
-	return User{
+	u := User{
 		ID:             GifBotUserID,
 		AccessHash:     GifBotAccessHash,
 		FirstName:      "GIFs",
@@ -355,11 +397,17 @@ func GifBotUser() User {
 		Bot:            true,
 		BotInfoVersion: 1,
 	}
+	if gifBotPhotoDCID != 0 {
+		u.PhotoID = GifBotUserPhotoID
+		u.PhotoDCID = gifBotPhotoDCID
+		u.PhotoStripped = gifBotPhotoStripped
+	}
+	return u
 }
 
 // PremiumBotUser returns the built-in Premium storefront and payment peer.
 func PremiumBotUser() User {
-	return User{
+	u := User{
 		ID:             PremiumBotUserID,
 		AccessHash:     PremiumBotAccessHash,
 		FirstName:      "Premium Bot",
@@ -368,6 +416,12 @@ func PremiumBotUser() User {
 		Bot:            true,
 		BotInfoVersion: 1,
 	}
+	if premiumBotPhotoDCID != 0 {
+		u.PhotoID = PremiumBotUserPhotoID
+		u.PhotoDCID = premiumBotPhotoDCID
+		u.PhotoStripped = premiumBotPhotoStripped
+	}
+	return u
 }
 
 // SystemUserByID 返回内置系统账号；非系统账号返回 ok=false。

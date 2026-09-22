@@ -1053,6 +1053,16 @@ func run(logger *zap.Logger) error {
 	} else if seeded {
 		logger.Info("@verifybot avatar seed import complete", zap.Int64("photo_id", domain.VerifyBotUserPhotoID))
 	}
+	if seeded, err := filesService.SeedGifBotAvatar(ctx); err != nil {
+		return fmt.Errorf("seed gif bot avatar: %w", err)
+	} else if seeded {
+		logger.Info("@gif avatar seed import complete", zap.Int64("photo_id", domain.GifBotUserPhotoID))
+	}
+	if seeded, err := filesService.SeedPremiumBotAvatar(ctx); err != nil {
+		return fmt.Errorf("seed premium bot avatar: %w", err)
+	} else if seeded {
+		logger.Info("@premiumbot avatar seed import complete", zap.Int64("photo_id", domain.PremiumBotUserPhotoID))
+	}
 	if stats, err := filesService.WarmCaches(ctx); err != nil {
 		logger.Warn("media resource cache warmup failed", zap.Error(err))
 	} else if stats.StickerSets > 0 || stats.Documents > 0 || stats.Blobs > 0 {
