@@ -118,6 +118,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/moderation/cases/{id}/appeals/{appeal_id}/review", s.scopedRoute(permissionModerationReview, http.HandlerFunc(s.handleReviewModerationAppealAPI)))
 	mux.Handle("POST /api/actions/set-frozen", s.scopedRoute(permissionAccountsManage, http.HandlerFunc(s.handleSetAccountFrozenAPI)))
 	mux.Handle("POST /api/actions/grant-premium", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handleGrantPremiumAPI)))
+	mux.Handle("POST /api/actions/grant-stars", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handleGrantStarsAPI)))
 	mux.Handle("GET /api/premium/plans", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handlePremiumPlansAPI)))
 	mux.Handle("GET /api/premium/payments/{id}", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handlePremiumPaymentAPI)))
 	mux.Handle("POST /api/actions/premium-upsert-plan", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handleUpsertPremiumPlanAPI)))
@@ -1318,6 +1319,28 @@ func (s *server) handleGrantPremiumAPI(w http.ResponseWriter, r *http.Request) {
 		Months:      body.Months,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/grant-premium", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type grantStarsAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	UserID    int64  `json:"user_id"`
+	Amount    int64  `json:"amount"`
+}
+
+func (s *server) handleGrantStarsAPI(w http.ResponseWriter, r *http.Request) {
+	var body grantStarsAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.GrantStarsRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "grant-stars"),
+		UserID:      body.UserID,
+		Amount:      body.Amount,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/accounts/grant-stars", req)
 	writeCommandResultAPI(w, result, err)
 }
 

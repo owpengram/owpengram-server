@@ -42,6 +42,7 @@ type Service interface {
 	AccountAvatar(ctx context.Context, userID int64) ([]byte, string, bool, error)
 	SetAccountFrozen(ctx context.Context, req admin.SetAccountFrozenRequest) (admin.CommandResult, error)
 	GrantPremium(ctx context.Context, req admin.GrantPremiumRequest) (admin.CommandResult, error)
+	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	UpsertPremiumPlan(ctx context.Context, req admin.UpsertPremiumPlanRequest) (admin.CommandResult, error)
 	RefundPremium(ctx context.Context, req admin.RefundPremiumRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
@@ -196,6 +197,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/set-frozen", s.authenticated(s.handleSetAccountFrozen))
 	mux.HandleFunc("GET /v1/accounts/{id}/avatar", s.authenticated(s.handleAccountAvatar))
 	mux.HandleFunc("POST /v1/accounts/grant-premium", s.authenticated(s.handleGrantPremium))
+	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/premium/plans/upsert", s.authorized(PermissionPremiumManage, s.handleUpsertPremiumPlan))
 	mux.HandleFunc("POST /v1/premium/refund", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
@@ -338,6 +340,15 @@ func (s *Server) handleGrantPremium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.GrantPremium(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleGrantStars(w http.ResponseWriter, r *http.Request) {
+	var req admin.GrantStarsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.GrantStars(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

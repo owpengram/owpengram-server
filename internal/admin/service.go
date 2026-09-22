@@ -25,6 +25,7 @@ import (
 const (
 	ActionSetAccountFrozen         = "account.set_frozen"
 	ActionGrantPremium             = "account.grant_premium"
+	ActionGrantStars               = "account.grant_stars"
 	ActionUpsertPremiumPlan        = "premium.upsert_plan"
 	ActionRefundPremium            = "premium.refund"
 	ActionSetVerified              = "account.set_verified"
@@ -113,6 +114,9 @@ const (
 	maxHistoryBatches        = 100
 	maxPremiumMonths         = 120
 	maxFreezeAppealURLLength = 2048
+	// maxStarsGrant bounds one admin Stars credit, so a fat-fingered amount
+	// cannot mint an absurd balance.
+	maxStarsGrant = 1_000_000_000
 	// maxAccountRatingAdjustment bounds one manual rating adjustment in
 	// either direction, so a fat-fingered admin amount cannot overflow the
 	// composite score.
@@ -355,6 +359,16 @@ type PremiumService interface {
 	Refund(ctx context.Context, req domain.PremiumRefundRequest) (domain.PremiumPurchaseResult, error)
 }
 
+// StarsService is the operator-facing slice of the local Stars ledger: an
+// out-of-band credit (app/stars.Service satisfies it as-is). Unlike
+// GrantPremium, a credit here does not push a live update to the account --
+// the ledger has no notifier hook (only RPC-response-attached
+// UpdateStarsBalance, which needs a client-initiated call to attach to) --
+// so the new balance reaches the client on its next Stars/Wallet read.
+type StarsService interface {
+	Credit(ctx context.Context, userID, amount int64, reason domain.StarsTransactionReason, peer domain.Peer, title, desc string) (domain.StarsBalance, error)
+}
+
 type GifCatalogService interface {
 	// ValidateGifUpload is a pure check (no store writes) so a dry-run preview
 	// can validate an uploaded file's shape without materializing it.
@@ -495,6 +509,7 @@ type Dependencies struct {
 	Revoker                AuthKeyRevoker
 	Users                  UsersService
 	Premium                PremiumService
+	Stars                  StarsService
 	UserNotifier           UserNotifier
 	UserModerationNotifier UserModerationNotifier
 	FreezeNotifier         AccountFreezeNotifier
@@ -534,6 +549,7 @@ type Service struct {
 	revoker                AuthKeyRevoker
 	users                  UsersService
 	premium                PremiumService
+	stars                  StarsService
 	userNotifier           UserNotifier
 	userModerationNotifier UserModerationNotifier
 	freezeNotifier         AccountFreezeNotifier
@@ -580,6 +596,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Premium != nil {
 		s.premium = deps.Premium
+	}
+	if deps.Stars != nil {
+		s.stars = deps.Stars
 	}
 	if deps.UserNotifier != nil {
 		s.userNotifier = deps.UserNotifier
@@ -902,6 +921,12 @@ type GrantPremiumRequest struct {
 	CommandMeta
 	UserID int64 `json:"user_id"`
 	Months int   `json:"months"`
+}
+
+type GrantStarsRequest struct {
+	CommandMeta
+	UserID int64 `json:"user_id"`
+	Amount int64 `json:"amount"`
 }
 
 type UpsertPremiumPlanRequest struct {
@@ -1400,6 +1425,44 @@ func (s *Service) GrantPremium(ctx context.Context, req GrantPremiumRequest) (Co
 			msg = "premium cleared"
 		}
 		return CommandResult{Message: msg, Details: details}, nil
+	})
+}
+
+// GrantStars credits an account's local Stars ledger out of band (no
+// purchase, no purchase_intent/transaction row tying it to a real payment --
+// see StarsService's doc comment for why the account only sees the new
+// balance on its next Stars/Wallet read, not immediately).
+func (s *Service) GrantStars(ctx context.Context, req GrantStarsRequest) (CommandResult, error) {
+	if req.UserID <= 0 {
+		return CommandResult{}, fmt.Errorf("user_id is required")
+	}
+	if req.Amount <= 0 || req.Amount > maxStarsGrant {
+		return CommandResult{}, fmt.Errorf("amount must be between 1 and %d", maxStarsGrant)
+	}
+	if s == nil || s.stars == nil || s.users == nil {
+		return CommandResult{}, fmt.Errorf("stars dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionGrantStars, req.UserID, domain.Peer{}, req, func() (CommandResult, error) {
+		_, found, err := s.users.AdminUser(ctx, req.UserID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if !found {
+			return CommandResult{}, domain.ErrUserNotFound
+		}
+		if req.DryRun {
+			return CommandResult{Message: "dry-run completed", Details: map[string]any{
+				"user_id": req.UserID, "amount": req.Amount,
+			}}, nil
+		}
+		balance, err := s.stars.Credit(ctx, req.UserID, req.Amount, domain.StarsReasonAdjust, domain.Peer{},
+			"Admin grant", strings.TrimSpace(req.CommandMeta.Reason))
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "stars credited", Details: map[string]any{
+			"user_id": req.UserID, "amount": req.Amount, "balance": balance.Balance,
+		}}, nil
 	})
 }
 

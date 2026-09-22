@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MonitorSmartphone, ScrollText, Settings2, Sparkles, UserRound } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MonitorSmartphone, ScrollText, Settings2, Sparkles, Star, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { AvatarModal } from "../components/AvatarModal";
@@ -20,6 +20,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("profile");
   const [months, setMonths] = useState("1");
+  const [starsAmount, setStarsAmount] = useState("100");
   const [freezeUntil, setFreezeUntil] = useState(() => toDateTimeLocal(new Date(Date.now() + 7 * 86400_000)));
   const [freezeAppealURL, setFreezeAppealURL] = useState("");
   const [avatarModalOpen, setAvatarModalOpen] = useState(false);
@@ -224,6 +225,35 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
                       tone="warn"
                       path="/api/actions/grant-premium"
                       payload={() => ({ user_id: account.ID, months: 0 })}
+                      onDone={load}
+                    />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-block">
+              <SectionHead title={"Stars"} />
+              <div className="card-body">
+                <div className="attr-block">
+                  <label className="duration-field">
+                    <span>{"Amount to credit"}</span>
+                    <input
+                      aria-label={"Stars amount to credit"}
+                      value={starsAmount}
+                      onChange={(event) => setStarsAmount(event.target.value)}
+                      type="number"
+                      min="1"
+                      max="1000000000"
+                    />
+                  </label>
+                  <div className="action-stack">
+                    <ActionButton
+                      label={"Credit stars"}
+                      icon={<Star size={15} />}
+                      tone="warn"
+                      path="/api/actions/grant-stars"
+                      payload={() => ({ user_id: account.ID, amount: toInt(starsAmount) })}
                       onDone={load}
                     />
                   </div>

@@ -1724,6 +1724,7 @@ func run(logger *zap.Logger) error {
 		Revoker:                router,
 		Users:                  usersService,
 		Premium:                premiumService,
+		Stars:                  starsService,
 		UserNotifier:           router,
 		UserModerationNotifier: router,
 		FreezeNotifier:         router,
