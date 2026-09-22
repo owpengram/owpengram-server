@@ -80,6 +80,14 @@ type Service interface {
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	GifCatalogDocumentPreview(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	CreateGifCatalogEntry(ctx context.Context, req admin.CreateGifCatalogEntryRequest) (admin.CommandResult, error)
+	StarGiftCatalogAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
+	CreateStarGiftCatalogEntry(ctx context.Context, req admin.CreateStarGiftCatalogEntryRequest) (admin.CommandResult, error)
+	SetStarGiftCatalogEnabled(ctx context.Context, req admin.SetStarGiftCatalogEnabledRequest) (admin.CommandResult, error)
+	SetStarGiftCatalogSortOrder(ctx context.Context, req admin.SetStarGiftCatalogSortOrderRequest) (admin.CommandResult, error)
+	StarGiftCollectibles(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
+	StarGiftCollectibleAnimation(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
+	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
+	GiveStarGift(ctx context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error)
 	SetGifCatalogEnabled(ctx context.Context, req admin.SetGifCatalogEnabledRequest) (admin.CommandResult, error)
 	SetGifCatalogSortOrder(ctx context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error)
 	SetGifCatalogCategory(ctx context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error)
@@ -226,6 +234,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/gif-catalog/create", s.authenticated(s.handleCreateGifCatalogEntry))
 	mux.HandleFunc("POST /v1/gif-catalog/set-enabled", s.authenticated(s.handleSetGifCatalogEnabled))
 	mux.HandleFunc("POST /v1/gif-catalog/set-sort-order", s.authenticated(s.handleSetGifCatalogSortOrder))
+	mux.HandleFunc("POST /v1/star-gift-catalog/create", s.authenticated(s.handleCreateStarGiftCatalogEntry))
+	mux.HandleFunc("POST /v1/star-gift-catalog/set-enabled", s.authenticated(s.handleSetStarGiftCatalogEnabled))
+	mux.HandleFunc("POST /v1/star-gift-catalog/set-sort-order", s.authenticated(s.handleSetStarGiftCatalogSortOrder))
 	mux.HandleFunc("POST /v1/gif-catalog/set-category", s.authenticated(s.handleSetGifCatalogCategory))
 	mux.HandleFunc("POST /v1/gif-catalog/auto-categorize", s.authenticated(s.handleAutoCategorizeGifCatalog))
 	mux.HandleFunc("POST /v1/gif-catalog/delete-uncategorized", s.authenticated(s.handleDeleteUncategorizedGifs))
@@ -233,6 +244,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/storage/manual-purge", s.authenticated(s.handleManualPurgeStorage))
 	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("GET /v1/gif-catalog/documents/{id}/preview", s.authenticated(s.handleGifCatalogDocumentPreview))
+	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/animation", s.authenticated(s.handleStarGiftCatalogAnimation))
+	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
+	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
+	mux.HandleFunc("POST /v1/star-gift-catalog/publish-collectibles", s.authenticated(s.handlePublishStarGiftCollectibles))
+	mux.HandleFunc("POST /v1/star-gift-catalog/give", s.authenticated(s.handleGiveStarGift))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
 	mux.HandleFunc("GET /v1/moderation/cases/{id}", s.authenticated(s.handleModerationCase))
@@ -805,6 +821,58 @@ func (s *Server) handleSetGifCatalogSortOrder(w http.ResponseWriter, r *http.Req
 	writeCommandResult(w, result, err)
 }
 
+func (s *Server) handleCreateStarGiftCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, domain.MaxStarGiftLottieBytes+(1<<20))
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var req admin.CreateStarGiftCatalogEntryRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "animation file is required")
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, domain.MaxStarGiftLottieBytes+1))
+	if err != nil || len(data) == 0 || int64(len(data)) > domain.MaxStarGiftLottieBytes {
+		writeError(w, http.StatusBadRequest, "animation file is empty or too large")
+		return
+	}
+	req.FileName = header.Filename
+	req.Data = data
+	result, err := s.svc.CreateStarGiftCatalogEntry(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetStarGiftCatalogEnabled(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetStarGiftCatalogEnabledRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetStarGiftCatalogEnabled(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSetStarGiftCatalogSortOrder(w http.ResponseWriter, r *http.Request) {
+	var req admin.SetStarGiftCatalogSortOrderRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SetStarGiftCatalogSortOrder(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
 func (s *Server) handleSetGifCatalogCategory(w http.ResponseWriter, r *http.Request) {
 	var req admin.SetGifCatalogCategoryRequest
 	if !decodeJSON(w, r, &req) {
@@ -890,6 +958,176 @@ func (s *Server) handleGifCatalogDocumentPreview(w http.ResponseWriter, r *http.
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleStarGiftCatalogAnimation(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("gift_id"), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid gift id")
+		return
+	}
+	raw, found, err := s.svc.StarGiftCatalogAnimation(r.Context(), giftID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "star gift not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handleStarGiftCollectibles(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("gift_id"), 10, 64)
+	if err != nil || giftID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid gift id")
+		return
+	}
+	preview, found, err := s.svc.StarGiftCollectibles(r.Context(), giftID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeJSON(w, http.StatusOK, map[string]any{"found": false, "gift_id": strconv.FormatInt(giftID, 10)})
+		return
+	}
+	writeJSON(w, http.StatusOK, collectiblePreviewResponse(preview))
+}
+
+func collectiblePreviewResponse(preview domain.StarGiftUpgradePreview) map[string]any {
+	attribute := func(value domain.StarGiftCollectibleAttribute) map[string]any {
+		result := map[string]any{
+			"id": strconv.FormatInt(value.ID, 10), "name": value.Name, "rarity_kind": value.RarityKind,
+			"rarity_permille": value.RarityPermille, "crafted": value.Crafted,
+			"official_document_id": strconv.FormatInt(value.OfficialDocumentID, 10),
+			"sort_order":           value.SortOrder, "kind": value.Kind,
+		}
+		if value.Animation != nil {
+			result["source_name"] = value.Animation.SourceName
+			result["source_format"] = value.Animation.SourceFormat
+		}
+		if value.Kind == domain.StarGiftCollectibleBackdrop {
+			result["backdrop_id"] = value.BackdropID
+			result["center_color"] = value.CenterColor
+			result["edge_color"] = value.EdgeColor
+			result["pattern_color"] = value.PatternColor
+			result["text_color"] = value.TextColor
+		}
+		return result
+	}
+	mapAttributes := func(values []domain.StarGiftCollectibleAttribute) []map[string]any {
+		result := make([]map[string]any, 0, len(values))
+		for _, value := range values {
+			result = append(result, attribute(value))
+		}
+		return result
+	}
+	return map[string]any{
+		"found": true, "gift_id": strconv.FormatInt(preview.GiftID, 10), "revision": preview.Revision,
+		"upgrade_stars": strconv.FormatInt(preview.UpgradeStars, 10),
+		"supply_total":  preview.SupplyTotal, "issued": preview.Issued,
+		"slug_prefix": preview.SlugPrefix,
+		"models":      mapAttributes(preview.Models), "patterns": mapAttributes(preview.Patterns),
+		"backdrops": mapAttributes(preview.Backdrops),
+	}
+}
+
+func (s *Server) handleStarGiftCollectibleAnimation(w http.ResponseWriter, r *http.Request) {
+	giftID, err := strconv.ParseInt(r.PathValue("gift_id"), 10, 64)
+	attributeID, attrErr := strconv.ParseInt(r.PathValue("attribute_id"), 10, 64)
+	kind := domain.StarGiftCollectibleAttributeKind(r.PathValue("kind"))
+	if err != nil || giftID <= 0 || attrErr != nil || attributeID <= 0 ||
+		(kind != domain.StarGiftCollectibleModel && kind != domain.StarGiftCollectiblePattern) {
+		writeError(w, http.StatusBadRequest, "invalid collectible animation")
+		return
+	}
+	raw, found, err := s.svc.StarGiftCollectibleAnimation(r.Context(), giftID, kind, attributeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "collectible animation not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) handlePublishStarGiftCollectibles(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid collectible multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	var req admin.PublishStarGiftCollectiblesRequest
+	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
+		return
+	}
+	if len(req.Models)+len(req.Patterns) > 128 {
+		writeError(w, http.StatusBadRequest, "too many collectible animation files")
+		return
+	}
+	seen := make(map[string]struct{}, len(req.Models)+len(req.Patterns))
+	load := func(upload *admin.StarGiftCollectibleAnimationUpload) error {
+		upload.FileKey = strings.TrimSpace(upload.FileKey)
+		if upload.FileKey == "" {
+			return fmt.Errorf("animation file key is required")
+		}
+		if _, ok := seen[upload.FileKey]; ok {
+			return fmt.Errorf("duplicate animation file key %q", upload.FileKey)
+		}
+		seen[upload.FileKey] = struct{}{}
+		file, header, err := r.FormFile(upload.FileKey)
+		if err != nil {
+			return fmt.Errorf("animation file %q is required", upload.FileKey)
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, (4<<20)+1))
+		if err != nil || len(data) == 0 || len(data) > 4<<20 {
+			return fmt.Errorf("animation file %q is empty or too large", upload.FileKey)
+		}
+		upload.FileName = header.Filename
+		upload.Data = data
+		return nil
+	}
+	for i := range req.Models {
+		if err := load(&req.Models[i]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	for i := range req.Patterns {
+		if err := load(&req.Patterns[i]); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	result, err := s.svc.PublishStarGiftCollectibles(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleGiveStarGift(w http.ResponseWriter, r *http.Request) {
+	var req admin.GiveStarGiftRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.GiveStarGift(r.Context(), req)
+	writeCommandResult(w, result, err)
 }
 
 func (s *Server) handleEmojiAnimation(w http.ResponseWriter, r *http.Request) {

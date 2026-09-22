@@ -33,5 +33,7 @@ export function routeTitle(pathname: string): string {
   if (pathname.startsWith("/gif-catalog")) return "GIFs";
   if (pathname.startsWith("/server-settings")) return "Server Settings";
   if (pathname.startsWith("/account-ratings")) return "Account Ratings";
+  if (pathname.startsWith("/star-gift-catalog")) return "StarGift Catalog";
+  if (pathname.startsWith("/give-gifts")) return "Give Gifts";
   return "Operations Console";
 }

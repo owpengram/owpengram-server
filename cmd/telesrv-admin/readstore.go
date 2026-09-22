@@ -326,6 +326,62 @@ ORDER BY sort_order, id`)
 	return out, rows.Err()
 }
 
+// StarGiftCatalogRow is one entry of the admin-curated StarGift storefront,
+// the active revision's presentation/pricing joined onto the catalog
+// identity's live inventory. Auction/collectible fields are intentionally
+// absent -- that authoring surface is not exposed through this admin panel
+// yet (see internal/admin.StarGiftCatalogService's doc comment).
+type StarGiftCatalogRow struct {
+	GiftID              int64 `json:"GiftID,string"`
+	Enabled             bool
+	SortOrder           int
+	Revision            int
+	Title               string
+	Stars               int64 `json:"Stars,string"`
+	ConvertStars        int64 `json:"ConvertStars,string"`
+	DocumentID          int64 `json:"DocumentID,string"`
+	SourceFormat        string
+	Width               int
+	Height              int
+	Limited             bool
+	SoldOut             bool
+	Birthday            bool
+	RequirePremium      bool
+	AvailabilityTotal   int
+	AvailabilityRemains int
+	Auction             bool
+	ReceivedCount       int64 `json:"ReceivedCount,string"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+func (s *readStore) ListStarGiftCatalog(ctx context.Context) ([]StarGiftCatalogRow, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT c.gift_id, c.enabled, c.sort_order, c.availability_remains, c.created_at, c.updated_at,
+       r.revision, r.title, r.stars, r.convert_stars, r.document_id, r.source_format, r.width, r.height,
+       r.limited, r.sold_out, r.birthday, r.require_premium, r.availability_total, r.auction,
+       (SELECT count(*) FROM peer_star_gifts p WHERE p.gift_id = c.gift_id)
+FROM star_gift_catalog c
+JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
+ORDER BY c.sort_order, c.gift_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list star gift catalog: %w", err)
+	}
+	defer rows.Close()
+	out := make([]StarGiftCatalogRow, 0)
+	for rows.Next() {
+		var item StarGiftCatalogRow
+		if err := rows.Scan(&item.GiftID, &item.Enabled, &item.SortOrder, &item.AvailabilityRemains, &item.CreatedAt, &item.UpdatedAt,
+			&item.Revision, &item.Title, &item.Stars, &item.ConvertStars, &item.DocumentID, &item.SourceFormat, &item.Width, &item.Height,
+			&item.Limited, &item.SoldOut, &item.Birthday, &item.RequirePremium, &item.AvailabilityTotal, &item.Auction,
+			&item.ReceivedCount); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 // StickerSetDocumentIDs returns document ids as strings, not int64 — a plain
 // JSON number array would let the browser silently round these snowflake ids
 // past 2^53 (see StickerSetRow.ID for the same issue on the set id itself).

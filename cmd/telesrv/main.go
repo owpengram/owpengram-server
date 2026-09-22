@@ -1742,6 +1742,7 @@ func run(logger *zap.Logger) error {
 		Account:                accountService,
 		Broadcast:              broadcastService,
 		Rating:                 ratingService,
+		StarGifts:              starGiftsService,
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are

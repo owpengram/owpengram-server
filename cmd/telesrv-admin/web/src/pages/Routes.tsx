@@ -21,6 +21,8 @@ import { AuditLogPage } from "./AuditLogPage";
 import { PremiumPlansPage } from "./PremiumPlansPage";
 import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
 import { AccountRatingsPage } from "./AccountRatingsPage";
+import { StarGiftCatalogPage } from "./StarGiftCatalogPage";
+import { GiveGiftsPage } from "./GiveGiftsPage";
 import { ServerSettingsPage } from "./ServerSettingsPage";
 import { ModerationCaseDetailPage } from "./ModerationCaseDetailPage";
 import { ModerationCasesPage } from "./ModerationCasesPage";
@@ -46,6 +48,8 @@ import {
   permissionPremiumManage,
   permissionRatingsRead,
   permissionServerManage,
+  permissionStarGiftsRead,
+  permissionStarGiftsManage,
   permissionStorageRead,
   permissionUsernamesRead,
   permissionVerificationReview
@@ -171,6 +175,12 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/account-ratings") {
     return gate(permissionRatingsRead, <AccountRatingsPage navigate={navigate} />);
+  }
+  if (route.path === "/star-gift-catalog") {
+    return gate(permissionStarGiftsRead, <StarGiftCatalogPage />);
+  }
+  if (route.path === "/give-gifts") {
+    return gate(permissionStarGiftsManage, <GiveGiftsPage />);
   }
   if (route.path === "/server-settings") {
     return (

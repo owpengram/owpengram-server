@@ -9,6 +9,8 @@ export const permissionAll = "*";
 export const permissionPremiumManage = "premium.manage";
 export const permissionRatingsRead = "ratings.read";
 export const permissionRatingsManage = "ratings.manage";
+export const permissionStarGiftsRead = "stargifts.read";
+export const permissionStarGiftsManage = "stargifts.manage";
 export const permissionBotTokenRead = "bots.token.read";
 export const permissionVerificationReview = "verification.review";
 export const permissionVerificationRevoke = "verification.revoke";
@@ -181,6 +183,8 @@ const permissionLabels: Record<string, { title: string; hint: string }> = {
   "premium.manage": { title: "Manage Premium", hint: "Grant, revoke and refund Premium" },
   "ratings.read": { title: "View account ratings", hint: "Browse the account-rating leaderboard" },
   "ratings.manage": { title: "Adjust account ratings", hint: "Recompute ratings and apply manual corrections" },
+  "stargifts.read": { title: "View StarGift catalog", hint: "Browse the gift storefront" },
+  "stargifts.manage": { title: "Manage StarGift catalog", hint: "Add gifts and change storefront visibility/order" },
   "verification.review": { title: "Verify accounts", hint: "Work the verification queue and grant badges" },
   "verification.revoke": { title: "Remove verification", hint: "Take a granted badge away (needs the right above too)" },
   "botverification.review": { title: "Handle third-party marks", hint: "Work the third-party verification queue" },
@@ -238,8 +242,8 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
   },
   {
     title: "Billing",
-    hint: "Premium grants/refunds and the account-rating leaderboard",
-    permissions: ["premium.manage", "ratings.read", "ratings.manage"]
+    hint: "Premium grants/refunds, the account-rating leaderboard, and the StarGift catalog",
+    permissions: ["premium.manage", "ratings.read", "ratings.manage", "stargifts.read", "stargifts.manage"]
   },
   {
     title: "The console itself",

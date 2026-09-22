@@ -771,6 +771,66 @@ export type GifCatalogRow = {
 
 export type GifCatalogListResponse = { rows: GifCatalogRow[] };
 
+// StarGiftCatalogRow is one entry of the admin-curated StarGift storefront.
+// Auction/collectible fields are deliberately absent -- see
+// cmd/telesrv-admin/readstore.go's StarGiftCatalogRow doc comment.
+export type StarGiftCatalogRow = {
+  GiftID: string;
+  Enabled: boolean;
+  SortOrder: number;
+  Revision: number;
+  Title: string;
+  Stars: string;
+  ConvertStars: string;
+  DocumentID: string;
+  SourceFormat: string;
+  Width: number;
+  Height: number;
+  Limited: boolean;
+  SoldOut: boolean;
+  Birthday: boolean;
+  RequirePremium: boolean;
+  AvailabilityTotal: number;
+  AvailabilityRemains: number;
+  Auction: boolean;
+  ReceivedCount: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+};
+
+export type StarGiftCatalogListResponse = { rows: StarGiftCatalogRow[] };
+
+export type StarGiftCollectibleAttributeRow = {
+  id: string;
+  kind: "model" | "pattern" | "backdrop";
+  name: string;
+  rarity_kind: "permille" | "uncommon" | "rare" | "epic" | "legendary";
+  rarity_permille: number;
+  crafted: boolean;
+  official_document_id: string;
+  sort_order: number;
+  source_name?: string;
+  source_format?: "tgs" | "lottie";
+  backdrop_id?: number;
+  center_color?: number;
+  edge_color?: number;
+  pattern_color?: number;
+  text_color?: number;
+};
+
+export type StarGiftCollectiblePreview = {
+  found: boolean;
+  gift_id: string;
+  revision?: number;
+  upgrade_stars?: string;
+  supply_total?: number;
+  issued?: number;
+  slug_prefix?: string;
+  models?: StarGiftCollectibleAttributeRow[];
+  patterns?: StarGiftCollectibleAttributeRow[];
+  backdrops?: StarGiftCollectibleAttributeRow[];
+};
+
 export type AccountListResponse = {
   query: string;
   limit: number;

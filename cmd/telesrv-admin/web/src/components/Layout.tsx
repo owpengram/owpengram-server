@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Smile,
+  Gift,
   Stamp,
   Trophy,
   Users,
@@ -33,6 +34,8 @@ import { permissionBotVerificationReview, permissionServerManage, permissionAdmi
   permissionAuditRead,
   permissionPremiumManage,
   permissionRatingsRead,
+  permissionStarGiftsRead,
+  permissionStarGiftsManage,
   permissionAccountsRead,
   permissionChannelsRead,
   permissionBotsRead,
@@ -110,6 +113,8 @@ export function Shell({
   const canReadAuditLog = useCan(permissionAuditRead);
   const canManagePremium = useCan(permissionPremiumManage);
   const canReadRatings = useCan(permissionRatingsRead);
+  const canReadStarGifts = useCan(permissionStarGiftsRead);
+  const canManageStarGifts = useCan(permissionStarGiftsManage);
   // Each section entry is hidden without the right to open it: the route is
   // gated server-side either way, so showing it would only lead to a 403.
   const canReadAccounts = useCan(permissionAccountsRead);
@@ -331,6 +336,12 @@ export function Shell({
           )}
           {canReadRatings && (
             <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
+          )}
+          {canReadStarGifts && (
+            <NavLink icon={<Gift size={16} />} href="/star-gift-catalog" route={route} navigate={navigate}>{"StarGift Catalog"}</NavLink>
+          )}
+          {canManageStarGifts && (
+            <NavLink icon={<Gift size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
           )}
           {canManageServer && (
             <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>

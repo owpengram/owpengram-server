@@ -96,6 +96,11 @@ const (
 	// leaderboard and detail; manage recomputes and adjusts.
 	permissionRatingsRead   = "ratings.read"
 	permissionRatingsManage = "ratings.manage"
+	// StarGift catalog authoring (plain gifts only -- see
+	// internal/admin.StarGiftCatalogService's doc comment for what "manage"
+	// deliberately does not cover yet).
+	permissionStarGiftsRead   = "stargifts.read"
+	permissionStarGiftsManage = "stargifts.manage"
 
 	// permissionSessionOnly marks the handful of routes that need a session but
 	// no right: reading who you are, and signing out. It is not a grantable
@@ -142,6 +147,8 @@ func assignablePermissions() []string {
 		permissionAuditRead,
 		permissionRatingsRead,
 		permissionRatingsManage,
+		permissionStarGiftsRead,
+		permissionStarGiftsManage,
 	}
 }
 

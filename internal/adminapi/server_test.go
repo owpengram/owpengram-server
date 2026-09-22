@@ -476,6 +476,38 @@ func (fakeService) SetGifCatalogCategory(_ context.Context, req admin.SetGifCata
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) StarGiftCatalogAnimation(context.Context, int64) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
+func (fakeService) CreateStarGiftCatalogEntry(_ context.Context, req admin.CreateStarGiftCatalogEntryRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetStarGiftCatalogEnabled(_ context.Context, req admin.SetStarGiftCatalogEnabledRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) SetStarGiftCatalogSortOrder(_ context.Context, req admin.SetStarGiftCatalogSortOrderRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) StarGiftCollectibles(context.Context, int64) (domain.StarGiftUpgradePreview, bool, error) {
+	return domain.StarGiftUpgradePreview{}, false, nil
+}
+
+func (fakeService) StarGiftCollectibleAnimation(context.Context, int64, domain.StarGiftCollectibleAttributeKind, int64) ([]byte, bool, error) {
+	return nil, false, nil
+}
+
+func (fakeService) PublishStarGiftCollectibles(_ context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) GiveStarGift(_ context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) AutoCategorizeGifCatalog(_ context.Context, req admin.AutoCategorizeGifCatalogRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }

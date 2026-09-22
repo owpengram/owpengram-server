@@ -66,6 +66,13 @@ const (
 	ActionAutoCategorizeGifCatalog = "gif_catalog.auto_categorize"
 	ActionDeleteUncategorizedGifs  = "gif_catalog.delete_uncategorized"
 	ActionDeleteGifCatalogEntry    = "gif_catalog.delete"
+
+	ActionCreateStarGiftCatalogEntry  = "star_gift_catalog.create"
+	ActionSetStarGiftCatalogEnabled   = "star_gift_catalog.set_enabled"
+	ActionSetStarGiftCatalogSortOrder = "star_gift_catalog.set_sort_order"
+	ActionPublishStarGiftCollectibles = "star_gift_catalog.publish_collectibles"
+	ActionGiveStarGift                = "star_gift_catalog.give"
+
 	// Manual storage purge: admin-chosen categories + optional age cutoff,
 	// independent of the automatic retention sweep's config-derived
 	// selection. See StorageService's doc comment.
@@ -369,6 +376,41 @@ type GifCatalogService interface {
 	AdminDeleteGifCatalogEntry(ctx context.Context, id int64) (bool, error)
 }
 
+// StarGiftCatalogService is the operator-facing slice of the StarGift
+// catalog: author a new gift (or a new revision of an existing one) from an
+// uploaded .tgs/Lottie animation, publish its collectible (unique-upgrade)
+// attribute pool, grant it directly to a user or channel free of charge, and
+// manage its storefront visibility/order. Purchase, resale, auction and
+// craft (the buyer-facing use cases) are a separate, much larger surface
+// (internal/app/stargifts.Service) still deliberately not exposed here.
+type StarGiftCatalogService interface {
+	// PrepareAnimation normalizes and validates an uploaded .tgs/.json/.lottie
+	// file (512x512, no external assets/expressions, size-bounded) into the
+	// canonical form CreateCatalogRevision needs. A pure check plus
+	// transform -- no store writes -- so a dry-run preview can validate a
+	// file's shape without materializing it.
+	PrepareAnimation(fileName string, data []byte) (domain.StarGiftAnimation, error)
+	CreateCatalogRevision(ctx context.Context, write domain.StarGiftCatalogWrite) (domain.StarGiftCatalogEntry, error)
+	SetCatalogEnabled(ctx context.Context, giftID int64, enabled bool) (bool, error)
+	SetCatalogSortOrder(ctx context.Context, giftID int64, sortOrder int) (bool, error)
+	// AnimationJSON returns the active revision's normalized Lottie JSON, for
+	// the admin panel to render a live preview of what was actually uploaded.
+	AnimationJSON(ctx context.Context, giftID int64) ([]byte, bool, error)
+	GiftByID(ctx context.Context, id int64) (domain.StarGift, bool, error)
+	// CreateCollectibleRevision materializes uploaded model/pattern animations
+	// and atomically publishes the complete immutable attribute pool a plain
+	// gift needs before it can be delivered as an upgraded collectible.
+	CreateCollectibleRevision(ctx context.Context, write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error)
+	// CollectiblePreview is the currently-published attribute pool, for the
+	// admin panel's own read (not the client-facing upgrade preview).
+	CollectiblePreview(ctx context.Context, giftID int64) (domain.StarGiftUpgradePreview, bool, error)
+	CollectibleAnimationJSON(ctx context.Context, giftID int64, kind domain.StarGiftCollectibleAttributeKind, attributeID int64) ([]byte, bool, error)
+	// GrantUnique delivers a catalog gift directly to a user or channel free
+	// of charge -- the admin "give gift" action, independent of the Stars
+	// purchase path.
+	GrantUnique(ctx context.Context, req domain.AdminStarGiftGrant) (domain.AdminStarGiftGrantResult, error)
+}
+
 // StorageService is the admin-console surface over manual storage purge --
 // deleting media blob bytes (never the document/photo metadata row) by
 // admin-chosen category and an optional age cutoff, independent of the
@@ -479,7 +521,10 @@ type Dependencies struct {
 	// Rating is the composite account rating use case (read/recompute/adjust/
 	// list/events).
 	Rating AccountRatingService
-	Now    func() time.Time
+	// StarGifts is the catalog-authoring slice only -- see
+	// StarGiftCatalogService's doc comment.
+	StarGifts StarGiftCatalogService
+	Now       func() time.Time
 }
 
 type Service struct {
@@ -508,6 +553,7 @@ type Service struct {
 	account                AccountService
 	broadcast              BroadcastService
 	rating                 AccountRatingService
+	starGifts              StarGiftCatalogService
 	now                    func() time.Time
 }
 
@@ -591,6 +637,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Rating != nil {
 		s.rating = deps.Rating
+	}
+	if deps.StarGifts != nil {
+		s.starGifts = deps.StarGifts
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
