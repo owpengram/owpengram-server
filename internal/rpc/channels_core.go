@@ -196,6 +196,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 		}
 		r.applyStoriesPinnedAvailableToChannelFull(ctx, userID, ref.ID, &full)
 		r.applyNotifySettingsToChannelFull(ctx, userID, ref.ID, &full)
+		r.applyStarGiftsCountToChannelFull(ctx, ref.ID, &full)
 		r.applyBotVerificationToChannelFull(ctx, ref.ID, &full)
 		r.applyAndroidChannelReactionEditorCompat(ctx, &full, cached.canChangeInfo)
 		chats := append([]tg.ChatClass(nil), cached.chats...)
@@ -215,6 +216,7 @@ func (r *Router) onChannelsGetFullChannel(ctx context.Context, input tg.InputCha
 	}
 	full := tgChannelFull(view, r.cfg.PublicBaseURL)
 	r.applyChannelStatsCapability(full)
+	r.applyStarGiftsCountToChannelFull(ctx, view.Channel.ID, full)
 	userIDs := []int64{view.Channel.CreatorUserID, view.Self.UserID}
 	// 注：Bots 过滤实际会返回群内 bot（TestGroupBotRPCShape 覆盖），这里据此富化 full.BotInfo。
 	// （此前审计误判为死代码，已由单测纠正——勿删。）

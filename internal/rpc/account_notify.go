@@ -353,3 +353,20 @@ func (r *Router) applyNotifySettingsToChannelFull(ctx context.Context, viewerUse
 	}
 	full.NotifySettings = *tgPeerNotifySettings(&s)
 }
+
+// applyStarGiftsCountToChannelFull sets stargifts_count, which gates the
+// client's own gift-showcase section on a channel profile -- without it, a
+// gift saved to the channel stays invisible even though the underlying
+// payments.getSavedStarGifts data is correct. Best-effort like the sibling
+// apply* overlays: a lookup failure just leaves the count unset rather than
+// failing the whole channelFull response.
+func (r *Router) applyStarGiftsCountToChannelFull(ctx context.Context, channelID int64, full *tg.ChannelFull) {
+	if r.deps.Gifts == nil {
+		return
+	}
+	page, err := r.deps.Gifts.ListSaved(ctx, domain.Peer{Type: domain.PeerTypeChannel, ID: channelID}, true, "", 1)
+	if err != nil || page.Count <= 0 {
+		return
+	}
+	full.SetStargiftsCount(page.Count)
+}

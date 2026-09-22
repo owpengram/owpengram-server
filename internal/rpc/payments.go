@@ -74,6 +74,20 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsConvertStarGiftRequest](d, tlprofile.SemanticMethodPaymentsConvertStarGift, func(ctx context.Context, layerRequest *tg.PaymentsConvertStarGiftRequest) (any, error) {
 		return r.onPaymentsConvertStarGift(ctx, layerRequest.Stargift)
 	})
+	// Read-only listing calls the stock client always makes when opening the
+	// gifts panel, regardless of whether the viewer's account has any
+	// auctions/collections -- unlike bidding/craft/resale (the actual
+	// advanced surface, still deliberately unregistered), these move no
+	// money and already degrade to an empty list when nothing exists. Not
+	// registering them left the whole gifts panel stuck on "Loading..."
+	// even for a plain saved gift, since the client waits on both before it
+	// renders anything.
+	registerRPC[*tg.PaymentsGetStarGiftActiveAuctionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftActiveAuctions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftActiveAuctionsRequest) (any, error) {
+		return r.onPaymentsGetStarGiftActiveAuctions(ctx, layerRequest)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftCollections, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftCollectionsRequest) (any, error) {
+		return r.onPaymentsGetStarGiftCollections(ctx, layerRequest)
+	})
 
 }
 

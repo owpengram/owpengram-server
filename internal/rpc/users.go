@@ -435,6 +435,21 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 		}
 	}
 	r.applyAccountRatingToUserFull(ctx, currentUserID, u, &full)
+	// stargifts_count gates the client's own gift-showcase section on a
+	// profile (DrKLO ProfileActivity renders it only when this is nonzero) --
+	// without it, a real, correctly stored saved gift stays invisible even
+	// though payments.getSavedStarGifts would answer it directly. Shown to
+	// every viewer, self included, same as the real protocol: a StarGift wall
+	// is not privacy-gated.
+	if r.deps.Gifts != nil {
+		page, err := r.deps.Gifts.ListSaved(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: u.ID}, true, "", 1)
+		if err != nil {
+			return tg.UserFull{}, internalErr()
+		}
+		if page.Count > 0 {
+			full.SetStargiftsCount(page.Count)
+		}
+	}
 	// 个人频道（account.updatePersonalChannel）不在此落地：它按 viewer 实时解析，作为缓存后的
 	// overlay 处理（applyPersonalChannelToUserFull），避免烤进 per-(viewer,target) 投影缓存以及
 	// build/chats 两次解析同一频道。
