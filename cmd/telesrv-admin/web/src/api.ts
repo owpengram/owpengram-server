@@ -33,6 +33,7 @@ import type {
   DockerService,
   EnvGroup,
   ServerIdentity,
+  ServerStartupLog,
   ServerStatus,
   GroupMessageDetail,
   GroupMessageListResponse,
@@ -263,6 +264,7 @@ export const api = {
   serverIconURL: () => `/api/server/icon?t=${Date.now()}`,
   serverEnv: () => request<EnvGroup[]>("/api/server/env"),
   serverStatus: () => request<ServerStatus>("/api/server/status"),
+  serverStartupLog: () => request<ServerStartupLog>("/api/server/startup-log"),
   dockerStatus: () => request<DockerService[]>("/api/server/docker-status"),
   checkServerUpdates: () => request<{ commits_behind: number }>("/api/server/check-updates"),
   action: (path: string, payload: Record<string, unknown>) => request<CommandResult>(path, {

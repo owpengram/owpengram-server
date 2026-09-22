@@ -207,6 +207,36 @@ func (m *Manager) launch(exePath, logPath string) (int, error) {
 	return cmd.Process.Pid, nil
 }
 
+// startupMarker is the first line owpengram-server logs on every launch
+// (cmd/telesrv/main.go), before config/migrations/media seed/OnServing.
+// logs/owpengram-server.log is opened in append mode and never rotated or
+// truncated across restarts (see launch()), so a freshly launched process's
+// own lines sit after its predecessor's in the same file -- this is what
+// tells them apart.
+const startupMarker = "telesrv starting"
+
+// StartupLogTail returns the current owpengram-server run's log lines, from
+// its own startup marker onward -- so a restart's progress view shows only
+// what the process now starting has done, not leftover lines from whatever
+// ran in this file before it. Nil (not an error) when the log doesn't exist
+// yet, which is normal in the instant right after launch() creates it.
+func (m *Manager) StartupLogTail() ([]string, error) {
+	data, err := os.ReadFile(m.serverLog())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], startupMarker) {
+			return lines[i:], nil
+		}
+	}
+	return nil, nil
+}
+
 // --- Docker infrastructure (Postgres/Redis/MinIO) -------------------------
 
 const (

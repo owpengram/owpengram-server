@@ -375,6 +375,19 @@ func (s *server) handleCheckServerUpdatesAPI(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"commits_behind": behind})
 }
 
+// handleServerStartupLogAPI backs the restart overlay's live progress view:
+// while the frontend polls /api/session for a new boot_id, it polls this
+// alongside it to show what the newly launched owpengram-server is actually
+// doing (migrations, media seed phases, ...) instead of a plain spinner.
+func (s *server) handleServerStartupLogAPI(w http.ResponseWriter, r *http.Request) {
+	lines, err := s.serverCtl.StartupLogTail()
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
+}
+
 func (s *server) handleDockerStatusAPI(w http.ResponseWriter, r *http.Request) {
 	services, err := s.serverCtl.DockerStatus(r.Context())
 	if err != nil {

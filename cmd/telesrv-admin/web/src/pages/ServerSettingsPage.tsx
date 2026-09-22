@@ -501,9 +501,34 @@ function sleep(ms: number): Promise<void> {
 // process is up, not just that the old one is still slow -- then reloading
 // the page. A timeout surfaces as a message with a manual reload button
 // instead of spinning forever if something went wrong server-side.
+// Known owpengram-server startup log lines, mapped to an operator-facing
+// label -- the raw zap lines (phase=reactions elapsed=...) are meant for
+// logs/grep, not for someone watching a restart happen. An unrecognized
+// line still shows verbatim rather than being dropped, so a future log line
+// nobody added a mapping for yet doesn't just vanish from the view.
+const STARTUP_LOG_STEPS: { match: RegExp; label: string }[] = [
+  { match: /telesrv starting/, label: "Starting server process" },
+  { match: /PostgreSQL schema migrated/, label: "Applying database migrations" },
+  { match: /persistence dependencies ready/, label: "Connecting to Postgres and Redis" },
+  { match: /blob backend ready/, label: "Connecting to media storage" },
+  { match: /media seed phase complete phase=reactions/, label: "Seeded reactions" },
+  { match: /media seed phase complete phase=sticker_sets/, label: "Seeded sticker sets" },
+  { match: /media seed phase complete phase=effects/, label: "Seeded message effects" },
+  { match: /media seed phase complete phase=emoji_group_icons/, label: "Seeded emoji group icons" },
+  { match: /telesrv service ready/, label: "Server is up and serving" }
+];
+
+function friendlyStartupLogLine(line: string): string {
+  for (const step of STARTUP_LOG_STEPS) {
+    if (step.match.test(line)) return step.label;
+  }
+  return line;
+}
+
 export function useAdminRestartWatcher() {
   const [waiting, setWaiting] = useState(false);
   const [timedOut, setTimedOut] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
   const cancelled = useRef(false);
 
   // 5 minutes, not 2.5: Restart/Update run a synchronous `go build` of both
@@ -520,6 +545,7 @@ export function useAdminRestartWatcher() {
     cancelled.current = false;
     setTimedOut(false);
     setWaiting(true);
+    setLogLines([]);
     let baseline = "";
     try {
       baseline = (await api.session()).boot_id ?? "";
@@ -547,6 +573,19 @@ export function useAdminRestartWatcher() {
         // Expected mid-bounce: the old process is dying or the new one
         // hasn't opened its listener yet. Keep polling.
       }
+      // Best-effort progress view of the *new* owpengram-server's own log --
+      // read by the admin process still answering this poll, a separate OS
+      // process from whatever is starting up. A failure here (log not
+      // written yet, admin process itself mid-bounce) just leaves the last
+      // known lines on screen instead of clearing them.
+      try {
+        const log = await api.serverStartupLog();
+        if (log.lines && log.lines.length > 0) {
+          setLogLines(log.lines.map(friendlyStartupLogLine));
+        }
+      } catch {
+        // Ignored -- see above.
+      }
     }
     setWaiting(false);
     setTimedOut(true);
@@ -558,14 +597,24 @@ export function useAdminRestartWatcher() {
     setTimedOut(false);
   }, []);
 
-  return { waiting, timedOut, watch, dismiss };
+  return { waiting, timedOut, watch, dismiss, logLines };
 }
 
-// No detail line under the heading on purpose -- "restarting owpengram-server
-// and the admin panel" (or Update's commit count) told the operator nothing
-// they didn't already know from having just clicked Restart/Update/Finish
-// setup, and this is meant to be glanced at for a few seconds, not read.
-export function RestartOverlay({ timedOut, onDismiss }: { timedOut: boolean; onDismiss: () => void }) {
+// No fixed detail line under the heading on purpose -- "restarting
+// owpengram-server and the admin panel" told the operator nothing they
+// didn't already know from having just clicked Restart/Update/Finish setup.
+// logLines (from useAdminRestartWatcher, polled off the new process's own
+// log) fills that spot instead once there's something real to say -- most
+// of a restart's wall-clock time is the new owpengram-server working
+// through migrations and, on a fresh install, the one-time media seed, and
+// an operator staring at a plain spinner for that long has no way to tell
+// "still working" from "stuck".
+export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: boolean; onDismiss: () => void; logLines?: string[] }) {
+  const steps = logLines && logLines.length > 0 && (
+    <ul className="restart-overlay-log">
+      {logLines.map((line, index) => <li key={index}>{line}</li>)}
+    </ul>
+  );
   return createPortal(
     <div className="modal-backdrop" role="presentation">
       <section className="modal command-modal restart-overlay" role="dialog" aria-modal="true" aria-label={timedOut ? "Restart is taking longer than expected" : "Restarting"}>
@@ -576,6 +625,7 @@ export function RestartOverlay({ timedOut, onDismiss }: { timedOut: boolean; onD
             </div>
             <h2 className="restart-overlay-heading">{"Still restarting..."}</h2>
             <Alert>{"The admin panel did not come back within the expected time. It may still be building/restarting -- reload manually in a bit, or check the server logs."}</Alert>
+            {steps}
             <div className="gift-table-actions restart-overlay-actions">
               <button className="btn" type="button" onClick={onDismiss}>{"Dismiss"}</button>
               <button className="btn primary" type="button" onClick={() => window.location.reload()}>{"Reload now"}</button>
@@ -588,6 +638,7 @@ export function RestartOverlay({ timedOut, onDismiss }: { timedOut: boolean; onD
             </div>
             <h2 className="restart-overlay-heading">{"Restarting"}</h2>
             <div className="loader-bar restart-overlay-progress" />
+            {steps}
           </div>
         )}
       </section>
@@ -821,8 +872,8 @@ function ServicesTab() {
           </div>
         )}
       </section>
-      {restartWatcher.waiting && <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} />}
-      {restartWatcher.timedOut && <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} />}
+      {restartWatcher.waiting && <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
+      {restartWatcher.timedOut && <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
     </>
   );
 }

@@ -1003,6 +1003,12 @@ export type DockerService = {
   health: string;
 };
 
+export type ServerStartupLog = {
+  // The currently launching owpengram-server's own log lines, from its
+  // startup marker onward. Null/empty before the log file exists yet.
+  lines: string[] | null;
+};
+
 // One admin console operator. Mirrors AdminConsoleUser in adminusers.go; the
 // password hash deliberately has no representation here.
 export type AdminConsoleUser = {

@@ -1163,6 +1163,27 @@
   justify-content: center;
 }
 
+.restart-overlay-log {
+  width: 100%;
+  max-height: 140px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: left;
+  list-style: none;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.restart-overlay-log li:last-child {
+  color: var(--heading);
+  font-weight: 600;
+}
+
 /* Server Settings' Settings/Services tab bar. */
 .tab-bar {
   display: flex;

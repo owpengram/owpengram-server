@@ -482,7 +482,15 @@ function DoneStep() {
         setBusy(false);
         return;
       }
-      void restartWatcher.watch(undefined, { beforeReload: async () => { await api.logout(); } });
+      // Longer than the Services tab's default: this restart, uniquely, runs
+      // right after a fresh install, so it can also run the one-time media
+      // seed (reactions/sticker_sets/effects/emoji_group_icons -- see
+      // internal/app/files/seed.go) before the server even reaches
+      // OnServing. On a slow connection that alone can pass five minutes,
+      // on top of the cold `go build` useAdminRestartWatcher already budgets
+      // for -- and unlike a plain Restart/Update, there's no second chance
+      // to sit and watch the wizard again once it's dismissed.
+      void restartWatcher.watch(900000, { beforeReload: async () => { await api.logout(); } });
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
@@ -503,10 +511,10 @@ function DoneStep() {
         </button>
       </WizardActions>
       {restartWatcher.waiting && (
-        <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} />
+        <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />
       )}
       {restartWatcher.timedOut && (
-        <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} />
+        <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />
       )}
     </div>
   );
