@@ -3,9 +3,13 @@ import {
   BadgeCheck,
   Bot,
   ChevronDown,
+  Contact,
   Database,
   Film,
+  Gavel,
+  HandHeart,
   History,
+  Landmark,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -282,7 +286,7 @@ export function Shell({
           <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{"Overview"}</NavLink>
 
           {(canReadAccounts || canReadChannels || canReadMessages) && (
-            <NavSection title={"People & Chats"} icon={<Users size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"People & Chats"} icon={<Contact size={14} />} route={route} collapsed={navCollapsed}
               paths={["/accounts", "/channels", "/messages"]}>
               {canReadAccounts && (
                 <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
@@ -315,7 +319,7 @@ export function Shell({
           )}
 
           {(canReviewModeration || canReviewVerification || (canReviewBotVerification && !thirdPartyVerificationHidden)) && (
-            <NavSection title={"Moderation & Verification"} icon={<ShieldAlert size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Moderation & Verification"} icon={<Gavel size={14} />} route={route} collapsed={navCollapsed}
               paths={["/moderation", "/verification", "/bot-verification"]}>
               {canReviewModeration && (
                 <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
@@ -348,7 +352,7 @@ export function Shell({
           )}
 
           {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts) && (
-            <NavSection title={"Economy"} icon={<Sparkles size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Economy"} icon={<Landmark size={14} />} route={route} collapsed={navCollapsed}
               paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts"]}>
               {canManagePremium && (
                 <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
@@ -360,7 +364,7 @@ export function Shell({
                 <NavLink icon={<Gift size={16} />} href="/star-gift-catalog" route={route} navigate={navigate}>{"StarGift Catalog"}</NavLink>
               )}
               {canManageStarGifts && (
-                <NavLink icon={<Gift size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
+                <NavLink icon={<HandHeart size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
               )}
             </NavSection>
           )}
