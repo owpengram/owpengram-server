@@ -348,7 +348,7 @@ export function Shell({
           )}
 
           {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts) && (
-            <NavSection title={"Billing"} icon={<Sparkles size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Economy"} icon={<Sparkles size={14} />} route={route} collapsed={navCollapsed}
               paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts"]}>
               {canManagePremium && (
                 <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>

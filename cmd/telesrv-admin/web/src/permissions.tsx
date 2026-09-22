@@ -241,7 +241,7 @@ export const permissionGroups: { title: string; hint: string; permissions: strin
     permissions: ["storage.read", "storage.manage", "dashboard.read"]
   },
   {
-    title: "Billing",
+    title: "Economy",
     hint: "Premium grants/refunds, the account-rating leaderboard, and the StarGift catalog",
     permissions: ["premium.manage", "ratings.read", "ratings.manage", "stargifts.read", "stargifts.manage"]
   },
