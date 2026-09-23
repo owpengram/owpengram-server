@@ -186,8 +186,11 @@ func sampled(n int, phase float64, f func(u float64) []float64) []key {
 		}
 		last = t
 		u := frac(t/op + phase)
-		if t == seam-1 {
-			u = frac((t)/op + phase)
+		if t == op && phase == 0 {
+			// The last frame of an unshifted cycle is its end state f(1), not
+			// a wrap back to f(0): otherwise a one-way motion (rising steam,
+			// a travelling dot) visibly slides back during the final sample.
+			u = 1
 		}
 		out = append(out, key{t, f(u)})
 	}

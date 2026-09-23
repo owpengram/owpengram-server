@@ -64,6 +64,38 @@ func TestPacksImportCleanlyAndIdempotently(t *testing.T) {
 					t.Errorf("gift %q status = %q error=%q, want created", g.Title, g.Status, g.Error)
 				}
 			}
+			// Every mechanic a gift declares must survive the import into the
+			// live catalog -- that's what makes the pack useful for testing.
+			catalog, err := svc.Catalog(ctx)
+			if err != nil {
+				t.Fatalf("Catalog: %v", err)
+			}
+			byTitle := map[string]bool{}
+			for _, got := range catalog {
+				byTitle[got.Title] = true
+				var want giftpack.GiftSpec
+				for _, g := range manifest.Gifts {
+					if g.Title == got.Title {
+						want = g
+					}
+				}
+				if got.Auction != want.Auction || got.AuctionSlug != want.AuctionSlug || got.GiftsPerRound != want.GiftsPerRound ||
+					got.Limited != (want.Limited || want.AvailabilityTotal > 0) || got.AvailabilityTotal != want.AvailabilityTotal ||
+					got.RequirePremium != want.RequirePremium || got.Birthday != want.Birthday || got.SupportOnly != want.SupportOnly ||
+					got.LimitedPerUser != want.LimitedPerUser || got.PerUserTotal != want.PerUserTotal ||
+					got.ResellMinStars != want.ResellMinStars || got.ConvertStars != want.ConvertStars {
+					t.Errorf("gift %q imported as %+v, want mechanics of %+v", got.Title, got, want)
+				}
+				if upgradeable := want.Upgrade != nil; upgradeable != (got.UpgradeStars > 0) {
+					t.Errorf("gift %q UpgradeStars = %d, upgradeable = %v", got.Title, got.UpgradeStars, upgradeable)
+				}
+			}
+			for _, g := range manifest.Gifts {
+				if !byTitle[g.Title] {
+					t.Errorf("gift %q missing from catalog", g.Title)
+				}
+			}
+
 			again, err := giftpack.Import(ctx, svc, manifest, assets, giftpack.ImportOptions{})
 			if err != nil {
 				t.Fatalf("re-Import: %v", err)
@@ -94,6 +126,19 @@ func TestListIsConsistent(t *testing.T) {
 			if _, ok := Animation(p.ID, g.Slug); !ok {
 				t.Errorf("pack %q gift %q has no animation", p.ID, g.Slug)
 			}
+			if g.Upgrade == nil {
+				continue
+			}
+			for _, a := range append(append([]AttrSummary{}, g.Upgrade.Models...), g.Upgrade.Patterns...) {
+				if _, ok := Animation(p.ID, a.ID); !ok {
+					t.Errorf("pack %q gift %q attribute %q has no animation", p.ID, g.Slug, a.ID)
+				}
+			}
+			for _, b := range g.Upgrade.Backdrops {
+				if b.Center == "" || b.Edge == "" {
+					t.Errorf("pack %q gift %q backdrop %q has no colours", p.ID, g.Slug, b.Name)
+				}
+			}
 		}
 	}
 	if _, ok := Animation("no-such-pack", "x"); ok {
@@ -105,10 +150,26 @@ func TestListIsConsistent(t *testing.T) {
 // Lottie player forgives but rlottie does not (see lottie.go's doc comment).
 // Each of these once shipped broken art that only showed up in the client.
 func TestAnimationsFollowRlottieContract(t *testing.T) {
-	for _, p := range List() {
-		for _, g := range p.Gifts {
-			raw, _ := Animation(p.ID, g.Slug)
-			name := p.ID + "/" + g.Slug
+	for _, p := range registry {
+		want := len(p.gifts)
+		seen := map[string]bool{}
+		for _, g := range p.gifts {
+			if g.upgrade == nil {
+				continue
+			}
+			for _, a := range append(append([]attrDef{}, g.upgrade.models...), g.upgrade.patterns...) {
+				if !seen[a.id] {
+					seen[a.id] = true
+					want++
+				}
+			}
+		}
+		if got := len(p.assetIDs()); got != want {
+			t.Errorf("pack %q renders %d animations, want %d (an attribute id collides with a gift slug?)", p.id, got, want)
+		}
+		for _, id := range p.assetIDs() {
+			raw, _ := Animation(p.id, id)
+			name := p.id + "/" + id
 			if !bytes.HasPrefix(raw, []byte(`{"tgs":1,"v":"5.5.2","fr":60,`)) {
 				t.Errorf("%s: root must start with tgs/v/fr as a real export does", name)
 			}

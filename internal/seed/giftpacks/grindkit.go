@@ -1,27 +1,123 @@
 package giftpacks
 
-import "math"
+import (
+	"math"
 
+	"telesrv/internal/app/giftpack"
+)
+
+// Grind Kit doubles as the reference pack for the whole Star Gift feature
+// surface: every gift exercises a different mechanic, so importing it is
+// enough to test plain purchase, limited supply and sell-out, premium-only,
+// birthday, support-only, per-user limits, collectible upgrade, crafting,
+// resale floor and auction end to end.
 func init() {
 	register(&packDef{
 		id:          "grind-kit",
 		name:        "Grind Kit",
 		author:      "OwpenGram",
-		description: "From the first coffee to a safe full of cash: the tech and money of the daily grind.",
+		description: "From the first coffee to a safe full of cash: the tech and money of the daily grind. Covers every gift mechanic: limited, premium, birthday, per-user limits, upgrades, crafting, resale and auction.",
 		icon:        "safe",
 		gifts: []giftDef{
-			{"coffee", "Morning Coffee", 15, coffee},
-			{"phone", "Smartphone", 25, phone},
-			{"laptop", "Laptop", 35, laptop},
-			{"desktop", "Desktop PC", 40, desktop},
-			{"server", "Data Server", 55, server},
-			{"headphones", "Headphones", 20, headphones},
-			{"coin", "Gold Coin", 15, coin},
-			{"wallet", "Leather Wallet", 25, wallet},
-			{"safe", "Money Safe", 70, safe},
+			{slug: "coffee", title: "Morning Coffee", stars: 15, build: coffee},
+			{slug: "phone", title: "Smartphone", stars: 25, build: phone, upgrade: &upgradeDef{
+				stars: 50, supply: 100_000,
+				models: []attrDef{
+					{id: "m-phone-midnight", name: "Midnight", build: func() *scene { return phoneWith(phoneMidnight) }, permille: 400},
+					{id: "m-phone-rose", name: "Rose Gold", build: func() *scene { return phoneWith(phoneRose) }, permille: 300},
+					{id: "m-phone-mint", name: "Mint", build: func() *scene { return phoneWith(phoneMint) }, permille: 300},
+				},
+				patterns:  []attrDef{patternHearts, patternSparkle, patternCode},
+				backdrops: []string{"Midnight Blue", "Rose Quartz", "Mint Leaf"},
+			}},
+			{slug: "laptop", title: "Laptop", stars: 35, build: laptop,
+				spec: giftpack.GiftSpec{Limited: true, AvailabilityTotal: 5, ConvertStars: 30}},
+			{slug: "desktop", title: "Desktop PC", stars: 40, build: desktop,
+				spec: giftpack.GiftSpec{RequirePremium: true}},
+			{slug: "server", title: "Data Server", stars: 55, build: server,
+				spec: giftpack.GiftSpec{Limited: true, AvailabilityTotal: 50, ResellMinStars: 150},
+				upgrade: &upgradeDef{
+					stars: 100, supply: 50,
+					models: []attrDef{
+						{id: "m-server-classic", name: "Classic Rack", build: func() *scene { return serverWith(serverClassic) }, permille: 400},
+						{id: "m-server-neon", name: "Neon Rack", build: func() *scene { return serverWith(serverNeon) }, permille: 350},
+						{id: "m-server-crimson", name: "Crimson Rack", build: func() *scene { return serverWith(serverCrimson) }, permille: 250},
+						{id: "m-server-quantum", name: "Quantum Core", build: func() *scene { return serverWith(serverQuantum) }, rarity: "legendary"},
+					},
+					patterns:  []attrDef{patternBolt, patternCode},
+					backdrops: []string{"Graphite", "Neon Night", "Crimson"},
+				}},
+			{slug: "headphones", title: "Headphones", stars: 20, build: headphones,
+				spec: giftpack.GiftSpec{Birthday: true}},
+			{slug: "coin", title: "Gold Coin", stars: 15, build: coin,
+				spec: giftpack.GiftSpec{LimitedPerUser: true, PerUserTotal: 3},
+				upgrade: &upgradeDef{
+					stars: 25, supply: 100_000,
+					models: []attrDef{
+						{id: "m-coin-gold", name: "Gold", build: func() *scene { return coinWith(coinGold) }, permille: 500},
+						{id: "m-coin-silver", name: "Silver", build: func() *scene { return coinWith(coinSilver) }, permille: 350},
+						{id: "m-coin-rose", name: "Rose Gold", build: func() *scene { return coinWith(coinRose) }, permille: 150},
+					},
+					patterns:  []attrDef{patternCoins, patternStars, patternSparkle},
+					backdrops: []string{"Gold Rush", "Graphite", "Mint Leaf"},
+				}},
+			{slug: "wallet", title: "Leather Wallet", stars: 25, build: wallet,
+				spec: giftpack.GiftSpec{SupportOnly: true}},
+			{slug: "safe", title: "Money Safe", stars: 250, build: safe,
+				spec: giftpack.GiftSpec{Auction: true, AuctionSlug: "money-safe", GiftsPerRound: 3, AvailabilityTotal: 15, Limited: true},
+				upgrade: &upgradeDef{
+					stars: 200, supply: 15,
+					models: []attrDef{
+						{id: "m-safe-steel", name: "Steel", build: func() *scene { return safeWith(safeSteel) }, permille: 500},
+						{id: "m-safe-gold", name: "Gold", build: func() *scene { return safeWith(safeGold) }, permille: 300},
+						{id: "m-safe-obsidian", name: "Obsidian", build: func() *scene { return safeWith(safeObsidian) }, permille: 200},
+					},
+					patterns:  []attrDef{patternDiamonds, patternCoins},
+					backdrops: []string{"Gold Rush", "Midnight Blue", "Graphite"},
+				}},
+		},
+		backdrops: map[string]giftpack.BackdropSpec{
+			"Midnight Blue": {Center: "#3B6CF6", Edge: "#172466", Pattern: "#0E1A4F", Text: "#FFFFFF", Permille: 500},
+			"Rose Quartz":   {Center: "#FF9AB8", Edge: "#B8406A", Pattern: "#8E2A50", Text: "#FFFFFF", Permille: 500},
+			"Mint Leaf":     {Center: "#5EE6C1", Edge: "#138A7A", Pattern: "#0B5E53", Text: "#FFFFFF", Permille: 500},
+			"Neon Night":    {Center: "#8A5CFF", Edge: "#2A1566", Pattern: "#FF4FD8", Text: "#FFFFFF", Permille: 500},
+			"Gold Rush":     {Center: "#FFD24A", Edge: "#B8801A", Pattern: "#8A5A0A", Text: "#3A2A00", Permille: 500},
+			"Graphite":      {Center: "#6A7384", Edge: "#262B34", Pattern: "#1A1D23", Text: "#FFFFFF", Permille: 500},
+			"Crimson":       {Center: "#FF5A5A", Edge: "#8A1620", Pattern: "#5E0E15", Text: "#FFFFFF", Permille: 500},
 		},
 	})
 }
+
+// ------------------------------------------------------------ patterns
+//
+// Collectible patterns are single glyphs the client tiles over the backdrop
+// and tints with the backdrop's pattern colour, so they stay flat and white.
+
+func glyph(name string, items ...any) func() *scene {
+	return func() *scene {
+		s := &scene{name: name}
+		k := pivot(0, 0)
+		k.P = sv(pt3(cx, cy, 0))
+		s.shape("glyph", 0, k, items...)
+		return s
+	}
+}
+
+var (
+	patternSparkle  = attrDef{id: "p-sparkle", name: "Sparkle", permille: 400, build: glyph("Sparkle", G(star(0, 0, 4, 170, 44, 0), fill(white)))}
+	patternStars    = attrDef{id: "p-stars", name: "Stars", permille: 350, build: glyph("Stars", G(star(0, 0, 5, 170, 76, 0), fill(white)))}
+	patternHearts   = attrDef{id: "p-hearts", name: "Hearts", permille: 350, build: glyph("Hearts", G(heart(0, 12, 320), fill(white)))}
+	patternDiamonds = attrDef{id: "p-diamonds", name: "Diamonds", permille: 500, build: glyph("Diamonds", G(polyPath(true, P{0, -170}, P{130, 0}, P{0, 170}, P{-130, 0}), fill(white)))}
+	patternCoins    = attrDef{id: "p-coins", name: "Coins", permille: 450, build: glyph("Coins",
+		G(ell(0, 0, 280, 280), stroke(white, 44)),
+		G(ell(0, 0, 100, 100), fill(white)))}
+	patternBolt = attrDef{id: "p-bolt", name: "Bolt", permille: 550, build: glyph("Bolt",
+		G(polyPath(true, P{40, -180}, P{-110, 25}, P{-12, 25}, P{-45, 180}, P{110, -35}, P{12, -35}), fill(white)))}
+	patternCode = attrDef{id: "p-code", name: "Code", permille: 450, build: glyph("Code",
+		G(polyPath(false, P{-70, -100}, P{-170, 0}, P{-70, 100}), stroke(white, 40)),
+		G(polyPath(false, P{70, -100}, P{170, 0}, P{70, 100}), stroke(white, 40)),
+		G(polyPath(false, P{36, -150}, P{-36, 150}), stroke(white, 34)))}
+)
 
 // heart path centred on (x,y), size = overall width.
 func heart(x, y, size float64) shItem {
@@ -59,14 +155,19 @@ func coffee() *scene {
 	s := &scene{name: "Morning Coffee"}
 	root := s.stage(200, 380, 10)
 
+	// Each wisp rises, widens and sways more as it goes, fading in fast and
+	// dissolving slowly: evaporation, not a loop. It is invisible at both
+	// ends of its cycle, so the restart is never seen.
 	for i, x0 := range []float64{-50, 4, 56} {
 		x, ph := x0, float64(i)/3
 		kk := pivot(x, -96)
-		kk.P = apLin(sampled(24, ph, func(u float64) []float64 {
-			return []float64{x + 9*wave(u*1.5, 0), -96 - 70*u, 0}
+		kk.P = apLin(sampled(30, ph, func(u float64) []float64 {
+			return []float64{x + 16*u*wave(u*1.2, 0), -96 - 95*u, 0}
 		})...)
-		kk.O = avLin(sampled(24, ph, func(u float64) []float64 { return []float64{90 * math.Pow(math.Sin(math.Pi*u), 1.3)} })...)
-		kk.S = avLin(sampled(24, ph, func(u float64) []float64 { v := 75 + 40*u; return []float64{v, v, 100} })...)
+		kk.O = avLin(sampled(30, ph, func(u float64) []float64 {
+			return []float64{88 * smooth01(0, 0.18, u) * (1 - smooth01(0.3, 1, u))}
+		})...)
+		kk.S = avLin(sampled(30, ph, func(u float64) []float64 { return []float64{70 + 70*u, 80 + 45*u, 100} })...)
 		s.shape("steam", root, kk,
 			G(smoothPath(false, 1, P{x, -70}, P{x + 14, -98}, P{x - 12, -128}, P{x + 9, -158}), strokeA(white, 15, 0.85)))
 	}
@@ -123,22 +224,37 @@ func appGlyph(i int, x, y float64) grItem {
 	}
 }
 
-func phone() *scene {
-	s := &scene{name: "Smartphone"}
+type phoneStyle struct {
+	name         string
+	frame        [4]int
+	wall         [3]int
+	glowA, glowB int
+}
+
+var (
+	phoneMidnight = phoneStyle{"Smartphone", [4]int{0xA3AAB6, 0x40465A, 0x6A7284, 0x23262E}, [3]int{0x7A5CFF, 0x3B6CF6, 0x172466}, 0xFF6FB5, 0x3DE0FF}
+	phoneRose     = phoneStyle{"Rose Gold", [4]int{0xFBE3D6, 0xC08A75, 0xE9BFAD, 0x7A4E42}, [3]int{0xFFB08A, 0xFF6A88, 0x6E2456}, 0xFFE66F, 0xFF9AE0}
+	phoneMint     = phoneStyle{"Mint", [4]int{0xE3F7F0, 0x6E9E90, 0xB5DDCF, 0x355A50}, [3]int{0x6FF2CF, 0x19B3A5, 0x0A4A57}, 0xB4FF6F, 0x3DE0FF}
+)
+
+func phone() *scene { return phoneWith(phoneMidnight) }
+
+func phoneWith(st phoneStyle) *scene {
+	s := &scene{name: st.name}
 	root := s.stage(214, 320, 12)
 	tk := pivot(0, 40)
 	tk.R = avLin(sampled(18, 0, func(u float64) []float64 { return []float64{-9 + 3*wave(u, 0)} })...)
 	tilt := s.null("tilt", root, tk)
 
 	items := []any{
-		G(rect(-119, -92, 8, 46, 3), fill(hx(0x4A4F5B))),
-		G(rect(-119, -36, 8, 46, 3), fill(hx(0x4A4F5B))),
-		G(rect(119, -64, 8, 74, 3), fill(hx(0x4A4F5B))),
-		G(rect(0, 0, 236, 416, 52), lin(-118, -208, 118, 208, S(0, hx(0xA3AAB6)), S(0.3, hx(0x40465A)), S(0.65, hx(0x6A7284)), S(1, hx(0x23262E)))),
+		G(rect(-119, -92, 8, 46, 3), fill(hx(st.frame[1]))),
+		G(rect(-119, -36, 8, 46, 3), fill(hx(st.frame[1]))),
+		G(rect(119, -64, 8, 74, 3), fill(hx(st.frame[1]))),
+		G(rect(0, 0, 236, 416, 52), lin(-118, -208, 118, 208, S(0, hx(st.frame[0])), S(0.3, hx(st.frame[1])), S(0.65, hx(st.frame[2])), S(1, hx(st.frame[3])))),
 		G(rect(0, 0, 222, 402, 45), fill(hx(0x0A0B0E))),
-		G(rect(0, 0, 204, 384, 36), lin(0, -192, 0, 192, S(0, hx(0x7A5CFF)), S(0.55, hx(0x3B6CF6)), S(1, hx(0x172466)))),
-		glow(38, 112, 62, hx(0xFF6FB5), 0.8),
-		glow(-40, -70, 60, hx(0x3DE0FF), 0.6),
+		G(rect(0, 0, 204, 384, 36), lin(0, -192, 0, 192, S(0, hx(st.wall[0])), S(0.55, hx(st.wall[1])), S(1, hx(st.wall[2])))),
+		glow(38, 112, 62, hx(st.glowA), 0.8),
+		glow(-40, -70, 60, hx(st.glowB), 0.6),
 		G(rect(0, -170, 76, 22, 11), fill(hx(0x040405))),
 		G(ell(22, -170, 8, 8), fill(hx(0x1B2340))),
 		G(rect(-68, -170, 30, 9, 4.5), fillA(white, 0.9)),
@@ -208,10 +324,6 @@ type seg struct {
 func laptop() *scene {
 	s := &scene{name: "Laptop"}
 	root := s.stage(178, 480, 8)
-
-	gk := pivot(0, -52)
-	gk.O = avLin(sampled(12, 0, func(u float64) []float64 { return []float64{65 + 35*wave(u, 0)} })...)
-	s.shape("glow", root, gk, glow(0, -52, 250, hx(0x5AA9FF), 0.4))
 
 	items := []any{
 		G(rect(0, -52, 394, 262, 26), silver(-197, -183, 197, 79)),
@@ -376,21 +488,38 @@ func desktop() *scene {
 
 // ------------------------------------------------------------ server
 
-func server() *scene {
-	s := &scene{name: "Data Server"}
+type serverStyle struct {
+	name    string
+	cabinet [3]int
+	unit    [2]int
+	leds    [2]int
+	data    int
+}
+
+var (
+	serverClassic = serverStyle{"Data Server", [3]int{0x5A6376, 0x363D4B, 0x1A1D25}, [2]int{0x5A6375, 0x2B303B}, [2]int{0x4CFF8A, 0x49B6FF}, 0x3DE0FF}
+	serverNeon    = serverStyle{"Neon Rack", [3]int{0x5B4A9A, 0x302658, 0x150F2B}, [2]int{0x4A3C85, 0x241C47}, [2]int{0xFF4FD8, 0x3DE0FF}, 0xFF4FD8}
+	serverCrimson = serverStyle{"Crimson Rack", [3]int{0x7A3542, 0x4A1F28, 0x220C11}, [2]int{0x6E2C38, 0x3A161D}, [2]int{0xFF4D4D, 0xFFB23D}, 0xFF7A5C}
+	serverQuantum = serverStyle{"Quantum Core", [3]int{0xFFE08A, 0xC99A2E, 0x6E4A0E}, [2]int{0x3A2C5E, 0x1A1230}, [2]int{0xB18CFF, 0xFFFFFF}, 0xFFD166}
+)
+
+func server() *scene { return serverWith(serverClassic) }
+
+func serverWith(st serverStyle) *scene {
+	s := &scene{name: st.name}
 	root := s.stage(220, 380, 8)
 	ys := []float64{-141, -47, 47, 141}
 	items := []any{
 		G(rect(-108, 208, 52, 16, 5), fill(hx(0x22262D))),
 		G(rect(108, 208, 52, 16, 5), fill(hx(0x22262D))),
-		G(rect(0, 0, 308, 414, 28), lin(-154, -207, 154, 207, S(0, hx(0x5A6376)), S(0.5, hx(0x363D4B)), S(1, hx(0x1A1D25)))),
+		G(rect(0, 0, 308, 414, 28), lin(-154, -207, 154, 207, S(0, hx(st.cabinet[0])), S(0.5, hx(st.cabinet[1])), S(1, hx(st.cabinet[2])))),
 		G(rect(0, -204, 270, 4, 2), fillA(white, 0.25)),
 		G(rect(0, 0, 284, 390, 20), fill(hx(0x0E1015))),
 	}
 	for _, y := range ys {
 		items = append(items,
 			G(rect(0, y+3, 266, 84, 13), fillA(black, 0.5)),
-			G(rect(0, y, 266, 84, 13), vgrad(0, y-42, y+42, hx(0x5A6375), hx(0x2B303B))),
+			G(rect(0, y, 266, 84, 13), vgrad(0, y-42, y+42, hx(st.unit[0]), hx(st.unit[1]))),
 			G(rect(0, y-39, 250, 3, 1.5), fillA(white, 0.2)),
 			G(rect(-125, y, 5, 60, 2.5), fill(hx(0x1C2027))),
 			G(rect(125, y, 5, 60, 2.5), fill(hx(0x1C2027))),
@@ -413,7 +542,7 @@ func server() *scene {
 
 	for i, y0 := range ys {
 		y, ph := y0, float64(i)*0.27
-		for j, c := range []col{hx(0x4CFF8A), hx(0x49B6FF)} {
+		for j, c := range []col{hx(st.leds[0]), hx(st.leds[1])} {
 			x := 98.0 + 20*float64(j)
 			period := []float64{20, 30, 45, 60}[(i+j)%4]
 			off := float64((i*7 + j*11) % int(period))
@@ -429,7 +558,7 @@ func server() *scene {
 		dk := pivot(-66, y+22)
 		dk.P = apLin(sampled(18, ph, func(u float64) []float64 { return []float64{-66 + 148*u, y + 22, 0} })...)
 		dk.O = avLin(sampled(18, ph, func(u float64) []float64 { return []float64{100 * math.Sin(math.Pi*u)} })...)
-		s.shape("data", root, dk, glow(-66, y+22, 18, hx(0x3DE0FF), 0.8), G(rect(-66, y+22, 18, 4, 2), fill(hx(0xCFFAFF))))
+		s.shape("data", root, dk, glow(-66, y+22, 18, hx(st.data), 0.8), G(rect(-66, y+22, 18, 4, 2), fill(hx(st.data).l(0.75))))
 	}
 	return s
 }
@@ -488,37 +617,53 @@ func headphones() *scene {
 
 // ------------------------------------------------------------ coin
 
-func coin() *scene {
-	s := &scene{name: "Gold Coin"}
+// coinStyle is a metal: highlight, body and shadow tone; every other shade
+// of the coin is derived from these three.
+type coinStyle struct {
+	name        string
+	hi, mid, lo int
+}
+
+var (
+	coinGold   = coinStyle{"Gold Coin", 0xFFF4B8, 0xFFCC3D, 0xD98F12}
+	coinSilver = coinStyle{"Silver", 0xFFFFFF, 0xCDD5DF, 0x8A94A3}
+	coinRose   = coinStyle{"Rose Gold", 0xFFE3EA, 0xF4A7B9, 0xB8607A}
+)
+
+func coin() *scene { return coinWith(coinGold) }
+
+func coinWith(st coinStyle) *scene {
+	hi, mid, lo := hx(st.hi), hx(st.mid), hx(st.lo)
+	s := &scene{name: st.name}
 	root := s.stage(204, 330, 16)
-	s.shape("aura", root, pivot(0, 0), glow(0, 0, 210, hx(0xFFC83D), 0.35))
+	s.shape("aura", root, pivot(0, 0), glow(0, 0, 210, mid, 0.35))
 	rk := pivot(0, 0)
 	rk.R = avLin(sampled(18, 0, func(u float64) []float64 { return []float64{8 * wave(u, 0)} })...)
 	rk.S = avLin(sampled(18, 0, func(u float64) []float64 { v := 100 - 9*bump(u*2, 0); return []float64{v, 100, 100} })...)
 	rock := s.null("rock", root, rk)
 
 	items := []any{
-		G(ell(14, 12, 304, 304), lin(-150, -150, 160, 160, S(0, hx(0xD9961A)), S(1, hx(0x7A4E05)))),
-		G(ell(0, 0, 304, 304), goldRad(0, 0, 152)),
-		G(ell(0, 0, 294, 294), glin(10, -150, -150, 150, 150, S(0, hx(0xFFF6CC)), S(0.5, hx(0xF2B535)), S(1, hx(0xB06F0A)))),
-		G(ell(0, 0, 236, 236), glin(6, -118, -118, 118, 118, S(0, hx(0xB87A0E)), S(1, hx(0xFFF0B0)))),
-		G(ell(0, 0, 226, 226), rad(-36, -44, 170, S(0, hx(0xFFE68A)), S(0.6, hx(0xFFC23A)), S(1, hx(0xE9A21C)))),
+		G(ell(14, 12, 304, 304), lin(-150, -150, 160, 160, S(0, mid.d(0.15)), S(1, lo.d(0.45)))),
+		G(ell(0, 0, 304, 304), rad(-45, -53, 198, S(0, hi), S(0.45, mid), S(1, lo))),
+		G(ell(0, 0, 294, 294), glin(10, -150, -150, 150, 150, S(0, hi.l(0.4)), S(0.5, mid.d(0.05)), S(1, lo.d(0.25)))),
+		G(ell(0, 0, 236, 236), glin(6, -118, -118, 118, 118, S(0, lo.d(0.15)), S(1, hi.l(0.3)))),
+		G(ell(0, 0, 226, 226), rad(-36, -44, 170, S(0, mid.l(0.45)), S(0.6, mid), S(1, lo.l(0.15)))),
 	}
 	for i := 0; i < 28; i++ {
 		a := deg(float64(i) * 360 / 28)
-		items = append(items, G(ell(131*math.Cos(a), 131*math.Sin(a), 7, 7), fillA(hx(0xFFF3C0), 0.85)))
+		items = append(items, G(ell(131*math.Cos(a), 131*math.Sin(a), 7, 7), fillA(hi.l(0.3), 0.85)))
 	}
 	items = append(items,
-		G(star(7, 9, 5, 80, 36, 0), fillA(hx(0xA8690A), 0.75)),
-		G(star(0, 0, 5, 80, 36, 0), lin(-60, -70, 60, 70, S(0, hx(0xFFFBE6)), S(0.5, hx(0xFFD65C)), S(1, hx(0xF0A51E)))),
-		G(star(0, 0, 5, 80, 36, 0), strokeA(hx(0xFFF6D6), 2.5, 0.8)),
+		G(star(7, 9, 5, 80, 36, 0), fillA(lo.d(0.3), 0.75)),
+		G(star(0, 0, 5, 80, 36, 0), lin(-60, -70, 60, 70, S(0, hi.l(0.6)), S(0.5, mid.l(0.25)), S(1, lo.l(0.1)))),
+		G(star(0, 0, 5, 80, 36, 0), strokeA(hi.l(0.5), 2.5, 0.8)),
 		GRot(-64, -76, -40, G(ell(-64, -76, 96, 44), rad(-64, -76, 48, SA(0, white, 0.7), SA(1, white, 0)))),
 	)
 	s.shape("coin", rock, pivot(0, 0), items...)
 	s.sparkle(rock, -52, -64, 26, white, 0.1)
-	s.sparkle(root, 160, -142, 30, hx(0xFFF1B0), 0.35)
-	s.sparkle(root, -168, -108, 22, hx(0xFFF1B0), 0.7)
-	s.sparkle(root, 172, 104, 20, hx(0xFFF1B0), 0.9)
+	s.sparkle(root, 160, -142, 30, hi.l(0.3), 0.35)
+	s.sparkle(root, -168, -108, 22, hi.l(0.3), 0.7)
+	s.sparkle(root, 172, 104, 20, hi.l(0.3), 0.9)
 	return s
 }
 
@@ -624,22 +769,33 @@ func coinDisc(x, y float64) []any {
 	}
 }
 
-func safe() *scene {
-	s := &scene{name: "Money Safe"}
-	root := s.stage(220, 420, 6)
+type safeStyle struct {
+	name  string
+	body  [3]int
+	door  [2]int
+	bevel [2]int
+}
 
-	gk := pivot(0, -150)
-	gk.O = avLin(sampled(12, 0, func(u float64) []float64 { return []float64{60 + 40*bump(u, 0)} })...)
-	s.shape("goldglow", root, gk, glow(0, -150, 170, hx(0xFFD24A), 0.45))
+var (
+	safeSteel    = safeStyle{"Money Safe", [3]int{0x7A8596, 0x4A5362, 0x232830}, [2]int{0x8894A5, 0x3A424E}, [2]int{0x2E343E, 0xB4BECB}}
+	safeGold     = safeStyle{"Gold", [3]int{0xF5D27A, 0xC9962E, 0x6E4A10}, [2]int{0xFFE39A, 0xA87720}, [2]int{0x6E4A10, 0xFFF0B8}}
+	safeObsidian = safeStyle{"Obsidian", [3]int{0x4A4F5C, 0x23262E, 0x0B0C10}, [2]int{0x3E4350, 0x121418}, [2]int{0x08090C, 0x6A7080}}
+)
+
+func safe() *scene { return safeWith(safeSteel) }
+
+func safeWith(st safeStyle) *scene {
+	s := &scene{name: st.name}
+	root := s.stage(220, 420, 6)
 
 	body := []any{
 		G(rect(-118, 212, 66, 18, 6), fill(hx(0x1E2228))),
 		G(rect(118, 212, 66, 18, 6), fill(hx(0x1E2228))),
-		G(rect(0, 44, 348, 338, 36), lin(-174, -125, 174, 213, S(0, hx(0x7A8596)), S(0.5, hx(0x4A5362)), S(1, hx(0x232830)))),
+		G(rect(0, 44, 348, 338, 36), lin(-174, -125, 174, 213, S(0, hx(st.body[0])), S(0.5, hx(st.body[1])), S(1, hx(st.body[2])))),
 		G(rect(0, -121, 300, 4, 2), fillA(white, 0.28)),
 		G(rect(-4, 48, 294, 284, 26), fill(hx(0x1A1D23))),
-		G(rect(-4, 44, 284, 274, 22), lin(-146, -93, 138, 181, S(0, hx(0x8894A5)), S(1, hx(0x3A424E)))),
-		G(rect(-4, 44, 256, 246, 14), glin(5, -132, -79, 124, 167, S(0, hx(0x2E343E)), S(1, hx(0xB4BECB)))),
+		G(rect(-4, 44, 284, 274, 22), lin(-146, -93, 138, 181, S(0, hx(st.door[0])), S(1, hx(st.door[1])))),
+		G(rect(-4, 44, 256, 246, 14), glin(5, -132, -79, 124, 167, S(0, hx(st.bevel[0])), S(1, hx(st.bevel[1])))),
 		G(rect(-152, -34, 16, 58, 6), silver(-160, 0, -144, 0)),
 		G(rect(-152, 124, 16, 58, 6), silver(-160, 0, -144, 0)),
 	}

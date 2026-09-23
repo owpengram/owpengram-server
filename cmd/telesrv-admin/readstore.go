@@ -144,8 +144,8 @@ type RestrictionRow struct {
 }
 
 type AuthorizationRow struct {
-	AuthKeyID       int64
-	Hash            int64
+	AuthKeyID       int64 `json:"AuthKeyID,string"`
+	Hash            int64 `json:"Hash,string"`
 	Layer           int
 	DeviceModel     string
 	Platform        string

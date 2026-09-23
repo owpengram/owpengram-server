@@ -39,8 +39,8 @@ export type RestrictionRow = {
 };
 
 export type AuthorizationRow = {
-  AuthKeyID: number;
-  Hash: number;
+  AuthKeyID: string;
+  Hash: string;
   Layer: number;
   DeviceModel: string;
   Platform: string;
@@ -837,7 +837,7 @@ export type BuiltinGiftPack = {
   author: string;
   description: string;
   icon: string;
-  gifts: { slug: string; title: string; stars: number }[];
+  gifts: { slug: string; title: string; stars: number; flags: string[] }[];
 };
 
 export type AccountListResponse = {

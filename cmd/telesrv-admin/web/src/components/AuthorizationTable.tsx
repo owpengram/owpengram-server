@@ -6,7 +6,7 @@ import { ActionButton } from "./ActionButton";
 import { EmptyRow } from "./ui";
 
 export function AuthorizationTable({ rows, userID, onDone }: { rows: AuthorizationRow[]; userID: number; onDone: () => void }) {
-  const [removedHashes, setRemovedHashes] = useState<Set<number>>(() => new Set());
+  const [removedHashes, setRemovedHashes] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     setRemovedHashes(new Set());
@@ -17,7 +17,7 @@ export function AuthorizationTable({ rows, userID, onDone }: { rows: Authorizati
     [rows, removedHashes]
   );
 
-  function afterRevoke(mutator: (previous: Set<number>) => Set<number>) {
+  function afterRevoke(mutator: (previous: Set<string>) => Set<string>) {
     setRemovedHashes((previous) => mutator(previous));
     onDone();
   }

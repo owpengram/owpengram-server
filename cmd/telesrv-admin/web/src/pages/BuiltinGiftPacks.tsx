@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { Alert } from "../components/ui";
+import { Alert, Badge } from "../components/ui";
 import type { BuiltinGiftPack } from "../types";
 
 function PackAnimation({ packID, slug }: { packID: string; slug: string }) {
@@ -84,6 +84,9 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
                 <figcaption>
                   <strong>{gift.title}</strong>
                   <span>⭐ {gift.stars}</span>
+                  {(gift.flags ?? []).length > 0 && (
+                    <div className="gift-pack-flags">{gift.flags.map((flag) => <Badge key={flag}>{flag}</Badge>)}</div>
+                  )}
                 </figcaption>
               </figure>
             ))}

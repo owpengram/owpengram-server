@@ -799,7 +799,8 @@
 .gift-pack-tile .gift-pack-anim { width: 128px; height: 128px; }
 .gift-pack-tile figcaption { display: grid; justify-items: center; gap: 2px; text-align: center; }
 .gift-pack-tile strong { color: var(--text); font-size: 12px; }
-.gift-pack-tile span { color: var(--warn); font-size: 12px; font-weight: 700; }
+.gift-pack-tile figcaption > span { color: var(--warn); font-size: 12px; font-weight: 700; }
+.gift-pack-flags { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 4px; }
 
 @media (max-width: 900px) {
   .gift-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
