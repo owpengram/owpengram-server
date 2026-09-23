@@ -97,6 +97,25 @@ func TestStarGiftPrepaidUpgradeServiceMessageIsAuthoredByOwner(t *testing.T) {
 		t.Fatalf("imported gift = %+v, want an upgradeable catalog entry", gift)
 	}
 
+	// A second gift can't publish under the same slug prefix (its "<prefix>-1"
+	// would collide with this gift's); the importer moves it to "-2" and the
+	// rejected attempt leaves nothing behind.
+	again := manifest
+	again.Gifts = []giftpack.GiftSpec{phone}
+	again.Gifts[0].Title += " again"
+	reimported, err := giftpack.Import(ctx, svc, again, assets, giftpack.ImportOptions{})
+	if err != nil || len(reimported.Gifts) != 1 || reimported.Gifts[0].Status != "created" {
+		t.Fatalf("re-import with a taken prefix = %+v err %v", reimported, err)
+	}
+	if preview, found, err := svc.CollectiblePreview(ctx, reimported.Gifts[0].GiftID); err != nil || !found || preview.SlugPrefix != phone.Upgrade.SlugPrefix+"-2" {
+		t.Fatalf("re-imported prefix = %q found %v err %v, want %q", preview.SlugPrefix, found, err, phone.Upgrade.SlugPrefix+"-2")
+	}
+	if _, err := gifts.PublishCollectibleRevision(ctx, domain.StarGiftCollectibleWrite{
+		GiftID: reimported.Gifts[0].GiftID, SlugPrefix: phone.Upgrade.SlugPrefix,
+	}); err == nil {
+		t.Fatal("publishing another gift's slug prefix succeeded, want it rejected")
+	}
+
 	now := int(time.Now().Unix())
 	charge := gift.Stars + gift.UpgradeStars
 	if _, _, err := NewStarsStore(pool).EnsureGrant(ctx, giver.ID, charge*10, now); err != nil {

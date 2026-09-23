@@ -1146,14 +1146,18 @@ var (
 	// ErrStarGiftNotFound 表示找不到该已收到礼物实例。
 	ErrStarGiftNotFound = errors.New("stargift: saved gift not found")
 	// ErrStarGiftAlreadyConverted 表示礼物已转换回 Stars（不可重复转换）。
-	ErrStarGiftAlreadyConverted            = errors.New("stargift: already converted")
-	ErrStarGiftFileInvalid                 = errors.New("stargift: invalid animation file")
-	ErrStarGiftCatalogFull                 = errors.New("stargift: catalog full")
-	ErrStarGiftLifecycleInvalid            = errors.New("stargift: invalid auction or scheduled-release parameters")
-	ErrStarGiftCollectibleUnavailable      = errors.New("stargift: collectible upgrade unavailable")
-	ErrStarGiftAlreadyUpgraded             = errors.New("stargift: already upgraded")
-	ErrStarGiftCollectibleSoldOut          = errors.New("stargift: collectible supply exhausted")
-	ErrStarGiftCollectibleInvalid          = errors.New("stargift: invalid collectible definition")
+	ErrStarGiftAlreadyConverted       = errors.New("stargift: already converted")
+	ErrStarGiftFileInvalid            = errors.New("stargift: invalid animation file")
+	ErrStarGiftCatalogFull            = errors.New("stargift: catalog full")
+	ErrStarGiftLifecycleInvalid       = errors.New("stargift: invalid auction or scheduled-release parameters")
+	ErrStarGiftCollectibleUnavailable = errors.New("stargift: collectible upgrade unavailable")
+	ErrStarGiftAlreadyUpgraded        = errors.New("stargift: already upgraded")
+	ErrStarGiftCollectibleSoldOut     = errors.New("stargift: collectible supply exhausted")
+	ErrStarGiftCollectibleInvalid     = errors.New("stargift: invalid collectible definition")
+	// ErrStarGiftCollectibleSlugTaken: collectible slugs are "<prefix>-<num>"
+	// with num counted per gift, so two gifts sharing a prefix would mint the
+	// same slug and every upgrade after the first would fail.
+	ErrStarGiftCollectibleSlugTaken        = errors.New("stargift: collectible slug prefix is already used by another gift")
 	ErrStarGiftCollectionNotFound          = errors.New("stargift: collection not found")
 	ErrStarGiftCollectionsFull             = errors.New("stargift: collections full")
 	ErrStarGiftUnavailable                 = errors.New("stargift: unavailable")

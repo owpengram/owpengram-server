@@ -2,6 +2,7 @@ package giftpack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func Import(ctx context.Context, svc Service, manifest Manifest, assets AssetRes
 			result.Gifts = append(result.Gifts, outcome)
 			continue
 		}
-		created, err := svc.CreateCatalogBundle(ctx, bundle)
+		created, err := createWithFreeSlugPrefix(ctx, svc, bundle)
 		if err != nil {
 			outcome.Status, outcome.Error = "failed", err.Error()
 			result.Gifts = append(result.Gifts, outcome)
@@ -103,6 +104,42 @@ func Import(ctx context.Context, svc Service, manifest Manifest, assets AssetRes
 		result.Gifts = append(result.Gifts, outcome)
 	}
 	return result, nil
+}
+
+// maxSlugPrefixAttempts bounds how many "-N" suffixes Import tries before
+// giving up on a gift whose slug prefix keeps colliding.
+const maxSlugPrefixAttempts = 50
+
+// createWithFreeSlugPrefix publishes bundle, moving its collectible slug
+// prefix to "<prefix>-2", "<prefix>-3", ... while another gift already owns
+// it. Re-importing a pack after disabling its old gifts creates new gift
+// identities with the pack's same prefixes; reusing one would mint slugs
+// that already exist and fail every upgrade. A "-N" suffix never collides
+// with the original prefix's own slugs, since a slug's number is always the
+// part after its last hyphen.
+func createWithFreeSlugPrefix(ctx context.Context, svc Service, bundle domain.StarGiftCatalogBundleWrite) (domain.StarGiftCatalogBundleResult, error) {
+	if bundle.Collectible == nil {
+		return svc.CreateCatalogBundle(ctx, bundle)
+	}
+	base := bundle.Collectible.SlugPrefix
+	for attempt := 1; ; attempt++ {
+		prefix := base
+		if attempt > 1 {
+			suffix := "-" + strconv.Itoa(attempt)
+			if len(base)+len(suffix) > 48 {
+				prefix = strings.TrimRight(base[:48-len(suffix)], "-") + suffix
+			} else {
+				prefix = base + suffix
+			}
+		}
+		collectible := *bundle.Collectible
+		collectible.SlugPrefix = prefix
+		bundle.Collectible = &collectible
+		created, err := svc.CreateCatalogBundle(ctx, bundle)
+		if !errors.Is(err, domain.ErrStarGiftCollectibleSlugTaken) || attempt >= maxSlugPrefixAttempts {
+			return created, err
+		}
+	}
 }
 
 func buildBundle(prep Preparer, spec GiftSpec, assets AssetResolver) (domain.StarGiftCatalogBundleWrite, error) {

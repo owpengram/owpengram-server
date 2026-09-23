@@ -837,7 +837,24 @@ export type BuiltinGiftPack = {
   author: string;
   description: string;
   icon: string;
-  gifts: { slug: string; title: string; stars: number; flags: string[] }[];
+  gifts: BuiltinGift[];
+};
+
+export type BuiltinGiftAttr = { id: string; name: string; permille: number; rarity?: string };
+
+export type BuiltinGift = {
+  slug: string;
+  title: string;
+  stars: number;
+  convert_stars: number;
+  flags: string[];
+  upgrade?: {
+    stars: number;
+    supply: number;
+    models: BuiltinGiftAttr[];
+    patterns: BuiltinGiftAttr[];
+    backdrops: { name: string; center: string; edge: string; pattern: string; text: string; permille: number }[];
+  };
 };
 
 export type AccountListResponse = {

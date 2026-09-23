@@ -160,6 +160,46 @@ func TestImportCreatesEveryGift(t *testing.T) {
 	}
 }
 
+// TestImportMovesToAFreeSlugPrefix covers re-importing a pack after its old
+// gifts were disabled: the new gift identity must not reuse the prefix the
+// old one minted slugs under, or its first upgrade collides with "up-1".
+func TestImportMovesToAFreeSlugPrefix(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	first, err := Import(ctx, svc, fixtureManifest(), fixtureAssets(), ImportOptions{})
+	if err != nil {
+		t.Fatalf("first Import: %v", err)
+	}
+	second := fixtureManifest()
+	second.Gifts = second.Gifts[1:2]
+	second.Gifts[0].Title = "Upgradeable Again"
+	third := fixtureManifest()
+	third.Gifts = third.Gifts[1:2]
+	third.Gifts[0].Title = "Upgradeable Third"
+
+	for i, tc := range []struct {
+		manifest Manifest
+		want     string
+	}{{second, "up-2"}, {third, "up-3"}} {
+		result, err := Import(ctx, svc, tc.manifest, fixtureAssets(), ImportOptions{})
+		if err != nil || len(result.Gifts) != 1 || result.Gifts[0].Status != "created" {
+			t.Fatalf("import #%d = %+v err %v, want created", i+2, result, err)
+		}
+		preview, found, err := svc.CollectiblePreview(ctx, result.Gifts[0].GiftID)
+		if err != nil || !found || preview.SlugPrefix != tc.want {
+			t.Fatalf("import #%d slug prefix = %q found %v err %v, want %q", i+2, preview.SlugPrefix, found, err, tc.want)
+		}
+	}
+	original, _, _ := svc.CollectiblePreview(ctx, first.Gifts[1].GiftID)
+	if original.SlugPrefix != "up" {
+		t.Fatalf("original gift prefix = %q, want it untouched as \"up\"", original.SlugPrefix)
+	}
+	catalog, _ := svc.Catalog(ctx)
+	if len(catalog) != 5 {
+		t.Fatalf("catalog has %d gifts, want 5 (no orphan left by a rejected prefix)", len(catalog))
+	}
+}
+
 func TestImportIsIdempotentByTitle(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

@@ -84,10 +84,57 @@ func (p *packDef) animations() map[string][]byte {
 }
 
 type GiftSummary struct {
-	Slug  string   `json:"slug"`
-	Title string   `json:"title"`
-	Stars int      `json:"stars"`
-	Flags []string `json:"flags"`
+	Slug         string          `json:"slug"`
+	Title        string          `json:"title"`
+	Stars        int             `json:"stars"`
+	ConvertStars int             `json:"convert_stars"`
+	Flags        []string        `json:"flags"`
+	Upgrade      *UpgradeSummary `json:"upgrade,omitempty"`
+}
+
+// UpgradeSummary is a gift's collectible pool, so the admin panel can show
+// the upgraded variants before import. Model/pattern IDs are Animation keys.
+type UpgradeSummary struct {
+	Stars     int64             `json:"stars"`
+	Supply    int               `json:"supply"`
+	Models    []AttrSummary     `json:"models"`
+	Patterns  []AttrSummary     `json:"patterns"`
+	Backdrops []BackdropSummary `json:"backdrops"`
+}
+
+type AttrSummary struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Permille int    `json:"permille"`
+	Rarity   string `json:"rarity,omitempty"`
+}
+
+type BackdropSummary struct {
+	Name     string `json:"name"`
+	Center   string `json:"center"`
+	Edge     string `json:"edge"`
+	Pattern  string `json:"pattern"`
+	Text     string `json:"text"`
+	Permille int    `json:"permille"`
+}
+
+func (p *packDef) upgradeSummary(g giftDef) *UpgradeSummary {
+	u := g.upgrade
+	if u == nil {
+		return nil
+	}
+	out := &UpgradeSummary{Stars: u.stars, Supply: u.supply, Models: []AttrSummary{}, Patterns: []AttrSummary{}, Backdrops: []BackdropSummary{}}
+	for _, a := range u.models {
+		out.Models = append(out.Models, AttrSummary{ID: a.id, Name: a.name, Permille: a.permille, Rarity: a.rarity})
+	}
+	for _, a := range u.patterns {
+		out.Patterns = append(out.Patterns, AttrSummary{ID: a.id, Name: a.name, Permille: a.permille})
+	}
+	for _, name := range u.backdrops {
+		b := p.backdrops[name]
+		out.Backdrops = append(out.Backdrops, BackdropSummary{Name: name, Center: b.Center, Edge: b.Edge, Pattern: b.Pattern, Text: b.Text, Permille: b.Permille})
+	}
+	return out
 }
 
 type PackSummary struct {
@@ -143,7 +190,12 @@ func List() []PackSummary {
 	for _, p := range registry {
 		s := PackSummary{ID: p.id, Name: p.name, Author: p.author, Description: p.description, Icon: p.icon, Gifts: make([]GiftSummary, 0, len(p.gifts))}
 		for _, g := range p.gifts {
-			s.Gifts = append(s.Gifts, GiftSummary{Slug: g.slug, Title: g.title, Stars: g.stars, Flags: g.flags()})
+			convert := int(g.spec.ConvertStars)
+			if convert == 0 {
+				convert = g.stars
+			}
+			s.Gifts = append(s.Gifts, GiftSummary{Slug: g.slug, Title: g.title, Stars: g.stars, ConvertStars: convert,
+				Flags: g.flags(), Upgrade: p.upgradeSummary(g)})
 		}
 		out = append(out, s)
 	}

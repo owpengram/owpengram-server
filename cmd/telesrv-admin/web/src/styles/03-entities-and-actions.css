@@ -795,12 +795,45 @@
 .gift-pack-modal-title .gift-pack-anim { width: 60px; height: 60px; flex: 0 0 60px; }
 .gift-pack-modal-body { min-height: 0; overflow: auto; padding: 4px 18px 18px; }
 .gift-pack-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
-.gift-pack-tile { display: grid; justify-items: center; gap: 6px; margin: 0; padding: 10px 8px 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; }
-.gift-pack-tile .gift-pack-anim { width: 128px; height: 128px; }
-.gift-pack-tile figcaption { display: grid; justify-items: center; gap: 2px; text-align: center; }
-.gift-pack-tile strong { color: var(--text); font-size: 12px; }
-.gift-pack-tile figcaption > span { color: var(--warn); font-size: 12px; font-weight: 700; }
-.gift-pack-flags { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 4px; }
+.gift-pack-tile { display: grid; justify-items: center; align-content: start; gap: 3px; margin: 0; padding: 10px 8px 12px; color: inherit; font: inherit; text-align: center; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
+.gift-pack-tile:hover,
+.gift-pack-tile:focus-visible { border-color: var(--brand); transform: translateY(-1px); }
+.gift-pack-tile .gift-pack-anim { width: 128px; height: 128px; margin-bottom: 3px; }
+.gift-pack-tile-title { color: var(--text); font-size: 12px; font-weight: 700; }
+.gift-pack-tile-price { color: var(--warn); font-size: 12px; font-weight: 700; }
+.gift-pack-mods { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 4px; }
+.gift-pack-mod { display: grid; width: 22px; height: 22px; place-items: center; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 50%; }
+
+.gift-detail { display: grid; gap: 12px; padding-top: 4px; }
+.gift-detail-back { justify-self: start; }
+.gift-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.gift-detail-hero { display: grid; flex: 0 0 176px; height: 176px; place-items: center; background: radial-gradient(circle at 50% 42%, var(--surface-soft), var(--panel-strong)); border: 1px solid var(--line); border-radius: 14px; }
+.gift-detail-hero .gift-pack-anim { width: 160px; height: 160px; }
+.gift-detail-info { display: grid; flex: 1 1 260px; gap: 8px; }
+.gift-detail-info h3 { margin: 0; color: var(--heading); font-size: 18px; }
+.gift-detail-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.gift-detail-price strong { color: var(--warn); font-size: 15px; }
+.gift-detail-price span { color: var(--muted); font-size: 12px; }
+.gift-detail-props { display: flex; flex-wrap: wrap; gap: 6px; }
+.gift-detail-prop { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; color: var(--text); font-size: 11px; font-weight: 700; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 999px; }
+.gift-detail-upgrade { color: var(--muted); font-size: 12px; font-weight: 700; }
+.gift-detail-section { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: var(--heading); font-size: 13px; }
+.gift-detail-section span { color: var(--muted); font-size: 11px; font-weight: 700; }
+.gift-detail-noupgrade { margin-top: 4px; }
+.gift-variant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.gift-variant-grid.small { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+.gift-variant { display: grid; gap: 6px; margin: 0; }
+.gift-variant-art { display: grid; aspect-ratio: 1; place-items: center; overflow: hidden; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; }
+.gift-variant-art .gift-pack-anim { width: 88%; height: 88%; }
+.gift-variant-art.symbol { background: #1b2130; }
+.gift-variant-art.symbol .gift-pack-anim { width: 60%; height: 60%; }
+.gift-variant.crafted .gift-variant-art { box-shadow: 0 0 0 2px #f5b83d; }
+.gift-variant figcaption { display: grid; gap: 1px; text-align: center; }
+.gift-variant figcaption strong { color: var(--text); font-size: 12px; }
+.gift-variant figcaption span { color: var(--muted); font-size: 11px; font-weight: 700; }
+.gift-variant.crafted figcaption span { color: var(--warn); }
+.gift-backdrop-swatch { display: grid; aspect-ratio: 1; place-items: end center; padding-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; }
+.gift-backdrop-swatch strong { font-size: 11px; text-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 
 @media (max-width: 900px) {
   .gift-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

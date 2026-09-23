@@ -159,6 +159,9 @@ func (s *StarGiftStore) CreateCatalogBundle(_ context.Context, write domain.Star
 		if err := domain.ValidateStarGiftCollectibleWrite(collectibleWrite); err != nil {
 			return domain.StarGiftCatalogBundleResult{}, err
 		}
+		if s.slugPrefixTakenLocked(collectibleWrite.SlugPrefix, write.Catalog.GiftID) {
+			return domain.StarGiftCatalogBundleResult{}, domain.ErrStarGiftCollectibleSlugTaken
+		}
 	}
 	entry, err := s.createCatalogRevisionLocked(write.Catalog)
 	if err != nil {
@@ -216,9 +219,24 @@ func (s *StarGiftStore) PublishCollectibleRevision(_ context.Context, write doma
 	return s.publishCollectibleRevisionLocked(write)
 }
 
+// slugPrefixTakenLocked reports whether another gift already publishes
+// collectibles under prefix (giftID 0 = a gift not created yet).
+func (s *StarGiftStore) slugPrefixTakenLocked(prefix string, giftID int64) bool {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	for owner, other := range s.collectibles {
+		if owner != giftID && other.SlugPrefix == prefix {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *StarGiftStore) publishCollectibleRevisionLocked(write domain.StarGiftCollectibleWrite) (domain.StarGiftCollectibleRevision, error) {
 	if _, ok := s.catalog[write.GiftID]; !ok {
 		return domain.StarGiftCollectibleRevision{}, domain.ErrStarGiftNotFound
+	}
+	if s.slugPrefixTakenLocked(write.SlugPrefix, write.GiftID) {
+		return domain.StarGiftCollectibleRevision{}, domain.ErrStarGiftCollectibleSlugTaken
 	}
 	previous := s.collectibles[write.GiftID]
 	revision := domain.StarGiftCollectibleRevision{

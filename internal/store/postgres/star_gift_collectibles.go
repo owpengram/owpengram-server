@@ -58,6 +58,19 @@ func (s *StarGiftStore) PublishCollectibleRevision(ctx context.Context, write do
 			}
 			return fmt.Errorf("lock collectible catalog gift: %w", err)
 		}
+		// Serialize publishers of the same prefix so two gifts can't both claim it.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('star-gift-slug-prefix:' || $1, 0))`, write.SlugPrefix); err != nil {
+			return fmt.Errorf("lock collectible slug prefix: %w", err)
+		}
+		var taken bool
+		if err := tx.QueryRow(ctx, `
+SELECT EXISTS (SELECT 1 FROM star_gift_collectible_revisions WHERE slug_prefix=$1 AND gift_id<>$2)`,
+			write.SlugPrefix, write.GiftID).Scan(&taken); err != nil {
+			return fmt.Errorf("check collectible slug prefix: %w", err)
+		}
+		if taken {
+			return domain.ErrStarGiftCollectibleSlugTaken
+		}
 		var revision int
 		if err := tx.QueryRow(ctx, `
 SELECT COALESCE(MAX(revision), 0) + 1 FROM star_gift_collectible_revisions WHERE gift_id=$1`, write.GiftID).Scan(&revision); err != nil {
