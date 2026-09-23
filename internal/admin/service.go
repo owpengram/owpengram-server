@@ -74,7 +74,7 @@ const (
 	ActionPublishStarGiftCollectibles = "star_gift_catalog.publish_collectibles"
 	ActionGiveStarGift                = "star_gift_catalog.give"
 	ActionImportGiftPack              = "star_gift_catalog.import_pack"
-	ActionImportDefaultGiftPack       = "star_gift_catalog.import_default_pack"
+	ActionImportBuiltinGiftPack       = "star_gift_catalog.import_builtin_pack"
 
 	// Manual storage purge: admin-chosen categories + optional age cutoff,
 	// independent of the automatic retention sweep's config-derived

@@ -1,4 +1,4 @@
-import { Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileJson2, FileArchive, Gem, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, FileJson2, FileArchive, Gem, Loader2, PackagePlus, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Upload, X } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -6,7 +6,8 @@ import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { formatDate } from "../lib/format";
-import type { CommandResult, GiftPackSummary, StarGiftCatalogRow } from "../types";
+import type { CommandResult, StarGiftCatalogRow } from "../types";
+import { BuiltinGiftPacks } from "./BuiltinGiftPacks";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
 type GiftPageSize = 10 | 20 | 50 | 100 | "all";
@@ -96,18 +97,11 @@ export function StarGiftCatalogPage() {
   const [pageSize, setPageSize] = useState<GiftPageSize>(10);
   const [page, setPage] = useState(1);
 
-  const [defaultPack, setDefaultPack] = useState<GiftPackSummary[]>([]);
-  const [defaultPackError, setDefaultPackError] = useState("");
   const [packFile, setPackFile] = useState<File | null>(null);
   const [packReason, setPackReason] = useState("");
   const [packPreview, setPackPreview] = useState<CommandResult | null>(null);
   const [packBusy, setPackBusy] = useState(false);
   const [packError, setPackError] = useState("");
-
-  useEffect(() => {
-    if (tab !== "import") return;
-    api.defaultGiftPack().then((res) => setDefaultPack(res.gifts ?? [])).catch((err) => setDefaultPackError(errorMessage(err)));
-  }, [tab]);
 
   function packUploadForm(confirm: boolean, commandID = "") {
     if (!packFile) throw new Error("Choose a pack .zip file first");
@@ -366,35 +360,7 @@ export function StarGiftCatalogPage() {
       </>}
 
       {tab === "import" && <>
-      <section className="section-block">
-        <h2>{"Default pack"}</h2>
-        <div className="card-body">
-          <p className="gift-import-note"><span>{"OwpenGram's own built-in gift pack -- 7 original gifts covering every mechanic (plain purchase, standard upgrade, limited supply, craft, resale floor, birthday, premium-required, support-only, auction), safe to import on any deployment."}</span></p>
-          {defaultPackError && <Alert>{defaultPackError}</Alert>}
-          <div className="table-wrap gift-table-wrap">
-            <table className="data-table gift-table">
-              <thead><tr><th>{"Title"}</th><th>{"Flags"}</th></tr></thead>
-              <tbody>
-                {defaultPack.map((gift) => (
-                  <tr key={gift.theme}>
-                    <td><strong className="gift-table-title">{gift.title}</strong></td>
-                    <td>{(gift.flags ?? []).map((flag) => <Badge key={flag}>{flag}</Badge>)}</td>
-                  </tr>
-                ))}
-                {defaultPack.length === 0 && <EmptyRow colSpan={2} />}
-              </tbody>
-            </table>
-          </div>
-          <ActionButton
-            tone="primary"
-            label={"Import default pack"}
-            icon={<Boxes size={15} />}
-            path="/api/actions/import-default-gift-pack"
-            payload={() => ({})}
-            onDone={() => void load()}
-          />
-        </div>
-      </section>
+      <BuiltinGiftPacks onImported={() => void load()} />
 
       <section className="section-block">
         <h2>{"Upload a pack"}</h2>

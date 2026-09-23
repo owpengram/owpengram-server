@@ -17,7 +17,7 @@ import (
 
 	"telesrv/internal/admin"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpackdefault"
+	"telesrv/internal/seed/giftpacks"
 )
 
 type Config struct {
@@ -91,8 +91,9 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	GiveStarGift(ctx context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error)
 	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
-	ImportDefaultGiftPack(ctx context.Context, req admin.ImportDefaultGiftPackRequest) (admin.CommandResult, error)
-	DefaultGiftPack() []giftpackdefault.GiftSummary
+	ImportBuiltinGiftPack(ctx context.Context, req admin.ImportBuiltinGiftPackRequest) (admin.CommandResult, error)
+	BuiltinGiftPacks() []giftpacks.PackSummary
+	BuiltinGiftPackAnimation(packID, slug string) ([]byte, bool)
 	SetGifCatalogEnabled(ctx context.Context, req admin.SetGifCatalogEnabledRequest) (admin.CommandResult, error)
 	SetGifCatalogSortOrder(ctx context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error)
 	SetGifCatalogCategory(ctx context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error)
@@ -256,8 +257,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/star-gift-catalog/publish-collectibles", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/star-gift-catalog/give", s.authenticated(s.handleGiveStarGift))
 	mux.HandleFunc("POST /v1/star-gift-catalog/import-pack", s.authenticated(s.handleImportGiftPack))
-	mux.HandleFunc("POST /v1/star-gift-catalog/import-default-pack", s.authenticated(s.handleImportDefaultGiftPack))
-	mux.HandleFunc("GET /v1/star-gift-catalog/default-pack", s.authenticated(s.handleDefaultGiftPack))
+	mux.HandleFunc("GET /v1/gift-packs", s.authenticated(s.handleBuiltinGiftPacks))
+	mux.HandleFunc("GET /v1/gift-packs/{pack_id}/animations/{slug}", s.authenticated(s.handleBuiltinGiftPackAnimation))
+	mux.HandleFunc("POST /v1/gift-packs/import", s.authenticated(s.handleImportBuiltinGiftPack))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
 	mux.HandleFunc("GET /v1/moderation/cases/{id}", s.authenticated(s.handleModerationCase))
@@ -1178,17 +1180,29 @@ func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
 	writeCommandResult(w, result, err)
 }
 
-func (s *Server) handleImportDefaultGiftPack(w http.ResponseWriter, r *http.Request) {
-	var req admin.ImportDefaultGiftPackRequest
+func (s *Server) handleImportBuiltinGiftPack(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportBuiltinGiftPackRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := s.svc.ImportDefaultGiftPack(r.Context(), req)
+	result, err := s.svc.ImportBuiltinGiftPack(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
-func (s *Server) handleDefaultGiftPack(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"gifts": s.svc.DefaultGiftPack()})
+func (s *Server) handleBuiltinGiftPacks(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"packs": s.svc.BuiltinGiftPacks()})
+}
+
+func (s *Server) handleBuiltinGiftPackAnimation(w http.ResponseWriter, r *http.Request) {
+	raw, found := s.svc.BuiltinGiftPackAnimation(r.PathValue("pack_id"), r.PathValue("slug"))
+	if !found {
+		writeError(w, http.StatusNotFound, "gift pack animation not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) handleGiveStarGift(w http.ResponseWriter, r *http.Request) {

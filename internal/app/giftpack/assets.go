@@ -57,8 +57,8 @@ func (z *ZipAssetResolver) Open(path string) ([]byte, error) {
 }
 
 // MapAssetResolver resolves paths against an in-memory map, used by the
-// built-in default pack (internal/seed/giftpackdefault), which generates its
-// assets procedurally rather than shipping real files.
+// built-in packs (internal/seed/giftpacks), which generate their assets
+// procedurally rather than shipping real files.
 type MapAssetResolver map[string][]byte
 
 func (m MapAssetResolver) Open(path string) ([]byte, error) {

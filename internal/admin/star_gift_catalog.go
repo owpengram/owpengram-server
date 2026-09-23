@@ -9,7 +9,7 @@ import (
 
 	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpackdefault"
+	"telesrv/internal/seed/giftpacks"
 )
 
 // CreateStarGiftCatalogEntryRequest authors a new StarGift (GiftID == 0) or a
@@ -152,34 +152,44 @@ func (s *Service) ImportGiftPack(ctx context.Context, req ImportGiftPackRequest)
 	})
 }
 
-type ImportDefaultGiftPackRequest struct {
+type ImportBuiltinGiftPackRequest struct {
 	CommandMeta
+	PackID string `json:"pack_id"`
 }
 
-// ImportDefaultGiftPack imports OwpenGram's own built-in gift pack
-// (internal/seed/giftpackdefault) through the exact same path
-// ImportGiftPack uses for a community pack.
-func (s *Service) ImportDefaultGiftPack(ctx context.Context, req ImportDefaultGiftPackRequest) (CommandResult, error) {
+// ImportBuiltinGiftPack imports one of OwpenGram's built-in packs
+// (internal/seed/giftpacks) through the exact same path ImportGiftPack uses
+// for an uploaded pack.
+func (s *Service) ImportBuiltinGiftPack(ctx context.Context, req ImportBuiltinGiftPackRequest) (CommandResult, error) {
 	if s == nil || s.starGifts == nil {
 		return CommandResult{}, domain.ErrStarGiftInvalid
 	}
-	manifest, assets := giftpackdefault.Pack()
-	return s.runCommand(ctx, req.CommandMeta, ActionImportDefaultGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+	manifest, assets, ok := giftpacks.Manifest(req.PackID)
+	if !ok {
+		return CommandResult{}, fmt.Errorf("unknown built-in gift pack %q", req.PackID)
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportBuiltinGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
 		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{DryRun: req.DryRun, Now: s.now})
 		if err != nil {
 			return CommandResult{}, err
 		}
 		return CommandResult{
-			Message: "default gift pack processed",
-			Details: map[string]any{"pack_name": manifest.PackName, "gifts": result.Gifts},
+			Message: fmt.Sprintf("gift pack %q processed", manifest.PackName),
+			Details: map[string]any{"pack_id": req.PackID, "pack_name": manifest.PackName, "gifts": result.Gifts},
 		}, nil
 	})
 }
 
-// DefaultGiftPack summarizes the built-in pack for the admin panel's preview
-// before import. A pure read of static content -- no s.starGifts dependency.
-func (s *Service) DefaultGiftPack() []giftpackdefault.GiftSummary {
-	return giftpackdefault.List()
+// BuiltinGiftPacks lists the built-in packs for the admin panel. A pure read
+// of static content -- no s.starGifts dependency.
+func (s *Service) BuiltinGiftPacks() []giftpacks.PackSummary {
+	return giftpacks.List()
+}
+
+// BuiltinGiftPackAnimation returns one built-in gift's Lottie JSON, for the
+// pack preview before import.
+func (s *Service) BuiltinGiftPackAnimation(packID, slug string) ([]byte, bool) {
+	return giftpacks.Animation(packID, slug)
 }
 
 func (s *Service) SetStarGiftCatalogEnabled(ctx context.Context, req SetStarGiftCatalogEnabledRequest) (CommandResult, error) {

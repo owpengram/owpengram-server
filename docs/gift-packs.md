@@ -3,8 +3,8 @@
 A gift pack is a portable bundle -- a `pack.json` manifest plus the Lottie/TGS
 assets it references -- that adds one or more Star Gifts to the catalog in a
 single admin action. Import it from **StarGift Catalog → Import Pack** in the
-admin panel: either the built-in **default pack** (one click) or your own
-`.zip` upload.
+admin panel: either one of the **built-in packs** (shown as cards; *Preview*
+opens every gift's animation before you import) or your own `.zip` upload.
 
 Re-importing a pack is always safe: a gift already present by title is
 skipped, never duplicated, so handing an operator an updated pack that only
@@ -28,25 +28,26 @@ don't agree on what the file means.
 There is no way for this server to catch that for you -- it would need to
 embed rlottie itself, which it doesn't. So the practical rule is:
 
-- **Stick to basic shape layers** (ellipse, rectangle, polygon/star) animated
-  with **transform, opacity, scale and rotation keyframes only**. This is
-  exactly what the built-in default pack does (see
-  `internal/seed/giftpackdefault`) -- every animation in it is generated from
-  these primitives alone, specifically so it's safe to ship without a manual
-  rlottie check on each one.
+- **Known safe** (every one of these is used by the built-in packs in
+  `internal/seed/giftpacks` and verified frame by frame in rlottie): shape
+  layers with ellipses, rectangles, polystars and bezier paths; solid,
+  linear-gradient and radial-gradient fills, including gradients with
+  opacity stops (soft shadows, glows, highlights); solid and gradient
+  strokes; nested groups with their own transforms; null layers with
+  parenting; and keyframed position, scale, rotation and opacity.
 - **Avoid**: masks and mattes, merge paths, repeaters, image or
   pre-composition layers, and text layers. Support for these in rlottie is
   partial at best and varies by version.
-- **Be cautious with**: gradients and blend modes. Simple linear gradients
-  usually work; anything more elaborate is a gamble.
+- **Be cautious with**: blend modes and anything not in the "known safe"
+  list above.
 - **Always preview the final `.tgs` in a real rlottie-based client** --
   OwpenGram Desktop, or a stock Telegram client if you're not sure your fork
   differs -- before shipping a pack to anyone. A web Lottie player (or After
   Effects itself) is not a substitute; it will happily show you something
   rlottie can't.
 
-  **Concrete examples, found the hard way**, all from building
-  `internal/seed/giftpackdefault` -- three separate, cumulative defects,
+  **Concrete examples, found the hard way** while building OwpenGram's own
+  built-in packs -- three separate, cumulative defects,
   each one invisible to this server's structural validator and to a generic
   Lottie player, each confirmed only by diffing a genuine Telegram-issued
   `.tgs`'s raw JSON against the generated equivalent:
@@ -82,6 +83,20 @@ embed rlottie itself, which it doesn't. So the practical rule is:
   everywhere except the actual client, check all three -- starting with the
   animated-property keyframes, since that one produces the most
   misleading symptom (partial breakage, not total).
+
+## Adding a built-in pack
+
+Built-in packs live in `internal/seed/giftpacks`, drawn in Go with the
+Lottie DSL in `lottie.go`, which emits only structures copied from a real
+Telegram export (so all three rules above hold by construction). To add one,
+create a file next to `grindkit.go` whose `init()` calls `register(...)`
+with an id, name, author, description, an icon (the slug of one of its
+gifts) and its gifts. It then appears in the admin panel automatically.
+
+`go test ./internal/seed/giftpacks/` imports every registered pack through
+the real Star Gift service and lints every animation against the rlottie
+rules above. It can't render, though: still check new art frame by frame in
+a real rlottie build before shipping it.
 
 ## `pack.json` reference
 

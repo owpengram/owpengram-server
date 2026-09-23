@@ -773,6 +773,34 @@
 .collectible-row .icon-btn { align-self: center; }
 .collectible-row .icon-btn:disabled { opacity: .28; }
 
+/* Built-in gift packs */
+.gift-pack-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.gift-pack-card { display: flex; flex-direction: column; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.gift-pack-cover { display: grid; height: 196px; padding: 0; place-items: center; background: radial-gradient(circle at 50% 42%, var(--surface-soft), var(--panel-strong)); border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.gift-pack-cover .gift-pack-anim { width: 176px; height: 176px; transition: transform .2s ease; }
+.gift-pack-cover:hover .gift-pack-anim,
+.gift-pack-cover:focus-visible .gift-pack-anim { transform: scale(1.06); }
+.gift-pack-anim { position: relative; display: grid; place-items: center; }
+.gift-pack-anim canvas { width: 100% !important; height: 100% !important; }
+.gift-pack-anim-error { position: absolute; color: var(--muted); font-size: 10px; text-align: center; }
+.gift-pack-info { display: grid; gap: 3px; padding: 12px 14px 0; }
+.gift-pack-name { color: var(--heading); font-size: 15px; }
+.gift-pack-meta { color: var(--muted); font-size: 11px; font-weight: 700; }
+.gift-pack-desc { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.gift-pack-actions { display: flex; gap: 8px; margin-top: auto; padding: 12px 14px 14px; }
+.gift-pack-actions .btn { flex: 1; justify-content: center; }
+.gift-pack-loading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.gift-pack-modal { width: min(900px, 100%); }
+.gift-pack-modal-title { display: flex; align-items: center; gap: 12px; }
+.gift-pack-modal-title .gift-pack-anim { width: 60px; height: 60px; flex: 0 0 60px; }
+.gift-pack-modal-body { min-height: 0; overflow: auto; padding: 4px 18px 18px; }
+.gift-pack-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
+.gift-pack-tile { display: grid; justify-items: center; gap: 6px; margin: 0; padding: 10px 8px 12px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; }
+.gift-pack-tile .gift-pack-anim { width: 128px; height: 128px; }
+.gift-pack-tile figcaption { display: grid; justify-items: center; gap: 2px; text-align: center; }
+.gift-pack-tile strong { color: var(--text); font-size: 12px; }
+.gift-pack-tile span { color: var(--warn); font-size: 12px; font-weight: 700; }
+
 @media (max-width: 900px) {
   .gift-fields-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .give-gift-layout { grid-template-columns: 1fr; }

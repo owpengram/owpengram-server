@@ -396,26 +396,57 @@ func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request)
 	writeCommandResultAPI(w, result, err)
 }
 
-type importDefaultGiftPackAPIRequest struct {
+type importBuiltinGiftPackAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
+	PackID    string `json:"pack_id"`
 }
 
-func (s *server) handleImportDefaultGiftPackAPI(w http.ResponseWriter, r *http.Request) {
-	var body importDefaultGiftPackAPIRequest
+func (s *server) handleImportBuiltinGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	var body importBuiltinGiftPackAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
-	req := admin.ImportDefaultGiftPackRequest{
-		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-default-gift-pack"),
+	if !validPackToken(body.PackID) {
+		writeAPIError(w, http.StatusBadRequest, "invalid pack id")
+		return
 	}
-	result, err := s.callAdminAPI(r.Context(), "/v1/star-gift-catalog/import-default-pack", req)
+	req := admin.ImportBuiltinGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-builtin-gift-pack"),
+		PackID:      body.PackID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gift-packs/import", req)
 	writeCommandResultAPI(w, result, err)
 }
 
-// handleDefaultGiftPackAPI proxies the built-in pack's summary (what's in
-// it, before importing anything) for the "Import Pack" tab's preview.
-func (s *server) handleDefaultGiftPackAPI(w http.ResponseWriter, r *http.Request) {
-	s.proxyAdminJSON(w, r, "/v1/star-gift-catalog/default-pack", 1<<20)
+// handleBuiltinGiftPacksAPI proxies the list of built-in packs for the
+// "Import Pack" tab.
+func (s *server) handleBuiltinGiftPacksAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSON(w, r, "/v1/gift-packs", 1<<20)
+}
+
+// handleBuiltinGiftPackAnimationAPI proxies one built-in gift's Lottie JSON
+// for the pack preview.
+func (s *server) handleBuiltinGiftPackAnimationAPI(w http.ResponseWriter, r *http.Request) {
+	packID, slug := r.PathValue("pack_id"), r.PathValue("slug")
+	if !validPackToken(packID) || !validPackToken(slug) {
+		writeAPIError(w, http.StatusBadRequest, "invalid gift pack animation")
+		return
+	}
+	s.proxyAdminJSONWithCache(w, r, "/v1/gift-packs/"+packID+"/animations/"+slug, 4<<20, "private, max-age=300")
+}
+
+// validPackToken keeps pack ids and gift slugs to the charset the registry
+// uses, since they're spliced into the upstream URL path.
+func validPackToken(v string) bool {
+	if v == "" || len(v) > 64 {
+		return false
+	}
+	for _, c := range v {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
