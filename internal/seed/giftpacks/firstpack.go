@@ -16,7 +16,7 @@ func init() {
 		id:          "first-pack",
 		name:        "First Pack",
 		author:      "OwpenGram",
-		description: "The first sticker pack made for OwpenGram.",
+		description: "The first gift pack made for OwpenGram.",
 		icon:        "giftbox",
 		gifts: []giftDef{
 			{slug: "coffee", title: "Morning Coffee", stars: 15, build: coffee},

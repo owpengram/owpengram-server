@@ -8,9 +8,7 @@ opens every gift's animation before you import) or your own `.zip` upload.
 
 Re-importing a pack is always safe: a gift already present by title is
 skipped, never duplicated, so handing an operator an updated pack that only
-adds a few new gifts to one they already imported just works. The pack cards
-say so up front -- each one shows how many of its gifts the catalog already
-has, and the Import button offers only what is actually new.
+adds a few new gifts to one they already imported just works.
 
 ## Build your own pack: the short version
 

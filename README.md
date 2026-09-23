@@ -520,6 +520,20 @@ internal/sfu/             real-time SFU experiments
 internal/turnsrv/         TURN/STUN building blocks
 ```
 
+## 🎁 Star Gifts and gift packs
+
+Star Gifts ship with **First Pack**, OwpenGram's own set of animated gifts:
+import it in one click from **StarGift Catalog → Import Pack** in the admin
+panel, preview every gift and every upgraded variant before you do, and
+re-import later to pick up gifts added since.
+
+You can also write your own pack -- a `.zip` with a `pack.json` manifest plus
+its Lottie/`.tgs` animations -- and upload it from the same screen.
+**[docs/gift-packs.md](docs/gift-packs.md)** is the guide: a step-by-step
+build loop, the hard limits every animation must meet, the full `pack.json`
+reference, and the rlottie pitfalls that make an animation look perfect in a
+browser and render as nothing in a real client.
+
 ## 🤝 Contributing
 
 This server gets better fastest with real usage and focused fixes:
