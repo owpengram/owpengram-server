@@ -6,113 +6,151 @@ import (
 	"telesrv/internal/app/giftpack"
 )
 
-// Grind Kit doubles as the reference pack for the whole Star Gift feature
+// First Pack doubles as the reference pack for the whole Star Gift feature
 // surface: every gift exercises a different mechanic, so importing it is
 // enough to test plain purchase, limited supply and sell-out, premium-only,
-// birthday, support-only, per-user limits, collectible upgrade, crafting,
-// resale floor and auction end to end.
+// birthday, per-user limits, collectible upgrade, crafting, resale floor and
+// auction end to end.
 func init() {
 	register(&packDef{
-		id:          "grind-kit",
-		name:        "Grind Kit",
+		id:          "first-pack",
+		name:        "First Pack",
 		author:      "OwpenGram",
-		description: "From the first coffee to a safe full of cash: the tech and money of the daily grind. Covers upgrades, crafting, limited supply, resale, premium-only, per-user limits and auction.",
-		icon:        "safe",
+		description: "The first sticker pack made for OwpenGram.",
+		icon:        "giftbox",
 		gifts: []giftDef{
 			{slug: "coffee", title: "Morning Coffee", stars: 15, build: coffee},
+			{slug: "cake", title: "Birthday Cake", stars: 30, build: cake,
+				spec: giftpack.GiftSpec{Birthday: true}},
+			{slug: "giftbox", title: "Gift Box", stars: 20, build: giftbox},
+			{slug: "bear", title: "Teddy Bear", stars: 50, build: bear, upgrade: &upgradeDef{
+				stars: 80, supply: 100_000,
+				models: []attrDef{
+					{id: "m-bear-honey", name: "Honey", build: func() *scene { return bearWith(bearHoney) }, permille: 250},
+					{id: "m-bear-chocolate", name: "Chocolate", build: func() *scene { return bearWith(bearChocolate) }, permille: 200},
+					{id: "m-bear-cream", name: "Cream", build: func() *scene { return bearWith(bearCream) }, permille: 160},
+					{id: "m-bear-panda", name: "Panda", build: func() *scene { return bearWith(bearPanda) }, permille: 140},
+					{id: "m-bear-rose", name: "Rose", build: func() *scene { return bearWith(bearRose) }, permille: 110},
+					{id: "m-bear-sky", name: "Sky", build: func() *scene { return bearWith(bearSky) }, permille: 80},
+					{id: "m-bear-midnight", name: "Midnight", build: func() *scene { return bearWith(bearMidnight) }, permille: 60},
+				},
+				patterns:  []attrDef{patternHearts, patternStars, patternSparkle, patternNotes},
+				backdrops: []string{"Rose Quartz", "Mint Leaf", "Lavender", "Sunset", "Gold Rush"},
+			}},
 			{slug: "phone", title: "Smartphone", stars: 25, build: phone, upgrade: &upgradeDef{
 				stars: 50, supply: 100_000,
 				models: []attrDef{
-					{id: "m-phone-midnight", name: "Midnight", build: func() *scene { return phoneWith(phoneMidnight) }, permille: 400},
-					{id: "m-phone-rose", name: "Rose Gold", build: func() *scene { return phoneWith(phoneRose) }, permille: 300},
-					{id: "m-phone-mint", name: "Mint", build: func() *scene { return phoneWith(phoneMint) }, permille: 300},
+					{id: "m-phone-midnight", name: "Midnight", build: func() *scene { return phoneWith(phoneMidnight) }, permille: 250},
+					{id: "m-phone-rose", name: "Rose Gold", build: func() *scene { return phoneWith(phoneRose) }, permille: 200},
+					{id: "m-phone-mint", name: "Mint", build: func() *scene { return phoneWith(phoneMint) }, permille: 180},
+					{id: "m-phone-graphite", name: "Graphite", build: func() *scene { return phoneWith(phoneGraphite) }, permille: 150},
+					{id: "m-phone-ultraviolet", name: "Ultraviolet", build: func() *scene { return phoneWith(phoneUltraviolet) }, permille: 120},
+					{id: "m-phone-sunset", name: "Sunset Gold", build: func() *scene { return phoneWith(phoneSunset) }, permille: 100},
 				},
-				patterns:  []attrDef{patternHearts, patternSparkle, patternCode},
-				backdrops: []string{"Midnight Blue", "Rose Quartz", "Mint Leaf"},
+				patterns:  []attrDef{patternHearts, patternSparkle, patternCode, patternWave},
+				backdrops: []string{"Midnight Blue", "Rose Quartz", "Mint Leaf", "Lavender", "Sunset"},
 			}},
 			{slug: "laptop", title: "Laptop", stars: 35, build: laptop, upgrade: &upgradeDef{
 				stars: 60, supply: 100_000,
 				models: []attrDef{
-					{id: "m-laptop-silver", name: "Silver", build: func() *scene { return laptopWith(laptopSilver) }, permille: 400},
-					{id: "m-laptop-spacegray", name: "Space Gray", build: func() *scene { return laptopWith(laptopSpaceGray) }, permille: 300},
-					{id: "m-laptop-midnight", name: "Midnight", build: func() *scene { return laptopWith(laptopMidnight) }, permille: 200},
-					{id: "m-laptop-starlight", name: "Starlight", build: func() *scene { return laptopWith(laptopStarlight) }, permille: 100},
+					{id: "m-laptop-silver", name: "Silver", build: func() *scene { return laptopWith(laptopSilver) }, permille: 250},
+					{id: "m-laptop-spacegray", name: "Space Gray", build: func() *scene { return laptopWith(laptopSpaceGray) }, permille: 200},
+					{id: "m-laptop-midnight", name: "Midnight", build: func() *scene { return laptopWith(laptopMidnight) }, permille: 150},
+					{id: "m-laptop-starlight", name: "Starlight", build: func() *scene { return laptopWith(laptopStarlight) }, permille: 130},
+					{id: "m-laptop-rose", name: "Rose Gold", build: func() *scene { return laptopWith(laptopRose) }, permille: 120},
+					{id: "m-laptop-jet", name: "Jet Black", build: func() *scene { return laptopWith(laptopJet) }, permille: 90},
+					{id: "m-laptop-sky", name: "Sky Blue", build: func() *scene { return laptopWith(laptopSky) }, permille: 60},
 				},
-				patterns:  []attrDef{patternCode, patternSparkle, patternStars},
-				backdrops: []string{"Graphite", "Midnight Blue", "Mint Leaf"},
+				patterns:  []attrDef{patternCode, patternSparkle, patternStars, patternGear},
+				backdrops: []string{"Graphite", "Midnight Blue", "Mint Leaf", "Arctic", "Rose Quartz"},
 			}},
 			{slug: "desktop", title: "Desktop PC", stars: 40, build: desktop,
 				spec: giftpack.GiftSpec{RequirePremium: true},
 				upgrade: &upgradeDef{
 					stars: 70, supply: 100_000,
 					models: []attrDef{
-						{id: "m-desktop-rgb", name: "RGB", build: func() *scene { return desktopWith(desktopRGB) }, permille: 400},
-						{id: "m-desktop-toxic", name: "Toxic", build: func() *scene { return desktopWith(desktopToxic) }, permille: 250},
-						{id: "m-desktop-inferno", name: "Inferno", build: func() *scene { return desktopWith(desktopInferno) }, permille: 200},
-						{id: "m-desktop-frost", name: "Frost", build: func() *scene { return desktopWith(desktopFrost) }, permille: 150},
+						{id: "m-desktop-rgb", name: "RGB", build: func() *scene { return desktopWith(desktopRGB) }, permille: 250},
+						{id: "m-desktop-toxic", name: "Toxic", build: func() *scene { return desktopWith(desktopToxic) }, permille: 180},
+						{id: "m-desktop-inferno", name: "Inferno", build: func() *scene { return desktopWith(desktopInferno) }, permille: 160},
+						{id: "m-desktop-frost", name: "Frost", build: func() *scene { return desktopWith(desktopFrost) }, permille: 140},
+						{id: "m-desktop-aqua", name: "Aqua", build: func() *scene { return desktopWith(desktopAqua) }, permille: 120},
+						{id: "m-desktop-sakura", name: "Sakura", build: func() *scene { return desktopWith(desktopSakura) }, permille: 90},
+						{id: "m-desktop-midas", name: "Midas", build: func() *scene { return desktopWith(desktopMidas) }, permille: 60},
 					},
-					patterns:  []attrDef{patternBolt, patternCode},
-					backdrops: []string{"Neon Night", "Graphite", "Crimson"},
+					patterns:  []attrDef{patternBolt, patternCode, patternGear, patternSparkle},
+					backdrops: []string{"Neon Night", "Graphite", "Crimson", "Arctic", "Lavender"},
 				}},
 			{slug: "server", title: "Data Server", stars: 55, build: server,
 				spec: giftpack.GiftSpec{Limited: true, AvailabilityTotal: 1000, ResellMinStars: 150},
 				upgrade: &upgradeDef{
 					stars: 100, supply: 1000,
 					models: []attrDef{
-						{id: "m-server-classic", name: "Classic Rack", build: func() *scene { return serverWith(serverClassic) }, permille: 400},
-						{id: "m-server-neon", name: "Neon Rack", build: func() *scene { return serverWith(serverNeon) }, permille: 350},
-						{id: "m-server-crimson", name: "Crimson Rack", build: func() *scene { return serverWith(serverCrimson) }, permille: 250},
+						{id: "m-server-classic", name: "Classic Rack", build: func() *scene { return serverWith(serverClassic) }, permille: 300},
+						{id: "m-server-neon", name: "Neon Rack", build: func() *scene { return serverWith(serverNeon) }, permille: 250},
+						{id: "m-server-crimson", name: "Crimson Rack", build: func() *scene { return serverWith(serverCrimson) }, permille: 200},
+						{id: "m-server-arctic", name: "Arctic Rack", build: func() *scene { return serverWith(serverArctic) }, permille: 150},
+						{id: "m-server-emerald", name: "Emerald Rack", build: func() *scene { return serverWith(serverEmerald) }, permille: 100},
 						{id: "m-server-quantum", name: "Quantum Core", build: func() *scene { return serverWith(serverQuantum) }, rarity: "legendary"},
 					},
-					patterns:  []attrDef{patternBolt, patternCode},
-					backdrops: []string{"Graphite", "Neon Night", "Crimson"},
+					patterns:  []attrDef{patternBolt, patternCode, patternGear},
+					backdrops: []string{"Graphite", "Neon Night", "Crimson", "Arctic", "Emerald"},
 				}},
 			{slug: "headphones", title: "Headphones", stars: 20, build: headphones, upgrade: &upgradeDef{
 				stars: 40, supply: 100_000,
 				models: []attrDef{
-					{id: "m-headphones-midnight", name: "Midnight", build: func() *scene { return headphonesWith(headphonesMidnight) }, permille: 350},
-					{id: "m-headphones-starlight", name: "Starlight", build: func() *scene { return headphonesWith(headphonesStarlight) }, permille: 250},
-					{id: "m-headphones-sky", name: "Sky Blue", build: func() *scene { return headphonesWith(headphonesSky) }, permille: 150},
-					{id: "m-headphones-pink", name: "Pink", build: func() *scene { return headphonesWith(headphonesPink) }, permille: 150},
-					{id: "m-headphones-green", name: "Green", build: func() *scene { return headphonesWith(headphonesGreen) }, permille: 100},
+					{id: "m-headphones-midnight", name: "Midnight", build: func() *scene { return headphonesWith(headphonesMidnight) }, permille: 220},
+					{id: "m-headphones-starlight", name: "Starlight", build: func() *scene { return headphonesWith(headphonesStarlight) }, permille: 180},
+					{id: "m-headphones-sky", name: "Sky Blue", build: func() *scene { return headphonesWith(headphonesSky) }, permille: 140},
+					{id: "m-headphones-pink", name: "Pink", build: func() *scene { return headphonesWith(headphonesPink) }, permille: 130},
+					{id: "m-headphones-green", name: "Green", build: func() *scene { return headphonesWith(headphonesGreen) }, permille: 110},
+					{id: "m-headphones-lavender", name: "Lavender", build: func() *scene { return headphonesWith(headphonesLavender) }, permille: 100},
+					{id: "m-headphones-sunset", name: "Sunset", build: func() *scene { return headphonesWith(headphonesSunset) }, permille: 70},
+					{id: "m-headphones-graphite", name: "Graphite", build: func() *scene { return headphonesWith(headphonesGraphite) }, permille: 50},
 				},
-				patterns:  []attrDef{patternNotes, patternHearts, patternSparkle},
-				backdrops: []string{"Graphite", "Rose Quartz", "Midnight Blue"},
+				patterns:  []attrDef{patternNotes, patternHearts, patternSparkle, patternWave},
+				backdrops: []string{"Graphite", "Rose Quartz", "Midnight Blue", "Lavender", "Sunset"},
 			}},
 			{slug: "coin", title: "Lucky Coin", stars: 15, build: coin,
 				spec: giftpack.GiftSpec{LimitedPerUser: true, PerUserTotal: 3},
 				upgrade: &upgradeDef{
 					stars: 25, supply: 100_000,
 					models: []attrDef{
-						{id: "m-coin-silver", name: "Silver", build: func() *scene { return coinWith(coinSilver) }, permille: 500},
-						{id: "m-coin-gold", name: "Gold", build: func() *scene { return coinWith(coinGold) }, permille: 350},
+						{id: "m-coin-silver", name: "Silver", build: func() *scene { return coinWith(coinSilver) }, permille: 300},
+						{id: "m-coin-gold", name: "Gold", build: func() *scene { return coinWith(coinGold) }, permille: 250},
 						{id: "m-coin-platinum", name: "Platinum", build: func() *scene { return coinWith(coinPlatinum) }, permille: 150},
+						{id: "m-coin-rose", name: "Rose Gold", build: func() *scene { return coinWith(coinRose) }, permille: 130},
+						{id: "m-coin-emerald", name: "Emerald", build: func() *scene { return coinWith(coinEmerald) }, permille: 100},
+						{id: "m-coin-sapphire", name: "Sapphire", build: func() *scene { return coinWith(coinSapphire) }, permille: 70},
 					},
-					patterns:  []attrDef{patternCoins, patternStars, patternSparkle},
-					backdrops: []string{"Gold Rush", "Graphite", "Mint Leaf"},
+					patterns:  []attrDef{patternCoins, patternStars, patternSparkle, patternDiamonds},
+					backdrops: []string{"Gold Rush", "Graphite", "Mint Leaf", "Emerald", "Arctic"},
 				}},
 			{slug: "wallet", title: "Leather Wallet", stars: 25, build: wallet, upgrade: &upgradeDef{
 				stars: 45, supply: 100_000,
 				models: []attrDef{
-					{id: "m-wallet-classic", name: "Classic", build: func() *scene { return walletWith(walletClassic) }, permille: 400},
-					{id: "m-wallet-noir", name: "Noir", build: func() *scene { return walletWith(walletNoir) }, permille: 300},
-					{id: "m-wallet-crimson", name: "Crimson", build: func() *scene { return walletWith(walletCrimson) }, permille: 200},
-					{id: "m-wallet-navy", name: "Navy", build: func() *scene { return walletWith(walletNavy) }, permille: 100},
+					{id: "m-wallet-classic", name: "Classic", build: func() *scene { return walletWith(walletClassic) }, permille: 300},
+					{id: "m-wallet-noir", name: "Noir", build: func() *scene { return walletWith(walletNoir) }, permille: 250},
+					{id: "m-wallet-crimson", name: "Crimson", build: func() *scene { return walletWith(walletCrimson) }, permille: 180},
+					{id: "m-wallet-navy", name: "Navy", build: func() *scene { return walletWith(walletNavy) }, permille: 120},
+					{id: "m-wallet-forest", name: "Forest", build: func() *scene { return walletWith(walletForest) }, permille: 90},
+					{id: "m-wallet-sand", name: "Sand", build: func() *scene { return walletWith(walletSand) }, permille: 60},
 				},
-				patterns:  []attrDef{patternCoins, patternDiamonds, patternStars},
-				backdrops: []string{"Gold Rush", "Crimson", "Mint Leaf"},
+				patterns:  []attrDef{patternCoins, patternDiamonds, patternStars, patternHearts},
+				backdrops: []string{"Gold Rush", "Crimson", "Mint Leaf", "Emerald", "Sunset"},
 			}},
 			{slug: "safe", title: "Money Safe", stars: 250, build: safe,
 				spec: giftpack.GiftSpec{Auction: true, AuctionSlug: "money-safe", GiftsPerRound: 3, AvailabilityTotal: 15, Limited: true},
 				upgrade: &upgradeDef{
 					stars: 200, supply: 15,
 					models: []attrDef{
-						{id: "m-safe-steel", name: "Steel", build: func() *scene { return safeWith(safeSteel) }, permille: 500},
-						{id: "m-safe-gold", name: "Gold", build: func() *scene { return safeWith(safeGold) }, permille: 300},
+						{id: "m-safe-steel", name: "Steel", build: func() *scene { return safeWith(safeSteel) }, permille: 350},
+						{id: "m-safe-gold", name: "Gold", build: func() *scene { return safeWith(safeGold) }, permille: 250},
 						{id: "m-safe-obsidian", name: "Obsidian", build: func() *scene { return safeWith(safeObsidian) }, permille: 200},
+						{id: "m-safe-emerald", name: "Emerald", build: func() *scene { return safeWith(safeEmerald) }, permille: 120},
+						{id: "m-safe-rose", name: "Rose Gold", build: func() *scene { return safeWith(safeRose) }, permille: 80},
 					},
-					patterns:  []attrDef{patternDiamonds, patternCoins},
-					backdrops: []string{"Gold Rush", "Midnight Blue", "Graphite"},
+					patterns:  []attrDef{patternDiamonds, patternCoins, patternGear},
+					backdrops: []string{"Gold Rush", "Midnight Blue", "Graphite", "Emerald", "Lavender"},
 				}},
 		},
 		backdrops: map[string]giftpack.BackdropSpec{
@@ -123,6 +161,10 @@ func init() {
 			"Gold Rush":     {Center: "#FFD24A", Edge: "#B8801A", Pattern: "#8A5A0A", Text: "#3A2A00", Permille: 500},
 			"Graphite":      {Center: "#6A7384", Edge: "#262B34", Pattern: "#1A1D23", Text: "#FFFFFF", Permille: 500},
 			"Crimson":       {Center: "#FF5A5A", Edge: "#8A1620", Pattern: "#5E0E15", Text: "#FFFFFF", Permille: 500},
+			"Lavender":      {Center: "#C9A8FF", Edge: "#5E2FB8", Pattern: "#3E1C80", Text: "#FFFFFF", Permille: 500},
+			"Sunset":        {Center: "#FF9A5C", Edge: "#A8321F", Pattern: "#701E12", Text: "#FFFFFF", Permille: 500},
+			"Arctic":        {Center: "#BFE8FF", Edge: "#3D7FA8", Pattern: "#245A7A", Text: "#0B2A3A", Permille: 500},
+			"Emerald":       {Center: "#4FE0A0", Edge: "#10704F", Pattern: "#094436", Text: "#FFFFFF", Permille: 500},
 		},
 	})
 }
@@ -160,7 +202,22 @@ var (
 		G(polyPath(false, P{-70, -100}, P{-170, 0}, P{-70, 100}), stroke(white, 40)),
 		G(polyPath(false, P{70, -100}, P{170, 0}, P{70, 100}), stroke(white, 40)),
 		G(polyPath(false, P{36, -150}, P{-36, 150}), stroke(white, 34)))}
+	patternGear = attrDef{id: "p-gear", name: "Gears", permille: 400, build: gearGlyph()}
+	patternWave = attrDef{id: "p-wave", name: "Waves", permille: 450, build: glyph("Waves",
+		G(smoothPath(false, 1, P{-170, -78}, P{-57, -138}, P{57, -18}, P{170, -78}), stroke(white, 30)),
+		G(smoothPath(false, 1, P{-170, 12}, P{-57, -48}, P{57, 72}, P{170, 12}), stroke(white, 30)),
+		G(smoothPath(false, 1, P{-170, 102}, P{-57, 42}, P{57, 162}, P{170, 102}), stroke(white, 30)))}
 )
+
+// gearGlyph is a ring with eight teeth -- a pattern glyph can't punch a hole
+// through itself (there's no even-odd fill here), so the hub is left open.
+func gearGlyph() func() *scene {
+	items := []any{G(ell(0, 0, 208, 208), stroke(white, 46))}
+	for i := 0; i < 8; i++ {
+		items = append(items, GRot(0, 0, float64(i)*45, G(rect(0, -148, 46, 58, 10), fill(white))))
+	}
+	return glyph("Gears", items...)
+}
 
 // heart path centred on (x,y), size = overall width.
 func heart(x, y, size float64) shItem {
@@ -241,6 +298,273 @@ func coffee() *scene {
 	return s
 }
 
+// ------------------------------------------------------------ cake
+
+// flamePath is a teardrop centred on (x,y): a sharp tip on top (zero
+// handles) over a rounded body, scaled by k.
+func flamePath(x, y, k float64) shItem {
+	v := []P{{x, y - 38*k}, {x + 17*k, y + 2*k}, {x, y + 20*k}, {x - 17*k, y + 2*k}}
+	in := []P{{0, 0}, {0, -16 * k}, {11 * k, 0}, {0, 16 * k}}
+	out := []P{{0, 0}, {0, 16 * k}, {-11 * k, 0}, {0, -16 * k}}
+	return pathFrom(true, v, in, out)
+}
+
+func sprinkle(x, y, rot float64, c col) grItem {
+	return GAt(x, y, rot, G(rect(0, 0, 26, 9, 4.5), fill(c)))
+}
+
+// candle draws one striped candle with its wick; the flame is a separate,
+// animated layer so it can flicker on its own.
+func candle(x, base, h float64, body col) []any {
+	top := base - h
+	items := []any{
+		G(rect(x, base-h/2, 24, h, 10), lin(x-12, 0, x+12, 0, S(0, body.l(0.45)), S(0.55, body), S(1, body.d(0.3)))),
+	}
+	for y := top + 14; y < base-6; y += 22 {
+		items = append(items, G(rect(x, y, 24, 9, 0), fillA(white, 0.55)))
+	}
+	return append(items,
+		G(ell(x, top, 24, 9), fill(body.l(0.35))),
+		G(rect(x, top-9, 4.5, 16, 2), fill(hx(0x4A3524))),
+	)
+}
+
+func cake() *scene {
+	s := &scene{name: "Birthday Cake"}
+	root := s.stage(186, 400, 10)
+
+	s.shape("plate", root, pivot(0, 0),
+		G(ell(0, 176, 424, 88), vgrad(0, 132, 220, hx(0xFFFFFF), hx(0xBDB5AA))),
+		G(ell(0, 170, 408, 76), vgrad(0, 132, 208, hx(0xFBF8F4), hx(0xDCD4C9))),
+		G(ell(0, 164, 286, 48), vgrad(0, 140, 188, hx(0xD8CFC3), hx(0xF6F1EA))),
+	)
+
+	sponge := func(x0, x1, y0, y1 float64, radii []float64) []any {
+		return []any{
+			G(roundedPath(radii, P{x0, y0}, P{x1, y0}, P{x1, y1}, P{x0, y1}),
+				lin(x0, 0, x1, 0, S(0, hx(0xEFB884)), S(0.45, hx(0xC98A54)), S(1, hx(0x8A5A2E)))),
+			G(roundedPath(radii, P{x0, y0}, P{x1, y0}, P{x1, y1}, P{x0, y1}),
+				lin(0, y0, 0, y1, SA(0, black, 0), SA(1, black, 0.3))),
+		}
+	}
+
+	// Upper tier, drawn first so the lower tier's frosting overlaps it.
+	top := sponge(-108, 108, -54, 48, []float64{10, 10, 0, 0})
+	top = append(top, G(rect(0, 10, 216, 18, 0), fill(hx(0xFFF1DC))))
+	top = append(top,
+		G(ell(0, -62, 220, 36), fill(hx(0xFFE2EC))),
+		G(roundedPath([]float64{16, 16, 0, 0}, P{-110, -62}, P{110, -62}, P{110, -22}, P{-110, -22}),
+			vgrad(0, -62, -22, hx(0xFFD3E2), hx(0xFFAECD))),
+		G(ell(-74, -26, 64, 42), fill(hx(0xFFAECD))),
+		G(ell(-25, -26, 62, 56), fill(hx(0xFFAECD))),
+		G(ell(25, -26, 64, 40), fill(hx(0xFFAECD))),
+		G(ell(74, -26, 62, 58), fill(hx(0xFFAECD))),
+		sprinkle(-62, -64, -18, hx(0x6E9BFF)),
+		sprinkle(-8, -70, 24, hx(0x7CD86F)),
+		sprinkle(46, -62, -8, hx(0xFFD24A)),
+		sprinkle(-40, -50, 34, hx(0xB18CFF)),
+		sprinkle(60, -48, 16, hx(0x3DE0FF)),
+	)
+	s.shape("tier-top", root, pivot(0, 0), top...)
+
+	low := sponge(-152, 152, 42, 160, []float64{8, 8, 26, 26})
+	low = append(low, G(rect(0, 104, 304, 22, 0), fill(hx(0xFFF1DC))))
+	low = append(low,
+		G(roundedPath([]float64{18, 18, 0, 0}, P{-152, 30}, P{152, 30}, P{152, 74}, P{-152, 74}),
+			vgrad(0, 30, 74, hx(0xFFD3E2), hx(0xFFAECD))),
+		G(ell(-116, 70, 74, 46), fill(hx(0xFFAECD))),
+		G(ell(-58, 70, 72, 64), fill(hx(0xFFAECD))),
+		G(ell(0, 70, 74, 42), fill(hx(0xFFAECD))),
+		G(ell(58, 70, 72, 68), fill(hx(0xFFAECD))),
+		G(ell(116, 70, 74, 48), fill(hx(0xFFAECD))),
+		sprinkle(-104, 44, 22, hx(0xFFD24A)),
+		sprinkle(-46, 52, -26, hx(0x3DE0FF)),
+		sprinkle(16, 42, 12, hx(0x7CD86F)),
+		sprinkle(74, 54, -34, hx(0xB18CFF)),
+		sprinkle(124, 44, 8, hx(0x6E9BFF)),
+		sprinkle(-78, 120, -14, hx(0xFF6FB5)),
+		sprinkle(-10, 136, 28, hx(0xFFD24A)),
+		sprinkle(62, 122, -22, hx(0x3DE0FF)),
+	)
+	s.shape("tier-low", root, pivot(0, 0), low...)
+
+	candles := []any{}
+	for i, x := range []float64{-62, 0, 62} {
+		candles = append(candles, candle(x, -62, 74, hx([]int{0x6E9BFF, 0xFF8AB0, 0xFFD24A}[i]))...)
+	}
+	s.shape("candles", root, pivot(0, 0), candles...)
+
+	// Each flame flickers on its own phase: it breathes taller than wide and
+	// leans a little, so the three never move in lockstep.
+	for i, x0 := range []float64{-62, 0, 62} {
+		x, ph := x0, float64(i)/3
+		fk := pivot(x, -152)
+		fk.S = avLin(sampled(24, ph, func(u float64) []float64 {
+			return []float64{96 + 7*wave(u, 0), 92 + 16*bump(u, 0), 100}
+		})...)
+		fk.R = avLin(sampled(24, ph, func(u float64) []float64 { return []float64{5 * wave(u, 0.25)} })...)
+		s.shape("flame", root, fk,
+			glow(x, -150, 44, hx(0xFFB347), 0.5),
+			G(flamePath(x, -152, 1), lin(x, -192, x, -130, S(0, hx(0xFFE39A)), S(0.5, hx(0xFF9A3D)), S(1, hx(0xE8541F)))),
+			G(flamePath(x, -146, 0.52), lin(x, -170, x, -128, S(0, hx(0xFFFDF0)), S(1, hx(0xFFD24A)))),
+		)
+	}
+
+	s.sparkle(root, 158, -118, 26, hx(0xFFE9B8), 0.2)
+	s.sparkle(root, -166, -74, 22, hx(0xFFD9E4), 0.6)
+	s.sparkle(root, 140, 30, 20, hx(0xFFF3C0), 0.85)
+	return s
+}
+
+// ------------------------------------------------------------ teddy bear
+
+// bearStyle is a plush: the fur ramp, the lighter muzzle/belly felt, the
+// pads that line the ears and paws, and the ribbon round the neck.
+type bearStyle struct {
+	name   string
+	fur    [3]int
+	felt   [2]int
+	pad    int
+	ribbon [2]int
+}
+
+var (
+	bearHoney     = bearStyle{"Teddy Bear", [3]int{0xF2C784, 0xD9A05B, 0x96682F}, [2]int{0xFFF0D6, 0xE6CBA2}, 0xC98A54, [2]int{0xFF8AB0, 0xC2337A}}
+	bearChocolate = bearStyle{"Chocolate", [3]int{0xAE7A50, 0x6E4326, 0x3A2011}, [2]int{0xEBD3B0, 0xC4A278}, 0x8A5A38, [2]int{0xFFD98A, 0xC9962E}}
+	bearCream     = bearStyle{"Cream", [3]int{0xFFF8EC, 0xEBD9C0, 0xB0A184}, [2]int{0xFFFDF6, 0xE4D6BE}, 0xD9BFA0, [2]int{0x8FB4FF, 0x2B5CF6}}
+	bearPanda     = bearStyle{"Panda", [3]int{0xFFFFFF, 0xE8EAEE, 0xA5AAB4}, [2]int{0xFFFFFF, 0xD6DAE0}, 0x25272D, [2]int{0x8FE38A, 0x2FA34B}}
+	bearRose      = bearStyle{"Rose", [3]int{0xFFDCE6, 0xF2A8BE, 0xAE5F79}, [2]int{0xFFF0F4, 0xF0CFD9}, 0xE88AA8, [2]int{0xFFD98A, 0xC9962E}}
+	bearSky       = bearStyle{"Sky", [3]int{0xD6EAFB, 0x8FBCE4, 0x4C7BA5}, [2]int{0xF2F8FF, 0xD0E2F2}, 0x6E9BC9, [2]int{0xFF8AB0, 0xC2337A}}
+	bearMidnight  = bearStyle{"Midnight", [3]int{0x5E6474, 0x343A48, 0x14171E}, [2]int{0xB2B9C6, 0x7C8496}, 0x232833, [2]int{0x6CF6FF, 0x2B7BE4}}
+)
+
+func bear() *scene { return bearWith(bearHoney) }
+
+func bearWith(st bearStyle) *scene {
+	s := &scene{name: st.name}
+	root := s.stage(214, 330, 10)
+	hi, mid, lo := hx(st.fur[0]), hx(st.fur[1]), hx(st.fur[2])
+	felt, feltEdge, pad := hx(st.felt[0]), hx(st.felt[1]), hx(st.pad)
+
+	limb := func(x, y, w, h, rot float64) grItem {
+		return GAt(x, y, rot,
+			G(ell(0, 0, w, h), rad(-w*0.2, -h*0.25, w*0.75, S(0, hi), S(0.55, mid), S(1, lo))),
+			G(ell(0, h*0.16, w*0.56, h*0.44), fill(pad)),
+		)
+	}
+
+	// Arms and legs go down first so the belly overlaps them.
+	s.shape("limbs", root, pivot(0, 0),
+		limb(-118, 74, 84, 122, 16),
+		limb(118, 74, 84, 122, -16),
+		limb(-74, 176, 116, 96, -8),
+		limb(74, 176, 116, 96, 8),
+	)
+
+	s.shape("body", root, pivot(0, 0),
+		G(ell(0, 96, 246, 222), rad(-54, 30, 170, S(0, hi), S(0.5, mid), S(1, lo))),
+		G(ell(0, 112, 148, 150), rad(-30, 74, 100, S(0, felt), S(1, feltEdge))),
+	)
+
+	// The head leans as the whole toy floats, a beat behind the body.
+	hk := pivot(0, 20)
+	hk.R = avLin(sampled(24, 0, func(u float64) []float64 { return []float64{4.5 * wave(u, 0.12)} })...)
+	head := s.null("head", root, hk)
+
+	eye := func(x float64) []any {
+		return []any{
+			G(ell(x, -92, 32, 36), fill(hx(0x241A12))),
+			G(ell(x-6, -100, 13, 13), fillA(white, 0.9)),
+			G(ell(x+5, -84, 7, 7), fillA(white, 0.45)),
+		}
+	}
+	items := []any{
+		G(ell(-94, -168, 92, 92), rad(-108, -184, 60, S(0, hi), S(0.6, mid), S(1, lo))),
+		G(ell(-94, -164, 50, 50), fill(pad)),
+		G(ell(94, -168, 92, 92), rad(80, -184, 60, S(0, hi), S(0.6, mid), S(1, lo))),
+		G(ell(94, -164, 50, 50), fill(pad)),
+		G(ell(0, -86, 250, 226), rad(-58, -140, 168, S(0, hi), S(0.5, mid), S(1, lo))),
+		G(ell(0, -40, 142, 104), rad(-24, -58, 92, S(0, felt), S(1, feltEdge))),
+	}
+	items = append(items, eye(-50)...)
+	items = append(items, eye(50)...)
+	items = append(items,
+		G(ell(-104, -50, 46, 26), fillA(hx(0xFF8AA0), 0.45)),
+		G(ell(104, -50, 46, 26), fillA(hx(0xFF8AA0), 0.45)),
+		G(ell(0, -58, 48, 34), rad(-8, -66, 28, S(0, hx(0x5E4230)), S(1, hx(0x2A1A10)))),
+		G(ell(-8, -64, 16, 9), fillA(white, 0.55)),
+		G(rect(0, -36, 5, 22, 2.5), fill(hx(0x2A1A10))),
+		G(arcPath(-17, -24, 18, 15, 0, 160, 8), stroke(hx(0x2A1A10), 5)),
+		G(arcPath(17, -24, 18, 15, 20, 180, 8), stroke(hx(0x2A1A10), 5)),
+	)
+	s.shape("head", head, pivot(0, 0), items...)
+
+	// Ribbon: two loops and a knot where the head meets the body.
+	rb, rbDark := hx(st.ribbon[0]), hx(st.ribbon[1])
+	s.shape("ribbon", root, pivot(0, 0),
+		GAt(-62, 34, -16,
+			G(ell(0, 0, 84, 62), lin(-42, -31, 42, 31, S(0, rb), S(1, rbDark))),
+			G(ell(10, 2, 42, 30), fillA(rbDark, 0.55)),
+		),
+		GAt(62, 34, 16,
+			G(ell(0, 0, 84, 62), lin(42, -31, -42, 31, S(0, rb), S(1, rbDark))),
+			G(ell(-10, 2, 42, 30), fillA(rbDark, 0.55)),
+		),
+		G(ell(0, 36, 44, 40), rad(-10, 26, 28, S(0, rb.l(0.3)), S(1, rbDark))),
+	)
+
+	s.sparkle(root, 150, -140, 24, hx(0xFFE9B8), 0.25)
+	s.sparkle(root, -158, -70, 20, white, 0.7)
+	return s
+}
+
+// ------------------------------------------------------------ gift box
+
+func giftbox() *scene {
+	s := &scene{name: "Gift Box"}
+	root := s.stage(200, 360, 10)
+	gold := func(x0, y0, x1, y1 float64) gfItem {
+		return lin(x0, y0, x1, y1, S(0, hx(0xFFF0BC)), S(0.5, hx(0xFFD24A)), S(1, hx(0xD99A1E)))
+	}
+
+	s.shape("box", root, pivot(0, 0),
+		G(roundedPath([]float64{10, 10, 20, 20}, P{-146, 4}, P{146, 4}, P{146, 176}, P{-146, 176}),
+			lin(-146, 0, 146, 0, S(0, hx(0xFF9A96)), S(0.45, hx(0xE8454F)), S(1, hx(0x9E1420)))),
+		G(rect(0, 92, 62, 172, 0), gold(-31, 0, 31, 0)),
+		G(roundedPath([]float64{0, 0, 20, 20}, P{-146, 120}, P{146, 120}, P{146, 176}, P{-146, 176}),
+			lin(0, 120, 0, 176, SA(0, black, 0), SA(1, black, 0.25))),
+	)
+
+	// The lid rides a touch higher than the box, as if just lifted.
+	lk := pivot(0, -30)
+	lk.P = apLin(sampled(24, 0, func(u float64) []float64 { return []float64{0, -30 - 7*bump(u, 0), 0} })...)
+	lid := s.null("lid", root, lk)
+	s.shape("lid", lid, pivot(0, 0),
+		G(roundedPath([]float64{12, 12, 8, 8}, P{-166, -52}, P{166, -52}, P{166, 8}, P{-166, 8}),
+			lin(-166, 0, 166, 0, S(0, hx(0xFFAEA8)), S(0.45, hx(0xF05560)), S(1, hx(0xB01C2A)))),
+		G(rect(0, -48, 320, 6, 3), fillA(white, 0.3)),
+		G(rect(0, -22, 62, 60, 0), gold(-31, 0, 31, 0)),
+	)
+
+	// Bow: two loops, a knot and two tails, wobbling on its own.
+	wk := pivot(0, -52)
+	wk.R = avLin(sampled(24, 0, func(u float64) []float64 { return []float64{3 * wave(u, 0)} })...)
+	bow := s.null("bow", root, wk)
+	s.shape("bow", bow, pivot(0, 0),
+		G(smoothPath(true, 1, P{0, -46}, P{-58, -104}, P{-116, -66}, P{-52, -34}), gold(-116, -104, 0, -34)),
+		G(smoothPath(true, 1, P{0, -46}, P{58, -104}, P{116, -66}, P{52, -34}), gold(116, -104, 0, -34)),
+		G(smoothPath(true, 1, P{-14, -40}, P{-52, 8}, P{-26, 16}, P{-2, -30}), gold(-52, 16, 0, -40)),
+		G(smoothPath(true, 1, P{14, -40}, P{52, 8}, P{26, 16}, P{2, -30}), gold(52, 16, 0, -40)),
+		G(ell(0, -44, 56, 48), rad(-12, -56, 36, S(0, hx(0xFFF6D6)), S(0.55, hx(0xFFD24A)), S(1, hx(0xC98A18)))),
+		G(ell(-12, -54, 20, 12), fillA(white, 0.6)),
+	)
+
+	s.sparkle(root, 150, -110, 26, hx(0xFFE9B8), 0.2)
+	s.sparkle(root, -158, -46, 22, white, 0.6)
+	s.sparkle(root, 128, 96, 18, hx(0xFFF3C0), 0.85)
+	return s
+}
+
 // ------------------------------------------------------------ phone
 
 type app struct{ top, bottom int }
@@ -278,6 +602,10 @@ var (
 	phoneMidnight = phoneStyle{"Smartphone", [4]int{0xA3AAB6, 0x40465A, 0x6A7284, 0x23262E}, [3]int{0x7A5CFF, 0x3B6CF6, 0x172466}, 0xFF6FB5, 0x3DE0FF}
 	phoneRose     = phoneStyle{"Rose Gold", [4]int{0xFBE3D6, 0xC08A75, 0xE9BFAD, 0x7A4E42}, [3]int{0xFFB08A, 0xFF6A88, 0x6E2456}, 0xFFE66F, 0xFF9AE0}
 	phoneMint     = phoneStyle{"Mint", [4]int{0xE3F7F0, 0x6E9E90, 0xB5DDCF, 0x355A50}, [3]int{0x6FF2CF, 0x19B3A5, 0x0A4A57}, 0xB4FF6F, 0x3DE0FF}
+
+	phoneGraphite    = phoneStyle{"Graphite", [4]int{0x8A909C, 0x3A3E46, 0x5E646E, 0x1A1C21}, [3]int{0x6A7384, 0x2F3540, 0x0E1116}, 0x3DE0FF, 0x8A5CFF}
+	phoneUltraviolet = phoneStyle{"Ultraviolet", [4]int{0xD8C2FF, 0x6B45C9, 0xB79AF5, 0x32206B}, [3]int{0xB18CFF, 0x6E3DE8, 0x22104F}, 0xFF4FD8, 0x6CF6FF}
+	phoneSunset      = phoneStyle{"Sunset Gold", [4]int{0xFFF0C2, 0xC9A24A, 0xEFD79A, 0x77571A}, [3]int{0xFFD98A, 0xE8952E, 0x5E2A0A}, 0xFFF06F, 0xFF9A4F}
 )
 
 func phone() *scene { return phoneWith(phoneMidnight) }
@@ -376,6 +704,10 @@ var (
 	laptopSpaceGray = laptopStyle{"Space Gray", [3]int{0xB5B9C0, 0x6E737B, 0x3C4047}, [2]int{0xA7ABB2, 0x5A5E66}, 0x2E3136}
 	laptopMidnight  = laptopStyle{"Midnight", [3]int{0x6A7A9E, 0x33405F, 0x1A2238}, [2]int{0x55648A, 0x252F4A}, 0x131A2C}
 	laptopStarlight = laptopStyle{"Starlight", [3]int{0xFFF3DE, 0xE3D2B4, 0xA99474}, [2]int{0xF7EBD6, 0xC4AF8E}, 0x8C7A5E}
+
+	laptopRose = laptopStyle{"Rose Gold", [3]int{0xFFE3D4, 0xE8B49B, 0xB07A62}, [2]int{0xFBD9C8, 0xCE9B82}, 0x8E6150}
+	laptopJet  = laptopStyle{"Jet Black", [3]int{0x4A4E56, 0x24272C, 0x0C0D10}, [2]int{0x3A3D44, 0x17181C}, 0x0A0B0D}
+	laptopSky  = laptopStyle{"Sky Blue", [3]int{0xD6EAFB, 0x9CC3E6, 0x5E86AE}, [2]int{0xC7E0F7, 0x7FA6C9}, 0x4A6A8C}
 )
 
 func laptop() *scene { return laptopWith(laptopSilver) }
@@ -486,6 +818,10 @@ var (
 	desktopToxic   = desktopStyle{"Toxic", [2]int{0x505869, 0x1C1F26}, 0x121419, 0x7CFF4F, 0x2FE07A, 0xFFE34F, [2]int{0xD6FFB8, 0x2FB344}, [2]int{0xC8FF6F, 0x21A34B}, 0x7CFF4F}
 	desktopInferno = desktopStyle{"Inferno", [2]int{0x5A4A4A, 0x1F1616}, 0x140E0E, 0xFF4F4F, 0xFF7A3D, 0xFFC23D, [2]int{0xFFD0B3, 0xD6452B}, [2]int{0xFFD06C, 0xE8452B}, 0xFF7A3D}
 	desktopFrost   = desktopStyle{"Frost", [2]int{0xF4F6F9, 0xAEB5C0}, 0xDDE3EA, 0xFFFFFF, 0x8FD8FF, 0x3DB8FF, [2]int{0xEAF7FF, 0x7FB8E0}, [2]int{0xBFEFFF, 0x3D9BE0}, 0x8FD8FF}
+
+	desktopAqua   = desktopStyle{"Aqua", [2]int{0x3A4A5E, 0x121A22}, 0x0B1016, 0x3DE0FF, 0x2B9BF6, 0x6CF6D8, [2]int{0xB3F0FF, 0x2B7BE4}, [2]int{0x6CF6FF, 0x1F6AD6}, 0x3DE0FF}
+	desktopSakura = desktopStyle{"Sakura", [2]int{0xF7DCE6, 0xC993A8}, 0xF0CBDA, 0xFF9ACB, 0xFF6FB5, 0xFFD1E3, [2]int{0xFFE3EE, 0xE86FA8}, [2]int{0xFFB3D4, 0xE8448F}, 0xFF6FB5}
+	desktopMidas  = desktopStyle{"Midas", [2]int{0x6E5A2E, 0x241C0C}, 0x14100A, 0xFFD24A, 0xFFB03D, 0xFFF0B8, [2]int{0xFFEEB8, 0xC9962E}, [2]int{0xFFD98A, 0xB8801A}, 0xFFD24A}
 )
 
 func fan(s *scene, parent int, st desktopStyle, x, y float64, phase float64) {
@@ -581,6 +917,8 @@ var (
 	serverClassic = serverStyle{"Data Server", [3]int{0x5A6376, 0x363D4B, 0x1A1D25}, [2]int{0x5A6375, 0x2B303B}, [2]int{0x4CFF8A, 0x49B6FF}, 0x3DE0FF}
 	serverNeon    = serverStyle{"Neon Rack", [3]int{0x5B4A9A, 0x302658, 0x150F2B}, [2]int{0x4A3C85, 0x241C47}, [2]int{0xFF4FD8, 0x3DE0FF}, 0xFF4FD8}
 	serverCrimson = serverStyle{"Crimson Rack", [3]int{0x7A3542, 0x4A1F28, 0x220C11}, [2]int{0x6E2C38, 0x3A161D}, [2]int{0xFF4D4D, 0xFFB23D}, 0xFF7A5C}
+	serverArctic  = serverStyle{"Arctic Rack", [3]int{0xE6EEF6, 0xA9BACB, 0x5E7180}, [2]int{0xD3DEE8, 0x8FA2B2}, [2]int{0x3DE0FF, 0xFFFFFF}, 0x3DB8FF}
+	serverEmerald = serverStyle{"Emerald Rack", [3]int{0x3E8A6E, 0x1E4A3C, 0x0A1C17}, [2]int{0x2A5F4C, 0x123227}, [2]int{0x4CFF8A, 0xB8FF6F}, 0x4CFF8A}
 	serverQuantum = serverStyle{"Quantum Core", [3]int{0xFFE08A, 0xC99A2E, 0x6E4A0E}, [2]int{0x3A2C5E, 0x1A1230}, [2]int{0xB18CFF, 0xFFFFFF}, 0xFFD166}
 )
 
@@ -662,6 +1000,10 @@ var (
 	headphonesSky       = headphonesStyle{"Sky Blue", [2]int{0xB2D3EF, 0x6E9CC6}, [3]int{0xE6F1FA, 0xA5C5E1, 0x5E83A8}, 0x93B8DA}
 	headphonesPink      = headphonesStyle{"Pink", [2]int{0xFAD2D9, 0xE39AA8}, [3]int{0xFEEAEE, 0xF2BCC6, 0xC77F8D}, 0xF0B7C1}
 	headphonesGreen     = headphonesStyle{"Green", [2]int{0xC8E2C0, 0x86B07B}, [3]int{0xE6F2E2, 0xB0D1A6, 0x6E9763}, 0xA3C898}
+
+	headphonesLavender = headphonesStyle{"Lavender", [2]int{0xDCCBF2, 0xA98BD1}, [3]int{0xF0E6FB, 0xC7B0E4, 0x8268A8}, 0xCBB8E8}
+	headphonesSunset   = headphonesStyle{"Sunset", [2]int{0xF7C6A8, 0xD4855C}, [3]int{0xFFE0CC, 0xF0AE86, 0xB56A46}, 0xEFB596}
+	headphonesGraphite = headphonesStyle{"Graphite", [2]int{0x7A7F88, 0x44484F}, [3]int{0xB5BAC2, 0x80858E, 0x44484F}, 0x5E636B}
 )
 
 func headphones() *scene { return headphonesWith(headphonesMidnight) }
@@ -769,6 +1111,9 @@ var (
 	coinSilver   = coinStyle{"Silver", 0xEDEDEE, 0xA8ACB2, 0x62666D}
 	coinGold     = coinStyle{"Gold", 0xFFF4B8, 0xFFCC3D, 0xD98F12}
 	coinPlatinum = coinStyle{"Platinum", 0xF2FAFF, 0xBFD8EC, 0x6F90AE}
+	coinRose     = coinStyle{"Rose Gold", 0xFFE3EE, 0xEE8FA8, 0xA84A66}
+	coinEmerald  = coinStyle{"Emerald", 0xCFF7E2, 0x3FC78A, 0x136B47}
+	coinSapphire = coinStyle{"Sapphire", 0xD4E8FF, 0x4A8FE0, 0x1B3F80}
 )
 
 func coin() *scene { return coinWith(coinCopper) }
@@ -867,6 +1212,8 @@ var (
 	walletNoir    = walletStyle{"Noir", [2]int{0x2E3035, 0x111215}, [2]int{0x5A5E66, 0x23252A}, [2]int{0x44474E, 0x1A1B1F}, 0xC9CED6, snapSilver, walletCards}
 	walletCrimson = walletStyle{"Crimson", [2]int{0x6E1A22, 0x3A0A0F}, [2]int{0xD45252, 0x7A1C22}, [2]int{0xA8323A, 0x5E1217}, 0xFFD6A8, snapGold, walletCoins}
 	walletNavy    = walletStyle{"Navy", [2]int{0x1C3566, 0x0C1A36}, [2]int{0x4174CC, 0x1D3A75}, [2]int{0x2E5AA8, 0x152B55}, 0xFFE0A8, snapGold, walletForeign}
+	walletForest  = walletStyle{"Forest", [2]int{0x274A2E, 0x0E2016}, [2]int{0x5E9463, 0x274A2E}, [2]int{0x3E6E44, 0x1A3320}, 0xD8F0C8, snapSilver, walletCards}
+	walletSand    = walletStyle{"Sand", [2]int{0xA98A5A, 0x6E5636}, [2]int{0xEBD3A8, 0xB8975E}, [2]int{0xD9BC8A, 0x9A7A4E}, 0x6E5426, snapGold, walletMixed}
 )
 
 // bobbing adds one contents layer that floats gently in and out of the wallet.
@@ -920,6 +1267,18 @@ func walletCoins(s *scene, root int) {
 func walletForeign(s *scene, root int) {
 	bobbing(s, root, "bill", -42, -96, 10, 2.5, 0, bill(-42, -96, -8, billPurple))
 	bobbing(s, root, "bill", 36, -110, 10, 2.5, 0.45, bill(36, -110, 7, billOrange))
+}
+
+// walletMixed is a bit of everything: a note, a card and a short coin stack.
+func walletMixed(s *scene, root int) {
+	bobbing(s, root, "bill", -74, -92, 10, 2.5, 0, bill(-74, -92, -10, billOrange))
+	bobbing(s, root, "card", 8, -108, 9, 2, 0.35, card(8, -108, 4, [2]int{0xFFE9A8, 0xC9962E}, false))
+	var stack []any
+	for i := 0; i < 3; i++ {
+		stack = append(stack, coinDisc(98, -88-15*float64(i))...)
+	}
+	bobbing(s, root, "coins", 98, -88, 8, 0, 0.7, G(stack...))
+	s.sparkle(root, 132, -150, 18, hx(0xFFF1B0), 0.4)
 }
 
 func wallet() *scene { return walletWith(walletClassic) }
@@ -990,6 +1349,8 @@ var (
 	safeSteel    = safeStyle{"Money Safe", [3]int{0x7A8596, 0x4A5362, 0x232830}, [2]int{0x8894A5, 0x3A424E}, [2]int{0x2E343E, 0xB4BECB}}
 	safeGold     = safeStyle{"Gold", [3]int{0xF5D27A, 0xC9962E, 0x6E4A10}, [2]int{0xFFE39A, 0xA87720}, [2]int{0x6E4A10, 0xFFF0B8}}
 	safeObsidian = safeStyle{"Obsidian", [3]int{0x4A4F5C, 0x23262E, 0x0B0C10}, [2]int{0x3E4350, 0x121418}, [2]int{0x08090C, 0x6A7080}}
+	safeEmerald  = safeStyle{"Emerald", [3]int{0x6EC9A4, 0x2A6350, 0x0E2B22}, [2]int{0x5CB08E, 0x225245}, [2]int{0x0C241D, 0x9FE0C6}}
+	safeRose     = safeStyle{"Rose Gold", [3]int{0xF7CFC0, 0xD49279, 0x7A4A38}, [2]int{0xFFDECE, 0xB8735A}, [2]int{0x6E4030, 0xFFE9DE}}
 )
 
 func safe() *scene { return safeWith(safeSteel) }

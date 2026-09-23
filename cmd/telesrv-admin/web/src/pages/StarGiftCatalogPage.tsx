@@ -144,6 +144,10 @@ export function StarGiftCatalogPage() {
 
   useEffect(() => { void load(); }, []);
 
+  // Built-in pack import matches gifts by title, so the pack cards can say
+  // what a pack would actually add by comparing against the catalog.
+  const catalogTitles = useMemo(() => new Set(gifts.map((gift) => gift.Title)), [gifts]);
+
   const visibleGifts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return gifts;
@@ -360,12 +364,12 @@ export function StarGiftCatalogPage() {
       </>}
 
       {tab === "import" && <>
-      <BuiltinGiftPacks onImported={() => void load()} />
+      <BuiltinGiftPacks catalogTitles={catalogTitles} onImported={() => void load()} />
 
       <section className="section-block">
         <h2>{"Upload a pack"}</h2>
         <div className="card-body">
-          <p className="gift-import-note"><span>{"A community-authored pack: a .zip with pack.json at the root plus the .tgs/Lottie assets it references. See "}<code>{"docs/gift-packs.md"}</code>{" for the format and its rlottie caveats."}</span></p>
+          <p className="gift-import-note"><span>{"A community-authored pack: a .zip with pack.json at the root plus the .tgs/Lottie assets it references. Dry-run first — it parses the manifest and validates every animation before anything is written. Gifts already in the catalog (matched by title) are skipped. Build your own with the step-by-step guide in "}<code>{"docs/gift-packs.md"}</code>{"."}</span></p>
           <label className={`gift-file-picker ${packFile ? "has-file" : ""}`}>
             <input type="file" accept=".zip,application/zip" onChange={(e) => { setPackFile(e.target.files?.[0] ?? null); setPackPreview(null); }} />
             <span className="gift-file-icon"><FileArchive size={22} /></span>

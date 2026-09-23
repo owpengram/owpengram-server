@@ -8,7 +8,83 @@ opens every gift's animation before you import) or your own `.zip` upload.
 
 Re-importing a pack is always safe: a gift already present by title is
 skipped, never duplicated, so handing an operator an updated pack that only
-adds a few new gifts to one they already imported just works.
+adds a few new gifts to one they already imported just works. The pack cards
+say so up front -- each one shows how many of its gifts the catalog already
+has, and the Import button offers only what is actually new.
+
+## Build your own pack: the short version
+
+This is the whole loop, start to finish. Everything in it is expanded on
+further down.
+
+**1. Draw the animations.** One Lottie per gift, plus one per model and per
+pattern if the gift is upgradeable. Hard requirements the server checks:
+
+| Rule | Value |
+| --- | --- |
+| Canvas | exactly 512 × 512 |
+| Frame rate | `> 0`, at most 120 |
+| Duration | `op > ip >= 0`, at most 30 seconds |
+| Decompressed JSON | at most 4 MiB, at least one layer |
+| Compressed `.tgs` | at most 512 KiB |
+| Expressions (`"x"`) | rejected |
+| Image assets, external URLs | rejected |
+| Single file in the pack `.zip` | at most 8 MiB; whole `.zip` at most 32 MiB |
+
+Read the rlottie section below **before** drawing anything -- the renderer
+real clients use is stricter than any browser preview, and the server cannot
+catch that for you.
+
+**2. Convert to `.tgs`** (optional -- plain `.json` uploads fine and is
+normalized server side):
+
+```bash
+gzip -9 -c gift.json > gift.tgs
+```
+
+**3. Write `pack.json`** at the archive root, referencing every animation by
+its path inside the zip. Full field reference is below; the minimum is:
+
+```json
+{ "pack_name": "My Pack", "gifts": [ { "title": "My Gift", "stars": 25, "base_animation": "gift.json" } ] }
+```
+
+**4. Zip it** with `pack.json` at the root:
+
+```bash
+zip -r mypack.zip pack.json gift.json models/ patterns/
+```
+
+**5. Dry-run it** in **StarGift Catalog → Import Pack → Upload a pack**.
+The dry run parses the manifest, resolves and validates every animation and
+runs the same limited/auction/craft checks a real import does, then shows
+exactly what would be created. Nothing is written until you confirm.
+
+**6. Confirm, then look at it in a real client** -- the admin preview uses a
+browser Lottie player, which is *not* proof the pack renders in the app.
+
+### Checklist before you hand a pack to someone
+
+- Every gift `title` is unique inside the pack, and distinct from what the
+  target catalog already has (same title = skipped as already imported).
+- Every path in `pack.json` resolves inside the zip, relative to its root.
+- Upgradeable gifts have **at least two selectable models, two patterns and
+  two backdrops** (craft-only models do not count towards that).
+- `slug_prefix` is set per upgradeable gift and is not reused across gifts
+  in the same pack. If it collides with a prefix already in use on the
+  target server, the import moves to `<prefix>-2` on its own.
+- You watched every animation loop in a real rlottie client, not only in a
+  browser.
+
+### When a dry run fails
+
+| Message | What it means |
+| --- | --- |
+| `open "x.json" in pack` | The path in `pack.json` does not exist at that exact path in the zip (check the archive root, and case). |
+| `base animation: stargift: invalid animation file` | The animation broke one of the hard rules in the table above -- most often not 512×512, or an expression left in by the exporter. |
+| `external assets are not allowed` | The Lottie references an image or a URL. Convert the artwork to vector shapes. |
+| `auction requires gifts_per_round > 0` and friends | An auction gift is missing `auction_slug`, `gifts_per_round` or `availability_total`. |
+| `... preview requires at least two selectable attributes` | An upgrade pool has too few selectable models/patterns/backdrops. |
 
 ## Read this before you build one: rlottie, not a browser preview
 
@@ -89,7 +165,7 @@ embed rlottie itself, which it doesn't. So the practical rule is:
 Built-in packs live in `internal/seed/giftpacks`, drawn in Go with the
 Lottie DSL in `lottie.go`, which emits only structures copied from a real
 Telegram export (so all three rules above hold by construction). To add one,
-create a file next to `grindkit.go` whose `init()` calls `register(...)`
+create a file next to `firstpack.go` whose `init()` calls `register(...)`
 with an id, name, author, description, an icon (the slug of one of its
 gifts) and its gifts. It then appears in the admin panel automatically.
 

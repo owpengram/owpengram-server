@@ -804,8 +804,18 @@
 .gift-pack-mods { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 4px; }
 .gift-pack-mod { display: grid; width: 22px; height: 22px; place-items: center; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 50%; }
 
+.gift-pack-status { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 7px; color: var(--muted); font-size: 10px; font-weight: 800; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 999px; vertical-align: middle; }
+.gift-pack-status.part { color: var(--warn); }
+.gift-pack-status.all { color: var(--good); }
+.gift-pack-modal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.gift-pack-modal-toolbar .searchbox { flex: 1 1 220px; }
+.gift-pack-tile { position: relative; }
+.gift-pack-tile.imported { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.gift-pack-tile-check { position: absolute; top: 6px; right: 6px; display: grid; width: 18px; height: 18px; place-items: center; color: #fff; background: var(--good); border-radius: 50%; }
+.gift-detail-nav { display: flex; align-items: center; gap: 8px; }
+.gift-detail-position { margin-right: auto; color: var(--muted); font-size: 11px; font-weight: 700; }
+
 .gift-detail { display: grid; gap: 12px; padding-top: 4px; }
-.gift-detail-back { justify-self: start; }
 .gift-detail-head { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .gift-detail-hero { display: grid; flex: 0 0 176px; height: 176px; place-items: center; background: radial-gradient(circle at 50% 42%, var(--surface-soft), var(--panel-strong)); border: 1px solid var(--line); border-radius: 14px; }
 .gift-detail-hero .gift-pack-anim { width: 160px; height: 160px; }

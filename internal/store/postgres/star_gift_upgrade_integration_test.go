@@ -66,9 +66,9 @@ func TestStarGiftPrepaidUpgradeServiceMessageIsAuthoredByOwner(t *testing.T) {
 	// published, so these rows stay in the dedicated test database.
 	gifts := NewStarGiftStore(pool)
 	svc := stargiftsapp.NewService(gifts, &upgradeTestBlobs{store: map[string][]byte{}}, 2)
-	manifest, assets, ok := giftpacks.Manifest("grind-kit")
+	manifest, assets, ok := giftpacks.Manifest("first-pack")
 	if !ok {
-		t.Fatal("grind-kit pack missing")
+		t.Fatal("first-pack pack missing")
 	}
 	var phone giftpack.GiftSpec
 	for _, g := range manifest.Gifts {

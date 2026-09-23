@@ -1,6 +1,6 @@
-import { ArrowLeft, Boxes, Cake, Crown, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, Repeat, Sparkles, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Boxes, Cake, Check, ChevronLeft, ChevronRight, Crown, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, Repeat, Search, Sparkles, UserRound, X, type LucideIcon } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -37,11 +37,27 @@ function giftCount(pack: BuiltinGiftPack) {
   return `${pack.gifts.length} ${pack.gifts.length === 1 ? "gift" : "gifts"} · by ${pack.author}`;
 }
 
-function ImportPackButton({ pack, onDone }: { pack: BuiltinGiftPack; onDone: () => void }) {
+// packStatus counts how much of a pack the catalog already holds. Import
+// matches gifts by title, so the same comparison tells the operator up front
+// what pressing Import would actually add.
+function packStatus(pack: BuiltinGiftPack, catalogTitles: Set<string>) {
+  const present = pack.gifts.filter((gift) => catalogTitles.has(gift.title)).length;
+  return { present, total: pack.gifts.length, missing: pack.gifts.length - present };
+}
+
+function PackStatusBadge({ status }: { status: { present: number; total: number; missing: number } }) {
+  if (status.present === 0) return <span className="gift-pack-status">{"Not imported"}</span>;
+  if (status.missing === 0) return <span className="gift-pack-status all"><Check size={12} /> {"All imported"}</span>;
+  return <span className="gift-pack-status part">{`${status.present} of ${status.total} imported`}</span>;
+}
+
+function ImportPackButton({ pack, status, onDone }: { pack: BuiltinGiftPack; status: { missing: number; total: number }; onDone: () => void }) {
+  const nothingNew = status.missing === 0;
   return (
     <ActionButton
       tone="primary"
-      label={`Import ${pack.name}`}
+      disabled={nothingNew}
+      label={nothingNew ? "Nothing to import" : status.missing === status.total ? `Import ${pack.name}` : `Import ${status.missing} new`}
       icon={<Boxes size={15} />}
       path="/api/actions/import-builtin-gift-pack"
       payload={() => ({ pack_id: pack.id })}
@@ -81,18 +97,33 @@ function chance(attr: { permille: number; rarity?: string }, pool: { permille: n
   return `${pct.toFixed(pct < 10 ? 1 : 0).replace(/\.0$/, "")}%`;
 }
 
-function GiftDetail({ pack, gift, onBack }: { pack: BuiltinGiftPack; gift: BuiltinGift; onBack: () => void }) {
+function GiftDetail({ pack, gift, inCatalog, siblings, onSelect, onBack }: {
+  pack: BuiltinGiftPack;
+  gift: BuiltinGift;
+  inCatalog: boolean;
+  siblings: BuiltinGift[];
+  onSelect: (slug: string) => void;
+  onBack: () => void;
+}) {
   const upgrade = gift.upgrade;
   const flags = gift.flags ?? [];
   const firstBackdrop = upgrade?.backdrops[0];
   const modelBg = firstBackdrop ? `radial-gradient(circle at 50% 42%, ${firstBackdrop.center}, ${firstBackdrop.edge})` : undefined;
+  const at = siblings.findIndex((s) => s.slug === gift.slug);
+  const prev = at > 0 ? siblings[at - 1] : null;
+  const next = at >= 0 && at < siblings.length - 1 ? siblings[at + 1] : null;
   return (
     <div className="gift-detail">
-      <button className="btn compact-btn gift-detail-back" type="button" onClick={onBack}><ArrowLeft size={14} /> {"All gifts"}</button>
+      <div className="gift-detail-nav">
+        <button className="btn compact-btn" type="button" onClick={onBack}><ArrowLeft size={14} /> {"All gifts"}</button>
+        <span className="gift-detail-position">{at >= 0 ? `${at + 1} / ${siblings.length}` : ""}</span>
+        <button className="btn compact-btn" type="button" disabled={!prev} onClick={() => prev && onSelect(prev.slug)} aria-label={"Previous gift"}><ChevronLeft size={14} /> {"Prev"}</button>
+        <button className="btn compact-btn" type="button" disabled={!next} onClick={() => next && onSelect(next.slug)} aria-label={"Next gift"}>{"Next"} <ChevronRight size={14} /></button>
+      </div>
       <div className="gift-detail-head">
         <div className="gift-detail-hero"><PackAnimation packID={pack.id} slug={gift.slug} /></div>
         <div className="gift-detail-info">
-          <h3>{gift.title}</h3>
+          <h3>{gift.title}{inCatalog && <span className="gift-pack-status all"><Check size={12} /> {"In catalog"}</span>}</h3>
           <div className="gift-detail-price">
             <strong>⭐ {gift.stars}</strong>
             <span>{`converts to ⭐ ${gift.convert_stars}`}</span>
@@ -143,10 +174,18 @@ function GiftDetail({ pack, gift, onBack }: { pack: BuiltinGiftPack; gift: Built
   );
 }
 
-function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack; onClose: () => void; onImported: () => void }) {
+function PackPreviewModal({ pack, catalogTitles, onClose, onImported }: { pack: BuiltinGiftPack; catalogTitles: Set<string>; onClose: () => void; onImported: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const body = useRef<HTMLDivElement>(null);
   const selectedGift = pack.gifts.find((gift) => gift.slug === selected) ?? null;
+  const status = packStatus(pack, catalogTitles);
+  const needle = query.trim().toLowerCase();
+  // A pack can run to a dozen gifts; the filter matches the title and the
+  // mechanic labels, so "auction" or "upgradeable" narrows it down too.
+  const shown = useMemo(() => !needle ? pack.gifts : pack.gifts.filter((gift) =>
+    gift.title.toLowerCase().includes(needle) || (gift.flags ?? []).some((flag) => flag.toLowerCase().includes(needle))
+  ), [pack.gifts, needle]);
 
   useEffect(() => { body.current?.scrollTo({ top: 0 }); }, [selected]);
 
@@ -171,17 +210,33 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
             <div>
               <div className="eyebrow">{"Built-in gift pack"}</div>
               <h2>{pack.name}</h2>
-              <span className="gift-pack-meta">{giftCount(pack)}</span>
+              <span className="gift-pack-meta">{giftCount(pack)} <PackStatusBadge status={status} /></span>
             </div>
           </div>
           <button className="icon-btn" type="button" onClick={onClose} aria-label={"Close"}><X size={15} /></button>
         </div>
         <div className="gift-pack-modal-body" ref={body}>
-          {selectedGift ? <GiftDetail pack={pack} gift={selectedGift} onBack={() => setSelected(null)} /> : <>
+          {selectedGift ? (
+            <GiftDetail
+              pack={pack}
+              gift={selectedGift}
+              inCatalog={catalogTitles.has(selectedGift.title)}
+              // Prev/Next walks whatever the filter left on screen, so the
+              // arrows match the grid the gift was opened from.
+              siblings={shown.some((gift) => gift.slug === selectedGift.slug) ? shown : pack.gifts}
+              onSelect={setSelected}
+              onBack={() => setSelected(null)}
+            />
+          ) : <>
             <p className="gift-pack-desc">{pack.description}</p>
+            <div className="gift-pack-modal-toolbar">
+              <label className="searchbox"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={"Filter by gift title or mechanic"} /></label>
+              <span className="gift-pack-meta">{`Showing ${shown.length} of ${pack.gifts.length}`}</span>
+            </div>
             <div className="gift-pack-preview-grid">
-              {pack.gifts.map((gift) => (
-                <button className="gift-pack-tile" type="button" key={gift.slug} onClick={() => setSelected(gift.slug)} aria-label={`${gift.title} details`}>
+              {shown.map((gift) => (
+                <button className={`gift-pack-tile ${catalogTitles.has(gift.title) ? "imported" : ""}`} type="button" key={gift.slug} onClick={() => setSelected(gift.slug)} aria-label={`${gift.title} details`}>
+                  {catalogTitles.has(gift.title) && <span className="gift-pack-tile-check" title={"Already in the catalog"}><Check size={12} /></span>}
                   <PackAnimation packID={pack.id} slug={gift.slug} />
                   <span className="gift-pack-tile-title">{gift.title}</span>
                   <span className="gift-pack-tile-price">⭐ {gift.stars}</span>
@@ -192,12 +247,13 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
                   )}
                 </button>
               ))}
+              {shown.length === 0 && <p className="gift-pack-desc">{"No gift matches that filter."}</p>}
             </div>
           </>}
         </div>
         <div className="modal-actions">
           <button className="btn" type="button" onClick={onClose}>{"Close"}</button>
-          <ImportPackButton pack={pack} onDone={() => { onClose(); onImported(); }} />
+          <ImportPackButton pack={pack} status={status} onDone={() => { onClose(); onImported(); }} />
         </div>
       </section>
     </div>,
@@ -208,7 +264,7 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
 // Built-in packs ship inside the server (internal/seed/giftpacks) and import
 // through the same path as an uploaded pack; gifts already in the catalog by
 // title are skipped, so importing again is safe.
-export function BuiltinGiftPacks({ onImported }: { onImported: () => void }) {
+export function BuiltinGiftPacks({ catalogTitles, onImported }: { catalogTitles: Set<string>; onImported: () => void }) {
   const [packs, setPacks] = useState<BuiltinGiftPack[] | null>(null);
   const [error, setError] = useState("");
   const [previewPack, setPreviewPack] = useState<BuiltinGiftPack | null>(null);
@@ -227,26 +283,29 @@ export function BuiltinGiftPacks({ onImported }: { onImported: () => void }) {
         {packs?.length === 0 && <p className="gift-pack-desc">{"No built-in packs."}</p>}
         {packs && packs.length > 0 && (
           <div className="gift-pack-grid">
-            {packs.map((pack) => (
-              <article className="gift-pack-card" key={pack.id}>
-                <button className="gift-pack-cover" type="button" onClick={() => setPreviewPack(pack)} aria-label={`Preview ${pack.name}`}>
-                  <PackAnimation packID={pack.id} slug={pack.icon} />
-                </button>
-                <div className="gift-pack-info">
-                  <strong className="gift-pack-name">{pack.name}</strong>
-                  <span className="gift-pack-meta">{giftCount(pack)}</span>
-                  <p className="gift-pack-desc">{pack.description}</p>
-                </div>
-                <div className="gift-pack-actions">
-                  <button className="btn" type="button" onClick={() => setPreviewPack(pack)}><Eye size={15} /> {"Preview"}</button>
-                  <ImportPackButton pack={pack} onDone={onImported} />
-                </div>
-              </article>
-            ))}
+            {packs.map((pack) => {
+              const status = packStatus(pack, catalogTitles);
+              return (
+                <article className="gift-pack-card" key={pack.id}>
+                  <button className="gift-pack-cover" type="button" onClick={() => setPreviewPack(pack)} aria-label={`Preview ${pack.name}`}>
+                    <PackAnimation packID={pack.id} slug={pack.icon} />
+                  </button>
+                  <div className="gift-pack-info">
+                    <strong className="gift-pack-name">{pack.name}</strong>
+                    <span className="gift-pack-meta">{giftCount(pack)} <PackStatusBadge status={status} /></span>
+                    <p className="gift-pack-desc">{pack.description}</p>
+                  </div>
+                  <div className="gift-pack-actions">
+                    <button className="btn" type="button" onClick={() => setPreviewPack(pack)}><Eye size={15} /> {"Preview"}</button>
+                    <ImportPackButton pack={pack} status={status} onDone={onImported} />
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </div>
-      {previewPack && <PackPreviewModal pack={previewPack} onClose={() => setPreviewPack(null)} onImported={onImported} />}
+      {previewPack && <PackPreviewModal pack={previewPack} catalogTitles={catalogTitles} onClose={() => setPreviewPack(null)} onImported={onImported} />}
     </section>
   );
 }
