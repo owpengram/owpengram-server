@@ -12,7 +12,8 @@ import (
 
 // onPaymentsGetPremiumGiftCodeOptions answers the Settings -> Premium ->
 // Gift storefront: one Stars-denominated option per enabled plan. Fiat/app
-// store checkout is not implemented, so every option is Stars-only.
+// store checkout is not implemented, so every option is Stars-only --
+// which DrKLO cannot consume at all, see the client guard below.
 func (r *Router) onPaymentsGetPremiumGiftCodeOptions(
 	ctx context.Context,
 	req *tg.PaymentsGetPremiumGiftCodeOptionsRequest,
@@ -37,6 +38,20 @@ func (r *Router) onPaymentsGetPremiumGiftCodeOptions(
 			}
 			return nil, tgerr.New(400, "BOOST_PEER_INVALID")
 		}
+	}
+	// DrKLO builds its premium tiers from the *fiat* options and treats an
+	// "XTR" one only as a companion price of a fiat tier
+	// (GiftSheet.updatePremiumTiers skips every XTR option). A Stars-only
+	// catalog therefore leaves its tier list empty, and the empty-tier branch
+	// re-reads the now-cached options synchronously and calls itself again:
+	// GiftSheet.updatePremiumTiers -> BoostRepository.loadGiftOptions ->
+	// updatePremiumTiers -> ... until the app dies with StackOverflowError
+	// the moment "send a gift" is tapped. Android never shows the section
+	// anyway (userFull.disallowed_gifts.disallow_premium_gifts, see
+	// users.go), so an empty catalog costs it nothing, while TDesktop keeps
+	// consuming the Stars options for its own Gift Premium flow.
+	if ClientTypeFrom(ctx) == ClientTypeAndroid {
+		return []tg.PremiumGiftCodeOption{}, nil
 	}
 	plans, err := r.deps.Premium.Plans(ctx)
 	if err != nil {
