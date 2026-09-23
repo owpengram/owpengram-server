@@ -74,21 +74,91 @@ func (r *Router) registerPayments(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.PaymentsConvertStarGiftRequest](d, tlprofile.SemanticMethodPaymentsConvertStarGift, func(ctx context.Context, layerRequest *tg.PaymentsConvertStarGiftRequest) (any, error) {
 		return r.onPaymentsConvertStarGift(ctx, layerRequest.Stargift)
 	})
-	// Read-only listing calls the stock client always makes when opening the
-	// gifts panel, regardless of whether the viewer's account has any
-	// auctions/collections -- unlike bidding/craft/resale (the actual
-	// advanced surface, still deliberately unregistered), these move no
-	// money and already degrade to an empty list when nothing exists. Not
-	// registering them left the whole gifts panel stuck on "Loading..."
-	// even for a plain saved gift, since the client waits on both before it
-	// renders anything.
 	registerRPC[*tg.PaymentsGetStarGiftActiveAuctionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftActiveAuctions, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftActiveAuctionsRequest) (any, error) {
 		return r.onPaymentsGetStarGiftActiveAuctions(ctx, layerRequest)
 	})
 	registerRPC[*tg.PaymentsGetStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftCollections, func(ctx context.Context, layerRequest *tg.PaymentsGetStarGiftCollectionsRequest) (any, error) {
 		return r.onPaymentsGetStarGiftCollections(ctx, layerRequest)
 	})
+	r.registerStarGiftLifecycle(d)
+}
 
+// registerStarGiftLifecycle wires everything past the plain buy/save/convert
+// flow: collectible upgrade, crafting, resale and offers, transfer, auction
+// state and profile collections. The paid steps (upgrade, transfer, resale,
+// auction bid) settle through getPaymentForm/sendStarsForm above; these are
+// the calls the client makes around them. Leaving any of them unregistered
+// makes the matching client button silently do nothing (NOT_IMPLEMENTED).
+func (r *Router) registerStarGiftLifecycle(d *tlprofile.Dispatcher) {
+	registerRPC[*tg.PaymentsCheckCanSendGiftRequest](d, tlprofile.SemanticMethodPaymentsCheckCanSendGift, func(ctx context.Context, req *tg.PaymentsCheckCanSendGiftRequest) (any, error) {
+		return r.onPaymentsCheckCanSendGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetSavedStarGiftRequest](d, tlprofile.SemanticMethodPaymentsGetSavedStarGift, func(ctx context.Context, req *tg.PaymentsGetSavedStarGiftRequest) (any, error) {
+		return r.onPaymentsGetSavedStarGift(ctx, req.Stargift)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftUpgradePreviewRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftUpgradePreview, func(ctx context.Context, req *tg.PaymentsGetStarGiftUpgradePreviewRequest) (any, error) {
+		return r.onPaymentsGetStarGiftUpgradePreview(ctx, req.GiftID)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftUpgradeAttributesRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftUpgradeAttributes, func(ctx context.Context, req *tg.PaymentsGetStarGiftUpgradeAttributesRequest) (any, error) {
+		return r.onPaymentsGetStarGiftUpgradeAttributes(ctx, req.GiftID)
+	})
+	registerRPC[*tg.PaymentsUpgradeStarGiftRequest](d, tlprofile.SemanticMethodPaymentsUpgradeStarGift, func(ctx context.Context, req *tg.PaymentsUpgradeStarGiftRequest) (any, error) {
+		return r.onPaymentsUpgradeStarGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetUniqueStarGiftRequest](d, tlprofile.SemanticMethodPaymentsGetUniqueStarGift, func(ctx context.Context, req *tg.PaymentsGetUniqueStarGiftRequest) (any, error) {
+		return r.onPaymentsGetUniqueStarGift(ctx, req.Slug)
+	})
+	registerRPC[*tg.PaymentsGetUniqueStarGiftValueInfoRequest](d, tlprofile.SemanticMethodPaymentsGetUniqueStarGiftValueInfo, func(ctx context.Context, req *tg.PaymentsGetUniqueStarGiftValueInfoRequest) (any, error) {
+		return r.onPaymentsGetUniqueStarGiftValueInfo(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetResaleStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetResaleStarGifts, func(ctx context.Context, req *tg.PaymentsGetResaleStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetResaleStarGifts(ctx, req)
+	})
+	registerRPC[*tg.PaymentsUpdateStarGiftPriceRequest](d, tlprofile.SemanticMethodPaymentsUpdateStarGiftPrice, func(ctx context.Context, req *tg.PaymentsUpdateStarGiftPriceRequest) (any, error) {
+		return r.onPaymentsUpdateStarGiftPrice(ctx, req)
+	})
+	registerRPC[*tg.PaymentsTransferStarGiftRequest](d, tlprofile.SemanticMethodPaymentsTransferStarGift, func(ctx context.Context, req *tg.PaymentsTransferStarGiftRequest) (any, error) {
+		return r.onPaymentsTransferStarGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftWithdrawalURLRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftWithdrawalURL, func(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (any, error) {
+		return r.onPaymentsGetStarGiftWithdrawalURL(ctx, req)
+	})
+	registerRPC[*tg.PaymentsSendStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsSendStarGiftOffer, func(ctx context.Context, req *tg.PaymentsSendStarGiftOfferRequest) (any, error) {
+		return r.onPaymentsSendStarGiftOffer(ctx, req)
+	})
+	registerRPC[*tg.PaymentsResolveStarGiftOfferRequest](d, tlprofile.SemanticMethodPaymentsResolveStarGiftOffer, func(ctx context.Context, req *tg.PaymentsResolveStarGiftOfferRequest) (any, error) {
+		return r.onPaymentsResolveStarGiftOffer(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetCraftStarGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetCraftStarGifts, func(ctx context.Context, req *tg.PaymentsGetCraftStarGiftsRequest) (any, error) {
+		return r.onPaymentsGetCraftStarGifts(ctx, req)
+	})
+	registerRPC[*tg.PaymentsCraftStarGiftRequest](d, tlprofile.SemanticMethodPaymentsCraftStarGift, func(ctx context.Context, req *tg.PaymentsCraftStarGiftRequest) (any, error) {
+		return r.onPaymentsCraftStarGift(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftAuctionStateRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftAuctionState, func(ctx context.Context, req *tg.PaymentsGetStarGiftAuctionStateRequest) (any, error) {
+		return r.onPaymentsGetStarGiftAuctionState(ctx, req)
+	})
+	registerRPC[*tg.PaymentsGetStarGiftAuctionAcquiredGiftsRequest](d, tlprofile.SemanticMethodPaymentsGetStarGiftAuctionAcquiredGifts, func(ctx context.Context, req *tg.PaymentsGetStarGiftAuctionAcquiredGiftsRequest) (any, error) {
+		return r.onPaymentsGetStarGiftAuctionAcquiredGifts(ctx, req)
+	})
+	registerRPC[*tg.PaymentsToggleChatStarGiftNotificationsRequest](d, tlprofile.SemanticMethodPaymentsToggleChatStarGiftNotifications, func(ctx context.Context, req *tg.PaymentsToggleChatStarGiftNotificationsRequest) (any, error) {
+		return r.onPaymentsToggleChatStarGiftNotifications(ctx, req)
+	})
+	registerRPC[*tg.PaymentsCreateStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsCreateStarGiftCollection, func(ctx context.Context, req *tg.PaymentsCreateStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsCreateStarGiftCollection(ctx, req)
+	})
+	registerRPC[*tg.PaymentsUpdateStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsUpdateStarGiftCollection, func(ctx context.Context, req *tg.PaymentsUpdateStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsUpdateStarGiftCollection(ctx, req)
+	})
+	registerRPC[*tg.PaymentsDeleteStarGiftCollectionRequest](d, tlprofile.SemanticMethodPaymentsDeleteStarGiftCollection, func(ctx context.Context, req *tg.PaymentsDeleteStarGiftCollectionRequest) (any, error) {
+		return r.onPaymentsDeleteStarGiftCollection(ctx, req)
+	})
+	registerRPC[*tg.PaymentsReorderStarGiftCollectionsRequest](d, tlprofile.SemanticMethodPaymentsReorderStarGiftCollections, func(ctx context.Context, req *tg.PaymentsReorderStarGiftCollectionsRequest) (any, error) {
+		return r.onPaymentsReorderStarGiftCollections(ctx, req)
+	})
+	registerRPC[*tg.PaymentsToggleStarGiftsPinnedToTopRequest](d, tlprofile.SemanticMethodPaymentsToggleStarGiftsPinnedToTop, func(ctx context.Context, req *tg.PaymentsToggleStarGiftsPinnedToTopRequest) (any, error) {
+		return r.onPaymentsToggleStarGiftsPinnedToTop(ctx, req)
+	})
 }
 
 func (r *Router) onPaymentsCanPurchaseStore(ctx context.Context, _ *tg.PaymentsCanPurchaseStoreRequest) (bool, error) {

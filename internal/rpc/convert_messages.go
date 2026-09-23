@@ -150,6 +150,22 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 		return &tg.MessageActionPinMessage{}
 	case domain.MessageServiceActionStarGift:
 		return tgMessageActionStarGift(m.ServiceAction.StarGift)
+	case domain.MessageServiceActionStarGiftUnique:
+		return tgMessageActionStarGiftUniqueForViewer(m.ServiceAction.StarGiftUnique, msg.OwnerUserID)
+	case domain.MessageServiceActionStarGiftOffer:
+		action := m.ServiceAction.StarGiftOffer
+		if action == nil {
+			return &tg.MessageActionEmpty{}
+		}
+		return &tg.MessageActionStarGiftPurchaseOffer{Accepted: action.Accepted, Declined: action.Declined,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price), ExpiresAt: action.ExpiresAt}
+	case domain.MessageServiceActionStarGiftOfferDeclined:
+		action := m.ServiceAction.StarGiftOfferDeclined
+		if action == nil {
+			return &tg.MessageActionEmpty{}
+		}
+		return &tg.MessageActionStarGiftPurchaseOfferDeclined{Expired: action.Expired,
+			Gift: tgUniqueStarGift(action.Gift), Price: tgStarGiftAmount(action.Price)}
 	case domain.MessageServiceActionSetChatTheme:
 		return &tg.MessageActionSetChatTheme{
 			Theme: &tg.ChatTheme{Emoticon: m.ServiceAction.ChatThemeEmoticon},
@@ -249,6 +265,73 @@ func tgMessageServiceAction(msg domain.Message) tg.MessageActionClass {
 	default:
 		return &tg.MessageActionEmpty{}
 	}
+}
+
+// tgMessageActionStarGiftUnique projects the collectible snapshot written by
+// upgrade/craft/transfer/resale. Without it the client gets messageActionEmpty
+// ("Empty Message") and never plays the upgrade reveal.
+func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) tg.MessageActionClass {
+	if action == nil {
+		return &tg.MessageActionEmpty{}
+	}
+	out := &tg.MessageActionStarGiftUnique{
+		Upgrade: action.Upgrade, Saved: action.Saved, PrepaidUpgrade: action.PrepaidUpgrade,
+		Transferred: action.Transferred, Refunded: action.Refunded, Assigned: action.Assigned,
+		FromOffer: action.FromOffer, Craft: action.Craft,
+		Gift: tgUniqueStarGift(action.Gift),
+	}
+	// Channel-owned gifts can't export or craft; keep those markers off.
+	if action.Gift.Owner.Type == domain.PeerTypeUser && action.CanExportAt > 0 {
+		out.SetCanExportAt(action.CanExportAt)
+	}
+	if action.TransferStars > 0 {
+		out.SetTransferStars(action.TransferStars)
+	}
+	if action.ResaleAmount != nil {
+		out.SetResaleAmount(tgStarGiftAmount(*action.ResaleAmount))
+	}
+	if action.CanTransferAt > 0 {
+		out.SetCanTransferAt(action.CanTransferAt)
+	}
+	if action.CanResellAt > 0 {
+		out.SetCanResellAt(action.CanResellAt)
+	}
+	if action.DropOriginalDetailsStars > 0 {
+		out.SetDropOriginalDetailsStars(action.DropOriginalDetailsStars)
+	}
+	if action.Gift.Owner.Type == domain.PeerTypeUser && action.CanCraftAt > 0 {
+		out.SetCanCraftAt(action.CanCraftAt)
+	}
+	if action.FromUserID != 0 {
+		out.SetFromID(&tg.PeerUser{UserID: action.FromUserID})
+	}
+	if peer := tgPeer(action.Peer); peer != nil {
+		out.SetPeer(peer)
+	}
+	if action.SavedID != 0 {
+		out.SetSavedID(action.SavedID)
+	}
+	return out
+}
+
+// tgMessageActionStarGiftUniqueForViewer keeps owner-only lifecycle controls
+// off the sender's mirror copy of the service message; otherwise the sender
+// is offered transfer/resale/craft on a gift they don't own and the request
+// fails with PEER_ID_INVALID.
+func tgMessageActionStarGiftUniqueForViewer(action *domain.MessageStarGiftUniqueAction, viewerUserID int64) tg.MessageActionClass {
+	if action == nil || viewerUserID <= 0 || action.Gift.Owner.Type != domain.PeerTypeUser ||
+		action.Gift.Owner.ID == viewerUserID {
+		return tgMessageActionStarGiftUnique(action)
+	}
+	projected := *action
+	projected.CanExportAt = 0
+	projected.TransferStars = 0
+	projected.ResaleAmount = nil
+	projected.CanTransferAt = 0
+	projected.CanResellAt = 0
+	projected.DropOriginalDetailsStars = 0
+	projected.CanCraftAt = 0
+	return tgMessageActionStarGiftUnique(&projected)
 }
 
 func tgPeerList(peers []domain.Peer) []tg.PeerClass {

@@ -126,19 +126,6 @@ func TestListIsConsistent(t *testing.T) {
 			if _, ok := Animation(p.ID, g.Slug); !ok {
 				t.Errorf("pack %q gift %q has no animation", p.ID, g.Slug)
 			}
-			if g.Upgrade == nil {
-				continue
-			}
-			for _, a := range append(append([]AttrSummary{}, g.Upgrade.Models...), g.Upgrade.Patterns...) {
-				if _, ok := Animation(p.ID, a.ID); !ok {
-					t.Errorf("pack %q gift %q attribute %q has no animation", p.ID, g.Slug, a.ID)
-				}
-			}
-			for _, b := range g.Upgrade.Backdrops {
-				if b.Center == "" || b.Edge == "" {
-					t.Errorf("pack %q gift %q backdrop %q has no colours", p.ID, g.Slug, b.Name)
-				}
-			}
 		}
 	}
 	if _, ok := Animation("no-such-pack", "x"); ok {

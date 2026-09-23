@@ -363,11 +363,17 @@ func (s *StarGiftUpgradeStore) UpgradeStarGift(ctx context.Context, req domain.S
 		"telesrv:star-gift-upgrade:v1:%s:%d:%d:%t:%d:%t",
 		commandKey, saved.ID, req.ChargeStars, req.RequirePrepaid, req.FormID, req.KeepOriginalDetails,
 	)))
-	messageSenderID := saved.FromUserID
+	// Upgrading is the owner's own action, so for a user-owned gift the service
+	// message is authored by the owner and lands in their chat with the giver.
+	// Clients word it from the author ("You turned the gift from X ..." /
+	// "Y unpacked the gift that you helped to upgrade"); authoring it as the
+	// giver inverts both sides. Channel gifts keep the 777000 envelope to the
+	// acting admin.
+	messageSenderID, messageRecipientID := req.UserID, saved.FromUserID
 	if saved.Owner.Type == domain.PeerTypeChannel {
-		messageSenderID = domain.OfficialSystemUserID
+		messageSenderID, messageRecipientID = domain.OfficialSystemUserID, req.UserID
 	}
-	randomID := starGiftUpgradeRandomID(messageSenderID, req.UserID, commandKey)
+	randomID := starGiftUpgradeRandomID(messageSenderID, messageRecipientID, commandKey)
 	placeholder := &domain.MessageMedia{
 		Kind: domain.MessageMediaKindService,
 		ServiceAction: &domain.MessageServiceAction{
@@ -377,7 +383,7 @@ func (s *StarGiftUpgradeStore) UpgradeStarGift(ctx context.Context, req domain.S
 	}
 	messageReq := domain.SendPrivateTextRequest{
 		SenderUserID:           messageSenderID,
-		RecipientUserID:        req.UserID,
+		RecipientUserID:        messageRecipientID,
 		RandomID:               randomID,
 		Media:                  placeholder,
 		Date:                   req.Date,
@@ -540,7 +546,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.UserID, commandKey, locked.ID, req.For
 		},
 		after: func(ctx context.Context, tx pgx.Tx, sent domain.SendPrivateTextResult) error {
 			ownerMessageID := sent.RecipientMessage.ID
-			if result.Saved.Owner.Type == domain.PeerTypeUser && saved.FromUserID == req.UserID {
+			if result.Saved.Owner.Type == domain.PeerTypeUser {
 				ownerMessageID = sent.SenderMessage.ID
 			}
 			if ownerMessageID <= 0 {
@@ -613,10 +619,10 @@ WHERE user_id=$1 AND command_key=$2`, req.UserID, commandKey, ownerEditPts)
 }
 
 func starGiftUpgradeUniqueAction(saved domain.SavedStarGift, unique domain.UniqueStarGift, req domain.StarGiftUpgradeRequest) *domain.MessageStarGiftUniqueAction {
-	fromUserID := saved.FromUserID
-	if saved.NameHidden {
-		fromUserID = 0
-	}
+	// For a user-owned gift from_id stays unset: the message is authored by the
+	// owner, and clients name the actor from_id when present, so the giver's
+	// copy would read "<giver> turned the gift from you ...".
+	fromUserID := int64(0)
 	if saved.Owner.Type == domain.PeerTypeChannel {
 		// The private envelope is sent by 777000, while action.from_id identifies
 		// the administrator who performed the upgrade. TDesktop uses that

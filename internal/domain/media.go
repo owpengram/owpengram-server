@@ -702,8 +702,7 @@ type MessageServiceAction struct {
 }
 
 // MessageStarGiftOfferAction/OfferDeclined carry a resale price offer on a
-// unique gift. The negotiation surface (payments_star_gift_unique.go) is
-// copied but not wired into a running server yet.
+// unique gift (payments.sendStarGiftOffer / resolveStarGiftOffer).
 type MessageStarGiftOfferAction struct {
 	Gift      UniqueStarGift `json:"gift"`
 	Price     StarGiftAmount `json:"price"`
@@ -719,10 +718,9 @@ type MessageStarGiftOfferDeclinedAction struct {
 }
 
 // MessageStarGiftUniqueAction is the immutable collectible snapshot carried
-// by messageActionStarGiftUnique -- upgrade, transfer, offer and resale
-// surfaces (internal/store/postgres/star_gift_upgrade.go and
-// star_gift_craft_auction.go) that produce these are copied but not wired
-// into a running server yet; see the Star Gifts package doc.
+// by messageActionStarGiftUnique, written by the upgrade, craft, transfer,
+// offer and resale paths (internal/store/postgres/star_gift_upgrade.go and
+// star_gift_craft_auction.go).
 type MessageStarGiftUniqueAction struct {
 	Gift                     UniqueStarGift  `json:"gift"`
 	FromUserID               int64           `json:"from_user_id,omitempty"`
