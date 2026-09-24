@@ -314,6 +314,29 @@ func (s *StarGiftLifecycleStore) SetStarGiftListing(ctx context.Context, req dom
 	}
 	var uniqueID int64
 	err := withTx(ctx, s.db, "set star gift listing", func(tx pgx.Tx) error {
+		// PurchaseResaleStarGift locks star_gift_listings/unique_star_gifts
+		// (found by slug) before peer_star_gifts (found by unique_gift_id) --
+		// the reverse of the order below, since it starts from the slug a
+		// buyer sees, not the owner's ref. Racing the two in a live checkout
+		// deadlocks Postgres (ABBA on the same unique gift's two rows), which
+		// aborts one side and reads to the client as a listing/delisting that
+		// randomly fails until retried. A cheap unlocked read of which unique
+		// gift this ref names, then an advisory lock on that id *before*
+		// either row lock, serializes both paths against each other instead:
+		// only one of them ever proceeds past this point for a given gift.
+		where, args := savedStarGiftRefWhere(req.Ref)
+		var precheckUniqueID int64
+		switch err := tx.QueryRow(ctx, `SELECT COALESCE(unique_gift_id,0) FROM peer_star_gifts WHERE `+where, args...).Scan(&precheckUniqueID); {
+		case errors.Is(err, pgx.ErrNoRows):
+			return domain.ErrStarGiftNotFound
+		case err != nil:
+			return err
+		}
+		if precheckUniqueID > 0 {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, precheckUniqueID); err != nil {
+				return err
+			}
+		}
 		saved, err := lockSavedStarGiftForUpgrade(ctx, tx, req.Ref)
 		if err != nil {
 			return err
@@ -515,6 +538,15 @@ func (s *StarGiftLifecycleStore) PurchaseResaleStarGift(ctx context.Context, req
 	var sourceSaved domain.SavedStarGift
 	hooks := privateSendTxHooks{
 		before: func(ctx context.Context, tx pgx.Tx, send *domain.SendPrivateTextRequest) error {
+			// See the matching comment in SetStarGiftListing: this path locks
+			// star_gift_listings/unique_star_gifts before peer_star_gifts,
+			// the reverse of the seller's own listing/delisting/transfer
+			// paths. Taking the same advisory lock first, keyed by the
+			// unique gift id resolved (unlocked) above, serializes the two
+			// instead of letting them deadlock.
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, unique.ID); err != nil {
+				return err
+			}
 			var listingCurrency, sellerType string
 			var listingAmount, sellerID, uniqueID int64
 			if err := tx.QueryRow(ctx, `SELECT l.currency,l.amount,l.seller_peer_type,l.seller_peer_id,u.id
