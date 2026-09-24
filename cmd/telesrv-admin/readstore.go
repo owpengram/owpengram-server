@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
 
@@ -3017,6 +3018,130 @@ FROM premium_payment_intents WHERE id=$1`, paymentIntentID).Scan(
 	out.PaidAt, out.RefundedAt = int(paid), int(refunded)
 	out.CreatedAt, out.UpdatedAt = int(created), int(updated)
 	return out, true, nil
+}
+
+// DonationWalletStatusRow is the operator's one-glance view of the crypto
+// donations custodial wallet: whether one has ever been generated (it's
+// auto-provisioned at server startup if missing, never by an admin action --
+// see docs/donations.md) and how many users have been assigned a deposit
+// address. It never carries the mnemonic or a private key -- those live only
+// in server memory and the encrypted-at-rest seed row, out of reach of every
+// admin API route.
+type DonationWalletStatusRow struct {
+	HasWallet    bool
+	AddressCount int64
+}
+
+// donationWalletStatus reports whether a wallet exists and how many
+// addresses have been handed out, for the donations admin page's header.
+func (s *readStore) donationWalletStatus(ctx context.Context) (DonationWalletStatusRow, error) {
+	var out DonationWalletStatusRow
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM donation_wallet WHERE id = 1)`).Scan(&out.HasWallet); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("check donation wallet status: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM donation_addresses`).Scan(&out.AddressCount); err != nil {
+		return DonationWalletStatusRow{}, fmt.Errorf("count donation addresses: %w", err)
+	}
+	return out, nil
+}
+
+// donationChains lists every configured chain, enabled or not, for the
+// config editor -- writes go through admin.Service.UpdateDonationChain (for
+// the audit trail), this is a plain read.
+func (s *readStore) donationChains(ctx context.Context) ([]domain.DonationChain, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+confirmations_required, price_feed_address, manual_usd_rate_micros, enabled
+FROM donation_chains ORDER BY chain_key`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation chains: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationChain, 0)
+	for rows.Next() {
+		var c domain.DonationChain
+		if err := rows.Scan(&c.Key, &c.Name, &c.ChainID, &c.RPCURL, &c.WSURL, &c.NativeSymbol, &c.NativeDecimals,
+			&c.ConfirmationsRequired, &c.PriceFeedAddress, &c.ManualUSDRateMicros, &c.Enabled); err != nil {
+			return nil, fmt.Errorf("scan donation chain: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// donationTokens lists every configured stablecoin row across every chain,
+// including ones with an empty contract address the operator hasn't filled
+// in yet -- shown next to donationChains so the operator can see at a
+// glance which chains are actually watchable (see domain.DonationChain.Watchable
+// and domain.DonationToken.Watchable).
+func (s *readStore) donationTokens(ctx context.Context) ([]domain.DonationToken, error) {
+	rows, err := s.pool.Query(ctx, `SELECT chain_key, symbol, contract_address, decimals
+FROM donation_tokens ORDER BY chain_key, symbol`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation tokens: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationToken, 0)
+	for rows.Next() {
+		var t domain.DonationToken
+		if err := rows.Scan(&t.ChainKey, &t.Symbol, &t.ContractAddress, &t.Decimals); err != nil {
+			return nil, fmt.Errorf("scan donation token: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// DonationDepositRow is one deposit with the donor resolved for display.
+type DonationDepositRow struct {
+	domain.DonationDeposit
+	UserPhone     string
+	UserFirstName string
+}
+
+// donationDeposits lists every deposit across every user, newest first, for
+// the transactions/donations history table. beforeID is an exclusive
+// keyset cursor (0 for the first page).
+func (s *readStore) donationDeposits(ctx context.Context, beforeID int64, limit int) ([]DonationDepositRow, bool, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id, d.user_id, d.chain_key, d.token_symbol, d.tx_hash, d.log_index, d.block_number,
+	d.amount_raw::text, d.usd_value_micros, d.stars_credited, d.status, d.confirmations,
+	d.detected_at, d.credited_at, COALESCE(u.phone, ''), COALESCE(u.first_name, '')
+FROM donation_deposits d
+LEFT JOIN users u ON u.id = d.user_id
+WHERE $1::bigint = 0 OR d.id < $1
+ORDER BY d.id DESC
+LIMIT $2`, beforeID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list donation deposits: %w", err)
+	}
+	defer rows.Close()
+	out := make([]DonationDepositRow, 0, limit+1)
+	for rows.Next() {
+		var d DonationDepositRow
+		var status string
+		var creditedAt pgtype.Timestamptz
+		if err := rows.Scan(&d.ID, &d.UserID, &d.ChainKey, &d.TokenSymbol, &d.TxHash, &d.LogIndex, &d.BlockNumber,
+			&d.AmountRaw, &d.USDValueMicros, &d.StarsCredited, &status, &d.Confirmations,
+			&d.DetectedAt, &creditedAt, &d.UserPhone, &d.UserFirstName); err != nil {
+			return nil, false, fmt.Errorf("scan donation deposit: %w", err)
+		}
+		d.Status = domain.DonationDepositStatus(status)
+		if creditedAt.Valid {
+			d.CreditedAt = creditedAt.Time
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("iterate donation deposits: %w", err)
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
 }
 
 // AccountRatingRow is one user's composite rating projection with the account

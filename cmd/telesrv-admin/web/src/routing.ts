@@ -35,5 +35,6 @@ export function routeTitle(pathname: string): string {
   if (pathname.startsWith("/account-ratings")) return "Account Ratings";
   if (pathname.startsWith("/star-gift-catalog")) return "StarGift Catalog";
   if (pathname.startsWith("/give-gifts")) return "Give Gifts";
+  if (pathname.startsWith("/donations")) return "Crypto Donations";
   return "Operations Console";
 }

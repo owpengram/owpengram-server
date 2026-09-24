@@ -87,6 +87,64 @@ export type PremiumPlanListResponse = {
   rows: PremiumPlan[];
 };
 
+export type DonationChain = {
+  Key: string;
+  Name: string;
+  ChainID: number;
+  RPCURL: string;
+  WSURL: string;
+  NativeSymbol: string;
+  NativeDecimals: number;
+  ConfirmationsRequired: number;
+  PriceFeedAddress: string;
+  ManualUSDRateMicros: number;
+  Enabled: boolean;
+};
+
+export type DonationToken = {
+  ChainKey: string;
+  Symbol: string;
+  ContractAddress: string;
+  Decimals: number;
+};
+
+export type DonationChainsResponse = {
+  chains: DonationChain[];
+  tokens: DonationToken[];
+};
+
+export type DonationWalletStatus = {
+  HasWallet: boolean;
+  AddressCount: number;
+};
+
+export type DonationDepositStatus = "pending" | "confirmed" | "credited" | "orphaned";
+
+export type DonationDepositRow = {
+  ID: number;
+  UserID: number;
+  ChainKey: string;
+  TokenSymbol: string;
+  TxHash: string;
+  LogIndex: number;
+  BlockNumber: number;
+  AmountRaw: string;
+  USDValueMicros: number;
+  StarsCredited: number;
+  Status: DonationDepositStatus;
+  Confirmations: number;
+  DetectedAt: string;
+  CreditedAt: string;
+  UserPhone: string;
+  UserFirstName: string;
+};
+
+export type DonationDepositListResponse = {
+  rows: DonationDepositRow[];
+  has_more: boolean;
+  next_before_id: string;
+};
+
 export type AccountRatingEventKind = "stars" | "activity" | "moderation" | "manual" | "recompute";
 
 export type AccountRatingRow = {

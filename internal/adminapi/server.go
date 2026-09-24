@@ -46,6 +46,7 @@ type Service interface {
 	GrantStars(ctx context.Context, req admin.GrantStarsRequest) (admin.CommandResult, error)
 	UpsertPremiumPlan(ctx context.Context, req admin.UpsertPremiumPlanRequest) (admin.CommandResult, error)
 	RefundPremium(ctx context.Context, req admin.RefundPremiumRequest) (admin.CommandResult, error)
+	UpdateDonationChain(ctx context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -205,6 +206,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/accounts/grant-stars", s.authenticated(s.handleGrantStars))
 	mux.HandleFunc("POST /v1/premium/plans/upsert", s.authorized(PermissionPremiumManage, s.handleUpsertPremiumPlan))
 	mux.HandleFunc("POST /v1/premium/refund", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
+	mux.HandleFunc("POST /v1/donations/chains/update", s.authorized(PermissionDonationsManage, s.handleUpdateDonationChain))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -376,6 +378,15 @@ func (s *Server) handleRefundPremium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.svc.RefundPremium(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpdateDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpdateDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpdateDonationChain(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 

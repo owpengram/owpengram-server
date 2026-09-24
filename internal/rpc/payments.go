@@ -403,7 +403,7 @@ func tgStarsTransactions(in []domain.StarsTransaction) []tg.StarsTransaction {
 // Unsupported (the Peer field is required, never nil).
 func tgStarsTransactionPeer(t domain.StarsTransaction) tg.StarsTransactionPeerClass {
 	switch t.Reason {
-	case domain.StarsReasonGrant, domain.StarsReasonTopup, domain.StarsReasonMonthlyClaim:
+	case domain.StarsReasonGrant, domain.StarsReasonTopup, domain.StarsReasonMonthlyClaim, domain.StarsReasonDonationDeposit:
 		return &tg.StarsTransactionPeerFragment{}
 	case domain.StarsReasonPremium:
 		return &tg.StarsTransactionPeerPremiumBot{}

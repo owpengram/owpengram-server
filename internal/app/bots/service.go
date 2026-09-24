@@ -76,6 +76,20 @@ type starsClaimSource interface {
 	ClaimMonthly(ctx context.Context, userID, amount int64, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error)
 }
 
+// donationsSource is the built-in @premiumbot's crypto-donation surface
+// (app/donations.Service satisfies it as-is): assign/fetch a user's
+// permanent deposit address, list which chains it's actually live on, and
+// show their own deposit history. Wired post-construction via
+// SetDonationsSource for the same reason as premiumSource/starsClaimSource
+// above -- donations.Service is also built after bots.Service in
+// cmd/telesrv/main.go.
+type donationsSource interface {
+	Ready() bool
+	AddressForUser(ctx context.Context, userID int64) (string, error)
+	EnabledChains(ctx context.Context) ([]domain.DonationChain, error)
+	UserDeposits(ctx context.Context, userID int64, limit int) ([]domain.DonationDeposit, error)
+}
+
 // verificationApplications is the applicant-side surface of official platform
 // verification used by the built-in @verifybot (app/verification.Service
 // satisfies it as-is).
@@ -141,6 +155,7 @@ type Service struct {
 	gifCatalog                gifCatalogSource
 	premium                   premiumSource
 	stars                     starsClaimSource
+	donations                 donationsSource
 	starsMonthlyClaim         int64
 	starsMonthlyClaimCooldown time.Duration
 	telegramLogin             *telegramloginapp.Service
@@ -288,6 +303,17 @@ func (s *Service) SetStarsSource(src starsClaimSource) {
 		return
 	}
 	s.stars = src
+}
+
+// SetDonationsSource injects the crypto-donation address/history access
+// used by the built-in @premiumbot's /deposit command. See starsClaimSource's
+// doc comment for why this is a post-hoc setter. Without it, /deposit
+// answers that the feature is unavailable rather than crashing.
+func (s *Service) SetDonationsSource(src donationsSource) {
+	if s == nil || src == nil {
+		return
+	}
+	s.donations = src
 }
 
 // WithAIChatGenerator 注入内置 @ChatBot 使用的 AI 文本生成器。

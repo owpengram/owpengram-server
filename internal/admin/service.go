@@ -28,6 +28,7 @@ const (
 	ActionGrantStars               = "account.grant_stars"
 	ActionUpsertPremiumPlan        = "premium.upsert_plan"
 	ActionRefundPremium            = "premium.refund"
+	ActionUpdateDonationChain      = "donations.update_chain"
 	ActionSetVerified              = "account.set_verified"
 	ActionSetUserFlags             = "account.set_flags"
 	ActionSetSupport               = "account.set_support"
@@ -361,6 +362,16 @@ type PremiumService interface {
 	Refund(ctx context.Context, req domain.PremiumRefundRequest) (domain.PremiumPurchaseResult, error)
 }
 
+// DonationsService is the operator-facing slice of crypto donations
+// (app/donations.Service satisfies it as-is): the write side of chain
+// config (RPC/WS endpoint, enabled flag, confirmation depth, price feed or
+// manual USD rate). Everything read-only -- wallet status, chain list,
+// deposit history -- is served straight out of Postgres by
+// cmd/telesrv-admin's own readStore, the same split premium plans use.
+type DonationsService interface {
+	UpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error)
+}
+
 // StarsService is the operator-facing slice of the local Stars ledger: an
 // out-of-band credit (app/stars.Service satisfies it as-is). Unlike
 // GrantPremium, a credit here does not push a live update to the account --
@@ -518,6 +529,7 @@ type Dependencies struct {
 	Revoker                AuthKeyRevoker
 	Users                  UsersService
 	Premium                PremiumService
+	Donations              DonationsService
 	Stars                  StarsService
 	UserNotifier           UserNotifier
 	UserModerationNotifier UserModerationNotifier
@@ -558,6 +570,7 @@ type Service struct {
 	revoker                AuthKeyRevoker
 	users                  UsersService
 	premium                PremiumService
+	donations              DonationsService
 	stars                  StarsService
 	userNotifier           UserNotifier
 	userModerationNotifier UserModerationNotifier
@@ -605,6 +618,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.Premium != nil {
 		s.premium = deps.Premium
+	}
+	if deps.Donations != nil {
+		s.donations = deps.Donations
 	}
 	if deps.Stars != nil {
 		s.stars = deps.Stars
@@ -952,6 +968,21 @@ type UpsertPremiumPlanRequest struct {
 type RefundPremiumRequest struct {
 	CommandMeta
 	PaymentIntentID int64 `json:"payment_intent_id"`
+}
+
+// UpdateDonationChainRequest edits one crypto donation chain's
+// operator-editable settings. The wallet's mnemonic is never exposed or
+// touched here -- this only reaches RPC endpoint, enabled flag,
+// confirmation depth and pricing config.
+type UpdateDonationChainRequest struct {
+	CommandMeta
+	ChainKey              string `json:"chain_key"`
+	RPCURL                string `json:"rpc_url"`
+	WSURL                 string `json:"ws_url"`
+	Enabled               bool   `json:"enabled"`
+	ConfirmationsRequired int    `json:"confirmations_required"`
+	PriceFeedAddress      string `json:"price_feed_address"`
+	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
 }
 
 type SetVerifiedRequest struct {
@@ -1494,6 +1525,31 @@ func (s *Service) UpsertPremiumPlan(ctx context.Context, req UpsertPremiumPlanRe
 		return CommandResult{Message: "premium plan saved", Details: map[string]any{
 			"months": plan.Months, "duration_days": plan.DurationDays, "amount_stars": plan.AmountStars,
 			"enabled": plan.Enabled, "sort_order": plan.SortOrder, "label": plan.Label, "version": plan.Version,
+		}}, nil
+	})
+}
+
+// UpdateDonationChain edits one crypto donation chain's RPC/WS endpoint,
+// enabled flag, confirmation depth and pricing config. Like UpsertPremiumPlan,
+// it never runs as a dry-run preview -- there is no user-facing side effect
+// to simulate, only server config a running watcher goroutine will pick up
+// on its next poll.
+func (s *Service) UpdateDonationChain(ctx context.Context, req UpdateDonationChainRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionUpdateDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		chain, err := s.donations.UpdateChainConfig(ctx, domain.DonationChainConfigUpdate{
+			ChainKey: req.ChainKey, RPCURL: req.RPCURL, WSURL: req.WSURL,
+			ConfirmationsRequired: req.ConfirmationsRequired, PriceFeedAddress: req.PriceFeedAddress,
+			ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation chain config saved", Details: map[string]any{
+			"chain_key": chain.Key, "enabled": chain.Enabled, "rpc_url": chain.RPCURL,
+			"confirmations_required": chain.ConfirmationsRequired, "manual_usd_rate_micros": chain.ManualUSDRateMicros,
 		}}, nil
 	})
 }

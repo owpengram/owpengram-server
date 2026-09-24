@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 	communitiesapp "telesrv/internal/app/communities"
 	"telesrv/internal/app/contacts"
 	"telesrv/internal/app/dialogs"
+	donationsapp "telesrv/internal/app/donations"
 	ephemeralapp "telesrv/internal/app/ephemeral"
 	filesapp "telesrv/internal/app/files"
 	groupcallsapp "telesrv/internal/app/groupcalls"
@@ -1379,6 +1381,31 @@ func run(logger *zap.Logger) error {
 	premiumService := premiumapp.NewService(premiumStore, starsService)
 	botsService.SetPremiumSource(premiumService)
 	botsService.SetStarsSource(starsService)
+	// Crypto donations (deposit -> Stars): works out of the box, no manual
+	// setup step. The encryption key is a local file, generated the first
+	// time the server ever runs (same pattern as the RSA key below) unless
+	// TELESRV_DONATION_WALLET_KEY overrides it with a literal key; the
+	// wallet mnemonic itself is generated and stored, encrypted, the first
+	// time the server finds none in the database. See docs/donations.md.
+	donationWalletKey, err := donationsWalletKey(cfg)
+	if err != nil {
+		return fmt.Errorf("init donations wallet key: %w", err)
+	}
+	donationStore := postgres.NewDonationStore(pool)
+	donationsService, err := donationsapp.NewService(ctx, donationStore, donationWalletKey)
+	if err != nil {
+		return fmt.Errorf("init donations service: %w", err)
+	}
+	if !donationsService.Ready() {
+		mnemonic, err := donationsService.EnsureWallet(ctx)
+		if err != nil {
+			return fmt.Errorf("provision donations wallet: %w", err)
+		}
+		logger.Warn("generated a new crypto donations wallet -- back up this recovery phrase now, it will not be shown again",
+			zap.String("mnemonic", mnemonic))
+	}
+	botsService.SetDonationsSource(donationsService)
+	donationsService.SetNotifier(botsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
@@ -1736,6 +1763,7 @@ func run(logger *zap.Logger) error {
 		Revoker:                router,
 		Users:                  usersService,
 		Premium:                premiumService,
+		Donations:              donationsService,
 		Stars:                  starsService,
 		UserNotifier:           router,
 		UserModerationNotifier: router,
@@ -1876,6 +1904,23 @@ func run(logger *zap.Logger) error {
 	go router.RunInlineBotPushSubscriber(ctx)
 	go router.RunBotCallbackAnswerSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
+	if donationsService.Ready() {
+		donationChains, err := donationsService.EnabledChains(ctx)
+		if err != nil {
+			logger.Warn("list enabled donation chains failed; no donation watchers started", zap.Error(err))
+		}
+		for _, chain := range donationChains {
+			if !chain.Watchable() {
+				continue // enabled but not yet configured (e.g. rpc_url still empty) -- an operator will fill it in
+			}
+			chainLog := logger.Named("donations").Named(chain.Key)
+			go func(chainKey string, log *zap.Logger) {
+				if err := donationsService.WatchChain(ctx, chainKey, cfg.DonationPollInterval, log); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("donation watcher stopped", zap.Error(err))
+				}
+			}(chain.Key, chainLog)
+		}
+	}
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)
 	}
@@ -1993,6 +2038,17 @@ func telegramLoginRPCDependency(service *telegramloginapp.Service) rpc.TelegramL
 		return nil
 	}
 	return service
+}
+
+// donationsWalletKey resolves the crypto donations encryption key: an
+// explicit TELESRV_DONATION_WALLET_KEY wins if set, otherwise it's the
+// local key file at cfg.DonationWalletKeyPath, generated automatically the
+// first time this server ever runs (see donationsapp.LoadOrGenerateEncryptionKey).
+func donationsWalletKey(cfg config.Config) (donationsapp.EncryptionKey, error) {
+	if key := strings.TrimSpace(cfg.DonationWalletKey); key != "" {
+		return donationsapp.ParseEncryptionKey(key)
+	}
+	return donationsapp.LoadOrGenerateEncryptionKey(cfg.DonationWalletKeyPath)
 }
 
 func runTelegramLoginRetention(ctx context.Context, service *telegramloginapp.Service, retention, interval time.Duration, batch int, logger *zap.Logger) {

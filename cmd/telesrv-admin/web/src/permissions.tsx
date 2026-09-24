@@ -7,6 +7,7 @@ import type { Navigate } from "./routing";
 // a full-access session.
 export const permissionAll = "*";
 export const permissionPremiumManage = "premium.manage";
+export const permissionDonationsManage = "donations.manage";
 export const permissionRatingsRead = "ratings.read";
 export const permissionRatingsManage = "ratings.manage";
 export const permissionStarGiftsRead = "stargifts.read";

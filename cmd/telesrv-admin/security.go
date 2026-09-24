@@ -37,6 +37,12 @@ import (
 const (
 	permissionAll                = "*"
 	permissionPremiumManage      = "premium.manage"
+	// permissionDonationsManage gates the crypto donations admin page:
+	// wallet status, chain config (RPC/WS endpoint, enabled flag,
+	// confirmation depth, pricing) and the deposit/transaction history.
+	// Never exposes the wallet mnemonic or a private key -- there is no
+	// admin route that returns either.
+	permissionDonationsManage = "donations.manage"
 	permissionBotTokenRead       = "bots.token.read"
 	permissionVerificationReview = "verification.review"
 	permissionVerificationRevoke = "verification.revoke"
@@ -137,6 +143,7 @@ func assignablePermissions() []string {
 		permissionStorageManage,
 		permissionDashboardRead,
 		permissionPremiumManage,
+		permissionDonationsManage,
 		permissionBotTokenRead,
 		permissionVerificationReview,
 		permissionVerificationRevoke,

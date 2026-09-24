@@ -19,6 +19,7 @@ import { GifCatalogPage } from "./GifCatalogPage";
 import { AdminUsersPage } from "./AdminUsersPage";
 import { AuditLogPage } from "./AuditLogPage";
 import { PremiumPlansPage } from "./PremiumPlansPage";
+import { DonationsPage } from "./DonationsPage";
 import { AccountRatingDetailPage } from "./AccountRatingDetailPage";
 import { AccountRatingsPage } from "./AccountRatingsPage";
 import { StarGiftCatalogPage } from "./StarGiftCatalogPage";
@@ -46,6 +47,7 @@ import {
   permissionMessagesRead,
   permissionModerationReview,
   permissionPremiumManage,
+  permissionDonationsManage,
   permissionRatingsRead,
   permissionServerManage,
   permissionStarGiftsRead,
@@ -169,6 +171,9 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
   }
   if (route.path === "/premium") {
     return gate(permissionPremiumManage, <PremiumPlansPage />);
+  }
+  if (route.path === "/donations") {
+    return gate(permissionDonationsManage, <DonationsPage />);
   }
   if (accountRatingUserID) {
     return gate(permissionRatingsRead, <AccountRatingDetailPage userID={accountRatingUserID} navigate={navigate} />);

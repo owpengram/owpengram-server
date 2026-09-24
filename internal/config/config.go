@@ -694,6 +694,20 @@ type Config struct {
 	PremiumSweepInterval time.Duration
 	// PremiumSweepBatch 是单次到期清理的最大行数。
 	PremiumSweepBatch int
+	// DonationWalletKeyPath is where the crypto donations AES-256-GCM
+	// encryption key lives on disk -- generated automatically on first run,
+	// same "works out of the box" pattern as RSAKeyPath. The wallet mnemonic
+	// itself is generated automatically too, the first time the server
+	// starts with a store that doesn't have one yet. See docs/donations.md.
+	DonationWalletKeyPath string
+	// DonationWalletKey, if set, overrides DonationWalletKeyPath with a
+	// literal 64-hex-char key instead of reading/generating a local file --
+	// for an operator who wants to supply their own (e.g. from a secrets
+	// manager) rather than let the server manage a key file.
+	DonationWalletKey string
+	// DonationPollInterval is how often each enabled chain's watcher polls
+	// for new blocks.
+	DonationPollInterval time.Duration
 	// VerificationEnabled controls official platform verification: the @verifybot
 	// application flow and the panel's review queue. Disabled refuses every
 	// verification use case explicitly; already-verified peers keep their badge,
@@ -1213,6 +1227,9 @@ func Load() (Config, error) {
 		RatingActivityCap:                 envInt64Or("TELESRV_RATING_ACTIVITY_CAP", domain.DefaultAccountRatingWeights().ActivityCap),
 		PremiumSweepInterval:              envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),
 		PremiumSweepBatch:                 envIntOr("TELESRV_PREMIUM_SWEEP_BATCH", 500),
+		DonationWalletKeyPath:             envOr("TELESRV_DONATION_WALLET_KEY_PATH", "data/donation_wallet.key"),
+		DonationWalletKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_DONATION_WALLET_KEY", "")),
+		DonationPollInterval:              envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),
 
 		CollectibleUsernameURLTemplate: strings.TrimSpace(envAllowEmptyOr("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", "")),
 

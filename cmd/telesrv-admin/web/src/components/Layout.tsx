@@ -18,6 +18,7 @@ import {
   PanelLeftOpen,
   Settings,
   Sparkles,
+  Wallet,
   UserCog,
   UserRound,
   Share2,
@@ -39,6 +40,7 @@ import { clearAdminCache } from "../lib/cache";
 import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
   permissionAuditRead,
   permissionPremiumManage,
+  permissionDonationsManage,
   permissionRatingsRead,
   permissionStarGiftsRead,
   permissionStarGiftsManage,
@@ -118,6 +120,7 @@ export function Shell({
   const canManageAdmins = useCan(permissionAdminsManage);
   const canReadAuditLog = useCan(permissionAuditRead);
   const canManagePremium = useCan(permissionPremiumManage);
+  const canManageDonations = useCan(permissionDonationsManage);
   const canReadRatings = useCan(permissionRatingsRead);
   const canReadStarGifts = useCan(permissionStarGiftsRead);
   const canManageStarGifts = useCan(permissionStarGiftsManage);
@@ -342,11 +345,14 @@ export function Shell({
             </NavSection>
           )}
 
-          {(canManagePremium || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
+          {(canManagePremium || canManageDonations || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
             <NavSection title={"Economy"} icon={<Landmark size={14} />} route={route} collapsed={navCollapsed}
-              paths={["/premium", "/account-ratings", "/star-gift-catalog", "/give-gifts", "/collectible-usernames"]}>
+              paths={["/premium", "/donations", "/account-ratings", "/star-gift-catalog", "/give-gifts", "/collectible-usernames"]}>
               {canManagePremium && (
                 <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
+              )}
+              {canManageDonations && (
+                <NavLink icon={<Wallet size={16} />} href="/donations" route={route} navigate={navigate}>{"Donations"}</NavLink>
               )}
               {canReadRatings && (
                 <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
