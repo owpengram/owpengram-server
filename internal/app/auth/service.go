@@ -111,6 +111,10 @@ type Service struct {
 	emailSignupPhonePrefixes []string
 	// premiumGrantMonths 是新注册账号默认赠送的会员月数；0 表示关闭赠送。
 	premiumGrantMonths int
+	// starsGuard, when set (WithStarsGrantGuard), lets SignUp withhold the
+	// Stars starting grant for a device+IP fingerprint that already
+	// received one on a different account. nil skips the check entirely.
+	starsGuard starsGrantGuard
 	// stickerSets/defaultStickerSetID：新注册账号默认安装的贴纸集（见 WithDefaultStickerSet）。
 	stickerSets         userStickerSetInstaller
 	defaultStickerSetID int64
@@ -237,6 +241,25 @@ func WithBotLogin(bots store.BotStore) Option {
 func WithPremiumGrant(months int) Option {
 	return func(s *Service) {
 		s.premiumGrantMonths = months
+	}
+}
+
+// starsGrantGuard lets SignUp withhold the Stars starting grant when the
+// new account's device+IP fingerprint was already used by another account
+// (app/stars.Service.GuardStartingGrant satisfies it as-is). A narrow port,
+// primitives only, for the same reason every other cross-app dependency in
+// this file is: it must not import app/stars just to call one method.
+// Optional -- nil (the default) leaves the grant fully lazy, exactly as
+// before this guard existed.
+type starsGrantGuard interface {
+	GuardStartingGrant(ctx context.Context, userID int64, deviceModel, systemVersion, platform, ip string) (bool, error)
+}
+
+// WithStarsGrantGuard enables the device+IP duplicate check on the starting
+// grant. See starsGrantGuard's doc comment.
+func WithStarsGrantGuard(g starsGrantGuard) Option {
+	return func(s *Service) {
+		s.starsGuard = g
 	}
 }
 
@@ -1378,6 +1401,13 @@ func (s *Service) SignUp(ctx context.Context, auth domain.Authorization, phone, 
 	}
 	if err := s.bind(ctx, auth, u.ID); err != nil {
 		return domain.User{}, domain.Message{}, err
+	}
+	// Anti-farming: withhold the Stars starting grant if this exact
+	// device+IP fingerprint already received one on another account.
+	// Best-effort -- a guard failure must never block account creation
+	// itself, only the bonus it would have handed out.
+	if s.starsGuard != nil {
+		_, _ = s.starsGuard.GuardStartingGrant(ctx, u.ID, auth.DeviceModel, auth.SystemVersion, auth.Platform, auth.IP)
 	}
 	// 给新账号预装一个默认贴纸集，让贴纸面板不至于空空如也。best-effort：装不上不阻断注册。
 	// 存量账号的同等安装见迁移 20260721202007。

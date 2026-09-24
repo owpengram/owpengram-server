@@ -119,6 +119,32 @@ func (s *StarsStore) ClaimMonthly(_ context.Context, userID, amount int64, date 
 	return domain.StarsBalance{UserID: userID, Balance: st.balance, Granted: st.granted}, true, now.Add(cooldown), nil
 }
 
+// DeviceFingerprintGranted always reports false: this in-memory test double
+// has no authorizations table to join against (that lives in a separate
+// memory store), so it can't answer the cross-store question the postgres
+// implementation joins for. The device/IP guard is proven against real
+// Postgres -- see internal/store/postgres/stars_integration_test.go.
+func (s *StarsStore) DeviceFingerprintGranted(_ context.Context, _ int64, _, _, _, _ string) (bool, error) {
+	return false, nil
+}
+
+// SkipStartingGrant mirrors postgres: idempotently marks granted=true with
+// balance 0 so EnsureGrant's lazy path never retries it.
+func (s *StarsStore) SkipStartingGrant(_ context.Context, userID int64) error {
+	if userID == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.states[userID]
+	if st == nil {
+		st = &starsState{}
+		s.states[userID] = st
+	}
+	st.granted = true
+	return nil
+}
+
 func (s *StarsStore) ListTransactions(_ context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {
 	if userID == 0 {
 		return domain.StarsTransactionPage{}, nil

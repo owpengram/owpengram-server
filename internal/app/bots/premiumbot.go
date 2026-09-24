@@ -46,6 +46,24 @@ func (s *Service) NotifyDonationCredited(ctx context.Context, notice domain.Dona
 	s.sendServiceBotReply(ctx, domain.PremiumBotUserID, notice.UserID, botReply{Text: text})
 }
 
+// NotifyStarsGrantWithheld satisfies stars.AntiAbuseNotifier: it's called
+// once, right after SignUp, when app/stars.Service.GuardStartingGrant
+// withheld the new account's starting grant because its device+IP
+// fingerprint was already used by another account (see cmd/telesrv, which
+// wires starsService.SetAntiAbuseNotifier(botsService)). Sends a one-time
+// @premiumbot explanation so a legitimate new user isn't left wondering why
+// their balance shows 0 instead of the advertised starting grant.
+func (s *Service) NotifyStarsGrantWithheld(ctx context.Context, userID int64) {
+	if s == nil || userID <= 0 {
+		return
+	}
+	mu := s.serviceBotReplyLock(domain.PremiumBotUserID, userID)
+	mu.Lock()
+	defer mu.Unlock()
+	text := "Your starting " + branding.StarsName() + " bonus wasn't granted: this device and network are already linked to another account that received it. Multi-accounting to farm free " + branding.StarsName() + " isn't allowed. You can still buy " + branding.StarsName() + " and use every other feature normally."
+	s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: text})
+}
+
 // formatAssetAmount renders a raw smallest-unit amount (wei, or an ERC-20's
 // base units) as a human string with the asset's actual decimal point.
 // Deliberately duplicated from (rather than imported off)
@@ -150,6 +168,9 @@ func (s *Service) premiumBotStatusText(ctx context.Context, userID int64) string
 func (s *Service) premiumBotClaimText(ctx context.Context, userID int64) string {
 	if s.stars == nil || s.starsMonthlyClaim <= 0 {
 		return "The free " + branding.StarsName() + " claim is not available right now."
+	}
+	if withheld, err := s.stars.GuardClaim(ctx, userID); err == nil && withheld {
+		return "Your free " + branding.StarsName() + " claim was withheld: this device and network are already linked to another account that has claimed it. Multi-accounting to farm free " + branding.StarsName() + " isn't allowed."
 	}
 	bal, claimed, nextAt, err := s.stars.ClaimMonthly(ctx, userID, s.starsMonthlyClaim, s.starsMonthlyClaimCooldown)
 	if err != nil {

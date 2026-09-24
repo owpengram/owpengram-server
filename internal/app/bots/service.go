@@ -74,6 +74,11 @@ type premiumSource interface {
 // app/bots.Service in cmd/telesrv/main.go.
 type starsClaimSource interface {
 	ClaimMonthly(ctx context.Context, userID, amount int64, cooldown time.Duration) (domain.StarsBalance, bool, time.Time, error)
+	// GuardClaim reports whether userID's device+IP fingerprint already
+	// claimed (or was granted) on a different account -- /claim answers
+	// with the withheld explanation instead of calling ClaimMonthly at all
+	// when this reports true. See app/stars.Service.GuardClaim.
+	GuardClaim(ctx context.Context, userID int64) (bool, error)
 }
 
 // donationsSource is the built-in @premiumbot's crypto-donation surface

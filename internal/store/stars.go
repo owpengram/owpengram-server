@@ -36,6 +36,21 @@ type StarsStore interface {
 	// row). claimed reports whether this call performed the credit; nextAt
 	// is when the next claim becomes available either way.
 	ClaimMonthly(ctx context.Context, userID, amount int64, date int, cooldown time.Duration) (bal domain.StarsBalance, claimed bool, nextAt time.Time, err error)
+	// DeviceFingerprintGranted reports whether any account other than
+	// excludeUserID has, from this exact device_model+system_version+
+	// platform+ip fingerprint (an authorizations row), already received the
+	// starting grant or a monthly claim. This is the live enforcement of
+	// the same heuristic cmd/telesrv-admin's SharedDeviceGroup already
+	// surfaces read-only: two accounts matching on every one of those four
+	// attributes are treated as the same farmer. deviceModel and ip must be
+	// non-empty -- callers never invoke this with an unknown fingerprint
+	// (see app/stars.Service.GuardStartingGrant/GuardClaim).
+	DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error)
+	// SkipStartingGrant idempotently marks the starting grant as already
+	// handled without crediting anything (balance 0, granted=true), so
+	// EnsureGrant's lazy first-read path never retries it. Used when
+	// GuardStartingGrant withholds the grant for a duplicate device+IP.
+	SkipStartingGrant(ctx context.Context, userID int64) error
 }
 
 // StarsPurchaseStore owns fiat self-topup, friend-gift and giveaway-launch

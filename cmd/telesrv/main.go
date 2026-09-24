@@ -1376,11 +1376,13 @@ func run(logger *zap.Logger) error {
 	encryptedQueueStore := postgres.NewEncryptedQueueStore(pool)
 	secretChatService := secretchatapp.NewService(secretChatStore, encryptedQueueStore)
 	starsStore := postgres.NewStarsStore(pool)
-	starsService := starsapp.NewService(starsStore, starsapp.WithStartingGrant(cfg.StarsStartingGrant))
+	starsService := starsapp.NewService(starsStore, starsapp.WithStartingGrant(cfg.StarsStartingGrant),
+		starsapp.WithAuthorizations(authzStore), starsapp.WithAntiFarmGuard(cfg.StarsAntiFarmGuardEnabled))
 	premiumStore := postgres.NewPremiumStore(pool)
 	premiumService := premiumapp.NewService(premiumStore, starsService)
 	botsService.SetPremiumSource(premiumService)
 	botsService.SetStarsSource(starsService)
+	starsService.SetAntiAbuseNotifier(botsService)
 	// Crypto donations (deposit -> Stars): works out of the box, no manual
 	// setup step. The encryption key is a local file, generated the first
 	// time the server ever runs (same pattern as the RSA key below) unless
@@ -1534,6 +1536,7 @@ func run(logger *zap.Logger) error {
 		auth.WithPasswords(passwordStore),
 		auth.WithBotLogin(botStore),
 		auth.WithPremiumGrant(cfg.PremiumGrantMonths),
+		auth.WithStarsGrantGuard(starsService),
 		auth.WithDefaultStickerSet(passwordStore, cfg.DefaultStickerSetID),
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),

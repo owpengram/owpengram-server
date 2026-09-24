@@ -147,7 +147,7 @@ func TestDonationsGanacheDepositCreditsStars(t *testing.T) {
 			if notice.ID == 0 {
 				t.Fatal("no @premiumbot notification was sent after the deposit was credited")
 			}
-			wantStars := fmt.Sprintf("+%d Stars", deposits[0].StarsCredited)
+			wantStars := fmt.Sprintf("+%d OwpenGram Stars", deposits[0].StarsCredited)
 			if !strings.Contains(notice.Body, wantStars) || !strings.Contains(notice.Body, "Ganache") || !strings.Contains(notice.Body, "ETH") {
 				t.Fatalf("premiumbot notification = %q, want it to mention %q, the chain and the asset", notice.Body, wantStars)
 			}

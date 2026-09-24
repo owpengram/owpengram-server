@@ -131,6 +131,73 @@ func TestStarsLedgerPostgres(t *testing.T) {
 // TestStarsMonthlyClaimPostgres 回归迁移 20260922120000：@premiumbot /claim
 // 的一次性冷却窗口对真实 PG 的原子语义——首claim 记账+写流水，冷却期内第二次
 // claim 既不重复记账也报告下次可领时刻，冷却期外第三次 claim 恢复可领。
+// TestStarsDeviceFingerprintGuardPostgres proves the anti-farming device+IP
+// join against real Postgres: two accounts sharing the exact
+// device_model+system_version+platform+ip (via a real authorizations row
+// each, not a mock) are detected as the same farmer only once one of them
+// has actually been granted, only in the direction that excludes the
+// account being checked, and only for that exact fingerprint -- a
+// different IP on an otherwise-identical device never matches. This is the
+// SQL app/stars.Service.GuardStartingGrant/GuardClaim rely on.
+func TestStarsDeviceFingerprintGuardPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	st := NewStarsStore(pool)
+	keys := NewAuthKeyStore(pool)
+	auths := NewAuthorizationStore(pool)
+
+	userA := createRevokeTestUser(t, ctx, pool, "fp-a")
+	userB := createRevokeTestUser(t, ctx, pool, "fp-b")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id IN ($1,$2)", userA, userB)
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id IN ($1,$2)", userA, userB)
+	})
+
+	const deviceModel, systemVersion, platform, ip = "Pixel 8", "Android 15", "android", "203.0.113.9"
+	keyA := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID: keyA, UserID: userA, DeviceModel: deviceModel, SystemVersion: systemVersion, Platform: platform, IP: ip,
+	}); err != nil {
+		t.Fatalf("bind userA authorization: %v", err)
+	}
+	keyB := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+	if err := auths.Bind(ctx, domain.Authorization{
+		AuthKeyID: keyB, UserID: userB, DeviceModel: deviceModel, SystemVersion: systemVersion, Platform: platform, IP: ip,
+	}); err != nil {
+		t.Fatalf("bind userB authorization: %v", err)
+	}
+
+	// Neither account has been granted yet: no match in either direction.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || dup {
+		t.Fatalf("pre-grant DeviceFingerprintGranted = %v, %v, want false, nil", dup, err)
+	}
+
+	if _, _, err := st.EnsureGrant(ctx, userA, 1000, 1700000000); err != nil {
+		t.Fatalf("grant userA: %v", err)
+	}
+
+	// Now userB's identical fingerprint matches userA's grant.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || !dup {
+		t.Fatalf("post-grant DeviceFingerprintGranted(excl userB) = %v, %v, want true, nil", dup, err)
+	}
+	// The check excludes the caller's own account: userA never matches itself.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip); err != nil || dup {
+		t.Fatalf("DeviceFingerprintGranted(excl userA) = %v, %v, want false, nil (must not match itself)", dup, err)
+	}
+	// A different IP on the same device never matches.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, "203.0.113.99"); err != nil || dup {
+		t.Fatalf("DeviceFingerprintGranted with a different IP = %v, %v, want false, nil", dup, err)
+	}
+
+	if err := st.SkipStartingGrant(ctx, userB); err != nil {
+		t.Fatalf("skip starting grant: %v", err)
+	}
+	bal, err := st.GetBalance(ctx, userB)
+	if err != nil || bal.Balance != 0 || !bal.Granted {
+		t.Fatalf("userB balance after skip = %+v err %v, want 0 granted (never actually credited)", bal, err)
+	}
+}
+
 func TestStarsMonthlyClaimPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()

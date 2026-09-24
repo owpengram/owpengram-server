@@ -186,6 +186,44 @@ RETURNING balance, granted`, userID, amount).Scan(&out.Balance, &out.Granted); e
 	return out, claimed, nextAt, nil
 }
 
+// DeviceFingerprintGranted joins authorizations to stars_balances/
+// stars_monthly_claims: does some OTHER account sharing this exact
+// device_model+system_version+platform+ip already have a Stars grant or
+// claim on it? Same four-column match as cmd/telesrv-admin's
+// ListSharedDeviceGroups, just answered live instead of only surfaced for
+// an operator to look at.
+func (s *StarsStore) DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM authorizations a
+    WHERE a.user_id <> $1
+      AND a.device_model = $2 AND a.system_version = $3 AND a.platform = $4 AND a.ip = $5
+      AND (
+        EXISTS (SELECT 1 FROM stars_balances sb WHERE sb.user_id = a.user_id AND sb.granted)
+        OR EXISTS (SELECT 1 FROM stars_monthly_claims mc WHERE mc.user_id = a.user_id)
+      )
+)`, excludeUserID, deviceModel, systemVersion, platform, ip).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check device fingerprint grant: %w", err)
+	}
+	return exists, nil
+}
+
+// SkipStartingGrant see store.StarsStore's doc comment.
+func (s *StarsStore) SkipStartingGrant(ctx context.Context, userID int64) error {
+	if userID == 0 {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+INSERT INTO stars_balances (user_id, balance, granted, updated_at) VALUES ($1, 0, true, now())
+ON CONFLICT (user_id) DO NOTHING`, userID)
+	if err != nil {
+		return fmt.Errorf("skip starting stars grant: %w", err)
+	}
+	return nil
+}
+
 func (s *StarsStore) ListTransactions(ctx context.Context, userID int64, query domain.StarsTransactionQuery) (domain.StarsTransactionPage, error) {
 	if userID == 0 {
 		return domain.StarsTransactionPage{}, nil

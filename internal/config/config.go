@@ -656,6 +656,15 @@ type Config struct {
 	// StarsMonthlyClaimInterval is the cooldown between successful /claim
 	// uses, counted from the previous successful claim.
 	StarsMonthlyClaimInterval time.Duration
+	// StarsAntiFarmGuardEnabled withholds the starting grant and /claim when
+	// the requesting device_model+system_version+platform+ip fingerprint
+	// already received one on a DIFFERENT account -- the same heuristic the
+	// admin panel's Shared Devices page already surfaces read-only, now
+	// enforced live. The abuse it targets: cheap alt accounts collecting
+	// free Stars, then consolidating them (via gifts) onto one account.
+	// True by default; an operator seeing false positives (a household on
+	// one router and phone model) can turn it off.
+	StarsAntiFarmGuardEnabled bool
 	// RatingEnabled controls the local admin-only composite account rating.
 	// Disabled keeps every local projection empty and refuses rating writes;
 	// no client-facing Telegram field changes in either mode.
@@ -1209,6 +1218,7 @@ func Load() (Config, error) {
 		StarsStartingGrant:        envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
 		StarsMonthlyClaimAmount:   envInt64Or("TELESRV_STARS_MONTHLY_CLAIM_AMOUNT", 100),
 		StarsMonthlyClaimInterval: envDurationOr("TELESRV_STARS_MONTHLY_CLAIM_INTERVAL", 30*24*time.Hour),
+		StarsAntiFarmGuardEnabled: envBoolOr("TELESRV_STARS_ANTI_FARM_GUARD_ENABLED", true),
 		RatingEnabled:             envBoolOr("TELESRV_RATING_ENABLED", true),
 		RatingPendingDelay:        envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
 		RatingRecomputeInterval:   envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
