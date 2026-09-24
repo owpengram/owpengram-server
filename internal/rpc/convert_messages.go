@@ -318,9 +318,28 @@ func tgMessageActionStarGiftUnique(action *domain.MessageStarGiftUniqueAction) t
 // off the sender's mirror copy of the service message; otherwise the sender
 // is offered transfer/resale/craft on a gift they don't own and the request
 // fails with PEER_ID_INVALID.
+//
+// It also fills in from_id for the owner's own copy, which the upgrade
+// message otherwise leaves unset (see starGiftUpgradeUniqueAction: the
+// message is authored by the owner, and TDesktop's wording -- verified
+// against lng_action_gift_upgraded_mine, "You turned the gift from {user}
+// ..." -- resolves an absent from_id to the chat's other peer for your own
+// message, landing on the original giver either way). DrKLO Android has no
+// equivalent fallback: it reads from_id when present, and otherwise falls
+// back to the message's own author, which for the owner's copy is the owner
+// themselves -- so the header pill reads "From <you>" instead of the giver.
+// Setting from_id explicitly here fixes Android without touching TDesktop's
+// wording, since it already resolves to this same person.
 func tgMessageActionStarGiftUniqueForViewer(action *domain.MessageStarGiftUniqueAction, viewerUserID int64) tg.MessageActionClass {
-	if action == nil || viewerUserID <= 0 || action.Gift.Owner.Type != domain.PeerTypeUser ||
-		action.Gift.Owner.ID == viewerUserID {
+	if action == nil || viewerUserID <= 0 || action.Gift.Owner.Type != domain.PeerTypeUser {
+		return tgMessageActionStarGiftUnique(action)
+	}
+	if action.Gift.Owner.ID == viewerUserID {
+		if action.FromUserID == 0 && action.Gift.KeepOriginalDetails && action.Gift.OriginalFromUserID != 0 && !action.Gift.OriginalNameHidden {
+			projected := *action
+			projected.FromUserID = action.Gift.OriginalFromUserID
+			return tgMessageActionStarGiftUnique(&projected)
+		}
 		return tgMessageActionStarGiftUnique(action)
 	}
 	projected := *action
