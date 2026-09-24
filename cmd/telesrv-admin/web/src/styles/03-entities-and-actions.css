@@ -460,6 +460,9 @@
 .give-gift-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; padding-top: 4px; }
 .give-gift-empty-panel { display: grid; gap: 10px; place-items: center; padding: 48px 20px; color: var(--muted); text-align: center; }
 .give-gift-empty-panel svg { color: var(--brand); opacity: .8; }
+.give-gift-attrs-toggle { display: grid; gap: 8px; }
+.give-gift-upgrade-note svg { flex: 0 0 auto; vertical-align: -2px; margin-right: 2px; }
+.give-gift-more-options { display: grid; gap: 10px; padding-top: 10px; }
 .official-gift-picker { display: grid; min-width: 0; gap: 12px; }
 .official-gift-bulk-import { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .gift-bulk-import-progress { display: flex; align-items: center; gap: 8px; min-width: 180px; }
