@@ -133,19 +133,50 @@ func (s *Service) sweep(ctx context.Context, chainKey, destination string, execu
 			privKey = pk
 			return pk, nil
 		}
+		// Nonces start from the last MINED one, not the pending one, so a
+		// re-run replaces a sweep still stuck in the mempool instead of
+		// queueing another one behind it.
+		//
+		// A sweep sends an address's whole balance, so two queued sweeps can
+		// never both be funded: the node counts the pending one's cost
+		// against the balance and rejects the new one with "insufficient
+		// funds ... queued cost <balance>, overshot <balance>". With a
+		// pending nonce that rejection is permanent -- every later attempt
+		// queues yet another doomed transaction. Reusing the stuck nonce
+		// replaces it instead, which is what an operator pressing Sweep
+		// again actually means. Within one run the counter still increments
+		// locally, so an address's token transfer and its native transfer
+		// keep their order.
 		var nonce uint64
 		haveNonce := false
+		replacing := false
 		nextNonce := func() (uint64, error) {
 			if !haveNonce {
-				n, err := client.PendingNonceAt(ctx, fromAddr)
+				mined, err := client.NonceAt(ctx, fromAddr, nil)
 				if err != nil {
 					return 0, err
 				}
-				nonce, haveNonce = n, true
+				pending, err := client.PendingNonceAt(ctx, fromAddr)
+				if err != nil {
+					return 0, err
+				}
+				replacing = pending > mined
+				nonce, haveNonce = mined, true
 			}
 			n := nonce
 			nonce++
 			return n, nil
+		}
+		// gasPriceFor prices one transaction. A replacement must outbid the
+		// transaction it replaces or the node refuses it outright
+		// ("replacement transaction underpriced"), and the stuck one's own
+		// price is unknown here, so a replacement is deliberately overbid.
+		gasPriceFor := func() *big.Int {
+			if !replacing {
+				return gasPrice
+			}
+			bumped := new(big.Int).Mul(gasPrice, big.NewInt(125))
+			return bumped.Div(bumped, big.NewInt(100))
 		}
 
 		// Tokens first: their gas comes out of this address's OWN native
@@ -199,7 +230,7 @@ func (s *Service) sweep(ctx context.Context, chainKey, destination string, execu
 				return domain.DonationSweepResult{}, err
 			}
 			tx := types.NewTx(&types.LegacyTx{
-				Nonce: n, To: &tokenAddr, Value: big.NewInt(0), Gas: gasLimit, GasPrice: gasPrice, Data: transferData,
+				Nonce: n, To: &tokenAddr, Value: big.NewInt(0), Gas: gasLimit, GasPrice: gasPriceFor(), Data: transferData,
 			})
 			signed, err := types.SignTx(tx, signer, pk)
 			if err != nil {
@@ -222,28 +253,41 @@ func (s *Service) sweep(ctx context.Context, chainKey, destination string, execu
 		if nativeBalance.Sign() <= 0 {
 			continue
 		}
-		sendable := new(big.Int).Sub(nativeBalance, nativeGasCost)
-		if sendable.Sign() <= 0 {
+		// The preview is priced at the plain suggestion; only an execution
+		// knows whether it is replacing a stuck transaction, and finding that
+		// out costs two RPC calls per address.
+		if preview := new(big.Int).Sub(nativeBalance, nativeGasCost); preview.Sign() <= 0 {
 			result.Entries = append(result.Entries, domain.DonationSweepEntry{
 				Address: addr.Address, AmountRaw: nativeBalance.String(),
 				Skipped: true, Reason: "balance doesn't cover its own transfer gas",
 			})
 			continue
-		}
-		if !execute {
-			result.Entries = append(result.Entries, domain.DonationSweepEntry{Address: addr.Address, AmountRaw: sendable.String()})
+		} else if !execute {
+			result.Entries = append(result.Entries, domain.DonationSweepEntry{Address: addr.Address, AmountRaw: preview.String()})
 			continue
 		}
 		pk, err := loadSigner()
 		if err != nil {
 			return domain.DonationSweepResult{}, err
 		}
+		// nextNonce before gasPriceFor: it is what resolves whether this is a
+		// replacement, and a replacement is priced higher.
 		n, err := nextNonce()
 		if err != nil {
 			return domain.DonationSweepResult{}, err
 		}
+		nativePrice := gasPriceFor()
+		gasCost := new(big.Int).Mul(nativePrice, new(big.Int).SetUint64(nativeTransferGasLimit))
+		sendable := new(big.Int).Sub(nativeBalance, gasCost)
+		if sendable.Sign() <= 0 {
+			result.Entries = append(result.Entries, domain.DonationSweepEntry{
+				Address: addr.Address, AmountRaw: nativeBalance.String(),
+				Skipped: true, Reason: "balance doesn't cover its own transfer gas at the replacement price",
+			})
+			continue
+		}
 		to := destAddr
-		tx := types.NewTx(&types.LegacyTx{Nonce: n, To: &to, Value: sendable, Gas: nativeTransferGasLimit, GasPrice: gasPrice})
+		tx := types.NewTx(&types.LegacyTx{Nonce: n, To: &to, Value: sendable, Gas: nativeTransferGasLimit, GasPrice: nativePrice})
 		signed, err := types.SignTx(tx, signer, pk)
 		if err != nil {
 			return domain.DonationSweepResult{}, fmt.Errorf("donations: sign native sweep for %s: %w", addr.Address, err)
