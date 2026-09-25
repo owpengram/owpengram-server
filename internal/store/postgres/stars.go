@@ -186,12 +186,22 @@ RETURNING balance, granted`, userID, amount).Scan(&out.Balance, &out.Granted); e
 	return out, claimed, nextAt, nil
 }
 
-// DeviceFingerprintGranted joins authorizations to stars_balances/
-// stars_monthly_claims: does some OTHER account sharing this exact
-// device_model+system_version+platform+ip already have a Stars grant or
-// claim on it? Same four-column match as cmd/telesrv-admin's
+// DeviceFingerprintGranted joins authorizations to stars_transactions: does
+// some OTHER account sharing this exact device_model+system_version+
+// platform+ip already have an actually-credited Stars grant or claim on it?
+// Same four-column device/IP match as cmd/telesrv-admin's
 // ListSharedDeviceGroups, just answered live instead of only surfaced for
 // an operator to look at.
+//
+// This deliberately checks stars_transactions (reason IN grant/monthly_claim),
+// never stars_balances.granted: SkipStartingGrant also sets granted=true on
+// an account whose grant was WITHHELD by this very guard, without writing a
+// transaction. Treating that flag as "received a grant" here would poison
+// the fingerprint for good -- once one alt account got its grant withheld,
+// every other account on that device+IP (including the original, legitimate
+// one that earned the flag in the first place) would look like a repeat
+// offender and get blocked forever, including from claiming again next
+// month on their own account. Only a real credit counts as evidence.
 func (s *StarsStore) DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRow(ctx, `
@@ -199,9 +209,9 @@ SELECT EXISTS (
     SELECT 1 FROM authorizations a
     WHERE a.user_id <> $1
       AND a.device_model = $2 AND a.system_version = $3 AND a.platform = $4 AND a.ip = $5
-      AND (
-        EXISTS (SELECT 1 FROM stars_balances sb WHERE sb.user_id = a.user_id AND sb.granted)
-        OR EXISTS (SELECT 1 FROM stars_monthly_claims mc WHERE mc.user_id = a.user_id)
+      AND EXISTS (
+        SELECT 1 FROM stars_transactions st
+        WHERE st.user_id = a.user_id AND st.reason IN ('grant', 'monthly_claim')
       )
 )`, excludeUserID, deviceModel, systemVersion, platform, ip).Scan(&exists)
 	if err != nil {

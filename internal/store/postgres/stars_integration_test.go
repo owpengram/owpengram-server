@@ -196,6 +196,23 @@ func TestStarsDeviceFingerprintGuardPostgres(t *testing.T) {
 	if err != nil || bal.Balance != 0 || !bal.Granted {
 		t.Fatalf("userB balance after skip = %+v err %v, want 0 granted (never actually credited)", bal, err)
 	}
+
+	// Regression: a withheld grant (SkipStartingGrant) must never itself
+	// count as evidence against a THIRD account sharing the fingerprint --
+	// otherwise userA's own account, the legitimate one that earned the
+	// flag in the first place, would find userB's granted=true skip-marker
+	// and get blocked from ever claiming again. userB is still correctly
+	// excluded from claiming itself (that's the real, working guard); this
+	// only checks that userB's presence doesn't poison userA.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip); err != nil || dup {
+		t.Fatalf("DeviceFingerprintGranted(excl userA) after userB's withheld grant = %v, %v, want false, nil (userB's skip must not count as evidence)", dup, err)
+	}
+	// userB itself is still correctly recognized as sharing userA's
+	// fingerprint (unaffected by the fix above, which only changes what
+	// counts as evidence -- userA's real grant still does).
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || !dup {
+		t.Fatalf("DeviceFingerprintGranted(excl userB) after userB's withheld grant = %v, %v, want true, nil (userA's real grant still matches)", dup, err)
+	}
 }
 
 func TestStarsMonthlyClaimPostgres(t *testing.T) {

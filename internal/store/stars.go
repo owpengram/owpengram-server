@@ -38,13 +38,17 @@ type StarsStore interface {
 	ClaimMonthly(ctx context.Context, userID, amount int64, date int, cooldown time.Duration) (bal domain.StarsBalance, claimed bool, nextAt time.Time, err error)
 	// DeviceFingerprintGranted reports whether any account other than
 	// excludeUserID has, from this exact device_model+system_version+
-	// platform+ip fingerprint (an authorizations row), already received the
-	// starting grant or a monthly claim. This is the live enforcement of
-	// the same heuristic cmd/telesrv-admin's SharedDeviceGroup already
-	// surfaces read-only: two accounts matching on every one of those four
-	// attributes are treated as the same farmer. deviceModel and ip must be
-	// non-empty -- callers never invoke this with an unknown fingerprint
-	// (see app/stars.Service.GuardStartingGrant/GuardClaim).
+	// platform+ip fingerprint (an authorizations row), already been
+	// actually credited the starting grant or a monthly claim -- an account
+	// whose grant was withheld by this very guard (see SkipStartingGrant)
+	// never counts, or the fingerprint would stay permanently poisoned for
+	// every other account on it, including the original legitimate one.
+	// This is the live enforcement of the same heuristic
+	// cmd/telesrv-admin's SharedDeviceGroup already surfaces read-only: two
+	// accounts matching on every one of those four attributes are treated
+	// as the same farmer. deviceModel and ip must be non-empty -- callers
+	// never invoke this with an unknown fingerprint (see
+	// app/stars.Service.GuardStartingGrant/GuardClaim).
 	DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error)
 	// SkipStartingGrant idempotently marks the starting grant as already
 	// handled without crediting anything (balance 0, granted=true), so
