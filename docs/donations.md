@@ -149,6 +149,22 @@ once per transfer, never over the wire. Writes go through
 required), the same pattern as Premium plan edits. Deleting a chain is
 refused once it has real deposit history -- disable it instead.
 
+Adding a chain, or flipping its Enabled toggle, starts (or stops) that
+chain's watcher goroutine immediately -- `Service.StartWatchers` (called
+once at server boot) remembers its own ctx/poll interval/logger, and
+`CreateChain`/`UpdateChainConfig` call back into it (`ensureWatcher`/
+`stopWatcher`). No restart is needed. Before this, a chain added while the
+server was already running was silently never watched at all -- worth
+knowing if you're chasing why a real, on-chain-confirmed deposit never got
+credited on a chain that was added or re-enabled without a restart on an
+older build. See `TestDonationsCreateChainStartsWatcherWithoutRestart`.
+
+A chain enabled with `manual_usd_rate_micros` still at 0 (or a token with a
+price of $0) has every deposit price to zero Stars, which the watcher
+silently refuses to credit -- it sits at `confirmed` forever. Both
+`CreateChain` and `UpdateChainConfig` refuse to enable a chain without a
+positive rate.
+
 ### Sweep
 
 `internal/app/donations/sweep.go` moves every deposit address's balance on

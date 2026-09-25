@@ -2,9 +2,14 @@ package donations
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
+
+	"go.uber.org/zap"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
@@ -37,6 +42,12 @@ type Service struct {
 	key      EncryptionKey
 	wallet   *Wallet
 	notifier CreditNotifier
+
+	watcherMu           sync.Mutex
+	watcherCtx          context.Context
+	watcherPollInterval time.Duration
+	watcherLog          *zap.Logger
+	watcherCancel       map[string]context.CancelFunc
 }
 
 // SetNotifier wires the chat notification sent after each deposit is
@@ -165,7 +176,24 @@ func (s *Service) UpdateChainConfig(ctx context.Context, upd domain.DonationChai
 	if upd.ConfirmationsRequired <= 0 {
 		return domain.DonationChain{}, fmt.Errorf("donations: confirmations_required must be positive")
 	}
-	return s.store.UpdateDonationChainConfig(ctx, upd)
+	// A chain enabled with no USD rate prices every deposit to zero Stars,
+	// which the watcher silently refuses to credit (see
+	// refreshConfirmationsAndCredit) -- the deposit sits at "confirmed"
+	// forever. Catch this before it ships instead of after a donor's
+	// deposit goes uncredited.
+	if upd.Enabled && upd.ManualUSDRateMicros <= 0 {
+		return domain.DonationChain{}, fmt.Errorf("donations: manual_usd_rate_micros must be positive to enable a chain -- deposits would price to zero Stars and never get credited")
+	}
+	chain, err := s.store.UpdateDonationChainConfig(ctx, upd)
+	if err != nil {
+		return domain.DonationChain{}, err
+	}
+	if chain.Watchable() {
+		s.ensureWatcher(chain.Key)
+	} else {
+		s.stopWatcher(chain.Key)
+	}
+	return chain, nil
 }
 
 // CreateChain adds a brand new chain (an operator picking a preset or
@@ -187,7 +215,18 @@ func (s *Service) CreateChain(ctx context.Context, chain domain.DonationChain) (
 	if !chain.Valid() {
 		return domain.DonationChain{}, fmt.Errorf("donations: chain_id, native_decimals and confirmations_required must all be positive")
 	}
-	return s.store.CreateDonationChain(ctx, chain)
+	// See UpdateChainConfig's identical check for why.
+	if chain.Enabled && chain.ManualUSDRateMicros <= 0 {
+		return domain.DonationChain{}, fmt.Errorf("donations: manual_usd_rate_micros must be positive to enable a chain -- deposits would price to zero Stars and never get credited")
+	}
+	created, err := s.store.CreateDonationChain(ctx, chain)
+	if err != nil {
+		return domain.DonationChain{}, err
+	}
+	if created.Watchable() {
+		s.ensureWatcher(created.Key)
+	}
+	return created, nil
 }
 
 // DeleteChain removes a chain the operator added by mistake or no longer
@@ -202,7 +241,93 @@ func (s *Service) DeleteChain(ctx context.Context, chainKey string) error {
 	if chainKey == "" {
 		return domain.ErrDonationChainNotFound
 	}
-	return s.store.DeleteDonationChain(ctx, chainKey)
+	if err := s.store.DeleteDonationChain(ctx, chainKey); err != nil {
+		return err
+	}
+	s.stopWatcher(chainKey)
+	return nil
+}
+
+// StartWatchers starts the on-chain watcher for every currently enabled and
+// watchable chain, and remembers ctx/pollInterval/log so CreateChain and
+// UpdateChainConfig can start (or stop) an individual chain's watcher
+// dynamically from then on -- without this, a chain added or re-enabled
+// through the admin panel's "Add chain" menu or its Enabled toggle would
+// silently never be watched until the next full server restart, since
+// nothing else in this process ever re-scans the chain table. Call this
+// once, at server startup (see cmd/telesrv/main.go); ctx's cancellation
+// stops every watcher, current and future.
+func (s *Service) StartWatchers(ctx context.Context, pollInterval time.Duration, log *zap.Logger) error {
+	if s == nil || s.store == nil {
+		return domain.ErrDonationWalletNotConfigured
+	}
+	s.watcherMu.Lock()
+	s.watcherCtx = ctx
+	s.watcherPollInterval = pollInterval
+	s.watcherLog = log
+	if s.watcherCancel == nil {
+		s.watcherCancel = make(map[string]context.CancelFunc)
+	}
+	s.watcherMu.Unlock()
+	chains, err := s.store.EnabledDonationChains(ctx)
+	if err != nil {
+		return err
+	}
+	for _, chain := range chains {
+		if chain.Watchable() {
+			s.ensureWatcher(chain.Key)
+		}
+	}
+	return nil
+}
+
+// ensureWatcher starts chainKey's watcher goroutine if one isn't already
+// running. A no-op before StartWatchers has ever been called (donations
+// disabled entirely, or the process hasn't finished booting yet) -- the
+// chain will simply be picked up by StartWatchers' own initial sweep once
+// it does run.
+func (s *Service) ensureWatcher(chainKey string) {
+	s.watcherMu.Lock()
+	defer s.watcherMu.Unlock()
+	if s.watcherCtx == nil || s.watcherCancel == nil {
+		return
+	}
+	if _, running := s.watcherCancel[chainKey]; running {
+		return
+	}
+	childCtx, cancel := context.WithCancel(s.watcherCtx)
+	s.watcherCancel[chainKey] = cancel
+	log := s.watcherLog
+	if log == nil {
+		log = zap.NewNop()
+	}
+	chainLog := log.Named(chainKey)
+	pollInterval := s.watcherPollInterval
+	go func() {
+		if err := s.WatchChain(childCtx, chainKey, pollInterval, chainLog); err != nil && !errors.Is(err, context.Canceled) {
+			chainLog.Error("donation watcher stopped", zap.Error(err))
+		}
+		s.watcherMu.Lock()
+		if s.watcherCancel[chainKey] != nil {
+			delete(s.watcherCancel, chainKey)
+		}
+		s.watcherMu.Unlock()
+	}()
+}
+
+// stopWatcher cancels chainKey's watcher goroutine, if one is running --
+// called when a chain is disabled, deleted, or loses the RPC URL that made
+// it watchable.
+func (s *Service) stopWatcher(chainKey string) {
+	s.watcherMu.Lock()
+	cancel, running := s.watcherCancel[chainKey]
+	if running {
+		delete(s.watcherCancel, chainKey)
+	}
+	s.watcherMu.Unlock()
+	if running {
+		cancel()
+	}
 }
 
 // EnabledChains lists every chain configured as enabled, whether or not

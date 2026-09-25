@@ -480,6 +480,7 @@ function AddChainModal({ existingKeys, onClose, onAdded }: { existingKeys: Set<s
   const [rpcUrl, setRpcUrl] = useState("");
   const [wsUrl, setWsUrl] = useState("");
   const [confirmations, setConfirmations] = useState("12");
+  const [manualUsdRate, setManualUsdRate] = useState("");
   const [enabled, setEnabled] = useState(false);
 
   function pickPreset(preset: DonationChainPreset) {
@@ -498,14 +499,20 @@ function AddChainModal({ existingKeys, onClose, onAdded }: { existingKeys: Set<s
     setMode("custom");
     setSelectedPreset(null);
     setKey(""); setName(""); setChainId(""); setNativeSymbol(""); setNativeDecimals("18");
-    setRpcUrl(""); setWsUrl(""); setConfirmations("12");
+    setRpcUrl(""); setWsUrl(""); setConfirmations("12"); setManualUsdRate("");
   }
 
   const reviewing = mode === "custom" || selectedPreset !== null;
   const keyTaken = existingKeys.has(key.trim().toLowerCase());
+  // manual_usd_rate_micros only matters once the chain is actually
+  // watched: a chain saved disabled (still being set up) can be missing it
+  // for now, but flipping "Enable immediately" without it means every
+  // deposit prices to zero Stars and never gets credited -- see
+  // app/donations.Service.CreateChain's identical backend check.
+  const rateRequired = enabled;
   const valid = reviewing && /^[a-z][a-z0-9_]{1,31}$/.test(key.trim().toLowerCase()) && !keyTaken &&
     name.trim() !== "" && Number(chainId) > 0 && nativeSymbol.trim() !== "" && Number(nativeDecimals) > 0 &&
-    Number(confirmations) > 0 && rpcUrl.trim() !== "";
+    Number(confirmations) > 0 && rpcUrl.trim() !== "" && (!rateRequired || Number(manualUsdRate) > 0);
 
   return createPortal(
     <div className="modal-backdrop" role="presentation">
@@ -583,10 +590,24 @@ function AddChainModal({ existingKeys, onClose, onAdded }: { existingKeys: Set<s
                 <span>{"WS URL (optional)"}</span>
                 <input value={wsUrl} placeholder={"wss://…"} onChange={(event) => setWsUrl(event.target.value)} />
               </label>
-              <label className="duration-field">
-                <span>{"Confirmations required"}</span>
-                <input type="number" min="1" value={confirmations} onChange={(event) => setConfirmations(event.target.value)} />
-              </label>
+              <div className="bot-create-fields">
+                <label className="duration-field">
+                  <span>{"Confirmations required"}</span>
+                  <input type="number" min="1" value={confirmations} onChange={(event) => setConfirmations(event.target.value)} />
+                </label>
+                <label className="duration-field">
+                  <span>{"Manual USD rate (µ, per whole unit)"}</span>
+                  <input
+                    type="number"
+                    value={manualUsdRate}
+                    placeholder={"e.g. 2000000000 = $2000"}
+                    onChange={(event) => setManualUsdRate(event.target.value)}
+                  />
+                </label>
+              </div>
+              {rateRequired && !(Number(manualUsdRate) > 0) && (
+                <Alert>{"Required to enable: without it, every deposit on this chain prices to $0 / 0 Stars and is never credited."}</Alert>
+              )}
               <label className="gift-switch">
                 <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
                 <span className="gift-switch-track" aria-hidden="true"><span /></span>
@@ -615,7 +636,7 @@ function AddChainModal({ existingKeys, onClose, onAdded }: { existingKeys: Set<s
                 ws_url: wsUrl.trim(),
                 confirmations_required: Number(confirmations),
                 price_feed_address: "",
-                manual_usd_rate_micros: 0,
+                manual_usd_rate_micros: Number(manualUsdRate) || 0,
                 enabled
               })}
               onDone={onAdded}

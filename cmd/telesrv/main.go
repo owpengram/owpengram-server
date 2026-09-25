@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -1918,20 +1917,12 @@ func run(logger *zap.Logger) error {
 	go router.RunBotCallbackAnswerSubscriber(ctx)
 	go router.RunEphemeralPushSubscriber(ctx)
 	if donationsService.Ready() {
-		donationChains, err := donationsService.EnabledChains(ctx)
-		if err != nil {
+		// Also remembers ctx/cfg.DonationPollInterval/logger so a chain added
+		// or (re-)enabled later through the admin panel starts its own
+		// watcher immediately, without needing a restart to be picked up --
+		// see StartWatchers' doc comment.
+		if err := donationsService.StartWatchers(ctx, cfg.DonationPollInterval, logger.Named("donations")); err != nil {
 			logger.Warn("list enabled donation chains failed; no donation watchers started", zap.Error(err))
-		}
-		for _, chain := range donationChains {
-			if !chain.Watchable() {
-				continue // enabled but not yet configured (e.g. rpc_url still empty) -- an operator will fill it in
-			}
-			chainLog := logger.Named("donations").Named(chain.Key)
-			go func(chainKey string, log *zap.Logger) {
-				if err := donationsService.WatchChain(ctx, chainKey, cfg.DonationPollInterval, log); err != nil && !errors.Is(err, context.Canceled) {
-					log.Error("donation watcher stopped", zap.Error(err))
-				}
-			}(chain.Key, chainLog)
 		}
 	}
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
