@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"go.uber.org/zap"
 
@@ -193,25 +194,69 @@ func (s *Service) scanOnce(ctx context.Context, client *ethclient.Client, chain 
 	return s.refreshConfirmationsAndCredit(ctx, chain, latest, log)
 }
 
+// rawBlockTx is the only part of a transaction a deposit watcher cares
+// about, decoded straight from the JSON-RPC response.
+type rawBlockTx struct {
+	Hash  string  `json:"hash"`
+	To    *string `json:"to"`
+	Value string  `json:"value"`
+}
+
+type rawBlock struct {
+	Transactions []rawBlockTx `json:"transactions"`
+}
+
+// fetchBlockTransactions reads one block's transactions over raw JSON-RPC
+// instead of ethclient.BlockByNumber.
+//
+// BlockByNumber runs go-ethereum's consensus-level decoder, which rejects
+// the WHOLE block with "transaction type not supported" the moment it meets
+// a transaction type that build of go-ethereum does not know. That is not a
+// theoretical risk: OP-stack chains (Base, Optimism) use deposit
+// transactions, Arbitrum has its own types, and Polygon mixes in newer types
+// as the network upgrades -- so Base, Optimism and Arbitrum never scanned a
+// single block, and Polygon wedged permanently the first time one such
+// transaction appeared. Because the scan loop stops on the first error and
+// the cursor only advances after a clean pass, every later pass re-hit the
+// same block and died there, so every deposit after it was invisible
+// forever.
+//
+// A watcher only needs to/value/hash, so it reads exactly those and leaves
+// anything it cannot interpret alone: an unknown transaction type is simply
+// not a deposit to us.
+func fetchBlockTransactions(ctx context.Context, client *ethclient.Client, bn uint64) ([]rawBlockTx, error) {
+	var block *rawBlock
+	if err := client.Client().CallContext(ctx, &block, "eth_getBlockByNumber", hexutil.EncodeUint64(bn), true); err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, fmt.Errorf("block %d not found", bn)
+	}
+	return block.Transactions, nil
+}
+
 func (s *Service) scanNativeTransfers(ctx context.Context, client *ethclient.Client, chain domain.DonationChain, from, to uint64, log *zap.Logger) error {
 	for bn := from; bn <= to; bn++ {
-		block, err := client.BlockByNumber(ctx, new(big.Int).SetUint64(bn))
+		txs, err := fetchBlockTransactions(ctx, client, bn)
 		if err != nil {
 			return fmt.Errorf("fetch block %d: %w", bn, err)
 		}
-		for _, tx := range block.Transactions() {
-			toAddr := tx.To()
-			if toAddr == nil || tx.Value() == nil || tx.Value().Sign() <= 0 {
-				continue // contract creation, or a zero-value call
+		for _, tx := range txs {
+			if tx.To == nil {
+				continue // contract creation
 			}
-			userID, isOurs, err := s.store.DonationUserByAddress(ctx, normalizeAddress(toAddr.Hex()))
+			value, ok := new(big.Int).SetString(strings.TrimPrefix(tx.Value, "0x"), 16)
+			if !ok || value.Sign() <= 0 {
+				continue // zero-value call, or a value this node did not report
+			}
+			userID, isOurs, err := s.store.DonationUserByAddress(ctx, normalizeAddress(*tx.To))
 			if err != nil {
 				return err
 			}
 			if !isOurs {
 				continue
 			}
-			if err := s.recordDeposit(ctx, chain, userID, "", tx.Hash().Hex(), -1, int64(bn), tx.Value().String(), log); err != nil {
+			if err := s.recordDeposit(ctx, chain, userID, "", tx.Hash, -1, int64(bn), value.String(), log); err != nil {
 				return err
 			}
 		}
