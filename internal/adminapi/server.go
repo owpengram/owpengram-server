@@ -47,6 +47,10 @@ type Service interface {
 	UpsertPremiumPlan(ctx context.Context, req admin.UpsertPremiumPlanRequest) (admin.CommandResult, error)
 	RefundPremium(ctx context.Context, req admin.RefundPremiumRequest) (admin.CommandResult, error)
 	UpdateDonationChain(ctx context.Context, req admin.UpdateDonationChainRequest) (admin.CommandResult, error)
+	CreateDonationChain(ctx context.Context, req admin.CreateDonationChainRequest) (admin.CommandResult, error)
+	DeleteDonationChain(ctx context.Context, req admin.DeleteDonationChainRequest) (admin.CommandResult, error)
+	SweepDonationChain(ctx context.Context, req admin.SweepDonationChainRequest) (admin.CommandResult, error)
+	DonationChainBalance(ctx context.Context, chainKey string) (domain.DonationChainBalance, error)
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -207,6 +211,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/premium/plans/upsert", s.authorized(PermissionPremiumManage, s.handleUpsertPremiumPlan))
 	mux.HandleFunc("POST /v1/premium/refund", s.authorized(PermissionPremiumManage, s.handleRefundPremium))
 	mux.HandleFunc("POST /v1/donations/chains/update", s.authorized(PermissionDonationsManage, s.handleUpdateDonationChain))
+	mux.HandleFunc("POST /v1/donations/chains/create", s.authorized(PermissionDonationsManage, s.handleCreateDonationChain))
+	mux.HandleFunc("POST /v1/donations/chains/delete", s.authorized(PermissionDonationsManage, s.handleDeleteDonationChain))
+	mux.HandleFunc("POST /v1/donations/sweep", s.authorized(PermissionDonationsManage, s.handleSweepDonationChain))
+	mux.HandleFunc("GET /v1/donations/chains/{key}/balance", s.authorized(PermissionDonationsManage, s.handleDonationChainBalance))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -388,6 +396,47 @@ func (s *Server) handleUpdateDonationChain(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := s.svc.UpdateDonationChain(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleCreateDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.CreateDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.CreateDonationChain(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteDonationChain(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleSweepDonationChain(w http.ResponseWriter, r *http.Request) {
+	var req admin.SweepDonationChainRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.SweepDonationChain(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDonationChainBalance(w http.ResponseWriter, r *http.Request) {
+	chainKey := r.PathValue("key")
+	if chainKey == "" {
+		writeError(w, http.StatusBadRequest, "chain key is required")
+		return
+	}
+	balance, err := s.svc.DonationChainBalance(r.Context(), chainKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, balance)
 }
 
 func (s *Server) handleSetVerified(w http.ResponseWriter, r *http.Request) {

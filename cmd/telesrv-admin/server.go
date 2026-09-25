@@ -129,6 +129,10 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/donations/chains", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationChainsAPI)))
 	mux.Handle("GET /api/donations/deposits", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationDepositsAPI)))
 	mux.Handle("POST /api/actions/donation-chain-update", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleUpdateDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-chain-create", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleCreateDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-chain-delete", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDeleteDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-sweep", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleSweepDonationChainAPI)))
+	mux.Handle("GET /api/donations/chains/{key}/balance", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationChainBalanceAPI)))
 	mux.Handle("POST /api/actions/recompute-account-rating", s.scopedRoute(permissionRatingsManage, http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
 	mux.Handle("POST /api/actions/adjust-account-rating", s.scopedRoute(permissionRatingsManage, http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.scopedRoute(permissionVerificationReview, http.HandlerFunc(s.handleSetVerifiedAPI)))
@@ -2729,6 +2733,31 @@ func (s *server) commandMetaFromAPI(r *http.Request, commandID, reason string, c
 		Reason:    reason,
 		DryRun:    dryRun,
 	}
+}
+
+// callAdminAPIGet proxies a plain, unauthenticated-payload GET to the main
+// telesrv server's admin API and unmarshals its JSON body into out -- for
+// reads that need something only that process has (a live blockchain RPC
+// connection, here), unlike every other read on this panel, which queries
+// Postgres directly via readStore. Unlike callAdminAPI, the response isn't
+// admin.CommandResult-shaped: there's no command, dry-run or audit trail
+// for a read that mutates nothing.
+func (s *server) callAdminAPIGet(ctx context.Context, apiPath string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.AdminAPIURL+apiPath, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("admin api %s: status=%d body=%s", apiPath, resp.StatusCode, string(raw))
+	}
+	return json.Unmarshal(raw, out)
 }
 
 func (s *server) callAdminAPI(ctx context.Context, apiPath string, payload any) (admin.CommandResult, error) {

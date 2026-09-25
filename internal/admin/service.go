@@ -29,6 +29,9 @@ const (
 	ActionUpsertPremiumPlan        = "premium.upsert_plan"
 	ActionRefundPremium            = "premium.refund"
 	ActionUpdateDonationChain      = "donations.update_chain"
+	ActionCreateDonationChain      = "donations.create_chain"
+	ActionDeleteDonationChain      = "donations.delete_chain"
+	ActionSweepDonationChain       = "donations.sweep_chain"
 	ActionSetVerified              = "account.set_verified"
 	ActionSetUserFlags             = "account.set_flags"
 	ActionSetSupport               = "account.set_support"
@@ -365,11 +368,28 @@ type PremiumService interface {
 // DonationsService is the operator-facing slice of crypto donations
 // (app/donations.Service satisfies it as-is): the write side of chain
 // config (RPC/WS endpoint, enabled flag, confirmation depth, price feed or
-// manual USD rate). Everything read-only -- wallet status, chain list,
-// deposit history -- is served straight out of Postgres by
-// cmd/telesrv-admin's own readStore, the same split premium plans use.
+// manual USD rate), adding/removing a chain, and sweeping accumulated
+// funds. Everything read-only -- wallet status, chain list, deposit
+// history -- is served straight out of Postgres by cmd/telesrv-admin's own
+// readStore, the same split premium plans use.
 type DonationsService interface {
 	UpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error)
+	CreateChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error)
+	DeleteChain(ctx context.Context, chainKey string) error
+	// PreviewSweep computes exactly what Sweep would do (balances found,
+	// amounts after gas, addresses skipped for insufficient gas) without
+	// signing or broadcasting anything -- the dry-run half of
+	// Service.SweepDonationChain's confirm flow.
+	PreviewSweep(ctx context.Context, chainKey, destination string) (domain.DonationSweepResult, error)
+	// Sweep actually signs and broadcasts every transfer PreviewSweep would
+	// have reported -- only ever called from the confirm half of
+	// Service.SweepDonationChain, never from a dry-run.
+	Sweep(ctx context.Context, chainKey, destination string) (domain.DonationSweepResult, error)
+	// ChainBalance reads the live on-chain total (native + every watchable
+	// token) across every deposit address. A plain read -- see
+	// Service.DonationChainBalance, the only caller, which skips the
+	// command/audit-trail machinery entirely since nothing is mutated.
+	ChainBalance(ctx context.Context, chainKey string) (domain.DonationChainBalance, error)
 }
 
 // StarsService is the operator-facing slice of the local Stars ledger: an
@@ -985,6 +1005,44 @@ type UpdateDonationChainRequest struct {
 	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
 }
 
+// CreateDonationChainRequest adds a brand new chain -- either from the admin
+// panel's curated preset list (the operator picked one, its RPC/chain-id/
+// native-currency fields flow through verbatim) or a fully custom entry.
+type CreateDonationChainRequest struct {
+	CommandMeta
+	ChainKey              string `json:"chain_key"`
+	Name                  string `json:"name"`
+	ChainID               int64  `json:"chain_id"`
+	NativeSymbol          string `json:"native_symbol"`
+	NativeDecimals        int    `json:"native_decimals"`
+	RPCURL                string `json:"rpc_url"`
+	WSURL                 string `json:"ws_url"`
+	ConfirmationsRequired int    `json:"confirmations_required"`
+	PriceFeedAddress      string `json:"price_feed_address"`
+	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
+	Enabled               bool   `json:"enabled"`
+}
+
+// DeleteDonationChainRequest removes a chain the operator added by mistake
+// or no longer wants listed. Refused once the chain has real donation
+// history -- see store.DonationStore.DeleteDonationChain.
+type DeleteDonationChainRequest struct {
+	CommandMeta
+	ChainKey string `json:"chain_key"`
+}
+
+// SweepDonationChainRequest moves every deposit address's balance on one
+// chain (native currency and any watchable token) to a single
+// operator-supplied destination. destination is never validated against
+// anything the server itself controls -- it is deliberately an arbitrary
+// address the operator types in, exactly like withdrawing from any
+// custodial wallet.
+type SweepDonationChainRequest struct {
+	CommandMeta
+	ChainKey    string `json:"chain_key"`
+	Destination string `json:"destination"`
+}
+
 type SetVerifiedRequest struct {
 	CommandMeta
 	UserID   int64 `json:"user_id"`
@@ -1552,6 +1610,100 @@ func (s *Service) UpdateDonationChain(ctx context.Context, req UpdateDonationCha
 			"confirmations_required": chain.ConfirmationsRequired, "manual_usd_rate_micros": chain.ManualUSDRateMicros,
 		}}, nil
 	})
+}
+
+// CreateDonationChain adds a chain from the admin panel's "Add chain" menu
+// (a curated preset or a fully custom entry).
+func (s *Service) CreateDonationChain(ctx context.Context, req CreateDonationChainRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionCreateDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		chain, err := s.donations.CreateChain(ctx, domain.DonationChain{
+			Key: req.ChainKey, Name: req.Name, ChainID: req.ChainID,
+			NativeSymbol: req.NativeSymbol, NativeDecimals: req.NativeDecimals,
+			RPCURL: req.RPCURL, WSURL: req.WSURL, ConfirmationsRequired: req.ConfirmationsRequired,
+			PriceFeedAddress: req.PriceFeedAddress, ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation chain added", Details: map[string]any{
+			"chain_key": chain.Key, "name": chain.Name, "chain_id": chain.ChainID,
+		}}, nil
+	})
+}
+
+// DeleteDonationChain removes a chain the operator added by mistake. Refused
+// (see store.DonationStore.DeleteDonationChain) once real donation history
+// exists for it.
+func (s *Service) DeleteDonationChain(ctx context.Context, req DeleteDonationChainRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		if err := s.donations.DeleteChain(ctx, req.ChainKey); err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation chain removed", Details: map[string]any{"chain_key": req.ChainKey}}, nil
+	})
+}
+
+// SweepDonationChain moves every deposit address's balance on one chain to
+// destination. The dry-run half (req.DryRun) calls PreviewSweep -- a pure
+// read that signs and broadcasts nothing -- so an operator sees exactly
+// what would move, and how much of it is actually reachable (an address
+// holding a token but no gas to pay for the transfer is reported, not
+// silently skipped), before committing to the real, irreversible transfer.
+func (s *Service) SweepDonationChain(ctx context.Context, req SweepDonationChainRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionSweepDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		var result domain.DonationSweepResult
+		var err error
+		if req.DryRun {
+			result, err = s.donations.PreviewSweep(ctx, req.ChainKey, req.Destination)
+		} else {
+			result, err = s.donations.Sweep(ctx, req.ChainKey, req.Destination)
+		}
+		if err != nil {
+			return CommandResult{}, err
+		}
+		entries := make([]map[string]any, 0, len(result.Entries))
+		var moved, skipped int
+		for _, e := range result.Entries {
+			entries = append(entries, map[string]any{
+				"address": e.Address, "token_symbol": e.TokenSymbol, "amount_raw": e.AmountRaw,
+				"tx_hash": e.TxHash, "skipped": e.Skipped, "reason": e.Reason,
+			})
+			if e.Skipped {
+				skipped++
+			} else {
+				moved++
+			}
+		}
+		message := fmt.Sprintf("swept %d transfer(s), skipped %d", moved, skipped)
+		if req.DryRun {
+			message = fmt.Sprintf("would sweep %d transfer(s), would skip %d", moved, skipped)
+		}
+		return CommandResult{Message: message, Details: map[string]any{
+			"chain_key": result.ChainKey, "destination": result.Destination, "entries": entries,
+		}}, nil
+	})
+}
+
+// DonationChainBalance reads chainKey's live on-chain total (native +
+// every watchable token) across every deposit address. A plain read --
+// unlike every other donations method above, it skips runCommand entirely:
+// nothing is mutated, so there is no reason/dry-run/confirm/audit-trail
+// step to go through, the same way AccountRatings or ModerationCases are
+// plain reads elsewhere in this file.
+func (s *Service) DonationChainBalance(ctx context.Context, chainKey string) (domain.DonationChainBalance, error) {
+	if s == nil || s.donations == nil {
+		return domain.DonationChainBalance{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.donations.ChainBalance(ctx, chainKey)
 }
 
 // RefundPremium reverses a paid Stars purchase: the buyer gets their Stars

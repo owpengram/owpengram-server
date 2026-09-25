@@ -19,7 +19,8 @@ export function ActionButton({
   disabled = false,
   onDone,
   onError,
-  secretField
+  secretField,
+  renderTrigger
 }: {
   label: string;
   path: string;
@@ -32,6 +33,12 @@ export function ActionButton({
   // backend rejection.
   disabled?: boolean;
   onDone?: () => void;
+  // renderTrigger swaps the default "btn" element for a custom one (e.g. a
+  // toggle switch) while keeping the exact same reason/dry-run/confirm flow
+  // every other mutation on this panel goes through -- the confirm modal is
+  // never skipped, only what opens it looks different. Called with the same
+  // onClick the default button would use.
+  renderTrigger?: (onClick: () => void, disabled: boolean) => ReactNode;
   // onError lets a page react to a failure the operator cannot fix by editing the
   // form — an optimistic-locking 409, say — and replace the raw backend text with
   // an explanation by returning it.
@@ -99,20 +106,19 @@ export function ActionButton({
     setSecretCopied(true);
   }
 
+  const openFlow = () => {
+    reset();
+    setOpen(true);
+  };
+
   return (
     <>
-      <button
-        className={triggerClass}
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          reset();
-          setOpen(true);
-        }}
-      >
-        {icon}
-        {label}
-      </button>
+      {renderTrigger ? renderTrigger(openFlow, disabled) : (
+        <button className={triggerClass} type="button" disabled={disabled} onClick={openFlow}>
+          {icon}
+          {label}
+        </button>
+      )}
       {open && createPortal(
         <div className="modal-backdrop" role="presentation">
           <section className="modal command-modal" role="dialog" aria-modal="true" aria-label={label}>

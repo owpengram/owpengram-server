@@ -36,20 +36,22 @@ type StarsStore interface {
 	// row). claimed reports whether this call performed the credit; nextAt
 	// is when the next claim becomes available either way.
 	ClaimMonthly(ctx context.Context, userID, amount int64, date int, cooldown time.Duration) (bal domain.StarsBalance, claimed bool, nextAt time.Time, err error)
-	// DeviceFingerprintGranted reports whether any account other than
-	// excludeUserID has, from this exact device_model+system_version+
-	// platform+ip fingerprint (an authorizations row), already been
-	// actually credited the starting grant or a monthly claim -- an account
-	// whose grant was withheld by this very guard (see SkipStartingGrant)
-	// never counts, or the fingerprint would stay permanently poisoned for
-	// every other account on it, including the original legitimate one.
-	// This is the live enforcement of the same heuristic
-	// cmd/telesrv-admin's SharedDeviceGroup already surfaces read-only: two
-	// accounts matching on every one of those four attributes are treated
-	// as the same farmer. deviceModel and ip must be non-empty -- callers
-	// never invoke this with an unknown fingerprint (see
-	// app/stars.Service.GuardStartingGrant/GuardClaim).
-	DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error)
+	// DeviceFingerprintGranted reports whether at least threshold accounts
+	// other than excludeUserID have, from this exact device_model+
+	// system_version+platform+ip fingerprint (an authorizations row),
+	// already been actually credited the starting grant or a monthly claim
+	// -- an account whose grant was withheld by this very guard (see
+	// SkipStartingGrant) never counts, or the fingerprint would stay
+	// permanently poisoned for every other account on it, including the
+	// original legitimate one. threshold>1 tolerates an isolated coincidence
+	// (two unrelated real users sharing a NAT'd IP and a common phone
+	// model/OS build) while still catching a fingerprint reused many times;
+	// see the implementation's doc comment for the production data that
+	// motivated this. This is the live enforcement of the same heuristic
+	// cmd/telesrv-admin's SharedDeviceGroup already surfaces read-only.
+	// deviceModel and ip must be non-empty -- callers never invoke this with
+	// an unknown fingerprint (see app/stars.Service.GuardStartingGrant/GuardClaim).
+	DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string, threshold int) (bool, error)
 	// SkipStartingGrant idempotently marks the starting grant as already
 	// handled without crediting anything (balance 0, granted=true), so
 	// EnsureGrant's lazy first-read path never retries it. Used when

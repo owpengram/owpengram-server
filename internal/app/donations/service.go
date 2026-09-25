@@ -3,11 +3,18 @@ package donations
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"
 )
+
+// chainKeyRe matches the same slug shape every seeded chain_key already
+// uses (ethereum, bsc, sepolia, ...): lowercase ASCII letters, digits and
+// underscores, so it's safe as both a DB primary key and a URL-free token
+// in admin API paths.
+var chainKeyRe = regexp.MustCompile(`^[a-z][a-z0-9_]{1,31}$`)
 
 // CreditNotifier receives one notice per deposit the watcher just credited,
 // so whatever owns the actual chat channel (app/bots.Service and its
@@ -159,6 +166,43 @@ func (s *Service) UpdateChainConfig(ctx context.Context, upd domain.DonationChai
 		return domain.DonationChain{}, fmt.Errorf("donations: confirmations_required must be positive")
 	}
 	return s.store.UpdateDonationChainConfig(ctx, upd)
+}
+
+// CreateChain adds a brand new chain (an operator picking a preset or
+// filling in a custom form in the admin panel's "Add chain" menu). Unlike
+// UpdateChainConfig this also sets the chain's identity/native-currency
+// fields, since they don't exist yet for a chain the operator is creating.
+func (s *Service) CreateChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error) {
+	if s == nil || s.store == nil {
+		return domain.DonationChain{}, domain.ErrDonationWalletNotConfigured
+	}
+	chain.Key = strings.ToLower(strings.TrimSpace(chain.Key))
+	chain.Name = strings.TrimSpace(chain.Name)
+	if !chainKeyRe.MatchString(chain.Key) {
+		return domain.DonationChain{}, fmt.Errorf("donations: chain key must be 2-32 lowercase letters/digits/underscores, starting with a letter")
+	}
+	if chain.Name == "" {
+		return domain.DonationChain{}, fmt.Errorf("donations: chain name is required")
+	}
+	if !chain.Valid() {
+		return domain.DonationChain{}, fmt.Errorf("donations: chain_id, native_decimals and confirmations_required must all be positive")
+	}
+	return s.store.CreateDonationChain(ctx, chain)
+}
+
+// DeleteChain removes a chain the operator added by mistake or no longer
+// wants listed. See store.DonationStore.DeleteDonationChain: refuses with
+// domain.ErrDonationChainHasDeposits once real donation history exists --
+// disable it instead at that point.
+func (s *Service) DeleteChain(ctx context.Context, chainKey string) error {
+	if s == nil || s.store == nil {
+		return domain.ErrDonationWalletNotConfigured
+	}
+	chainKey = strings.ToLower(strings.TrimSpace(chainKey))
+	if chainKey == "" {
+		return domain.ErrDonationChainNotFound
+	}
+	return s.store.DeleteDonationChain(ctx, chainKey)
 }
 
 // EnabledChains lists every chain configured as enabled, whether or not

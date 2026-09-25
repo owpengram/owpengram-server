@@ -145,6 +145,20 @@ export type DonationDepositListResponse = {
   next_before_id: string;
 };
 
+export type DonationChainAssetBalance = {
+  Symbol: string;
+  Decimals: number;
+  TotalRaw: string;
+  AddressCount: number;
+  USDValueMicros: number;
+};
+
+export type DonationChainBalance = {
+  ChainKey: string;
+  Assets: DonationChainAssetBalance[];
+  TotalUSDValueMicros: number;
+};
+
 export type AccountRatingEventKind = "stars" | "activity" | "moderation" | "manual" | "recompute";
 
 export type AccountRatingRow = {

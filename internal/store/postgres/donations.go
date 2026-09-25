@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"telesrv/internal/domain"
@@ -88,6 +90,59 @@ RETURNING user_id, derivation_index, address, created_at`, userID, index, addres
 		return domain.DonationAddress{}, fmt.Errorf("insert donation address: %w", err)
 	}
 	return out, nil
+}
+
+func (s *DonationStore) ListDonationAddresses(ctx context.Context) ([]domain.DonationAddress, error) {
+	rows, err := s.db.Query(ctx, `SELECT user_id, derivation_index, address, created_at FROM donation_addresses ORDER BY derivation_index`)
+	if err != nil {
+		return nil, fmt.Errorf("list donation addresses: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationAddress, 0)
+	for rows.Next() {
+		var a domain.DonationAddress
+		if err := rows.Scan(&a.UserID, &a.DerivationIndex, &a.Address, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan donation address: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *DonationStore) CreateDonationChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error) {
+	var out domain.DonationChain
+	err := s.db.QueryRow(ctx, `
+INSERT INTO donation_chains (chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled`,
+		chain.Key, chain.Name, chain.ChainID, chain.RPCURL, chain.WSURL, chain.NativeSymbol, chain.NativeDecimals,
+		chain.ConfirmationsRequired, chain.PriceFeedAddress, chain.ManualUSDRateMicros, chain.Enabled).Scan(
+		&out.Key, &out.Name, &out.ChainID, &out.RPCURL, &out.WSURL, &out.NativeSymbol, &out.NativeDecimals,
+		&out.ConfirmationsRequired, &out.PriceFeedAddress, &out.ManualUSDRateMicros, &out.Enabled)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return domain.DonationChain{}, domain.ErrDonationChainAlreadyExists
+		}
+		return domain.DonationChain{}, fmt.Errorf("create donation chain: %w", err)
+	}
+	return out, nil
+}
+
+func (s *DonationStore) DeleteDonationChain(ctx context.Context, chainKey string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM donation_chains WHERE chain_key = $1`, chainKey)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+			return domain.ErrDonationChainHasDeposits
+		}
+		return fmt.Errorf("delete donation chain: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrDonationChainNotFound
+	}
+	return nil
 }
 
 func (s *DonationStore) EnabledDonationChains(ctx context.Context) ([]domain.DonationChain, error) {

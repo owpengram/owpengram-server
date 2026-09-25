@@ -168,7 +168,7 @@ func TestStarsDeviceFingerprintGuardPostgres(t *testing.T) {
 	}
 
 	// Neither account has been granted yet: no match in either direction.
-	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip, 1); err != nil || dup {
 		t.Fatalf("pre-grant DeviceFingerprintGranted = %v, %v, want false, nil", dup, err)
 	}
 
@@ -177,15 +177,15 @@ func TestStarsDeviceFingerprintGuardPostgres(t *testing.T) {
 	}
 
 	// Now userB's identical fingerprint matches userA's grant.
-	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || !dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip, 1); err != nil || !dup {
 		t.Fatalf("post-grant DeviceFingerprintGranted(excl userB) = %v, %v, want true, nil", dup, err)
 	}
 	// The check excludes the caller's own account: userA never matches itself.
-	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip); err != nil || dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip, 1); err != nil || dup {
 		t.Fatalf("DeviceFingerprintGranted(excl userA) = %v, %v, want false, nil (must not match itself)", dup, err)
 	}
 	// A different IP on the same device never matches.
-	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, "203.0.113.99"); err != nil || dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, "203.0.113.99", 1); err != nil || dup {
 		t.Fatalf("DeviceFingerprintGranted with a different IP = %v, %v, want false, nil", dup, err)
 	}
 
@@ -204,14 +204,72 @@ func TestStarsDeviceFingerprintGuardPostgres(t *testing.T) {
 	// and get blocked from ever claiming again. userB is still correctly
 	// excluded from claiming itself (that's the real, working guard); this
 	// only checks that userB's presence doesn't poison userA.
-	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip); err != nil || dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userA, deviceModel, systemVersion, platform, ip, 1); err != nil || dup {
 		t.Fatalf("DeviceFingerprintGranted(excl userA) after userB's withheld grant = %v, %v, want false, nil (userB's skip must not count as evidence)", dup, err)
 	}
 	// userB itself is still correctly recognized as sharing userA's
 	// fingerprint (unaffected by the fix above, which only changes what
 	// counts as evidence -- userA's real grant still does).
-	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip); err != nil || !dup {
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip, 1); err != nil || !dup {
 		t.Fatalf("DeviceFingerprintGranted(excl userB) after userB's withheld grant = %v, %v, want true, nil (userA's real grant still matches)", dup, err)
+	}
+}
+
+// TestStarsDeviceFingerprintThresholdPostgres proves threshold>1 tolerates
+// an isolated coincidence -- exactly the production scenario that motivated
+// raising the default: two unrelated real accounts sharing a fingerprint
+// (carrier-grade NAT, or a reverse-proxy quirk making the server's own IP
+// look like the client's) must NOT block each other, but once enough
+// distinct accounts pile up on the same fingerprint, it's evidently a farm
+// again.
+func TestStarsDeviceFingerprintThresholdPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	st := NewStarsStore(pool)
+	keys := NewAuthKeyStore(pool)
+	auths := NewAuthorizationStore(pool)
+
+	userA := createRevokeTestUser(t, ctx, pool, "fpt-a")
+	userB := createRevokeTestUser(t, ctx, pool, "fpt-b")
+	userC := createRevokeTestUser(t, ctx, pool, "fpt-c")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_transactions WHERE user_id IN ($1,$2,$3)", userA, userB, userC)
+		_, _ = pool.Exec(ctx, "DELETE FROM stars_balances WHERE user_id IN ($1,$2,$3)", userA, userB, userC)
+	})
+
+	const deviceModel, systemVersion, platform, ip = "Galaxy S23", "Android 14", "android", "198.51.100.42"
+	for _, u := range []int64{userA, userB, userC} {
+		key := saveTempIdentityTestAuthKey(t, ctx, pool, keys, 0)
+		if err := auths.Bind(ctx, domain.Authorization{
+			AuthKeyID: key, UserID: u, DeviceModel: deviceModel, SystemVersion: systemVersion, Platform: platform, IP: ip,
+		}); err != nil {
+			t.Fatalf("bind authorization for %d: %v", u, err)
+		}
+	}
+	if _, _, err := st.EnsureGrant(ctx, userA, 1000, 1700000000); err != nil {
+		t.Fatalf("grant userA: %v", err)
+	}
+
+	// Only userA (1 other account) has been granted so far: threshold 2
+	// tolerates it as a coincidence, threshold 1 still catches it.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip, 1); err != nil || !dup {
+		t.Fatalf("threshold=1 with 1 prior grantee = %v, %v, want true, nil", dup, err)
+	}
+	if dup, err := st.DeviceFingerprintGranted(ctx, userB, deviceModel, systemVersion, platform, ip, 2); err != nil || dup {
+		t.Fatalf("threshold=2 with only 1 prior grantee = %v, %v, want false, nil (isolated coincidence tolerated)", dup, err)
+	}
+
+	if _, _, err := st.EnsureGrant(ctx, userB, 1000, 1700000001); err != nil {
+		t.Fatalf("grant userB: %v", err)
+	}
+
+	// Now 2 other accounts (A and B) have been granted on this fingerprint:
+	// threshold 2 catches userC, but threshold 3 still tolerates it.
+	if dup, err := st.DeviceFingerprintGranted(ctx, userC, deviceModel, systemVersion, platform, ip, 2); err != nil || !dup {
+		t.Fatalf("threshold=2 with 2 prior grantees = %v, %v, want true, nil", dup, err)
+	}
+	if dup, err := st.DeviceFingerprintGranted(ctx, userC, deviceModel, systemVersion, platform, ip, 3); err != nil || dup {
+		t.Fatalf("threshold=3 with only 2 prior grantees = %v, %v, want false, nil", dup, err)
 	}
 }
 

@@ -594,6 +594,27 @@
 .gift-switch input:checked + .gift-switch-track { background: var(--brand); }
 .gift-switch input:checked + .gift-switch-track span { transform: translateX(15px); }
 .gift-switch input:focus-visible + .gift-switch-track { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* chain-toggle: same visual language as .gift-switch, but a plain button
+   (no checkbox) since it fires through ActionButton's confirm flow rather
+   than controlling form state directly. */
+.chain-toggle { display: inline-flex; align-items: center; width: 34px; height: 19px; padding: 2px; background: var(--switch-track); border: none; border-radius: 999px; cursor: pointer; transition: background .16s ease; }
+.chain-toggle span { width: 15px; height: 15px; background: #ffffff; border-radius: 50%; box-shadow: 0 1px 3px rgba(16, 24, 40, .22); transition: transform .16s ease; }
+.chain-toggle.on { background: var(--brand); }
+.chain-toggle.on span { transform: translateX(15px); }
+.chain-toggle:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.chain-logo { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex-shrink: 0; color: #ffffff; font-size: 10px; font-weight: 800; letter-spacing: .02em; border-radius: 50%; }
+.chain-name-cell { display: flex; align-items: center; gap: 10px; }
+
+.chain-preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.chain-preset-card { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px; text-align: left; background: var(--panel-subtle); border: 1px solid var(--line); border-radius: var(--radius-sm); cursor: pointer; transition: border-color .12s ease, transform .12s ease; }
+.chain-preset-card:hover:not(:disabled) { border-color: var(--brand); transform: translateY(-1px); }
+.chain-preset-card:disabled { cursor: default; opacity: .55; }
+.chain-preset-name { font-size: 13px; font-weight: 700; }
+
+.chain-balance { display: flex; flex-direction: column; gap: 2px; }
+.chain-balance strong { font-size: 13px; }
 .gift-validation { overflow: hidden; color: var(--code-text); background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-sm); }
 .gift-validation-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; color: var(--code-text); background: rgba(255, 255, 255, .035); border-bottom: 1px solid rgba(255, 255, 255, .09); }
 .gift-validation-head div { display: grid; gap: 2px; }

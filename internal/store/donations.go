@@ -39,7 +39,21 @@ type DonationStore interface {
 	// returns THAT row instead -- the caller's freshly derived index/address
 	// is discarded, not an error.
 	InsertDonationAddress(ctx context.Context, userID, index int64, address string) (domain.DonationAddress, error)
+	// ListDonationAddresses lists every address ever assigned, across every
+	// user -- the sweep's enumeration of "every address that could possibly
+	// hold a balance on this chain" (see app/donations.Service.Sweep). There
+	// is no per-chain filter: one address is the same on every EVM chain.
+	ListDonationAddresses(ctx context.Context) ([]domain.DonationAddress, error)
 
+	// CreateDonationChain inserts a brand new chain row (an operator adding
+	// one from the admin panel's preset or custom form). Fails with
+	// domain.ErrDonationChainAlreadyExists if chain.Key is already taken.
+	CreateDonationChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error)
+	// DeleteDonationChain removes a chain row. Fails with
+	// domain.ErrDonationChainHasDeposits if any deposit was ever recorded
+	// against it -- a chain with real donation history is never deletable,
+	// only disable it instead.
+	DeleteDonationChain(ctx context.Context, chainKey string) error
 	// EnabledDonationChains lists every chain row with enabled=true,
 	// regardless of whether it's actually watchable yet (RPCURL may still
 	// be empty) -- callers filter with domain.DonationChain.Watchable.

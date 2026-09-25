@@ -128,15 +128,48 @@ is sent and shown verbatim rather than rendered.
 
 ## Admin panel
 
-The Donations page (`permission: donations.manage`) shows wallet
-provisioning status and address count, every configured chain (enabled or
-not) with an editable RPC/WS endpoint, confirmation depth, price feed
-address and manual USD rate, and the deposit ledger across every user. It
-never exposes the wallet mnemonic or a private key -- no admin route
-returns either; `Wallet.PrivateKeyHex` (see "Not yet built" below) is not
-reachable from the admin API at all. Writes go through
-`internal/admin.Service.UpdateDonationChain` (audit trail, actor/reason
-required), the same pattern as Premium plan edits.
+No chain ships pre-configured (see `20260925120000_donations_empty_defaults`
+-- the migration that emptied the original seed rows once this page could
+add its own). The Donations page (`permission: donations.manage`) shows
+wallet provisioning status and address count, an **Add chain** menu (a
+curated preset -- chain id, native currency and a public RPC endpoint
+pre-filled, still fully editable -- or a blank custom form), every
+configured chain with an editable RPC/WS endpoint, confirmation depth,
+price feed address, manual USD rate, a toggle switch, its live on-chain
+balance (native + every watchable token, with a combined USD estimate --
+`internal/app/donations.Service.ChainBalance`, one RPC round trip per
+address per asset, so it's read fresh every time rather than cached or
+derived from `donation_deposits`), a **Sweep** action per chain, and the
+deposit ledger across every user. It never
+exposes the wallet mnemonic or a private key -- no admin route returns
+either; a sweep uses `Wallet.PrivateKeyHex` to sign in server memory only,
+once per transfer, never over the wire. Writes go through
+`internal/admin.Service` (`UpdateDonationChain`/`CreateDonationChain`/
+`DeleteDonationChain`/`SweepDonationChain`; audit trail, actor/reason
+required), the same pattern as Premium plan edits. Deleting a chain is
+refused once it has real deposit history -- disable it instead.
+
+### Sweep
+
+`internal/app/donations/sweep.go` moves every deposit address's balance on
+one chain -- native currency and any watchable token (USDT/USDC) -- to a
+single operator-supplied destination. It is manual and operator-triggered
+only; nothing in the automatic deposit-watching path ever calls it. A
+dry-run (built into every admin action's confirm flow) previews exactly
+what would move via `PreviewSweep`, signing and broadcasting nothing; only
+confirming calls `Sweep`, which actually signs (deriving each address's key
+on demand from the wallet mnemonic, never persisting it) and broadcasts.
+
+Gas for a token transfer always comes out of that same address's own
+native balance -- never the destination's, never another address's, never
+auto-funded from anywhere -- so an address holding only a stablecoin and no
+native currency for gas is reported as skipped, not silently dropped or
+top-up-funded (auto-funding would move more money through more
+transactions than the operator asked for). Tokens are swept before native
+on each address, since a token transfer's gas is spent out of the native
+balance the trailing native sweep would otherwise take all of. Proven
+end to end against a real Ganache node in
+`internal/store/postgres/donations_sweep_integration_test.go`.
 
 ## Not yet built
 
@@ -145,9 +178,6 @@ required), the same pattern as Premium plan edits.
 - **"Support the project"**, the separate single-operator-wallet flow for
   the site and admin panel -- unrelated to per-user crediting, not started.
 - **Chainlink price feeds** for native currency, replacing the manual rate.
-- **Manual, operator-triggered sweep** of accumulated funds out of
-  per-user deposit addresses into a treasury address. `Wallet.PrivateKeyHex`
-  exists for this; nothing calls it yet.
 - **Reorg handling.** A deposit currently only moves forward
   (`pending → confirmed → credited`); there is no `orphaned` transition yet
   if a block gets reorganized out before reaching depth. Ganache/Sepolia

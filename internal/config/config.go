@@ -665,6 +665,18 @@ type Config struct {
 	// True by default; an operator seeing false positives (a household on
 	// one router and phone model) can turn it off.
 	StarsAntiFarmGuardEnabled bool
+	// StarsAntiFarmGuardThreshold is how many OTHER accounts must already
+	// share an exact device+IP fingerprint (and have actually been credited
+	// a grant/claim) before the guard blocks a new one on it. 1 (the
+	// original default) turned out to be too trigger-happy against real
+	// production traffic: carrier-grade NAT put a dozen-plus distinct real
+	// users behind one public IP, and a reverse-proxy/NAT quirk made even
+	// the server's own address show up as the recorded "client" IP for a
+	// handful of genuine, distinct accounts. 3 tolerates an isolated
+	// coincidence (two unrelated users sharing a NAT'd IP and a common
+	// phone model/OS build) while still catching a fingerprint reused many
+	// times, which a real farm does.
+	StarsAntiFarmGuardThreshold int
 	// RatingEnabled controls the local admin-only composite account rating.
 	// Disabled keeps every local projection empty and refuses rating writes;
 	// no client-facing Telegram field changes in either mode.
@@ -1225,7 +1237,8 @@ func Load() (Config, error) {
 		StarsStartingGrant:        envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
 		StarsMonthlyClaimAmount:   envInt64Or("TELESRV_STARS_MONTHLY_CLAIM_AMOUNT", 100),
 		StarsMonthlyClaimInterval: envDurationOr("TELESRV_STARS_MONTHLY_CLAIM_INTERVAL", 30*24*time.Hour),
-		StarsAntiFarmGuardEnabled: envBoolOr("TELESRV_STARS_ANTI_FARM_GUARD_ENABLED", true),
+		StarsAntiFarmGuardEnabled:   envBoolOr("TELESRV_STARS_ANTI_FARM_GUARD_ENABLED", true),
+		StarsAntiFarmGuardThreshold: int(envInt64Or("TELESRV_STARS_ANTI_FARM_GUARD_THRESHOLD", 3)),
 		RatingEnabled:             envBoolOr("TELESRV_RATING_ENABLED", true),
 		RatingPendingDelay:        envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
 		RatingRecomputeInterval:   envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),

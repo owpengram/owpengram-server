@@ -186,12 +186,26 @@ RETURNING balance, granted`, userID, amount).Scan(&out.Balance, &out.Granted); e
 	return out, claimed, nextAt, nil
 }
 
-// DeviceFingerprintGranted joins authorizations to stars_transactions: does
-// some OTHER account sharing this exact device_model+system_version+
-// platform+ip already have an actually-credited Stars grant or claim on it?
-// Same four-column device/IP match as cmd/telesrv-admin's
-// ListSharedDeviceGroups, just answered live instead of only surfaced for
-// an operator to look at.
+// DeviceFingerprintGranted counts how many OTHER accounts sharing this
+// exact device_model+system_version+platform+ip fingerprint already have an
+// actually-credited Stars grant or claim, and reports whether that count
+// meets threshold. Same four-column device/IP match as
+// cmd/telesrv-admin's ListSharedDeviceGroups, just answered live instead of
+// only surfaced for an operator to look at.
+//
+// threshold exists because "ip" alone is a much noisier signal in the wild
+// than a single self-hosted deployment's own testing suggests: production
+// data showed carrier-grade NAT putting a dozen-plus distinct real users
+// behind one public IP, and even the server's OWN address showing up as
+// the recorded "client" IP for a handful of real, distinct accounts (very
+// likely a reverse-proxy/NAT quirk in some network paths). A threshold of 1
+// (the original behavior) means any two unrelated real users who happen to
+// share both a NAT'd IP and a common phone model/OS build get treated as
+// the same farmer -- see the git history around this function's threshold
+// parameter for the incident that surfaced this. Requiring several
+// distinct prior accounts on the exact same fingerprint before blocking
+// keeps catching real farms (which reuse a fingerprint dozens of times)
+// while tolerating an isolated coincidence.
 //
 // This deliberately checks stars_transactions (reason IN grant/monthly_claim),
 // never stars_balances.granted: SkipStartingGrant also sets granted=true on
@@ -202,22 +216,23 @@ RETURNING balance, granted`, userID, amount).Scan(&out.Balance, &out.Granted); e
 // one that earned the flag in the first place) would look like a repeat
 // offender and get blocked forever, including from claiming again next
 // month on their own account. Only a real credit counts as evidence.
-func (s *StarsStore) DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string) (bool, error) {
-	var exists bool
+func (s *StarsStore) DeviceFingerprintGranted(ctx context.Context, excludeUserID int64, deviceModel, systemVersion, platform, ip string, threshold int) (bool, error) {
+	if threshold < 1 {
+		threshold = 1
+	}
+	var count int
 	err := s.db.QueryRow(ctx, `
-SELECT EXISTS (
-    SELECT 1 FROM authorizations a
-    WHERE a.user_id <> $1
-      AND a.device_model = $2 AND a.system_version = $3 AND a.platform = $4 AND a.ip = $5
-      AND EXISTS (
-        SELECT 1 FROM stars_transactions st
-        WHERE st.user_id = a.user_id AND st.reason IN ('grant', 'monthly_claim')
-      )
-)`, excludeUserID, deviceModel, systemVersion, platform, ip).Scan(&exists)
+SELECT COUNT(DISTINCT a.user_id) FROM authorizations a
+WHERE a.user_id <> $1
+  AND a.device_model = $2 AND a.system_version = $3 AND a.platform = $4 AND a.ip = $5
+  AND EXISTS (
+    SELECT 1 FROM stars_transactions st
+    WHERE st.user_id = a.user_id AND st.reason IN ('grant', 'monthly_claim')
+  )`, excludeUserID, deviceModel, systemVersion, platform, ip).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("check device fingerprint grant: %w", err)
 	}
-	return exists, nil
+	return count >= threshold, nil
 }
 
 // SkipStartingGrant see store.StarsStore's doc comment.

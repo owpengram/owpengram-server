@@ -124,7 +124,7 @@ func (s *StarsStore) ClaimMonthly(_ context.Context, userID, amount int64, date 
 // memory store), so it can't answer the cross-store question the postgres
 // implementation joins for. The device/IP guard is proven against real
 // Postgres -- see internal/store/postgres/stars_integration_test.go.
-func (s *StarsStore) DeviceFingerprintGranted(_ context.Context, _ int64, _, _, _, _ string) (bool, error) {
+func (s *StarsStore) DeviceFingerprintGranted(_ context.Context, _ int64, _, _, _, _ string, _ int) (bool, error) {
 	return false, nil
 }
 

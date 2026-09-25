@@ -1377,7 +1377,8 @@ func run(logger *zap.Logger) error {
 	secretChatService := secretchatapp.NewService(secretChatStore, encryptedQueueStore)
 	starsStore := postgres.NewStarsStore(pool)
 	starsService := starsapp.NewService(starsStore, starsapp.WithStartingGrant(cfg.StarsStartingGrant),
-		starsapp.WithAuthorizations(authzStore), starsapp.WithAntiFarmGuard(cfg.StarsAntiFarmGuardEnabled))
+		starsapp.WithAuthorizations(authzStore), starsapp.WithAntiFarmGuard(cfg.StarsAntiFarmGuardEnabled),
+		starsapp.WithAntiFarmThreshold(cfg.StarsAntiFarmGuardThreshold))
 	premiumStore := postgres.NewPremiumStore(pool)
 	premiumService := premiumapp.NewService(premiumStore, starsService)
 	botsService.SetPremiumSource(premiumService)

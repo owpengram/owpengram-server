@@ -21,13 +21,14 @@ type fakeGuardStore struct {
 	dupCalled      bool
 	dupDeviceModel string
 	dupIP          string
+	dupThreshold   int
 	skippedUserIDs []int64
 	skipErr        error
 }
 
-func (f *fakeGuardStore) DeviceFingerprintGranted(_ context.Context, _ int64, deviceModel, _, _, ip string) (bool, error) {
+func (f *fakeGuardStore) DeviceFingerprintGranted(_ context.Context, _ int64, deviceModel, _, _, ip string, threshold int) (bool, error) {
 	f.dupCalled = true
-	f.dupDeviceModel, f.dupIP = deviceModel, ip
+	f.dupDeviceModel, f.dupIP, f.dupThreshold = deviceModel, ip, threshold
 	return f.dup, f.dupErr
 }
 
@@ -148,5 +149,35 @@ func TestGuardClaimWithoutAuthorizationsSourceFailsOpen(t *testing.T) {
 	withheld, err := svc.GuardClaim(context.Background(), 42)
 	if err != nil || withheld {
 		t.Fatalf("GuardClaim without an authorizations source = %v, %v, want false, nil", withheld, err)
+	}
+}
+
+// TestGuardDefaultThresholdIsThree pins the default: 1 (any single
+// coincidence) proved too trigger-happy against real production traffic
+// (carrier-grade NAT, a reverse-proxy IP quirk), so NewService must default
+// to something higher without an explicit WithAntiFarmThreshold.
+func TestGuardDefaultThresholdIsThree(t *testing.T) {
+	fs := &fakeGuardStore{StarsStore: memory.NewStarsStore(), dup: true}
+	svc := NewService(fs, WithStartingGrant(1000))
+
+	if _, err := svc.GuardStartingGrant(context.Background(), 42, "Pixel 8", "Android 15", "android", "203.0.113.9"); err != nil {
+		t.Fatalf("GuardStartingGrant: %v", err)
+	}
+	if fs.dupThreshold != 3 {
+		t.Fatalf("default threshold = %d, want 3", fs.dupThreshold)
+	}
+}
+
+// TestGuardThresholdConfigurable proves WithAntiFarmThreshold actually
+// reaches the store call, not just the service's own field.
+func TestGuardThresholdConfigurable(t *testing.T) {
+	fs := &fakeGuardStore{StarsStore: memory.NewStarsStore(), dup: true}
+	svc := NewService(fs, WithStartingGrant(1000), WithAntiFarmThreshold(5))
+
+	if _, err := svc.GuardStartingGrant(context.Background(), 42, "Pixel 8", "Android 15", "android", "203.0.113.9"); err != nil {
+		t.Fatalf("GuardStartingGrant: %v", err)
+	}
+	if fs.dupThreshold != 5 {
+		t.Fatalf("threshold = %d, want 5", fs.dupThreshold)
 	}
 }

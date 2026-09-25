@@ -18,7 +18,10 @@ var (
 	ErrDonationWalletAlreadyExists = errors.New("donations: wallet already exists")
 	ErrDonationChainDisabled       = errors.New("donations: chain disabled or misconfigured")
 	ErrDonationChainNotFound       = errors.New("donations: chain not found")
+	ErrDonationChainAlreadyExists  = errors.New("donations: chain already exists")
+	ErrDonationChainHasDeposits    = errors.New("donations: chain has recorded deposits, refusing to delete")
 	ErrDonationDepositInvalid      = errors.New("donations: deposit invalid")
+	ErrDonationSweepDestination    = errors.New("donations: invalid sweep destination address")
 )
 
 // DonationDepositStatus is the deposit's lifecycle: pending (seen, not yet
@@ -124,6 +127,53 @@ type DonationChainConfigUpdate struct {
 	PriceFeedAddress      string
 	ManualUSDRateMicros   int64
 	Enabled               bool
+}
+
+// DonationChainAssetBalance is the live, on-chain sum of one asset (the
+// chain's native currency, Symbol=="", or one watchable token) across every
+// known deposit address -- read fresh via RPC each time, never cached or
+// derived from donation_deposits (which tracks what the watcher has
+// credited, not necessarily every wei actually sitting on-chain right now).
+type DonationChainAssetBalance struct {
+	Symbol         string
+	Decimals       int
+	TotalRaw       string // decimal string, smallest unit (wei etc.)
+	AddressCount   int    // how many addresses hold a nonzero balance of this asset
+	USDValueMicros int64  // estimated at the same rate crediting uses; 0 if unpriced
+}
+
+// DonationChainBalance is one chain's live balance: native currency first,
+// then every watchable token, plus their combined USD estimate.
+type DonationChainBalance struct {
+	ChainKey            string
+	Assets              []DonationChainAssetBalance
+	TotalUSDValueMicros int64
+}
+
+// DonationSweepEntry is one asset moved (or skipped) for one address during
+// a sweep. TokenSymbol is empty for the chain's native currency. Skipped
+// entries (Reason non-empty) never touched the chain -- most commonly "not
+// enough native balance to cover this address's own gas", which a token
+// sweep needs since paying an ERC-20 transfer's gas always comes out of the
+// SAME address's native balance, never the destination's or the wallet's
+// as a whole (see app/donations.Service.Sweep). TxHash is empty for a
+// preview (PreviewSweep) or a skipped entry -- never for anything actually
+// broadcast.
+type DonationSweepEntry struct {
+	Address     string
+	TokenSymbol string
+	AmountRaw   string
+	TxHash      string
+	Skipped     bool
+	Reason      string
+}
+
+// DonationSweepResult is one sweep (real or previewed) of every deposit
+// address on one chain to a single operator-supplied destination.
+type DonationSweepResult struct {
+	ChainKey    string
+	Destination string
+	Entries     []DonationSweepEntry
 }
 
 // DonationCreditNotice is everything a "your deposit was credited" chat

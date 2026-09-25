@@ -37,6 +37,7 @@ type Service struct {
 	notifier       AntiAbuseNotifier
 	grantAmount    int64
 	antiFarmGuard  bool
+	antiFarmThresh int
 	now            func() time.Time
 }
 
@@ -70,6 +71,16 @@ func WithAntiFarmGuard(enabled bool) Option {
 	return func(s *Service) { s.antiFarmGuard = enabled }
 }
 
+// WithAntiFarmThreshold sets how many OTHER accounts must already share a
+// device+IP fingerprint (and have actually been credited a grant/claim)
+// before GuardStartingGrant/GuardClaim block a new one on it -- see
+// store.StarsStore.DeviceFingerprintGranted's doc comment for the production
+// data (carrier-grade NAT, a reverse-proxy IP quirk) that motivated raising
+// this above 1. threshold<1 is treated as 1.
+func WithAntiFarmThreshold(threshold int) Option {
+	return func(s *Service) { s.antiFarmThresh = threshold }
+}
+
 // WithClock 注入时钟（测试用）。
 func WithClock(now func() time.Time) Option {
 	return func(s *Service) {
@@ -94,7 +105,7 @@ func (s *Service) SetAntiAbuseNotifier(n AntiAbuseNotifier) {
 
 // NewService 创建 Stars 账本服务，默认起始授予 domain.DefaultStarsStartingGrant。
 func NewService(st store.StarsStore, opts ...Option) *Service {
-	s := &Service{store: st, grantAmount: domain.DefaultStarsStartingGrant, antiFarmGuard: true, now: time.Now}
+	s := &Service{store: st, grantAmount: domain.DefaultStarsStartingGrant, antiFarmGuard: true, antiFarmThresh: 3, now: time.Now}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -173,7 +184,7 @@ func (s *Service) GuardStartingGrant(ctx context.Context, userID int64, deviceMo
 	if deviceModel == "" || ip == "" {
 		return false, nil
 	}
-	dup, err := s.store.DeviceFingerprintGranted(ctx, userID, deviceModel, systemVersion, platform, ip)
+	dup, err := s.store.DeviceFingerprintGranted(ctx, userID, deviceModel, systemVersion, platform, ip, s.antiFarmThresh)
 	if err != nil || !dup {
 		return false, err
 	}
@@ -211,7 +222,7 @@ func (s *Service) GuardClaim(ctx context.Context, userID int64) (withheld bool, 
 	if latest.DeviceModel == "" || latest.IP == "" {
 		return false, nil
 	}
-	return s.store.DeviceFingerprintGranted(ctx, userID, latest.DeviceModel, latest.SystemVersion, latest.Platform, latest.IP)
+	return s.store.DeviceFingerprintGranted(ctx, userID, latest.DeviceModel, latest.SystemVersion, latest.Platform, latest.IP, s.antiFarmThresh)
 }
 
 // IssuePurchaseForm persists a short-lived, exact checkout intent.
