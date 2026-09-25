@@ -178,22 +178,8 @@ func (s *Service) AddressForUser(ctx context.Context, userID int64) (string, err
 // depth, price feed/manual rate) -- see internal/admin.Service.UpdateDonationChain,
 // the only caller. It never touches the chain's identity or native currency.
 func (s *Service) UpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error) {
-	if s == nil || s.store == nil {
-		return domain.DonationChain{}, domain.ErrDonationWalletNotConfigured
-	}
-	if strings.TrimSpace(upd.ChainKey) == "" {
-		return domain.DonationChain{}, domain.ErrDonationChainNotFound
-	}
-	if upd.ConfirmationsRequired <= 0 {
-		return domain.DonationChain{}, fmt.Errorf("donations: confirmations_required must be positive")
-	}
-	// A chain enabled with no USD rate prices every deposit to zero Stars,
-	// which the watcher silently refuses to credit (see
-	// refreshConfirmationsAndCredit) -- the deposit sits at "confirmed"
-	// forever. Catch this before it ships instead of after a donor's
-	// deposit goes uncredited.
-	if upd.Enabled && upd.ManualUSDRateMicros <= 0 {
-		return domain.DonationChain{}, fmt.Errorf("donations: manual_usd_rate_micros must be positive to enable a chain -- deposits would price to zero Stars and never get credited")
+	if err := s.validateChainConfig(ctx, upd); err != nil {
+		return domain.DonationChain{}, err
 	}
 	chain, err := s.store.UpdateDonationChainConfig(ctx, upd)
 	if err != nil {
@@ -207,11 +193,69 @@ func (s *Service) UpdateChainConfig(ctx context.Context, upd domain.DonationChai
 	return chain, nil
 }
 
+// PreviewUpdateChainConfig runs UpdateChainConfig's checks and writes
+// nothing, so a dry run cannot quietly repoint a live chain's RPC endpoint
+// or change its rate before anyone confirms it.
+func (s *Service) PreviewUpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) error {
+	return s.validateChainConfig(ctx, upd)
+}
+
+func (s *Service) validateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) error {
+	if s == nil || s.store == nil {
+		return domain.ErrDonationWalletNotConfigured
+	}
+	if strings.TrimSpace(upd.ChainKey) == "" {
+		return domain.ErrDonationChainNotFound
+	}
+	if upd.ConfirmationsRequired <= 0 {
+		return fmt.Errorf("donations: confirmations_required must be positive")
+	}
+	// A chain enabled with no USD rate prices every deposit to zero Stars,
+	// which the watcher silently refuses to credit (see
+	// refreshConfirmationsAndCredit) -- the deposit sits at "confirmed"
+	// forever. Catch this before it ships instead of after a donor's
+	// deposit goes uncredited.
+	if upd.Enabled && upd.ManualUSDRateMicros <= 0 {
+		return fmt.Errorf("donations: manual_usd_rate_micros must be positive to enable a chain -- deposits would price to zero Stars and never get credited")
+	}
+	if _, found, err := s.store.DonationChain(ctx, strings.ToLower(strings.TrimSpace(upd.ChainKey))); err != nil {
+		return err
+	} else if !found {
+		return domain.ErrDonationChainNotFound
+	}
+	return nil
+}
+
 // CreateChain adds a brand new chain (an operator picking a preset or
 // filling in a custom form in the admin panel's "Add chain" menu). Unlike
 // UpdateChainConfig this also sets the chain's identity/native-currency
 // fields, since they don't exist yet for a chain the operator is creating.
 func (s *Service) CreateChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error) {
+	chain, err := s.validateNewChain(ctx, chain)
+	if err != nil {
+		return domain.DonationChain{}, err
+	}
+	created, err := s.store.CreateDonationChain(ctx, chain)
+	if err != nil {
+		return domain.DonationChain{}, err
+	}
+	if created.Watchable() {
+		s.ensureWatcher(created.Key)
+	}
+	return created, nil
+}
+
+// PreviewCreateChain runs every check CreateChain runs -- including whether
+// the key is already taken -- and writes nothing. It is what the admin
+// panel's dry-run calls: before this existed the dry run created the chain
+// for real, so the confirm that followed failed with "chain already exists"
+// on a chain the operator had never added.
+func (s *Service) PreviewCreateChain(ctx context.Context, chain domain.DonationChain) error {
+	_, err := s.validateNewChain(ctx, chain)
+	return err
+}
+
+func (s *Service) validateNewChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error) {
 	if s == nil || s.store == nil {
 		return domain.DonationChain{}, domain.ErrDonationWalletNotConfigured
 	}
@@ -230,14 +274,12 @@ func (s *Service) CreateChain(ctx context.Context, chain domain.DonationChain) (
 	if chain.Enabled && chain.ManualUSDRateMicros <= 0 {
 		return domain.DonationChain{}, fmt.Errorf("donations: manual_usd_rate_micros must be positive to enable a chain -- deposits would price to zero Stars and never get credited")
 	}
-	created, err := s.store.CreateDonationChain(ctx, chain)
-	if err != nil {
+	if _, found, err := s.store.DonationChain(ctx, chain.Key); err != nil {
 		return domain.DonationChain{}, err
+	} else if found {
+		return domain.DonationChain{}, domain.ErrDonationChainAlreadyExists
 	}
-	if created.Watchable() {
-		s.ensureWatcher(created.Key)
-	}
-	return created, nil
+	return chain, nil
 }
 
 // DeleteChain removes a chain the operator added by mistake or no longer
@@ -245,13 +287,10 @@ func (s *Service) CreateChain(ctx context.Context, chain domain.DonationChain) (
 // domain.ErrDonationChainHasDeposits once real donation history exists --
 // disable it instead at that point.
 func (s *Service) DeleteChain(ctx context.Context, chainKey string) error {
-	if s == nil || s.store == nil {
-		return domain.ErrDonationWalletNotConfigured
+	if err := s.PreviewDeleteChain(ctx, chainKey); err != nil {
+		return err
 	}
 	chainKey = strings.ToLower(strings.TrimSpace(chainKey))
-	if chainKey == "" {
-		return domain.ErrDonationChainNotFound
-	}
 	if err := s.store.DeleteDonationChain(ctx, chainKey); err != nil {
 		return err
 	}
@@ -354,6 +393,21 @@ var evmAddressRe = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
 // allowed and means "configured but not watched yet" -- the watcher skips
 // it rather than watching the zero address.
 func (s *Service) UpsertToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error) {
+	token, err := s.validateToken(ctx, token)
+	if err != nil {
+		return domain.DonationToken{}, err
+	}
+	return s.store.UpsertDonationToken(ctx, token)
+}
+
+// PreviewUpsertToken validates a token without writing it, so a dry run
+// cannot silently repoint a chain's stablecoin contract.
+func (s *Service) PreviewUpsertToken(ctx context.Context, token domain.DonationToken) error {
+	_, err := s.validateToken(ctx, token)
+	return err
+}
+
+func (s *Service) validateToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error) {
 	if s == nil || s.store == nil {
 		return domain.DonationToken{}, domain.ErrDonationWalletNotConfigured
 	}
@@ -375,7 +429,12 @@ func (s *Service) UpsertToken(ctx context.Context, token domain.DonationToken) (
 		}
 		token.ContractAddress = normalizeAddress(token.ContractAddress)
 	}
-	return s.store.UpsertDonationToken(ctx, token)
+	if _, found, err := s.store.DonationChain(ctx, token.ChainKey); err != nil {
+		return domain.DonationToken{}, err
+	} else if !found {
+		return domain.DonationToken{}, domain.ErrDonationChainNotFound
+	}
+	return token, nil
 }
 
 // DeleteToken removes one token row from a chain. Deposits already
@@ -391,6 +450,26 @@ func (s *Service) DeleteToken(ctx context.Context, chainKey, symbol string) erro
 		return domain.ErrDonationTokenNotFound
 	}
 	return s.store.DeleteDonationToken(ctx, chainKey, symbol)
+}
+
+// PreviewDeleteChain checks a chain exists before a dry run claims it would
+// be removed. Whether it still has deposit history is only decided by the
+// store at delete time (see DeleteDonationChain), so a dry run can report
+// the chain is there but not promise the delete will be allowed.
+func (s *Service) PreviewDeleteChain(ctx context.Context, chainKey string) error {
+	if s == nil || s.store == nil {
+		return domain.ErrDonationWalletNotConfigured
+	}
+	chainKey = strings.ToLower(strings.TrimSpace(chainKey))
+	if chainKey == "" {
+		return domain.ErrDonationChainNotFound
+	}
+	if _, found, err := s.store.DonationChain(ctx, chainKey); err != nil {
+		return err
+	} else if !found {
+		return domain.ErrDonationChainNotFound
+	}
+	return nil
 }
 
 // EnabledChains lists every chain configured as enabled, whether or not

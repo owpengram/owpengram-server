@@ -382,6 +382,16 @@ type DonationsService interface {
 	DeleteChain(ctx context.Context, chainKey string) error
 	UpsertToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error)
 	DeleteToken(ctx context.Context, chainKey, symbol string) error
+	// The Preview* half of each write above: the same validation, including
+	// "does this key already exist", with nothing written. Every one of
+	// these actions is behind the panel's dry-run step, and before these
+	// existed the dry run performed the write for real -- adding a network
+	// reported "chain already exists" on the confirm, for a chain the
+	// operator had just created by pressing "Dry-run check".
+	PreviewCreateChain(ctx context.Context, chain domain.DonationChain) error
+	PreviewUpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) error
+	PreviewDeleteChain(ctx context.Context, chainKey string) error
+	PreviewUpsertToken(ctx context.Context, token domain.DonationToken) error
 	// PreviewSweep computes exactly what Sweep would do (balances found,
 	// amounts after gas, addresses skipped for insufficient gas) without
 	// signing or broadcasting anything -- the dry-run half of
@@ -1642,21 +1652,30 @@ func (s *Service) UpsertPremiumPlan(ctx context.Context, req UpsertPremiumPlanRe
 }
 
 // UpdateDonationChain edits one crypto donation chain's RPC/WS endpoint,
-// enabled flag, confirmation depth and pricing config. Like UpsertPremiumPlan,
-// it never runs as a dry-run preview -- there is no user-facing side effect
-// to simulate, only server config a running watcher goroutine will pick up
-// on its next poll.
+// enabled flag, confirmation depth and pricing config. A dry run validates
+// and writes nothing: the panel puts every one of these actions behind a
+// dry-run step, so applying the change there would repoint a live chain
+// before the operator ever confirmed it.
 func (s *Service) UpdateDonationChain(ctx context.Context, req UpdateDonationChainRequest) (CommandResult, error) {
 	if s == nil || s.donations == nil {
 		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionUpdateDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		chain, err := s.donations.UpdateChainConfig(ctx, domain.DonationChainConfigUpdate{
+		update := domain.DonationChainConfigUpdate{
 			ChainKey: req.ChainKey, RPCURL: req.RPCURL, WSURL: req.WSURL,
 			ConfirmationsRequired: req.ConfirmationsRequired, PriceFeedAddress: req.PriceFeedAddress,
 			ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
 			ExplorerURL: req.ExplorerURL, PriceSource: req.PriceSource, PriceSourceID: req.PriceSourceID,
-		})
+		}
+		if req.DryRun {
+			if err := s.donations.PreviewUpdateChainConfig(ctx, update); err != nil {
+				return CommandResult{}, err
+			}
+			return CommandResult{Message: "donation chain config validated", Details: map[string]any{
+				"chain_key": req.ChainKey, "enabled": req.Enabled,
+			}}, nil
+		}
+		chain, err := s.donations.UpdateChainConfig(ctx, update)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -1674,13 +1693,22 @@ func (s *Service) CreateDonationChain(ctx context.Context, req CreateDonationCha
 		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionCreateDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		chain, err := s.donations.CreateChain(ctx, domain.DonationChain{
+		draft := domain.DonationChain{
 			Key: req.ChainKey, Name: req.Name, ChainID: req.ChainID,
 			NativeSymbol: req.NativeSymbol, NativeDecimals: req.NativeDecimals,
 			RPCURL: req.RPCURL, WSURL: req.WSURL, ConfirmationsRequired: req.ConfirmationsRequired,
 			PriceFeedAddress: req.PriceFeedAddress, ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
 			ExplorerURL: req.ExplorerURL, PriceSource: req.PriceSource, PriceSourceID: req.PriceSourceID,
-		})
+		}
+		if req.DryRun {
+			if err := s.donations.PreviewCreateChain(ctx, draft); err != nil {
+				return CommandResult{}, err
+			}
+			return CommandResult{Message: "donation chain validated", Details: map[string]any{
+				"chain_key": req.ChainKey, "name": req.Name, "chain_id": req.ChainID,
+			}}, nil
+		}
+		chain, err := s.donations.CreateChain(ctx, draft)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -1698,6 +1726,13 @@ func (s *Service) DeleteDonationChain(ctx context.Context, req DeleteDonationCha
 		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionDeleteDonationChain, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		if req.DryRun {
+			if err := s.donations.PreviewDeleteChain(ctx, req.ChainKey); err != nil {
+				return CommandResult{}, err
+			}
+			return CommandResult{Message: "donation chain removal validated",
+				Details: map[string]any{"chain_key": req.ChainKey}}, nil
+		}
 		if err := s.donations.DeleteChain(ctx, req.ChainKey); err != nil {
 			return CommandResult{}, err
 		}
@@ -1713,10 +1748,19 @@ func (s *Service) UpsertDonationToken(ctx context.Context, req UpsertDonationTok
 		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
 	}
 	return s.runCommand(ctx, req.CommandMeta, ActionUpsertDonationToken, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		token, err := s.donations.UpsertToken(ctx, domain.DonationToken{
+		draft := domain.DonationToken{
 			ChainKey: req.ChainKey, Symbol: req.Symbol,
 			ContractAddress: req.ContractAddress, Decimals: req.Decimals,
-		})
+		}
+		if req.DryRun {
+			if err := s.donations.PreviewUpsertToken(ctx, draft); err != nil {
+				return CommandResult{}, err
+			}
+			return CommandResult{Message: "donation token validated", Details: map[string]any{
+				"chain_key": req.ChainKey, "symbol": req.Symbol,
+			}}, nil
+		}
+		token, err := s.donations.UpsertToken(ctx, draft)
 		if err != nil {
 			return CommandResult{}, err
 		}
