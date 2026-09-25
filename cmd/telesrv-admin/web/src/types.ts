@@ -916,18 +916,21 @@ export type StarGiftCollectiblePreview = {
   backdrops?: StarGiftCollectibleAttributeRow[];
 };
 
-export type BuiltinGiftPack = {
+// GiftPack is one archive on the operator's shelf, rendered from its own
+// manifest. Uploading a pack does not put anything in the catalog: these are
+// previewable, and importable whole or one gift at a time.
+export type GiftPack = {
   id: string;
   name: string;
   author: string;
   description: string;
   icon: string;
-  gifts: BuiltinGift[];
+  gifts: GiftPackGift[];
 };
 
-export type BuiltinGiftAttr = { id: string; name: string; permille: number; rarity?: string };
+export type GiftPackAttr = { id: string; name: string; permille: number; rarity?: string };
 
-export type BuiltinGift = {
+export type GiftPackGift = {
   slug: string;
   title: string;
   stars: number;
@@ -936,8 +939,8 @@ export type BuiltinGift = {
   upgrade?: {
     stars: number;
     supply: number;
-    models: BuiltinGiftAttr[];
-    patterns: BuiltinGiftAttr[];
+    models: GiftPackAttr[];
+    patterns: GiftPackAttr[];
     backdrops: { name: string; center: string; edge: string; pattern: string; text: string; permille: number }[];
   };
 };

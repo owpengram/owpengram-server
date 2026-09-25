@@ -41,6 +41,7 @@ import (
 	donationsapp "telesrv/internal/app/donations"
 	ephemeralapp "telesrv/internal/app/ephemeral"
 	filesapp "telesrv/internal/app/files"
+	"telesrv/internal/app/giftpack"
 	groupcallsapp "telesrv/internal/app/groupcalls"
 	"telesrv/internal/app/help"
 	"telesrv/internal/app/langpack"
@@ -1494,6 +1495,9 @@ func run(logger *zap.Logger) error {
 		stargiftsapp.WithUpgradeStore(starGiftUpgradeStore),
 		stargiftsapp.WithLifecycleStore(starGiftLifecycleStore),
 	)
+	// The gift-pack shelf holds uploaded archives only: nothing it stores is
+	// in the catalog until an operator imports from it.
+	giftPackLibrary := giftpack.NewLibrary(postgres.NewGiftPackStore(pool), starGiftsService)
 	// The composite account rating and collectible usernames are optional read
 	// models projected at the protocol edge. The rating worker below keeps the
 	// stored projection fresh; profile reads only fetch it.
@@ -1798,6 +1802,7 @@ func run(logger *zap.Logger) error {
 		Broadcast:              broadcastService,
 		Rating:                 ratingService,
 		StarGifts:              starGiftsService,
+		GiftPacks:              giftPackLibrary,
 	})
 	// The RPC edge owns the tg.* projection cache and the standard non-PTS
 	// updateUser/updateChannel refresh, so committed registry mutations are

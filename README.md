@@ -522,13 +522,17 @@ internal/turnsrv/         TURN/STUN building blocks
 
 ## 🎁 Star Gifts and gift packs
 
-Star Gifts ship with **First Pack**, OwpenGram's own set of animated gifts:
-import it in one click from **StarGift Catalog → Import Pack** in the admin
-panel, preview every gift and every upgraded variant before you do, and
-re-import later to pick up gifts added since.
+A fresh server has **no gifts and no packs**. A gift pack is a `.zip` -- a
+`pack.json` manifest plus its Lottie/`.tgs` animations -- that an operator
+uploads in **StarGift Catalog → Import Pack**. Uploading only puts it on the
+shelf: you then preview every gift and every upgraded variant, and import
+either the whole pack or a single gift out of it.
 
-You can also write your own pack -- a `.zip` with a `pack.json` manifest plus
-its Lottie/`.tgs` animations -- and upload it from the same screen.
+Two packs are authored in this repo and built into archives with
+`go run ./cmd/giftpack-export`: **Grind Pack** (desk gear and coffee; also
+the reference pack, since between them its gifts exercise every Star Gift
+mechanic) and **Energy Pack** (one limited, craftable can with a large
+collectible flavour pool).
 **[docs/gift-packs.md](docs/gift-packs.md)** is the guide: a step-by-step
 build loop, the hard limits every animation must meet, the full `pack.json`
 reference, and the rlottie pitfalls that make an animation look perfect in a

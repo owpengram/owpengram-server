@@ -850,9 +850,15 @@
 .gift-pack-name { color: var(--heading); font-size: 15px; }
 .gift-pack-meta { color: var(--muted); font-size: 11px; font-weight: 700; }
 .gift-pack-desc { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-.gift-pack-actions { display: flex; gap: 8px; margin-top: auto; padding: 12px 14px 14px; }
-.gift-pack-actions .btn { flex: 1; justify-content: center; }
+/* Three buttons never fit one 260px card row, so the row wraps rather than
+   letting Remove hang off the card edge. */
+.gift-pack-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding: 12px 14px 14px; }
+.gift-pack-actions .btn { flex: 1 1 auto; min-width: 0; justify-content: center; white-space: nowrap; }
 .gift-pack-loading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.gift-pack-empty { display: grid; justify-items: center; gap: 6px; padding: 28px 16px; color: var(--muted); text-align: center; background: var(--surface-soft); border: 1px dashed var(--line); border-radius: 14px; }
+.gift-pack-empty strong { color: var(--heading); font-size: 14px; }
+.gift-pack-empty span { max-width: 480px; font-size: 12px; line-height: 1.5; }
+.gift-pack-actions .btn.danger { flex: 0 0 auto; }
 .gift-pack-modal { width: min(900px, 100%); }
 .gift-pack-modal-title { display: flex; align-items: center; gap: 12px; }
 .gift-pack-modal-title .gift-pack-anim { width: 60px; height: 60px; flex: 0 0 60px; }
@@ -884,6 +890,7 @@
 .gift-detail-props { display: flex; flex-wrap: wrap; gap: 6px; }
 .gift-detail-prop { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; color: var(--text); font-size: 11px; font-weight: 700; background: var(--panel-strong); border: 1px solid var(--line); border-radius: 999px; }
 .gift-detail-upgrade { color: var(--muted); font-size: 12px; font-weight: 700; }
+.gift-detail-import { margin-top: 2px; }
 .gift-detail-section { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; color: var(--heading); font-size: 13px; }
 .gift-detail-section span { color: var(--muted); font-size: 11px; font-weight: 700; }
 .gift-detail-noupgrade { margin-top: 4px; }

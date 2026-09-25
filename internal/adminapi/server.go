@@ -16,8 +16,8 @@ import (
 	"go.uber.org/zap"
 
 	"telesrv/internal/admin"
+	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpacks"
 )
 
 type Config struct {
@@ -100,9 +100,10 @@ type Service interface {
 	PublishStarGiftCollectibles(ctx context.Context, req admin.PublishStarGiftCollectiblesRequest) (admin.CommandResult, error)
 	GiveStarGift(ctx context.Context, req admin.GiveStarGiftRequest) (admin.CommandResult, error)
 	ImportGiftPack(ctx context.Context, req admin.ImportGiftPackRequest) (admin.CommandResult, error)
-	ImportBuiltinGiftPack(ctx context.Context, req admin.ImportBuiltinGiftPackRequest) (admin.CommandResult, error)
-	BuiltinGiftPacks() []giftpacks.PackSummary
-	BuiltinGiftPackAnimation(packID, slug string) ([]byte, bool)
+	UploadGiftPack(ctx context.Context, req admin.UploadGiftPackRequest) (admin.CommandResult, error)
+	DeleteGiftPack(ctx context.Context, req admin.DeleteGiftPackRequest) (admin.CommandResult, error)
+	GiftPacks(ctx context.Context) ([]giftpack.PackSummary, error)
+	GiftPackAnimation(ctx context.Context, packID, slug string) ([]byte, bool, error)
 	SetGifCatalogEnabled(ctx context.Context, req admin.SetGifCatalogEnabledRequest) (admin.CommandResult, error)
 	SetGifCatalogSortOrder(ctx context.Context, req admin.SetGifCatalogSortOrderRequest) (admin.CommandResult, error)
 	SetGifCatalogCategory(ctx context.Context, req admin.SetGifCatalogCategoryRequest) (admin.CommandResult, error)
@@ -274,10 +275,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
 	mux.HandleFunc("POST /v1/star-gift-catalog/publish-collectibles", s.authenticated(s.handlePublishStarGiftCollectibles))
 	mux.HandleFunc("POST /v1/star-gift-catalog/give", s.authenticated(s.handleGiveStarGift))
-	mux.HandleFunc("POST /v1/star-gift-catalog/import-pack", s.authenticated(s.handleImportGiftPack))
-	mux.HandleFunc("GET /v1/gift-packs", s.authenticated(s.handleBuiltinGiftPacks))
-	mux.HandleFunc("GET /v1/gift-packs/{pack_id}/animations/{slug}", s.authenticated(s.handleBuiltinGiftPackAnimation))
-	mux.HandleFunc("POST /v1/gift-packs/import", s.authenticated(s.handleImportBuiltinGiftPack))
+	mux.HandleFunc("POST /v1/gift-packs/upload", s.authenticated(s.handleUploadGiftPack))
+	mux.HandleFunc("POST /v1/gift-packs/delete", s.authenticated(s.handleDeleteGiftPack))
+	mux.HandleFunc("GET /v1/gift-packs", s.authenticated(s.handleGiftPacks))
+	mux.HandleFunc("GET /v1/gift-packs/{pack_id}/animations/{slug}", s.authenticated(s.handleGiftPackAnimation))
+	mux.HandleFunc("POST /v1/gift-packs/import", s.authenticated(s.handleImportGiftPack))
 	mux.HandleFunc("GET /v1/emoji/{id}/animation", s.authenticated(s.handleEmojiAnimation))
 	mux.HandleFunc("GET /v1/moderation/cases", s.authenticated(s.handleModerationCases))
 	mux.HandleFunc("GET /v1/moderation/cases/{id}", s.authenticated(s.handleModerationCase))
@@ -1253,7 +1255,9 @@ func (s *Server) handlePublishStarGiftCollectibles(w http.ResponseWriter, r *htt
 // giftpack.AssetResolver and by PrepareAnimation itself).
 const maxGiftPackZipBytes = 32 << 20
 
-func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
+// handleUploadGiftPack stores an uploaded pack archive on the operator's
+// shelf. Importing from it is a separate call.
+func (s *Server) handleUploadGiftPack(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, maxGiftPackZipBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -1263,14 +1267,14 @@ func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	var req admin.ImportGiftPackRequest
+	var req admin.UploadGiftPackRequest
 	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid metadata: "+err.Error())
 		return
 	}
-	file, _, err := r.FormFile("file")
+	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "pack zip file is required")
 		return
@@ -1282,31 +1286,57 @@ func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.PackZip = data
+	if req.FileName == "" && header != nil {
+		req.FileName = header.Filename
+	}
+	result, err := s.svc.UploadGiftPack(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteGiftPack(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteGiftPackRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteGiftPack(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleImportGiftPack(w http.ResponseWriter, r *http.Request) {
+	var req admin.ImportGiftPackRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
 	result, err := s.svc.ImportGiftPack(r.Context(), req)
 	writeCommandResult(w, result, err)
 }
 
-func (s *Server) handleImportBuiltinGiftPack(w http.ResponseWriter, r *http.Request) {
-	var req admin.ImportBuiltinGiftPackRequest
-	if !decodeJSON(w, r, &req) {
+func (s *Server) handleGiftPacks(w http.ResponseWriter, r *http.Request) {
+	packs, err := s.svc.GiftPacks(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	result, err := s.svc.ImportBuiltinGiftPack(r.Context(), req)
-	writeCommandResult(w, result, err)
+	if packs == nil {
+		packs = []giftpack.PackSummary{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"packs": packs})
 }
 
-func (s *Server) handleBuiltinGiftPacks(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"packs": s.svc.BuiltinGiftPacks()})
-}
-
-func (s *Server) handleBuiltinGiftPackAnimation(w http.ResponseWriter, r *http.Request) {
-	raw, found := s.svc.BuiltinGiftPackAnimation(r.PathValue("pack_id"), r.PathValue("slug"))
+func (s *Server) handleGiftPackAnimation(w http.ResponseWriter, r *http.Request) {
+	raw, found, err := s.svc.GiftPackAnimation(r.Context(), r.PathValue("pack_id"), r.PathValue("slug"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if !found {
 		writeError(w, http.StatusNotFound, "gift pack animation not found")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	// A pack re-uploaded under the same name replaces the old one in place,
+	// so this URL's content is not immutable and must not be cached.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }

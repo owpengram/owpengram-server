@@ -9,7 +9,6 @@ import (
 
 	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpacks"
 )
 
 // CreateStarGiftCatalogEntryRequest authors a new StarGift (GiftID == 0) or a
@@ -107,27 +106,30 @@ func (s *Service) CreateStarGiftCatalogEntry(ctx context.Context, req CreateStar
 	})
 }
 
-// ImportGiftPackRequest carries one uploaded pack .zip (pack.json at the
+// UploadGiftPackRequest carries one uploaded pack .zip (pack.json at the
 // archive root plus the assets it references by relative path -- see
 // internal/app/giftpack's package doc). PackZip is populated server-side
 // from the multipart upload, not from the JSON body.
-type ImportGiftPackRequest struct {
+type UploadGiftPackRequest struct {
 	CommandMeta
-	PackZip []byte `json:"-"`
+	FileName string `json:"file_name"`
+	PackZip  []byte `json:"-"`
 }
 
-// ImportGiftPack parses and imports a community-authored gift pack. Gifts
-// already present by title are skipped, not duplicated (see
-// internal/app/giftpack.Import), so re-running an import -- including a
-// pack that only adds a few new gifts to one already imported before -- is
-// always safe.
-func (s *Service) ImportGiftPack(ctx context.Context, req ImportGiftPackRequest) (CommandResult, error) {
-	if s == nil || s.starGifts == nil {
-		return CommandResult{}, domain.ErrStarGiftInvalid
+// UploadGiftPack puts a pack archive on the operator's shelf. Nothing
+// reaches the catalog: uploading and importing are deliberately two steps,
+// so an operator can preview a pack -- and pick individual gifts out of it
+// -- before anything is published. Re-uploading a pack with the same name
+// replaces the stored archive.
+func (s *Service) UploadGiftPack(ctx context.Context, req UploadGiftPackRequest) (CommandResult, error) {
+	if s == nil || s.giftPacks == nil {
+		return CommandResult{}, fmt.Errorf("gift pack library dependency is not configured")
 	}
 	if len(req.PackZip) == 0 {
 		return CommandResult{}, fmt.Errorf("pack zip is required")
 	}
+	// Parsed before the command runs so a broken archive is rejected without
+	// an audit entry claiming a pack was uploaded.
 	assets, err := giftpack.NewZipAssetResolver(req.PackZip)
 	if err != nil {
 		return CommandResult{}, err
@@ -140,36 +142,86 @@ func (s *Service) ImportGiftPack(ctx context.Context, req ImportGiftPackRequest)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	return s.runCommand(ctx, req.CommandMeta, ActionImportGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{DryRun: req.DryRun, Now: s.now})
-		if err != nil {
-			return CommandResult{}, err
+	return s.runCommand(ctx, req.CommandMeta, ActionUploadGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"pack_name": manifest.PackName, "gifts": len(manifest.Gifts), "bytes": len(req.PackZip)}
+		if req.DryRun {
+			return CommandResult{Message: "gift pack validated", Details: details}, nil
 		}
-		return CommandResult{
-			Message: fmt.Sprintf("gift pack %q processed", manifest.PackName),
-			Details: map[string]any{"pack_name": manifest.PackName, "gifts": result.Gifts},
-		}, nil
+		pack, err := s.giftPacks.Save(ctx, req.FileName, req.PackZip, req.Actor)
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		details["pack_id"] = pack.PackID
+		return CommandResult{Message: fmt.Sprintf("gift pack %q uploaded", pack.Name), Details: details}, nil
 	})
 }
 
-type ImportBuiltinGiftPackRequest struct {
+type DeleteGiftPackRequest struct {
 	CommandMeta
 	PackID string `json:"pack_id"`
 }
 
-// ImportBuiltinGiftPack imports one of OwpenGram's built-in packs
-// (internal/seed/giftpacks) through the exact same path ImportGiftPack uses
-// for an uploaded pack.
-func (s *Service) ImportBuiltinGiftPack(ctx context.Context, req ImportBuiltinGiftPackRequest) (CommandResult, error) {
+// DeleteGiftPack takes a pack off the shelf. Gifts already imported from it
+// stay in the catalog -- by then they are catalog entries of their own, with
+// their own collectible pools and owners.
+func (s *Service) DeleteGiftPack(ctx context.Context, req DeleteGiftPackRequest) (CommandResult, error) {
+	if s == nil || s.giftPacks == nil {
+		return CommandResult{}, fmt.Errorf("gift pack library dependency is not configured")
+	}
+	if strings.TrimSpace(req.PackID) == "" {
+		return CommandResult{}, fmt.Errorf("pack id is required")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		details := map[string]any{"pack_id": req.PackID}
+		if req.DryRun {
+			return CommandResult{Message: "gift pack removal validated", Details: details}, nil
+		}
+		removed, err := s.giftPacks.Delete(ctx, req.PackID)
+		details["removed"] = removed
+		if err != nil {
+			return CommandResult{Details: details}, err
+		}
+		if !removed {
+			return CommandResult{Details: details}, domain.ErrGiftPackNotFound
+		}
+		return CommandResult{Message: "gift pack removed", Details: details}, nil
+	})
+}
+
+// ImportGiftPackRequest imports from a pack already on the shelf. Titles
+// restricts the import to those gifts; empty imports the whole pack.
+type ImportGiftPackRequest struct {
+	CommandMeta
+	PackID string   `json:"pack_id"`
+	Titles []string `json:"titles,omitempty"`
+}
+
+// ImportGiftPack publishes a stored pack's gifts into the catalog. Gifts
+// already present by title are skipped, not duplicated (see
+// internal/app/giftpack.Import), so re-running an import -- including a pack
+// that only adds a few new gifts to one already imported before -- is always
+// safe.
+func (s *Service) ImportGiftPack(ctx context.Context, req ImportGiftPackRequest) (CommandResult, error) {
 	if s == nil || s.starGifts == nil {
 		return CommandResult{}, domain.ErrStarGiftInvalid
 	}
-	manifest, assets, ok := giftpacks.Manifest(req.PackID)
-	if !ok {
-		return CommandResult{}, fmt.Errorf("unknown built-in gift pack %q", req.PackID)
+	if s.giftPacks == nil {
+		return CommandResult{}, fmt.Errorf("gift pack library dependency is not configured")
 	}
-	return s.runCommand(ctx, req.CommandMeta, ActionImportBuiltinGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
-		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{DryRun: req.DryRun, Now: s.now})
+	if strings.TrimSpace(req.PackID) == "" {
+		return CommandResult{}, fmt.Errorf("pack id is required")
+	}
+	manifest, assets, found, err := s.giftPacks.Load(ctx, req.PackID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if !found {
+		return CommandResult{}, domain.ErrGiftPackNotFound
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionImportGiftPack, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		result, err := giftpack.Import(ctx, s.starGifts, manifest, assets, giftpack.ImportOptions{
+			DryRun: req.DryRun, Now: s.now, Only: req.Titles,
+		})
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -180,16 +232,22 @@ func (s *Service) ImportBuiltinGiftPack(ctx context.Context, req ImportBuiltinGi
 	})
 }
 
-// BuiltinGiftPacks lists the built-in packs for the admin panel. A pure read
-// of static content -- no s.starGifts dependency.
-func (s *Service) BuiltinGiftPacks() []giftpacks.PackSummary {
-	return giftpacks.List()
+// GiftPacks lists the operator's shelf for the admin panel. A plain read of
+// stored packs -- importing is a separate, audited action.
+func (s *Service) GiftPacks(ctx context.Context) ([]giftpack.PackSummary, error) {
+	if s == nil || s.giftPacks == nil {
+		return nil, fmt.Errorf("gift pack library dependency is not configured")
+	}
+	return s.giftPacks.List(ctx)
 }
 
-// BuiltinGiftPackAnimation returns one built-in gift's Lottie JSON, for the
-// pack preview before import.
-func (s *Service) BuiltinGiftPackAnimation(packID, slug string) ([]byte, bool) {
-	return giftpacks.Animation(packID, slug)
+// GiftPackAnimation returns one stored gift's (or collectible attribute's)
+// Lottie JSON, for the pack preview before import.
+func (s *Service) GiftPackAnimation(ctx context.Context, packID, slug string) ([]byte, bool, error) {
+	if s == nil || s.giftPacks == nil {
+		return nil, false, fmt.Errorf("gift pack library dependency is not configured")
+	}
+	return s.giftPacks.Animation(ctx, packID, slug)
 }
 
 func (s *Service) SetStarGiftCatalogEnabled(ctx context.Context, req SetStarGiftCatalogEnabledRequest) (CommandResult, error) {

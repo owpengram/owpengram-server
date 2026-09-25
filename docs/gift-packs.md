@@ -2,13 +2,37 @@
 
 A gift pack is a portable bundle -- a `pack.json` manifest plus the Lottie/TGS
 assets it references -- that adds one or more Star Gifts to the catalog in a
-single admin action. Import it from **StarGift Catalog → Import Pack** in the
-admin panel: either one of the **built-in packs** (shown as cards; *Preview*
-opens every gift's animation before you import) or your own `.zip` upload.
+single admin action.
 
-Re-importing a pack is always safe: a gift already present by title is
-skipped, never duplicated, so handing an operator an updated pack that only
-adds a few new gifts to one they already imported just works.
+**Nothing ships installed.** A fresh server has an empty shelf and an empty
+catalog. The loop is two deliberate steps, both in **StarGift Catalog →
+Import Pack**:
+
+1. **Upload** a pack `.zip`. It is parsed, every animation it declares is
+   validated, and it is stored on the shelf. Nothing reaches the catalog.
+2. **Import** from a pack on the shelf -- *Preview* opens every gift and
+   every upgraded variant, and you publish either the whole pack
+   (*Import all*) or one gift at a time (*Import this gift* on a gift's own
+   page). A fifty-gift pack does not have to be taken whole.
+
+Re-importing is always safe: a gift already present by title is skipped,
+never duplicated, so handing an operator an updated pack that only adds a
+few new gifts to one they already imported just works. Re-uploading a pack
+with the same name replaces the stored archive rather than adding a second
+copy of it, and removing a pack from the shelf leaves gifts already imported
+from it untouched -- by then they are catalog entries of their own.
+
+The packs authored in this repo (`internal/seed/giftpacks`) are archives
+like any other. Build them with:
+
+```bash
+go run ./cmd/giftpack-export
+```
+
+which writes `dist/packs/grind-pack.zip` (desk gear and coffee; between them
+its gifts exercise every Star Gift mechanic, so it doubles as the reference
+pack) and `dist/packs/energy-pack.zip` (one strictly limited, craftable can
+with a fifty-strong flavour pool).
 
 ## Build your own pack: the short version
 
@@ -53,18 +77,21 @@ its path inside the zip. Full field reference is below; the minimum is:
 zip -r mypack.zip pack.json gift.json models/ patterns/
 ```
 
-**5. Dry-run it** in **StarGift Catalog → Import Pack → Upload a pack**.
-The dry run parses the manifest, resolves and validates every animation and
-runs the same limited/auction/craft checks a real import does, then shows
-exactly what would be created. Nothing is written until you confirm.
+**5. Dry-run the upload** in **StarGift Catalog → Import Pack → Upload a
+pack**. The dry run parses the manifest and resolves and validates every
+animation, then shows exactly what the pack contains. Nothing is stored
+until you confirm. Importing from the shelf afterwards has its own dry run,
+which runs the limited/auction/craft checks a real import does.
 
 **6. Confirm, then look at it in a real client** -- the admin preview uses a
 browser Lottie player, which is *not* proof the pack renders in the app.
 
 ### Checklist before you hand a pack to someone
 
-- Every gift `title` is unique inside the pack, and distinct from what the
-  target catalog already has (same title = skipped as already imported).
+- Every gift `title` is unique inside the pack, distinct from what the
+  target catalog already has (same title = skipped as already imported), and
+  no two titles reduce to the same URL slug (the upload refuses that: they
+  would share one preview handle).
 - Every path in `pack.json` resolves inside the zip, relative to its root.
 - Upgradeable gifts have **at least two selectable models, two patterns and
   two backdrops** (craft-only models do not count towards that).
@@ -102,7 +129,7 @@ don't agree on what the file means.
 There is no way for this server to catch that for you -- it would need to
 embed rlottie itself, which it doesn't. So the practical rule is:
 
-- **Known safe** (every one of these is used by the built-in packs in
+- **Known safe** (every one of these is used by the packs in
   `internal/seed/giftpacks` and verified frame by frame in rlottie): shape
   layers with ellipses, rectangles, polystars and bezier paths; solid,
   linear-gradient and radial-gradient fills, including gradients with
@@ -121,7 +148,7 @@ embed rlottie itself, which it doesn't. So the practical rule is:
   rlottie can't.
 
   **Concrete examples, found the hard way** while building OwpenGram's own
-  built-in packs -- three separate, cumulative defects,
+  packs here -- three separate, cumulative defects,
   each one invisible to this server's structural validator and to a generic
   Lottie player, each confirmed only by diffing a genuine Telegram-issued
   `.tgs`'s raw JSON against the generated equivalent:
@@ -158,19 +185,22 @@ embed rlottie itself, which it doesn't. So the practical rule is:
   animated-property keyframes, since that one produces the most
   misleading symptom (partial breakage, not total).
 
-## Adding a built-in pack
+## Adding a pack to this repo
 
-Built-in packs live in `internal/seed/giftpacks`, drawn in Go with the
-Lottie DSL in `lottie.go`, which emits only structures copied from a real
+The packs authored here live in `internal/seed/giftpacks`, drawn in Go with
+the Lottie DSL in `lottie.go`, which emits only structures copied from a real
 Telegram export (so all three rules above hold by construction). To add one,
-create a file next to `firstpack.go` whose `init()` calls `register(...)`
+create a file next to `grindpack.go` whose `init()` calls `register(...)`
 with an id, name, author, description, an icon (the slug of one of its
-gifts) and its gifts. It then appears in the admin panel automatically.
+gifts) and its gifts. `go run ./cmd/giftpack-export` then builds it into an
+uploadable `.zip` along with the rest; the export is deterministic, so
+re-running it on unchanged art produces byte-identical archives.
 
 `go test ./internal/seed/giftpacks/` imports every registered pack through
-the real Star Gift service and lints every animation against the rlottie
-rules above. It can't render, though: still check new art frame by frame in
-a real rlottie build before shipping it.
+the real Star Gift service, lints every animation against the rlottie rules
+above, and exports each pack to check the archive alone is self-contained.
+It can't render, though: still check new art frame by frame in a real
+rlottie build before shipping it.
 
 ## `pack.json` reference
 
@@ -178,6 +208,8 @@ a real rlottie build before shipping it.
 {
   "pack_name": "My Pack",
   "author": "you",
+  "description": "What this pack is, shown on its card.",
+  "icon": "example-gift",
   "gifts": [
     {
       "id_slug": "example-gift",
@@ -223,8 +255,10 @@ a real rlottie build before shipping it.
 }
 ```
 
-Top level: `pack_name` (required), `author` (optional), `gifts` (at least
-one, unique `title` per gift).
+Top level: `pack_name` (required -- it is also the pack's identity on the
+shelf, slugified), `author`, `description` and `icon` (all optional;
+`icon` names the gift whose animation represents the pack and defaults to
+the first one), `gifts` (at least one, unique `title` per gift).
 
 Every animation path (`base_animation`, and every model/pattern
 `animation`) is resolved **relative to the zip root**, next to `pack.json`,
@@ -276,9 +310,9 @@ mypack.zip
 A flat layout works fine, or organize assets into subfolders as long as the
 paths in `pack.json` match. Upload the `.zip` from **StarGift Catalog →
 Import Pack → Upload a pack**; the panel runs a dry-run first (parses the
-manifest, resolves and validates every animation, checks the same
-limited/auction/craft rules as a real import) and shows you exactly what
-would be created before you confirm.
+manifest, resolves and validates every animation) and shows you exactly what
+the pack contains before you confirm. It then appears on the shelf, where
+*Preview* and the import actions live.
 
 ## Licensing
 

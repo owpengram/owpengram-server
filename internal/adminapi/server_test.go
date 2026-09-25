@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"telesrv/internal/admin"
+	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpacks"
 )
 
 func TestAdminAPIRequiresBearerToken(t *testing.T) {
@@ -349,7 +349,9 @@ func (fakeService) DonationChainBalance(_ context.Context, chainKey string) (dom
 	return domain.DonationChainBalance{ChainKey: chainKey}, nil
 }
 
-func (fakeService) DonationPricePreview(_ context.Context, _ string) (int64, error) { return 2_400_000_000, nil }
+func (fakeService) DonationPricePreview(_ context.Context, _ string) (int64, error) {
+	return 2_400_000_000, nil
+}
 
 func (fakeService) DonationStarPriceMicros() int64 { return 5000 }
 
@@ -549,13 +551,19 @@ func (fakeService) ImportGiftPack(_ context.Context, req admin.ImportGiftPackReq
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
-func (fakeService) ImportBuiltinGiftPack(_ context.Context, req admin.ImportBuiltinGiftPackRequest) (admin.CommandResult, error) {
+func (fakeService) UploadGiftPack(_ context.Context, req admin.UploadGiftPackRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
-func (fakeService) BuiltinGiftPacks() []giftpacks.PackSummary { return nil }
+func (fakeService) DeleteGiftPack(_ context.Context, req admin.DeleteGiftPackRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
 
-func (fakeService) BuiltinGiftPackAnimation(string, string) ([]byte, bool) { return nil, false }
+func (fakeService) GiftPacks(context.Context) ([]giftpack.PackSummary, error) { return nil, nil }
+
+func (fakeService) GiftPackAnimation(context.Context, string, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
 
 func (fakeService) AutoCategorizeGifCatalog(_ context.Context, req admin.AutoCategorizeGifCatalogRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil

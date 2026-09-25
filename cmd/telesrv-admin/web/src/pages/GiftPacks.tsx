@@ -1,11 +1,11 @@
-import { ArrowLeft, Boxes, Cake, ChevronLeft, ChevronRight, Crown, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, Repeat, Search, Sparkles, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Boxes, Cake, ChevronLeft, ChevronRight, Crown, Download, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, PackageOpen, Repeat, Search, Sparkles, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert } from "../components/ui";
-import type { BuiltinGift, BuiltinGiftPack } from "../types";
+import type { GiftPack, GiftPackGift } from "../types";
 
 function PackAnimation({ packID, slug }: { packID: string; slug: string }) {
   const host = useRef<HTMLDivElement>(null);
@@ -14,7 +14,7 @@ function PackAnimation({ packID, slug }: { packID: string; slug: string }) {
   useEffect(() => {
     let cancelled = false;
     let animation: ReturnType<typeof lottie.loadAnimation> | null = null;
-    api.builtinGiftPackAnimation(packID, slug).then((data) => {
+    api.giftPackAnimation(packID, slug).then((data) => {
       if (cancelled || !host.current) return;
       animation = lottie.loadAnimation({
         container: host.current,
@@ -33,17 +33,48 @@ function PackAnimation({ packID, slug }: { packID: string; slug: string }) {
   return <div className="gift-pack-anim" ref={host}>{failed && <span className="gift-pack-anim-error">{"Preview unavailable"}</span>}</div>;
 }
 
-function giftCount(pack: BuiltinGiftPack) {
+function giftCount(pack: GiftPack) {
   return `${pack.gifts.length} ${pack.gifts.length === 1 ? "gift" : "gifts"} · by ${pack.author}`;
 }
 
-function ImportPackButton({ pack, onDone }: { pack: BuiltinGiftPack; onDone: () => void }) {
+function ImportPackButton({ pack, onDone }: { pack: GiftPack; onDone: () => void }) {
   return (
     <ActionButton
       tone="primary"
-      label={`Import ${pack.name}`}
+      label={pack.gifts.length === 1 ? "Import" : "Import all"}
       icon={<Boxes size={15} />}
-      path="/api/actions/import-builtin-gift-pack"
+      path="/api/actions/import-gift-pack"
+      payload={() => ({ pack_id: pack.id })}
+      onDone={onDone}
+    />
+  );
+}
+
+// ImportGiftButton publishes exactly one gift out of a pack. A pack is a
+// menu, not an all-or-nothing bundle: an operator who wants one collectible
+// from a fifty-gift pack should not have to take the other forty-nine.
+function ImportGiftButton({ pack, gift, onDone }: { pack: GiftPack; gift: GiftPackGift; onDone: () => void }) {
+  return (
+    <ActionButton
+      compact
+      tone="primary"
+      label={"Import this gift"}
+      icon={<Download size={14} />}
+      path="/api/actions/import-gift-pack"
+      payload={() => ({ pack_id: pack.id, titles: [gift.title] })}
+      onDone={onDone}
+    />
+  );
+}
+
+function DeletePackButton({ pack, onDone }: { pack: GiftPack; onDone: () => void }) {
+  return (
+    <ActionButton
+      compact
+      tone="danger"
+      label={"Remove"}
+      icon={<Trash2 size={14} />}
+      path="/api/actions/delete-gift-pack"
       payload={() => ({ pack_id: pack.id })}
       onDone={onDone}
     />
@@ -81,12 +112,13 @@ function chance(attr: { permille: number; rarity?: string }, pool: { permille: n
   return `${pct.toFixed(pct < 10 ? 1 : 0).replace(/\.0$/, "")}%`;
 }
 
-function GiftDetail({ pack, gift, siblings, onSelect, onBack }: {
-  pack: BuiltinGiftPack;
-  gift: BuiltinGift;
-  siblings: BuiltinGift[];
+function GiftDetail({ pack, gift, siblings, onSelect, onBack, onImported }: {
+  pack: GiftPack;
+  gift: GiftPackGift;
+  siblings: GiftPackGift[];
   onSelect: (slug: string) => void;
   onBack: () => void;
+  onImported: () => void;
 }) {
   const upgrade = gift.upgrade;
   const flags = gift.flags ?? [];
@@ -117,6 +149,7 @@ function GiftDetail({ pack, gift, siblings, onSelect, onBack }: {
             </div>
           ) : <p className="gift-pack-desc">{"No modifiers: a plain gift anyone can buy."}</p>}
           {upgrade && <div className="gift-detail-upgrade">{`Upgrade for ⭐ ${upgrade.stars} · supply ${upgrade.supply.toLocaleString()}`}</div>}
+          <div className="gift-detail-import"><ImportGiftButton pack={pack} gift={gift} onDone={onImported} /></div>
         </div>
       </div>
       {upgrade ? <>
@@ -157,7 +190,7 @@ function GiftDetail({ pack, gift, siblings, onSelect, onBack }: {
   );
 }
 
-function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack; onClose: () => void; onImported: () => void }) {
+function PackPreviewModal({ pack, onClose, onImported }: { pack: GiftPack; onClose: () => void; onImported: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const body = useRef<HTMLDivElement>(null);
@@ -190,7 +223,7 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
           <div className="gift-pack-modal-title">
             <PackAnimation packID={pack.id} slug={pack.icon} />
             <div>
-              <div className="eyebrow">{"Built-in gift pack"}</div>
+              <div className="eyebrow">{"Gift pack"}</div>
               <h2>{pack.name}</h2>
               <span className="gift-pack-meta">{giftCount(pack)}</span>
             </div>
@@ -202,6 +235,7 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
             <GiftDetail
               pack={pack}
               gift={selectedGift}
+              onImported={onImported}
               // Prev/Next walks whatever the filter left on screen, so the
               // arrows match the grid the gift was opened from.
               siblings={shown.some((gift) => gift.slug === selectedGift.slug) ? shown : pack.gifts}
@@ -241,25 +275,32 @@ function PackPreviewModal({ pack, onClose, onImported }: { pack: BuiltinGiftPack
   );
 }
 
-// Built-in packs ship inside the server (internal/seed/giftpacks) and import
-// through the same path as an uploaded pack; gifts already in the catalog by
-// title are skipped, so importing again is safe.
-export function BuiltinGiftPacks({ onImported }: { onImported: () => void }) {
-  const [packs, setPacks] = useState<BuiltinGiftPack[] | null>(null);
+// The shelf: packs an operator has uploaded. Nothing ships pre-installed --
+// a pack exists here only because someone uploaded its archive, and it
+// reaches the catalog only when someone imports from it. Gifts already in
+// the catalog by title are skipped, so importing again is safe.
+export function GiftPacks({ onImported, reloadKey = 0 }: { onImported: () => void; reloadKey?: number }) {
+  const [packs, setPacks] = useState<GiftPack[] | null>(null);
   const [error, setError] = useState("");
-  const [previewPack, setPreviewPack] = useState<BuiltinGiftPack | null>(null);
+  const [previewPack, setPreviewPack] = useState<GiftPack | null>(null);
 
-  useEffect(() => {
-    api.builtinGiftPacks().then((res) => setPacks(res.packs ?? [])).catch((err) => setError(errorMessage(err)));
-  }, []);
+  function load() {
+    api.giftPacks().then((res) => setPacks(res.packs ?? [])).catch((err) => setError(errorMessage(err)));
+  }
+
+  useEffect(load, [reloadKey]);
 
   return (
     <section className="section-block">
-      <h2>{"Built-in packs"}</h2>
+      <h2>{"Your packs"}</h2>
       <div className="card-body">
         {error && <Alert>{error}</Alert>}
         {packs === null && !error && <div className="gift-pack-loading"><Loader2 className="spin" size={16} /> {"Loading packs…"}</div>}
-        {packs?.length === 0 && <p className="gift-pack-desc">{"No built-in packs."}</p>}
+        {packs?.length === 0 && <div className="gift-pack-empty">
+          <PackageOpen size={26} />
+          <strong>{"No packs uploaded yet"}</strong>
+          <span>{"Upload a pack archive below, then preview it and import the whole pack or a single gift out of it."}</span>
+        </div>}
         {packs && packs.length > 0 && (
           <div className="gift-pack-grid">
             {packs.map((pack) => (
@@ -275,6 +316,7 @@ export function BuiltinGiftPacks({ onImported }: { onImported: () => void }) {
                 <div className="gift-pack-actions">
                   <button className="btn" type="button" onClick={() => setPreviewPack(pack)}><Eye size={15} /> {"Preview"}</button>
                   <ImportPackButton pack={pack} onDone={onImported} />
+                  <DeletePackButton pack={pack} onDone={() => { setPreviewPack(null); load(); }} />
                 </div>
               </article>
             ))}

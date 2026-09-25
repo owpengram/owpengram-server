@@ -46,3 +46,5 @@ tmp/
 .idea/
 .vscode/
 *.exe~
+
+/dist/

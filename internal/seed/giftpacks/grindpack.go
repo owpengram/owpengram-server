@@ -6,17 +6,18 @@ import (
 	"telesrv/internal/app/giftpack"
 )
 
-// First Pack doubles as the reference pack for the whole Star Gift feature
+// Grind Pack doubles as the reference pack for the whole Star Gift feature
 // surface: every gift exercises a different mechanic, so importing it is
 // enough to test plain purchase, limited supply and sell-out, premium-only,
 // birthday, per-user limits, collectible upgrade, crafting, resale floor and
-// auction end to end.
+// auction end to end. It is not installed by default -- like every pack, an
+// operator exports it (cmd/giftpack-export) and uploads the archive.
 func init() {
 	register(&packDef{
-		id:          "first-pack",
-		name:        "First Pack",
+		id:          "grind-pack",
+		name:        "Grind Pack",
 		author:      "OwpenGram",
-		description: "The first gift pack made for OwpenGram.",
+		description: "Everyday grind: desk gear, coffee and the hardware it all runs on.",
 		icon:        "giftbox",
 		gifts: []giftDef{
 			{slug: "coffee", title: "Morning Coffee", stars: 15, build: coffee},

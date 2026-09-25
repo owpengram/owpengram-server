@@ -288,3 +288,61 @@ func TestImportOptionsNowOverridesClock(t *testing.T) {
 		t.Fatalf("Import: %v", err)
 	}
 }
+
+// TestImportOnlyPublishesTheChosenGifts: a pack is a menu. Picking one gift
+// out of it must publish exactly that gift -- not the pack minus one, and
+// not the whole pack.
+func TestImportOnlyPublishesTheChosenGifts(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	result, err := Import(ctx, svc, fixtureManifest(), fixtureAssets(), ImportOptions{Only: []string{"Upgradeable"}})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if len(result.Gifts) != 1 || result.Gifts[0].Title != "Upgradeable" || result.Gifts[0].Status != "created" {
+		t.Fatalf("Gifts = %+v, want only Upgradeable created", result.Gifts)
+	}
+	catalog, err := svc.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+	if len(catalog) != 1 || catalog[0].Title != "Upgradeable" {
+		t.Fatalf("catalog = %+v, want just the one chosen gift", catalog)
+	}
+	if catalog[0].UpgradeStars == 0 {
+		t.Error("the chosen gift lost its collectible pool")
+	}
+
+	// Picking the rest afterwards must still work, and must not re-create
+	// the gift already imported.
+	rest, err := Import(ctx, svc, fixtureManifest(), fixtureAssets(), ImportOptions{Only: []string{"Basic", "Upgradeable"}})
+	if err != nil {
+		t.Fatalf("Import rest: %v", err)
+	}
+	status := map[string]string{}
+	for _, g := range rest.Gifts {
+		status[g.Title] = g.Status
+	}
+	if status["Basic"] != "created" || status["Upgradeable"] != "skipped" {
+		t.Fatalf("second import = %+v, want Basic created and Upgradeable skipped", status)
+	}
+}
+
+// TestImportOnlyReportsUnknownTitles: an operator picking a gift from a
+// preview of a pack that has since been replaced should be told, not left
+// with a silently empty import.
+func TestImportOnlyReportsUnknownTitles(t *testing.T) {
+	svc := newTestService(t)
+	result, err := Import(context.Background(), svc, fixtureManifest(), fixtureAssets(),
+		ImportOptions{Only: []string{"Gone", "Basic"}})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	status := map[string]string{}
+	for _, g := range result.Gifts {
+		status[g.Title] = g.Status
+	}
+	if status["Basic"] != "created" || status["Gone"] != "not_found" {
+		t.Fatalf("Gifts = %+v, want Basic created and Gone not_found", result.Gifts)
+	}
+}

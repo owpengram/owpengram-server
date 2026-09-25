@@ -33,6 +33,11 @@ type ImportOptions struct {
 	DryRun bool
 	// Now overrides the clock (tests only); defaults to time.Now.
 	Now func() time.Time
+	// Only restricts the import to these gift titles. Empty imports the
+	// whole pack; a title that isn't in the manifest is reported as
+	// "not_found" rather than silently doing nothing, so an operator who
+	// picked a gift from a stale preview finds out.
+	Only []string
 }
 
 // GiftImportOutcome reports what happened to one gift in the pack.
@@ -69,8 +74,20 @@ func Import(ctx context.Context, svc Service, manifest Manifest, assets AssetRes
 		existingTitles[g.Title] = true
 	}
 
+	var only map[string]bool
+	if len(opts.Only) > 0 {
+		only = make(map[string]bool, len(opts.Only))
+		for _, title := range opts.Only {
+			only[title] = true
+		}
+	}
+
 	result := ImportResult{PackName: manifest.PackName}
 	for _, spec := range manifest.Gifts {
+		if only != nil && !only[spec.Title] {
+			continue
+		}
+		delete(only, spec.Title)
 		outcome := GiftImportOutcome{Title: spec.Title}
 		if existingTitles[spec.Title] {
 			outcome.Status = "skipped"
@@ -102,6 +119,13 @@ func Import(ctx context.Context, svc Service, manifest Manifest, assets AssetRes
 		}
 		outcome.Status, outcome.GiftID = "created", created.Catalog.Gift.ID
 		result.Gifts = append(result.Gifts, outcome)
+	}
+	for _, title := range opts.Only {
+		if only[title] {
+			result.Gifts = append(result.Gifts, GiftImportOutcome{Title: title, Status: "not_found",
+				Error: "this pack has no gift with that title"})
+			delete(only, title)
+		}
 	}
 	return result, nil
 }

@@ -351,17 +351,17 @@ func (s *server) handleGiveStarGiftAPI(w http.ResponseWriter, r *http.Request) {
 
 const maxGiftPackZipBytes = 32 << 20
 
-type importGiftPackAPIRequest struct {
+type uploadGiftPackAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
 }
 
-// handleImportGiftPackAPI forwards an uploaded pack .zip (pack.json plus its
+// handleUploadGiftPackAPI forwards an uploaded pack .zip (pack.json plus its
 // referenced assets) to the real admin API unchanged -- the pack itself
 // carries every gift's authoring data, so there's nothing else to collect
 // from the operator besides the usual reason/dry-run/confirm metadata.
-func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleUploadGiftPackAPI(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, maxGiftPackZipBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -371,7 +371,7 @@ func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request)
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	var body importGiftPackAPIRequest
+	var body uploadGiftPackAPIRequest
 	dec := json.NewDecoder(strings.NewReader(r.FormValue("metadata")))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
@@ -389,22 +389,23 @@ func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "pack zip is empty or too large")
 		return
 	}
-	req := admin.ImportGiftPackRequest{
-		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-gift-pack"),
+	req := admin.UploadGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "upload-gift-pack"),
+		FileName:    header.Filename,
 	}
-	result, err := s.callAdminMultipart(r.Context(), "/v1/star-gift-catalog/import-pack", req, header.Filename, data)
+	result, err := s.callAdminMultipart(r.Context(), "/v1/gift-packs/upload", req, header.Filename, data)
 	writeCommandResultAPI(w, result, err)
 }
 
-type importBuiltinGiftPackAPIRequest struct {
+type deleteGiftPackAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
 	Confirm   bool   `json:"confirm"`
 	PackID    string `json:"pack_id"`
 }
 
-func (s *server) handleImportBuiltinGiftPackAPI(w http.ResponseWriter, r *http.Request) {
-	var body importBuiltinGiftPackAPIRequest
+func (s *server) handleDeleteGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteGiftPackAPIRequest
 	if !decodeAction(w, r, &body) {
 		return
 	}
@@ -412,29 +413,74 @@ func (s *server) handleImportBuiltinGiftPackAPI(w http.ResponseWriter, r *http.R
 		writeAPIError(w, http.StatusBadRequest, "invalid pack id")
 		return
 	}
-	req := admin.ImportBuiltinGiftPackRequest{
-		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-builtin-gift-pack"),
+	req := admin.DeleteGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "delete-gift-pack"),
 		PackID:      body.PackID,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/gift-packs/delete", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type importGiftPackAPIRequest struct {
+	CommandID string   `json:"command_id"`
+	Reason    string   `json:"reason"`
+	Confirm   bool     `json:"confirm"`
+	PackID    string   `json:"pack_id"`
+	Titles    []string `json:"titles,omitempty"`
+}
+
+// handleImportGiftPackAPI publishes gifts from a pack already on the shelf:
+// the whole pack, or just the titles the operator picked in the preview.
+func (s *server) handleImportGiftPackAPI(w http.ResponseWriter, r *http.Request) {
+	var body importGiftPackAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	if !validPackToken(body.PackID) {
+		writeAPIError(w, http.StatusBadRequest, "invalid pack id")
+		return
+	}
+	if len(body.Titles) > maxGiftPackImportTitles {
+		writeAPIError(w, http.StatusBadRequest, "too many gifts selected")
+		return
+	}
+	req := admin.ImportGiftPackRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "import-gift-pack"),
+		PackID:      body.PackID,
+		Titles:      body.Titles,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/gift-packs/import", req)
 	writeCommandResultAPI(w, result, err)
 }
 
-// handleBuiltinGiftPacksAPI proxies the list of built-in packs for the
+// maxGiftPackImportTitles bounds a per-gift selection; a pack far larger
+// than this is imported whole (an empty selection) instead.
+const maxGiftPackImportTitles = 256
+
+// handleGiftPacksAPI proxies the operator's uploaded-pack shelf for the
 // "Import Pack" tab.
-func (s *server) handleBuiltinGiftPacksAPI(w http.ResponseWriter, r *http.Request) {
-	s.proxyAdminJSON(w, r, "/v1/gift-packs", 1<<20)
+//
+// Never cached. The shelf changes as a direct result of an action on the
+// same screen -- upload, re-upload, remove -- and the default 30s proxy
+// cache made a pack uploaded within half a minute of another one simply not
+// appear: the panel re-read the list and the browser served it the copy
+// from before the upload.
+func (s *server) handleGiftPacksAPI(w http.ResponseWriter, r *http.Request) {
+	s.proxyAdminJSONNoStore(w, r, "/v1/gift-packs", 4<<20)
 }
 
-// handleBuiltinGiftPackAnimationAPI proxies one built-in gift's Lottie JSON
-// for the pack preview.
-func (s *server) handleBuiltinGiftPackAnimationAPI(w http.ResponseWriter, r *http.Request) {
+// handleGiftPackAnimationAPI proxies one stored gift's Lottie JSON for the
+// pack preview. Also uncached: re-uploading a pack under the same name
+// replaces it in place, so this URL's content changes whenever an operator
+// fixes their art -- exactly when they are looking to see whether the fix
+// took.
+func (s *server) handleGiftPackAnimationAPI(w http.ResponseWriter, r *http.Request) {
 	packID, slug := r.PathValue("pack_id"), r.PathValue("slug")
 	if !validPackToken(packID) || !validPackToken(slug) {
 		writeAPIError(w, http.StatusBadRequest, "invalid gift pack animation")
 		return
 	}
-	s.proxyAdminJSONWithCache(w, r, "/v1/gift-packs/"+packID+"/animations/"+slug, 4<<20, "private, max-age=300")
+	s.proxyAdminJSONNoStore(w, r, "/v1/gift-packs/"+packID+"/animations/"+slug, 4<<20)
 }
 
 // validPackToken keeps pack ids and gift slugs to the charset the registry

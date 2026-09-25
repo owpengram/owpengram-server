@@ -14,9 +14,13 @@ import (
 
 // Manifest is the parsed contents of a pack's pack.json.
 type Manifest struct {
-	PackName string     `json:"pack_name"`
-	Author   string     `json:"author,omitempty"`
-	Gifts    []GiftSpec `json:"gifts"`
+	PackName    string `json:"pack_name"`
+	Author      string `json:"author,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Icon names the gift (by id_slug or title) whose animation represents
+	// the pack on its card. Defaults to the first gift.
+	Icon  string     `json:"icon,omitempty"`
+	Gifts []GiftSpec `json:"gifts"`
 }
 
 // GiftSpec describes one gift, mirroring the fields of
@@ -94,6 +98,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("pack manifest: at least one gift is required")
 	}
 	seenTitles := make(map[string]bool, len(m.Gifts))
+	seenSlugs := make(map[string]bool, len(m.Gifts))
 	for i, g := range m.Gifts {
 		if strings.TrimSpace(g.Title) == "" {
 			return Manifest{}, fmt.Errorf("pack manifest: gifts[%d].title is required", i)
@@ -102,6 +107,13 @@ func ParseManifest(data []byte) (Manifest, error) {
 			return Manifest{}, fmt.Errorf("pack manifest: duplicate gift title %q", g.Title)
 		}
 		seenTitles[g.Title] = true
+		// Two gifts whose titles reduce to the same URL slug would share one
+		// preview handle, so the panel would show one gift's art for both.
+		slug := giftSlug(g)
+		if seenSlugs[slug] {
+			return Manifest{}, fmt.Errorf("pack manifest: gift %q collides with another gift's id slug %q", g.Title, slug)
+		}
+		seenSlugs[slug] = true
 		if g.Stars <= 0 {
 			return Manifest{}, fmt.Errorf("pack manifest: gift %q: stars must be > 0", g.Title)
 		}

@@ -7,7 +7,7 @@ import { ActionButton } from "../components/ActionButton";
 import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { formatDate } from "../lib/format";
 import type { CommandResult, StarGiftCatalogRow } from "../types";
-import { BuiltinGiftPacks } from "./BuiltinGiftPacks";
+import { GiftPacks } from "./GiftPacks";
 import { GiftCollectiblesModal } from "./GiftCollectiblesModal";
 
 type GiftPageSize = 10 | 20 | 50 | 100 | "all";
@@ -102,6 +102,8 @@ export function StarGiftCatalogPage() {
   const [packPreview, setPackPreview] = useState<CommandResult | null>(null);
   const [packBusy, setPackBusy] = useState(false);
   const [packError, setPackError] = useState("");
+  // Bumped after an upload so the shelf above re-reads itself.
+  const [packsVersion, setPacksVersion] = useState(0);
 
   function packUploadForm(confirm: boolean, commandID = "") {
     if (!packFile) throw new Error("Choose a pack .zip file first");
@@ -112,22 +114,22 @@ export function StarGiftCatalogPage() {
     return form;
   }
 
-  async function validatePackImport() {
+  async function validatePackUpload() {
     setPackBusy(true); setPackError(""); setPackPreview(null);
     try {
-      setPackPreview(await api.importGiftPack(packUploadForm(false)));
+      setPackPreview(await api.uploadGiftPack(packUploadForm(false)));
     } catch (err) {
       setPackError(errorMessage(err));
     } finally { setPackBusy(false); }
   }
 
-  async function confirmPackImport() {
+  async function confirmPackUpload() {
     if (!packPreview) return;
     setPackBusy(true); setPackError("");
     try {
-      await api.importGiftPack(packUploadForm(true, packPreview.command_id));
+      await api.uploadGiftPack(packUploadForm(true, packPreview.command_id));
       setPackPreview(null); setPackFile(null); setPackReason("");
-      await load();
+      setPacksVersion((v) => v + 1);
     } catch (err) {
       setPackError(errorMessage(err));
     } finally { setPackBusy(false); }
@@ -360,30 +362,30 @@ export function StarGiftCatalogPage() {
       </>}
 
       {tab === "import" && <>
-      <BuiltinGiftPacks onImported={() => void load()} />
+      <GiftPacks onImported={() => void load()} reloadKey={packsVersion} />
 
       <section className="section-block">
         <h2>{"Upload a pack"}</h2>
         <div className="card-body">
-          <p className="gift-import-note"><span>{"A community-authored pack: a .zip with pack.json at the root plus the .tgs/Lottie assets it references. Dry-run first — it parses the manifest and validates every animation before anything is written. Build your own with the step-by-step guide in "}<code>{"docs/gift-packs.md"}</code>{"."}</span></p>
+          <p className="gift-import-note"><span>{"A pack is a .zip with pack.json at the root plus the .tgs/Lottie assets it references. Uploading only puts it on the shelf above — nothing reaches the catalog until you import it there, whole or one gift at a time. Dry-run first: it parses the manifest and validates every animation before anything is stored. Build your own with the step-by-step guide in "}<code>{"docs/gift-packs.md"}</code>{"."}</span></p>
           <label className={`gift-file-picker ${packFile ? "has-file" : ""}`}>
             <input type="file" accept=".zip,application/zip" onChange={(e) => { setPackFile(e.target.files?.[0] ?? null); setPackPreview(null); }} />
             <span className="gift-file-icon"><FileArchive size={22} /></span>
-            <span className="gift-file-copy"><span className="gift-field-label">{"Pack archive"}</span><strong>{packFile ? packFile.name : "Drop or choose a pack .zip"}</strong><small>{packFile ? formatBytes(packFile.size) : "pack.json + assets, validated before import"}</small></span>
+            <span className="gift-file-copy"><span className="gift-field-label">{"Pack archive"}</span><strong>{packFile ? packFile.name : "Drop or choose a pack .zip"}</strong><small>{packFile ? formatBytes(packFile.size) : "pack.json + assets, validated before it is stored"}</small></span>
             <span className="gift-file-action">{packFile ? "Change file" : "Choose file"}</span>
           </label>
-          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={packReason} placeholder={"Briefly describe why this pack is being imported"} onChange={(e) => setPackReason(e.target.value)} /></label>
+          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={packReason} placeholder={"Briefly describe why this pack is being uploaded"} onChange={(e) => setPackReason(e.target.value)} /></label>
           {packError && <Alert>{packError}</Alert>}
           {packPreview && <div className="gift-validation">
-            <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{"Validation passed"}</strong><span>{"Review what would be imported, then confirm."}</span></div></div>
+            <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{"Validation passed"}</strong><span>{"Review what this pack contains, then confirm to store it."}</span></div></div>
             <pre>{JSON.stringify(packPreview.details, null, 2)}</pre>
           </div>}
           <div className="action-stack">
-            <button className="btn" type="button" onClick={validatePackImport} disabled={packBusy}>
+            <button className="btn" type="button" onClick={validatePackUpload} disabled={packBusy}>
               {packBusy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />} {"Dry-run validation"}
             </button>
-            <button className="btn primary" type="button" onClick={confirmPackImport} disabled={packBusy || !packPreview}>
-              <Upload size={15} /> {"Confirm import"}
+            <button className="btn primary" type="button" onClick={confirmPackUpload} disabled={packBusy || !packPreview}>
+              <Upload size={15} /> {"Confirm upload"}
             </button>
           </div>
         </div>

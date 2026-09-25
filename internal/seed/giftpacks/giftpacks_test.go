@@ -41,13 +41,13 @@ func (b *fakeBlobs) Get(_ context.Context, objectKey string) ([]byte, error) {
 }
 
 func TestPacksImportCleanlyAndIdempotently(t *testing.T) {
-	if len(List()) == 0 {
-		t.Fatal("no built-in packs registered")
+	if len(IDs()) == 0 {
+		t.Fatal("no gift packs registered")
 	}
-	for _, p := range List() {
-		t.Run(p.ID, func(t *testing.T) {
+	for _, id := range IDs() {
+		t.Run(id, func(t *testing.T) {
 			svc := stargiftsapp.NewService(memory.NewStarGiftStore(), newFakeBlobs(), 2)
-			manifest, assets, ok := Manifest(p.ID)
+			manifest, assets, ok := Manifest(id)
 			if !ok {
 				t.Fatal("Manifest: pack not found")
 			}
@@ -56,8 +56,8 @@ func TestPacksImportCleanlyAndIdempotently(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Import: %v", err)
 			}
-			if len(result.Gifts) != len(p.Gifts) {
-				t.Fatalf("imported %d gifts, want %d", len(result.Gifts), len(p.Gifts))
+			if len(result.Gifts) != len(manifest.Gifts) {
+				t.Fatalf("imported %d gifts, want %d", len(result.Gifts), len(manifest.Gifts))
 			}
 			for _, g := range result.Gifts {
 				if g.Status != "created" {
@@ -109,40 +109,71 @@ func TestPacksImportCleanlyAndIdempotently(t *testing.T) {
 	}
 }
 
-func TestListIsConsistent(t *testing.T) {
+// TestArchivesAreSelfContained exports every pack the way an operator
+// receives it and checks the archive alone is enough: the manifest parses,
+// every animation the panel would preview resolves inside the zip, and the
+// pack's cover is one of its own gifts. A pack that only works from Go
+// memory is useless now that packs ship as files.
+func TestArchivesAreSelfContained(t *testing.T) {
 	seen := map[string]bool{}
-	for _, p := range List() {
-		if seen[p.ID] {
-			t.Errorf("duplicate pack id %q", p.ID)
+	for _, id := range IDs() {
+		if seen[id] {
+			t.Errorf("duplicate pack id %q", id)
 		}
-		seen[p.ID] = true
-		if p.Name == "" || p.Description == "" {
-			t.Errorf("pack %q is missing name or description", p.ID)
+		seen[id] = true
+
+		data, err := Archive(id)
+		if err != nil {
+			t.Fatalf("Archive(%q): %v", id, err)
 		}
-		if _, ok := Animation(p.ID, p.Icon); !ok {
-			t.Errorf("pack %q icon %q is not one of its gifts", p.ID, p.Icon)
+		assets, err := giftpack.NewZipAssetResolver(data)
+		if err != nil {
+			t.Fatalf("pack %q: open archive: %v", id, err)
 		}
-		for _, g := range p.Gifts {
-			if _, ok := Animation(p.ID, g.Slug); !ok {
-				t.Errorf("pack %q gift %q has no animation", p.ID, g.Slug)
+		manifestJSON, err := assets.Manifest()
+		if err != nil {
+			t.Fatalf("pack %q: pack.json: %v", id, err)
+		}
+		manifest, err := giftpack.ParseManifest(manifestJSON)
+		if err != nil {
+			t.Fatalf("pack %q: parse pack.json: %v", id, err)
+		}
+		if manifest.PackName == "" || manifest.Description == "" {
+			t.Errorf("pack %q is missing name or description", id)
+		}
+		summary := giftpack.Summarize(id, manifest)
+		paths := giftpack.AssetPaths(manifest)
+		if _, ok := paths[summary.Icon]; !ok {
+			t.Errorf("pack %q cover %q is not one of its gifts", id, summary.Icon)
+		}
+		for slug, path := range paths {
+			if _, err := assets.Open(path); err != nil {
+				t.Errorf("pack %q: %s (%s) is missing from the archive: %v", id, slug, path, err)
 			}
+		}
+		for _, g := range summary.Gifts {
 			if g.Upgrade == nil {
 				continue
 			}
-			for _, a := range append(append([]AttrSummary{}, g.Upgrade.Models...), g.Upgrade.Patterns...) {
-				if _, ok := Animation(p.ID, a.ID); !ok {
-					t.Errorf("pack %q gift %q attribute %q has no animation", p.ID, g.Slug, a.ID)
-				}
-			}
 			for _, b := range g.Upgrade.Backdrops {
 				if b.Center == "" || b.Edge == "" || b.Pattern == "" {
-					t.Errorf("pack %q gift %q backdrop %q has no colours", p.ID, g.Slug, b.Name)
+					t.Errorf("pack %q gift %q backdrop %q has no colours", id, g.Slug, b.Name)
 				}
 			}
 		}
+
+		// Deterministic export: re-running it must not produce a new file to
+		// re-upload.
+		again, err := Archive(id)
+		if err != nil {
+			t.Fatalf("Archive(%q) again: %v", id, err)
+		}
+		if !bytes.Equal(data, again) {
+			t.Errorf("pack %q exports differently on a second run", id)
+		}
 	}
-	if _, ok := Animation("no-such-pack", "x"); ok {
-		t.Error("Animation found a gift in an unknown pack")
+	if _, err := Archive("no-such-pack"); err == nil {
+		t.Error("Archive succeeded for an unknown pack")
 	}
 }
 
@@ -168,7 +199,7 @@ func TestAnimationsFollowRlottieContract(t *testing.T) {
 			t.Errorf("pack %q renders %d animations, want %d (an attribute id collides with a gift slug?)", p.id, got, want)
 		}
 		for _, id := range p.assetIDs() {
-			raw, _ := Animation(p.id, id)
+			raw := p.animations()[id]
 			name := p.id + "/" + id
 			if !bytes.HasPrefix(raw, []byte(`{"tgs":1,"v":"5.5.2","fr":60,`)) {
 				t.Errorf("%s: root must start with tgs/v/fr as a real export does", name)

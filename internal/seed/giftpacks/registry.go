@@ -1,9 +1,13 @@
 package giftpacks
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"telesrv/internal/app/giftpack"
 )
@@ -83,138 +87,64 @@ func (p *packDef) animations() map[string][]byte {
 	return p.rendered
 }
 
-type GiftSummary struct {
-	Slug         string          `json:"slug"`
-	Title        string          `json:"title"`
-	Stars        int             `json:"stars"`
-	ConvertStars int             `json:"convert_stars"`
-	Flags        []string        `json:"flags"`
-	Upgrade      *UpgradeSummary `json:"upgrade,omitempty"`
-}
-
-// UpgradeSummary is a gift's collectible pool, so the admin panel can show
-// the upgraded variants before import. Model/pattern IDs are Animation keys.
-type UpgradeSummary struct {
-	Stars     int64             `json:"stars"`
-	Supply    int               `json:"supply"`
-	Models    []AttrSummary     `json:"models"`
-	Patterns  []AttrSummary     `json:"patterns"`
-	Backdrops []BackdropSummary `json:"backdrops"`
-}
-
-type AttrSummary struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Permille int    `json:"permille"`
-	Rarity   string `json:"rarity,omitempty"`
-}
-
-type BackdropSummary struct {
-	Name     string `json:"name"`
-	Center   string `json:"center"`
-	Edge     string `json:"edge"`
-	Pattern  string `json:"pattern"`
-	Text     string `json:"text"`
-	Permille int    `json:"permille"`
-}
-
-func (p *packDef) upgradeSummary(g giftDef) *UpgradeSummary {
-	u := g.upgrade
-	if u == nil {
-		return nil
-	}
-	out := &UpgradeSummary{Stars: u.stars, Supply: u.supply, Models: []AttrSummary{}, Patterns: []AttrSummary{}, Backdrops: []BackdropSummary{}}
-	for _, a := range u.models {
-		out.Models = append(out.Models, AttrSummary{ID: a.id, Name: a.name, Permille: a.permille, Rarity: a.rarity})
-	}
-	for _, a := range u.patterns {
-		out.Patterns = append(out.Patterns, AttrSummary{ID: a.id, Name: a.name, Permille: a.permille})
-	}
-	for _, name := range u.backdrops {
-		b := p.backdrops[name]
-		out.Backdrops = append(out.Backdrops, BackdropSummary{Name: name, Center: b.Center, Edge: b.Edge, Pattern: b.Pattern, Text: b.Text, Permille: b.Permille})
-	}
-	return out
-}
-
-type PackSummary struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Author      string        `json:"author"`
-	Description string        `json:"description"`
-	Icon        string        `json:"icon"`
-	Gifts       []GiftSummary `json:"gifts"`
-}
-
-// flags names the mechanics a gift exercises, for the admin panel preview.
-func (g giftDef) flags() []string {
-	out := []string{}
-	sp := g.spec
-	switch {
-	case sp.Auction:
-		out = append(out, fmt.Sprintf("auction · %d per round, %d total", sp.GiftsPerRound, sp.AvailabilityTotal))
-	case sp.Limited || sp.AvailabilityTotal > 0:
-		out = append(out, fmt.Sprintf("limited · %d", sp.AvailabilityTotal))
-	}
-	if sp.RequirePremium {
-		out = append(out, "premium only")
-	}
-	if sp.Birthday {
-		out = append(out, "birthday")
-	}
-	if sp.SupportOnly {
-		out = append(out, "support only")
-	}
-	if sp.LimitedPerUser {
-		out = append(out, fmt.Sprintf("%d per user", sp.PerUserTotal))
-	}
-	if g.upgrade != nil {
-		out = append(out, "upgradeable")
-		for _, m := range g.upgrade.models {
-			if m.rarity != "" {
-				out = append(out, "craftable")
-				break
-			}
-		}
-	}
-	if sp.ResellMinStars > 0 {
-		out = append(out, fmt.Sprintf("resale from %d", sp.ResellMinStars))
-	}
-	return out
-}
-
-// List describes every built-in pack for the admin panel, in registration
-// order.
-func List() []PackSummary {
-	out := make([]PackSummary, 0, len(registry))
+// IDs is every pack authored in this repo, in registration order.
+func IDs() []string {
+	out := make([]string, 0, len(registry))
 	for _, p := range registry {
-		s := PackSummary{ID: p.id, Name: p.name, Author: p.author, Description: p.description, Icon: p.icon, Gifts: make([]GiftSummary, 0, len(p.gifts))}
-		for _, g := range p.gifts {
-			convert := int(g.spec.ConvertStars)
-			if convert == 0 {
-				convert = g.stars
-			}
-			s.Gifts = append(s.Gifts, GiftSummary{Slug: g.slug, Title: g.title, Stars: g.stars, ConvertStars: convert,
-				Flags: g.flags(), Upgrade: p.upgradeSummary(g)})
-		}
-		out = append(out, s)
+		out = append(out, p.id)
 	}
 	return out
 }
 
-// Animation returns one gift's (or collectible attribute's) Lottie JSON, for
-// previews before import.
-func Animation(packID, slug string) ([]byte, bool) {
-	p := find(packID)
-	if p == nil {
-		return nil, false
+// Archive renders a pack as the distributable .zip an operator uploads:
+// pack.json at the root plus every animation it references. Packs are not
+// compiled into the running server any more -- this is the only way one
+// leaves this package.
+func Archive(packID string) ([]byte, error) {
+	manifest, assets, ok := Manifest(packID)
+	if !ok {
+		return nil, fmt.Errorf("unknown gift pack %q", packID)
 	}
-	data, ok := p.animations()[slug]
-	return data, ok
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode pack.json: %w", err)
+	}
+	paths := make([]string, 0, len(assets))
+	for path := range assets {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	// Deterministic output: the same pack always produces byte-identical
+	// bytes, so re-exporting one is a visible no-op rather than a new file
+	// to re-upload.
+	write := func(name string, data []byte) error {
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: time.Unix(0, 0).UTC()}
+		w, err := zw.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		return err
+	}
+	if err := write("pack.json", manifestJSON); err != nil {
+		return nil, err
+	}
+	for _, path := range paths {
+		if err := write(path, assets[path]); err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
-// Manifest builds the pack as a regular giftpack manifest, so a built-in
-// pack imports through exactly the same path as an uploaded .zip.
+// Manifest builds the pack as a regular giftpack manifest, so a pack
+// authored here imports through exactly the same path as any uploaded .zip.
 func Manifest(packID string) (giftpack.Manifest, giftpack.MapAssetResolver, bool) {
 	p := find(packID)
 	if p == nil {
@@ -227,7 +157,7 @@ func Manifest(packID string) (giftpack.Manifest, giftpack.MapAssetResolver, bool
 		assets[path] = anims[id]
 		return path
 	}
-	m := giftpack.Manifest{PackName: p.name, Author: p.author}
+	m := giftpack.Manifest{PackName: p.name, Author: p.author, Description: p.description, Icon: p.icon}
 	for _, g := range p.gifts {
 		spec := g.spec
 		spec.IDSlug, spec.Title, spec.Stars, spec.BaseAnimation = g.slug, g.title, int64(g.stars), asset(g.slug)

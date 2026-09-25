@@ -54,9 +54,9 @@ func TestResaleListingAndPurchaseDoNotDeadlock(t *testing.T) {
 
 	gifts := NewStarGiftStore(pool)
 	svc := stargiftsapp.NewService(gifts, &upgradeTestBlobs{store: map[string][]byte{}}, 2)
-	manifest, assets, ok := giftpacks.Manifest("first-pack")
+	manifest, assets, ok := giftpacks.Manifest("grind-pack")
 	if !ok {
-		t.Fatal("first-pack pack missing")
+		t.Fatal("grind-pack pack missing")
 	}
 	var phone giftpack.GiftSpec
 	for _, g := range manifest.Gifts {

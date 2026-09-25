@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"telesrv/internal/app/giftpack"
 	"telesrv/internal/domain"
 )
 
@@ -80,7 +81,8 @@ const (
 	ActionPublishStarGiftCollectibles = "star_gift_catalog.publish_collectibles"
 	ActionGiveStarGift                = "star_gift_catalog.give"
 	ActionImportGiftPack              = "star_gift_catalog.import_pack"
-	ActionImportBuiltinGiftPack       = "star_gift_catalog.import_builtin_pack"
+	ActionUploadGiftPack              = "star_gift_catalog.upload_pack"
+	ActionDeleteGiftPack              = "star_gift_catalog.delete_pack"
 
 	// Manual storage purge: admin-chosen categories + optional age cutoff,
 	// independent of the automatic retention sweep's config-derived
@@ -440,6 +442,18 @@ type GifCatalogService interface {
 // manage its storefront visibility/order. Purchase, resale, auction and
 // craft (the buyer-facing use cases) are a separate, much larger surface
 // (internal/app/stargifts.Service) still deliberately not exposed here.
+// GiftPackLibrary is the uploaded-pack shelf: archives an operator has
+// uploaded, previewable and importable, but not themselves part of the
+// catalog. *giftpack.Library satisfies this as-is.
+type GiftPackLibrary interface {
+	Save(ctx context.Context, fileName string, archive []byte, actor string) (domain.GiftPack, error)
+	List(ctx context.Context) ([]giftpack.PackSummary, error)
+	Animation(ctx context.Context, packID, slug string) ([]byte, bool, error)
+	Delete(ctx context.Context, packID string) (bool, error)
+	// Load returns a stored pack's manifest and assets, ready to import.
+	Load(ctx context.Context, packID string) (giftpack.Manifest, giftpack.AssetResolver, bool, error)
+}
+
 type StarGiftCatalogService interface {
 	// PrepareAnimation normalizes and validates an uploaded .tgs/.json/.lottie
 	// file (512x512, no external assets/expressions, size-bounded) into the
@@ -590,6 +604,9 @@ type Dependencies struct {
 	// StarGifts is the catalog-authoring slice only -- see
 	// StarGiftCatalogService's doc comment.
 	StarGifts StarGiftCatalogService
+	// GiftPacks is the operator's uploaded-pack shelf, which holds archives
+	// and never touches the catalog by itself.
+	GiftPacks GiftPackLibrary
 	Now       func() time.Time
 }
 
@@ -622,6 +639,7 @@ type Service struct {
 	broadcast              BroadcastService
 	rating                 AccountRatingService
 	starGifts              StarGiftCatalogService
+	giftPacks              GiftPackLibrary
 	now                    func() time.Time
 }
 
@@ -714,6 +732,9 @@ func (s *Service) Configure(deps Dependencies) *Service {
 	}
 	if deps.StarGifts != nil {
 		s.starGifts = deps.StarGifts
+	}
+	if deps.GiftPacks != nil {
+		s.giftPacks = deps.GiftPacks
 	}
 	if deps.Now != nil {
 		s.now = deps.Now
