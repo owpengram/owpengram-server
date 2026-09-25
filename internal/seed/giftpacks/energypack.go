@@ -240,10 +240,10 @@ func canWith(st canStyle) *scene {
 		G(rect(-46, 6, 20, 240, 10), fillA(white, 0.3)),
 		G(rect(-26, 6, 8, 214, 4), fillA(white, 0.18)),
 		G(rect(64, 10, 22, 226, 11), fillA(black, 0.16)),
-		// Flavour band around the bottom third.
-		G(rect(0, 92, 154, 64, 14), fillA(accent, 0.92)),
-		G(rect(0, 64, 154, 8, 4), fillA(white, 0.35)),
-		G(rect(0, 118, 120, 7, 3.5), fillA(black, 0.22)),
+		// Flavour stripe: a slim band low on the can, not a slab across its
+		// bottom third. The emblem already carries the flavour colour, and a
+		// block that size swallowed the whole can on the dark variants.
+		G(rect(0, 118, 92, 20, 9), fillA(accent, 0.92)),
 		// Emblem.
 		GAt(0, -34, 0, G(polyPath(true, P{22, -74}, P{-46, 10}, P{-5, 10}, P{-19, 74}, P{46, -14}, P{5, -14}), fill(accent))),
 		GAt(0, -34, 0, G(polyPath(true, P{22, -74}, P{-46, 10}, P{-5, 10}, P{-19, 74}, P{46, -14}, P{5, -14}), strokeA(white, 3, 0.55))),
