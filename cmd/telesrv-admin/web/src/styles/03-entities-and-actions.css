@@ -615,6 +615,45 @@
 
 .chain-balance { display: flex; flex-direction: column; gap: 2px; }
 .chain-balance strong { font-size: 13px; }
+
+/* Network cards: one card per configured chain, replacing a table that had
+   to carry six columns of mixed config, live balance and actions. */
+.chain-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+.chain-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.chain-card.on { border-color: var(--brand-tint-border); }
+.chain-card-head { display: flex; align-items: center; gap: 11px; }
+.chain-card-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.chain-card-title strong { font-size: 15px; }
+.chain-card-title span { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-card-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chain-warn { display: inline-flex; align-items: center; gap: 5px; color: var(--warn); font-size: 12px; font-weight: 600; }
+.chain-card-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px; background: var(--panel-subtle); border-radius: var(--radius-sm); }
+.chain-card-stats > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chain-card-stats span { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chain-card-stats strong { font-size: 14px; display: flex; align-items: center; gap: 5px; }
+.chain-card-tokens { display: flex; flex-wrap: wrap; gap: 6px; }
+.token-chip { display: inline-flex; align-items: center; padding: 3px 9px; font-size: 11px; font-weight: 700; color: var(--brand-tint-text); background: var(--brand-tint); border: 1px solid var(--brand-tint-border); border-radius: 999px; }
+.token-chip.pending { color: var(--muted); background: var(--panel-subtle); border-color: var(--line); }
+.chain-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 4px; }
+.chain-modal-title { display: flex; align-items: center; gap: 11px; }
+
+/* A bare <input> keeps the browser's ~190px intrinsic width even inside a
+   full-width grid field, which looks broken next to a URL. Opt specific
+   fields in rather than restyling every modal in the panel. */
+.form-field.wide input { width: 100%; }
+
+.rate-input { display: flex; align-items: center; gap: 0; }
+.rate-prefix { display: flex; align-items: center; padding: 0 10px; height: 38px; color: var(--muted); background: var(--panel-subtle); border: 1px solid var(--line); border-right: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.rate-input input { flex: 1; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+.token-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.token-contract { flex: 1; min-width: 220px; }
+.token-decimals { width: 78px; }
+.token-add-head { margin: 14px 0 4px; font-size: 13px; }
+.chain-link { color: var(--brand); text-decoration: none; }
+.chain-link:hover { text-decoration: underline; }
+.rate-auto { padding: 1px 6px; margin-left: 6px; font-size: 10px; font-weight: 800; color: var(--good); background: var(--good-tint); border: 1px solid var(--good-border); border-radius: 999px; }
+.price-check { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .gift-validation { overflow: hidden; color: var(--code-text); background: var(--code-bg); border: 1px solid var(--code-border); border-radius: var(--radius-sm); }
 .gift-validation-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; color: var(--code-text); background: rgba(255, 255, 255, .035); border-bottom: 1px solid rgba(255, 255, 255, .09); }
 .gift-validation-head div { display: grid; gap: 2px; }

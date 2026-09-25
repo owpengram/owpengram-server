@@ -50,7 +50,11 @@ type Service interface {
 	CreateDonationChain(ctx context.Context, req admin.CreateDonationChainRequest) (admin.CommandResult, error)
 	DeleteDonationChain(ctx context.Context, req admin.DeleteDonationChainRequest) (admin.CommandResult, error)
 	SweepDonationChain(ctx context.Context, req admin.SweepDonationChainRequest) (admin.CommandResult, error)
+	UpsertDonationToken(ctx context.Context, req admin.UpsertDonationTokenRequest) (admin.CommandResult, error)
+	DeleteDonationToken(ctx context.Context, req admin.DeleteDonationTokenRequest) (admin.CommandResult, error)
 	DonationChainBalance(ctx context.Context, chainKey string) (domain.DonationChainBalance, error)
+	DonationPricePreview(ctx context.Context, sourceID string) (int64, error)
+	DonationStarPriceMicros() int64
 	SetVerified(ctx context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error)
 	SetUserFlags(ctx context.Context, req admin.SetUserFlagsRequest) (admin.CommandResult, error)
 	SetChannelVerified(ctx context.Context, req admin.SetChannelVerifiedRequest) (admin.CommandResult, error)
@@ -214,7 +218,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/donations/chains/create", s.authorized(PermissionDonationsManage, s.handleCreateDonationChain))
 	mux.HandleFunc("POST /v1/donations/chains/delete", s.authorized(PermissionDonationsManage, s.handleDeleteDonationChain))
 	mux.HandleFunc("POST /v1/donations/sweep", s.authorized(PermissionDonationsManage, s.handleSweepDonationChain))
+	mux.HandleFunc("POST /v1/donations/tokens/upsert", s.authorized(PermissionDonationsManage, s.handleUpsertDonationToken))
+	mux.HandleFunc("POST /v1/donations/tokens/delete", s.authorized(PermissionDonationsManage, s.handleDeleteDonationToken))
 	mux.HandleFunc("GET /v1/donations/chains/{key}/balance", s.authorized(PermissionDonationsManage, s.handleDonationChainBalance))
+	mux.HandleFunc("GET /v1/donations/settings", s.authorized(PermissionDonationsManage, s.handleDonationSettings))
+	mux.HandleFunc("GET /v1/donations/price-preview", s.authorized(PermissionDonationsManage, s.handleDonationPricePreview))
 	mux.HandleFunc("POST /v1/accounts/set-verified", s.authenticated(s.handleSetVerified))
 	mux.HandleFunc("POST /v1/accounts/set-flags", s.authenticated(s.handleSetUserFlags))
 	mux.HandleFunc("POST /v1/accounts/set-support", s.authenticated(s.handleSetSupport))
@@ -423,6 +431,44 @@ func (s *Server) handleSweepDonationChain(w http.ResponseWriter, r *http.Request
 	}
 	result, err := s.svc.SweepDonationChain(r.Context(), req)
 	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleUpsertDonationToken(w http.ResponseWriter, r *http.Request) {
+	var req admin.UpsertDonationTokenRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.UpsertDonationToken(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+func (s *Server) handleDeleteDonationToken(w http.ResponseWriter, r *http.Request) {
+	var req admin.DeleteDonationTokenRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.svc.DeleteDonationToken(r.Context(), req)
+	writeCommandResult(w, result, err)
+}
+
+// handleDonationSettings exposes the deployment-wide donation numbers the
+// panel needs to quote the same figures the crediting path uses.
+func (s *Server) handleDonationSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"star_price_micros": s.svc.DonationStarPriceMicros()})
+}
+
+func (s *Server) handleDonationPricePreview(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.URL.Query().Get("source_id")
+	if sourceID == "" {
+		writeError(w, http.StatusBadRequest, "source_id is required")
+		return
+	}
+	micros, err := s.svc.DonationPricePreview(r.Context(), sourceID)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"source_id": sourceID, "usd_rate_micros": micros})
 }
 
 func (s *Server) handleDonationChainBalance(w http.ResponseWriter, r *http.Request) {

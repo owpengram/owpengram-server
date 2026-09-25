@@ -31,6 +31,8 @@ const (
 	ActionUpdateDonationChain      = "donations.update_chain"
 	ActionCreateDonationChain      = "donations.create_chain"
 	ActionDeleteDonationChain      = "donations.delete_chain"
+	ActionUpsertDonationToken      = "donations.upsert_token"
+	ActionDeleteDonationToken      = "donations.delete_token"
 	ActionSweepDonationChain       = "donations.sweep_chain"
 	ActionSetVerified              = "account.set_verified"
 	ActionSetUserFlags             = "account.set_flags"
@@ -376,6 +378,8 @@ type DonationsService interface {
 	UpdateChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error)
 	CreateChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error)
 	DeleteChain(ctx context.Context, chainKey string) error
+	UpsertToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error)
+	DeleteToken(ctx context.Context, chainKey, symbol string) error
 	// PreviewSweep computes exactly what Sweep would do (balances found,
 	// amounts after gas, addresses skipped for insufficient gas) without
 	// signing or broadcasting anything -- the dry-run half of
@@ -390,6 +394,12 @@ type DonationsService interface {
 	// Service.DonationChainBalance, the only caller, which skips the
 	// command/audit-trail machinery entirely since nothing is mutated.
 	ChainBalance(ctx context.Context, chainKey string) (domain.DonationChainBalance, error)
+	// PreviewPrice resolves one price-source coin id to a USD rate without
+	// storing anything, so the panel can verify an id before it is saved.
+	PreviewPrice(ctx context.Context, sourceID string) (int64, error)
+	// StarPriceMicros is what one Star costs, so the panel quotes the same
+	// number the crediting path uses.
+	StarPriceMicros() int64
 }
 
 // StarsService is the operator-facing slice of the local Stars ledger: an
@@ -1003,6 +1013,9 @@ type UpdateDonationChainRequest struct {
 	ConfirmationsRequired int    `json:"confirmations_required"`
 	PriceFeedAddress      string `json:"price_feed_address"`
 	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
+	ExplorerURL           string `json:"explorer_url"`
+	PriceSource           string `json:"price_source"`
+	PriceSourceID         string `json:"price_source_id"`
 }
 
 // CreateDonationChainRequest adds a brand new chain -- either from the admin
@@ -1021,6 +1034,9 @@ type CreateDonationChainRequest struct {
 	PriceFeedAddress      string `json:"price_feed_address"`
 	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
 	Enabled               bool   `json:"enabled"`
+	ExplorerURL           string `json:"explorer_url"`
+	PriceSource           string `json:"price_source"`
+	PriceSourceID         string `json:"price_source_id"`
 }
 
 // DeleteDonationChainRequest removes a chain the operator added by mistake
@@ -1029,6 +1045,23 @@ type CreateDonationChainRequest struct {
 type DeleteDonationChainRequest struct {
 	CommandMeta
 	ChainKey string `json:"chain_key"`
+}
+
+// UpsertDonationTokenRequest adds or updates one stablecoin contract on a
+// chain. An empty ContractAddress means "listed but not watched yet".
+type UpsertDonationTokenRequest struct {
+	CommandMeta
+	ChainKey        string `json:"chain_key"`
+	Symbol          string `json:"symbol"`
+	ContractAddress string `json:"contract_address"`
+	Decimals        int    `json:"decimals"`
+}
+
+// DeleteDonationTokenRequest removes one token row from a chain.
+type DeleteDonationTokenRequest struct {
+	CommandMeta
+	ChainKey string `json:"chain_key"`
+	Symbol   string `json:"symbol"`
 }
 
 // SweepDonationChainRequest moves every deposit address's balance on one
@@ -1601,6 +1634,7 @@ func (s *Service) UpdateDonationChain(ctx context.Context, req UpdateDonationCha
 			ChainKey: req.ChainKey, RPCURL: req.RPCURL, WSURL: req.WSURL,
 			ConfirmationsRequired: req.ConfirmationsRequired, PriceFeedAddress: req.PriceFeedAddress,
 			ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
+			ExplorerURL: req.ExplorerURL, PriceSource: req.PriceSource, PriceSourceID: req.PriceSourceID,
 		})
 		if err != nil {
 			return CommandResult{}, err
@@ -1624,6 +1658,7 @@ func (s *Service) CreateDonationChain(ctx context.Context, req CreateDonationCha
 			NativeSymbol: req.NativeSymbol, NativeDecimals: req.NativeDecimals,
 			RPCURL: req.RPCURL, WSURL: req.WSURL, ConfirmationsRequired: req.ConfirmationsRequired,
 			PriceFeedAddress: req.PriceFeedAddress, ManualUSDRateMicros: req.ManualUSDRateMicros, Enabled: req.Enabled,
+			ExplorerURL: req.ExplorerURL, PriceSource: req.PriceSource, PriceSourceID: req.PriceSourceID,
 		})
 		if err != nil {
 			return CommandResult{}, err
@@ -1646,6 +1681,44 @@ func (s *Service) DeleteDonationChain(ctx context.Context, req DeleteDonationCha
 			return CommandResult{}, err
 		}
 		return CommandResult{Message: "donation chain removed", Details: map[string]any{"chain_key": req.ChainKey}}, nil
+	})
+}
+
+// UpsertDonationToken adds or updates one stablecoin contract on a chain.
+// The watcher picks the change up on its next poll -- see
+// app/donations.Service.WatchChain, which re-reads tokens every pass.
+func (s *Service) UpsertDonationToken(ctx context.Context, req UpsertDonationTokenRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionUpsertDonationToken, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		token, err := s.donations.UpsertToken(ctx, domain.DonationToken{
+			ChainKey: req.ChainKey, Symbol: req.Symbol,
+			ContractAddress: req.ContractAddress, Decimals: req.Decimals,
+		})
+		if err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation token saved", Details: map[string]any{
+			"chain_key": token.ChainKey, "symbol": token.Symbol,
+			"contract_address": token.ContractAddress, "decimals": token.Decimals,
+			"watched": token.Watchable(),
+		}}, nil
+	})
+}
+
+// DeleteDonationToken removes one stablecoin from a chain's watch list.
+func (s *Service) DeleteDonationToken(ctx context.Context, req DeleteDonationTokenRequest) (CommandResult, error) {
+	if s == nil || s.donations == nil {
+		return CommandResult{}, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.runCommand(ctx, req.CommandMeta, ActionDeleteDonationToken, 0, domain.Peer{}, req, func() (CommandResult, error) {
+		if err := s.donations.DeleteToken(ctx, req.ChainKey, req.Symbol); err != nil {
+			return CommandResult{}, err
+		}
+		return CommandResult{Message: "donation token removed", Details: map[string]any{
+			"chain_key": req.ChainKey, "symbol": req.Symbol,
+		}}, nil
 	})
 }
 
@@ -1704,6 +1777,23 @@ func (s *Service) DonationChainBalance(ctx context.Context, chainKey string) (do
 		return domain.DonationChainBalance{}, fmt.Errorf("donations dependency is not configured")
 	}
 	return s.donations.ChainBalance(ctx, chainKey)
+}
+
+// DonationPricePreview resolves a price-source coin id to a live USD rate
+// without saving anything -- a plain read, like DonationChainBalance.
+func (s *Service) DonationPricePreview(ctx context.Context, sourceID string) (int64, error) {
+	if s == nil || s.donations == nil {
+		return 0, fmt.Errorf("donations dependency is not configured")
+	}
+	return s.donations.PreviewPrice(ctx, sourceID)
+}
+
+// DonationStarPriceMicros is the configured price of one Star.
+func (s *Service) DonationStarPriceMicros() int64 {
+	if s == nil || s.donations == nil {
+		return 0
+	}
+	return s.donations.StarPriceMicros()
 }
 
 // RefundPremium reverses a paid Stars purchase: the buyer gets their Stars

@@ -3,11 +3,13 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
@@ -21,19 +23,53 @@ import (
 // TELESRV_DONATION_WALLET_KEY and are never checked into the repo.
 const testDonationWalletKey = "0101010101010101010101010101010101010101010101010101010101010101" // 64 hex chars
 
+// testGanacheURL is the local dev chain every donations integration test
+// dials. Overridable so a second, throwaway Ganache can be used without
+// disturbing whichever one a developer already has wired into their own
+// running server on the default port.
+func testGanacheURL() string {
+	if url := strings.TrimSpace(os.Getenv("TELESRV_TEST_GANACHE_URL")); url != "" {
+		return url
+	}
+	return "http://127.0.0.1:7545"
+}
+
+// ensureGanacheChain points the shared "ganache" chain row at whatever
+// testGanacheURL() resolves to, with a confirmation depth of 1 and a
+// sane USD rate. Without this a test would silently run against whatever
+// endpoint a previous run (or a developer's own server) happened to leave
+// in the scratch database.
+func ensureGanacheChain(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+INSERT INTO donation_chains (chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled)
+VALUES ('ganache', 'Ganache (local)', 1337, $1, '', 'ETH', 18, 1, '', 2000000000, true)
+ON CONFLICT (chain_key) DO UPDATE SET rpc_url = EXCLUDED.rpc_url, confirmations_required = 1,
+    manual_usd_rate_micros = 2000000000, enabled = true`, testGanacheURL()); err != nil {
+		t.Fatalf("ensure ganache chain row: %v", err)
+	}
+	// Drop any cursor left over from a previous run against a different
+	// (or since-reset) local chain, so each run starts cleanly from the
+	// current tip rather than from a height this chain may never reach.
+	if _, err := pool.Exec(ctx, `DELETE FROM donation_chain_cursors WHERE chain_key = 'ganache'`); err != nil {
+		t.Fatalf("reset ganache cursor: %v", err)
+	}
+}
+
 // TestDonationsGanacheDepositCreditsStars is the end-to-end proof the whole
 // donations pipeline actually works: derive a real per-user address, send a
 // real transaction to it on a local Ganache node, run the watcher's scan
 // pass, and see Stars land in the user's balance. Skips (not fails) if
-// Ganache isn't reachable at 127.0.0.1:7545 -- this is a real blockchain
+// Ganache isn't reachable -- this is a real blockchain
 // integration test, not a mock.
 func TestDonationsGanacheDepositCreditsStars(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	client, err := ethclient.DialContext(ctx, "http://127.0.0.1:7545")
+	client, err := ethclient.DialContext(ctx, testGanacheURL())
 	if err != nil {
-		t.Skip("ganache not reachable at 127.0.0.1:7545: " + err.Error())
+		t.Skip("ganache not reachable at " + testGanacheURL() + ": " + err.Error())
 	}
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
@@ -41,6 +77,7 @@ func TestDonationsGanacheDepositCreditsStars(t *testing.T) {
 	}
 	t.Logf("connected to chain id %s", chainID)
 
+	ensureGanacheChain(t, ctx, pool)
 	suffix := randomSuffix(t)
 	testKey, err := donations.ParseEncryptionKey(testDonationWalletKey)
 	if err != nil {

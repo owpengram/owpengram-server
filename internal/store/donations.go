@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"telesrv/internal/domain"
 )
@@ -66,10 +67,25 @@ type DonationStore interface {
 	// fixed at migration time. Returns domain.ErrDonationChainNotFound if
 	// chainKey doesn't exist.
 	UpdateDonationChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error)
+	// SetDonationChainPrice writes a freshly fetched USD rate for one
+	// chain, touching nothing else -- see the price refresher in
+	// internal/app/donations.
+	SetDonationChainPrice(ctx context.Context, chainKey string, rateMicros int64, at time.Time) error
 	// DonationTokens lists the stablecoin rows configured for one chain,
 	// including any with an empty ContractAddress the operator hasn't
 	// filled in yet -- callers filter with domain.DonationToken.Watchable.
 	DonationTokens(ctx context.Context, chainKey string) ([]domain.DonationToken, error)
+	// AllDonationTokens lists every configured token row across every chain,
+	// for the admin panel's chain list.
+	AllDonationTokens(ctx context.Context) ([]domain.DonationToken, error)
+	// UpsertDonationToken adds or updates one token row (chain_key, symbol
+	// is the primary key). Returns domain.ErrDonationChainNotFound if the
+	// chain doesn't exist.
+	UpsertDonationToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error)
+	// DeleteDonationToken removes one token row. Removing a token the
+	// watcher already credited deposits for is allowed: deposits reference
+	// the symbol as plain text, not a foreign key, so history survives.
+	DeleteDonationToken(ctx context.Context, chainKey, symbol string) error
 
 	// DonationChainCursor is the last block height fully scanned for a
 	// chain (0 before the watcher has run at all).

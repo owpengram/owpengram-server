@@ -3,6 +3,7 @@ package bots
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,23 +208,43 @@ func (s *Service) premiumBotDepositReply(ctx context.Context, userID int64) botR
 	if err != nil {
 		return botReply{Text: "Could not load deposit info right now. Please try again later."}
 	}
-	var live []string
+	starPrice := s.donations.StarPriceMicros()
+	var lines []string
 	for _, c := range chains {
-		if c.Watchable() {
-			live = append(live, fmt.Sprintf("%s (%s)", c.Name, c.NativeSymbol))
+		if !c.Watchable() {
+			continue
 		}
+		assets := c.NativeSymbol
+		if tokens, err := s.donations.ChainTokens(ctx, c.Key); err == nil {
+			for _, t := range tokens {
+				if t.Watchable() {
+					assets += ", " + t.Symbol
+				}
+			}
+		}
+		line := "• " + c.Name + " — " + assets
+		// Only quote a rate the watcher would actually credit at: a price
+		// too low to be worth a single Star means deposits are detected and
+		// then never credited, and promising a number here would be a lie.
+		if stars := starsPerWholeUnit(c.ManualUSDRateMicros, starPrice); stars > 0 {
+			line += "\n   1 " + c.NativeSymbol + " ≈ " + formatStarCount(stars) + " " + branding.StarsName()
+		}
+		lines = append(lines, line)
 	}
-	if len(live) == 0 {
-		return botReply{Text: "Crypto deposits are not available right now -- no chain is configured yet."}
+	if len(lines) == 0 {
+		return botReply{Text: "Crypto deposits are not available right now -- no network is configured yet."}
 	}
 	address, err := s.donations.AddressForUser(ctx, userID)
 	if err != nil || address == "" {
 		return botReply{Text: "Could not assign your deposit address right now. Please try again later."}
 	}
+
 	head := "Your personal crypto deposit address:\n\n"
-	tail := "\n\nThis address works on: " + strings.Join(live, ", ") + ".\n\n" +
-		"Send ETH, USDT or USDC to it from any wallet. Once your deposit reaches enough confirmations, it's automatically converted to " + branding.StarsName() + " and credited to your balance -- no further action needed.\n\n" +
-		"This is the same address every time you check /deposit -- do not send funds on a chain not listed above, they will not be credited."
+	tail := "\n\nSupported networks and coins:\n" + strings.Join(lines, "\n") +
+		"\n\nRate: 1 " + branding.StarsName() + " = " + formatUSDMicros(starPrice) +
+		" (" + formatStarCount(starsPerUSD(starPrice)) + " per $1)." +
+		"\n\nSend any coin listed above to this address from any wallet. Once the deposit reaches enough confirmations it is converted automatically and credited to your balance -- nothing else to do." +
+		"\n\nThis is the same address every time you check /deposit. Do not send anything on a network that is not listed above, and do not send a token that is not listed for that network -- those funds cannot be credited."
 	return botReply{
 		Text: head + address + tail,
 		Entities: []domain.MessageEntity{
@@ -232,6 +253,54 @@ func (s *Service) premiumBotDepositReply(ctx context.Context, userID int64) botR
 			{Type: domain.MessageEntityCode, Offset: len(head), Length: len(address)},
 		},
 	}
+}
+
+// starsPerWholeUnit is how many Stars one whole coin buys at a chain's USD
+// rate, rounded down exactly like the crediting path does.
+func starsPerWholeUnit(rateMicros, starPriceMicros int64) int64 {
+	if rateMicros <= 0 || starPriceMicros <= 0 {
+		return 0
+	}
+	return rateMicros / starPriceMicros
+}
+
+// starsPerUSD is how many Stars one US dollar buys.
+func starsPerUSD(starPriceMicros int64) int64 {
+	if starPriceMicros <= 0 {
+		return 0
+	}
+	return 1_000_000 / starPriceMicros
+}
+
+// formatUSDMicros renders a micro-dollar amount as a plain price, trimming
+// the trailing zeros a fixed 6-decimal rendering would leave ("$0.005",
+// not "$0.005000").
+func formatUSDMicros(micros int64) string {
+	if micros <= 0 {
+		return "$0"
+	}
+	out := strconv.FormatFloat(float64(micros)/1_000_000, 'f', -1, 64)
+	return "$" + out
+}
+
+// formatStarCount groups thousands so a six-figure quote stays readable.
+func formatStarCount(n int64) string {
+	digits := strconv.FormatInt(n, 10)
+	if len(digits) <= 3 {
+		return digits
+	}
+	var b strings.Builder
+	lead := len(digits) % 3
+	if lead > 0 {
+		b.WriteString(digits[:lead])
+	}
+	for i := lead; i < len(digits); i += 3 {
+		if b.Len() > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(digits[i : i+3])
+	}
+	return b.String()
 }
 
 func (s *Service) premiumBotHistoryText(ctx context.Context, userID int64) string {

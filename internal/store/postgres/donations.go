@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
@@ -109,18 +110,39 @@ func (s *DonationStore) ListDonationAddresses(ctx context.Context) ([]domain.Don
 	return out, rows.Err()
 }
 
+// donationChainColumns is the SELECT/RETURNING list every chain query uses,
+// in the exact order scanDonationChain expects.
+const donationChainColumns = `chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
+    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled,
+    explorer_url, price_source, price_source_id, price_updated_at`
+
+type donationChainScanner interface{ Scan(dest ...any) error }
+
+func scanDonationChain(row donationChainScanner) (domain.DonationChain, error) {
+	var c domain.DonationChain
+	var priceUpdatedAt pgtype.Timestamptz
+	if err := row.Scan(&c.Key, &c.Name, &c.ChainID, &c.RPCURL, &c.WSURL, &c.NativeSymbol, &c.NativeDecimals,
+		&c.ConfirmationsRequired, &c.PriceFeedAddress, &c.ManualUSDRateMicros, &c.Enabled,
+		&c.ExplorerURL, &c.PriceSource, &c.PriceSourceID, &priceUpdatedAt); err != nil {
+		return domain.DonationChain{}, err
+	}
+	if priceUpdatedAt.Valid {
+		c.PriceUpdatedAt = priceUpdatedAt.Time
+	}
+	return c, nil
+}
+
 func (s *DonationStore) CreateDonationChain(ctx context.Context, chain domain.DonationChain) (domain.DonationChain, error) {
-	var out domain.DonationChain
-	err := s.db.QueryRow(ctx, `
+	row := s.db.QueryRow(ctx, `
 INSERT INTO donation_chains (chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
-    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
-    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled`,
+    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled,
+    explorer_url, price_source, price_source_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING `+donationChainColumns,
 		chain.Key, chain.Name, chain.ChainID, chain.RPCURL, chain.WSURL, chain.NativeSymbol, chain.NativeDecimals,
-		chain.ConfirmationsRequired, chain.PriceFeedAddress, chain.ManualUSDRateMicros, chain.Enabled).Scan(
-		&out.Key, &out.Name, &out.ChainID, &out.RPCURL, &out.WSURL, &out.NativeSymbol, &out.NativeDecimals,
-		&out.ConfirmationsRequired, &out.PriceFeedAddress, &out.ManualUSDRateMicros, &out.Enabled)
+		chain.ConfirmationsRequired, chain.PriceFeedAddress, chain.ManualUSDRateMicros, chain.Enabled,
+		chain.ExplorerURL, chain.PriceSource, chain.PriceSourceID)
+	out, err := scanDonationChain(row)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return domain.DonationChain{}, domain.ErrDonationChainAlreadyExists
@@ -146,8 +168,7 @@ func (s *DonationStore) DeleteDonationChain(ctx context.Context, chainKey string
 }
 
 func (s *DonationStore) EnabledDonationChains(ctx context.Context) ([]domain.DonationChain, error) {
-	rows, err := s.db.Query(ctx, `SELECT chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
-confirmations_required, price_feed_address, manual_usd_rate_micros, enabled
+	rows, err := s.db.Query(ctx, `SELECT `+donationChainColumns+`
 FROM donation_chains WHERE enabled ORDER BY chain_key`)
 	if err != nil {
 		return nil, fmt.Errorf("list enabled donation chains: %w", err)
@@ -157,12 +178,8 @@ FROM donation_chains WHERE enabled ORDER BY chain_key`)
 }
 
 func (s *DonationStore) DonationChain(ctx context.Context, chainKey string) (domain.DonationChain, bool, error) {
-	var out domain.DonationChain
-	err := s.db.QueryRow(ctx, `SELECT chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
-confirmations_required, price_feed_address, manual_usd_rate_micros, enabled
-FROM donation_chains WHERE chain_key = $1`, chainKey).Scan(
-		&out.Key, &out.Name, &out.ChainID, &out.RPCURL, &out.WSURL, &out.NativeSymbol, &out.NativeDecimals,
-		&out.ConfirmationsRequired, &out.PriceFeedAddress, &out.ManualUSDRateMicros, &out.Enabled)
+	out, err := scanDonationChain(s.db.QueryRow(ctx, `SELECT `+donationChainColumns+`
+FROM donation_chains WHERE chain_key = $1`, chainKey))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.DonationChain{}, false, nil
 	}
@@ -173,17 +190,13 @@ FROM donation_chains WHERE chain_key = $1`, chainKey).Scan(
 }
 
 func (s *DonationStore) UpdateDonationChainConfig(ctx context.Context, upd domain.DonationChainConfigUpdate) (domain.DonationChain, error) {
-	var out domain.DonationChain
-	err := s.db.QueryRow(ctx, `UPDATE donation_chains SET
+	out, err := scanDonationChain(s.db.QueryRow(ctx, `UPDATE donation_chains SET
     rpc_url = $2, ws_url = $3, confirmations_required = $4, price_feed_address = $5,
-    manual_usd_rate_micros = $6, enabled = $7
+    manual_usd_rate_micros = $6, enabled = $7, explorer_url = $8, price_source = $9, price_source_id = $10
 WHERE chain_key = $1
-RETURNING chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_decimals,
-    confirmations_required, price_feed_address, manual_usd_rate_micros, enabled`,
+RETURNING `+donationChainColumns,
 		upd.ChainKey, upd.RPCURL, upd.WSURL, upd.ConfirmationsRequired, upd.PriceFeedAddress,
-		upd.ManualUSDRateMicros, upd.Enabled).Scan(
-		&out.Key, &out.Name, &out.ChainID, &out.RPCURL, &out.WSURL, &out.NativeSymbol, &out.NativeDecimals,
-		&out.ConfirmationsRequired, &out.PriceFeedAddress, &out.ManualUSDRateMicros, &out.Enabled)
+		upd.ManualUSDRateMicros, upd.Enabled, upd.ExplorerURL, upd.PriceSource, upd.PriceSourceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.DonationChain{}, domain.ErrDonationChainNotFound
 	}
@@ -193,12 +206,27 @@ RETURNING chain_key, name, chain_id, rpc_url, ws_url, native_symbol, native_deci
 	return out, nil
 }
 
+// SetDonationChainPrice writes a freshly fetched rate for one chain (see
+// app/donations price refresher). Deliberately narrow: it never touches any
+// other config field, so a refresh can never clobber an operator edit that
+// landed between the fetch and the write.
+func (s *DonationStore) SetDonationChainPrice(ctx context.Context, chainKey string, rateMicros int64, at time.Time) error {
+	tag, err := s.db.Exec(ctx, `UPDATE donation_chains SET manual_usd_rate_micros = $2, price_updated_at = $3
+WHERE chain_key = $1`, chainKey, rateMicros, at)
+	if err != nil {
+		return fmt.Errorf("set donation chain price: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrDonationChainNotFound
+	}
+	return nil
+}
+
 func scanDonationChains(rows pgx.Rows) ([]domain.DonationChain, error) {
 	out := make([]domain.DonationChain, 0)
 	for rows.Next() {
-		var c domain.DonationChain
-		if err := rows.Scan(&c.Key, &c.Name, &c.ChainID, &c.RPCURL, &c.WSURL, &c.NativeSymbol, &c.NativeDecimals,
-			&c.ConfirmationsRequired, &c.PriceFeedAddress, &c.ManualUSDRateMicros, &c.Enabled); err != nil {
+		c, err := scanDonationChain(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan donation chain: %w", err)
 		}
 		out = append(out, c)
@@ -228,6 +256,53 @@ FROM donation_tokens WHERE chain_key = $1 ORDER BY symbol`, chainKey)
 		return nil, fmt.Errorf("iterate donation tokens: %w", err)
 	}
 	return out, nil
+}
+
+func (s *DonationStore) AllDonationTokens(ctx context.Context) ([]domain.DonationToken, error) {
+	rows, err := s.db.Query(ctx, `SELECT chain_key, symbol, contract_address, decimals
+FROM donation_tokens ORDER BY chain_key, symbol`)
+	if err != nil {
+		return nil, fmt.Errorf("list all donation tokens: %w", err)
+	}
+	defer rows.Close()
+	out := make([]domain.DonationToken, 0)
+	for rows.Next() {
+		var t domain.DonationToken
+		if err := rows.Scan(&t.ChainKey, &t.Symbol, &t.ContractAddress, &t.Decimals); err != nil {
+			return nil, fmt.Errorf("scan donation token: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *DonationStore) UpsertDonationToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error) {
+	var out domain.DonationToken
+	err := s.db.QueryRow(ctx, `
+INSERT INTO donation_tokens (chain_key, symbol, contract_address, decimals) VALUES ($1, $2, $3, $4)
+ON CONFLICT (chain_key, symbol) DO UPDATE SET contract_address = EXCLUDED.contract_address, decimals = EXCLUDED.decimals
+RETURNING chain_key, symbol, contract_address, decimals`,
+		token.ChainKey, token.Symbol, token.ContractAddress, token.Decimals).
+		Scan(&out.ChainKey, &out.Symbol, &out.ContractAddress, &out.Decimals)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+			return domain.DonationToken{}, domain.ErrDonationChainNotFound
+		}
+		return domain.DonationToken{}, fmt.Errorf("upsert donation token: %w", err)
+	}
+	return out, nil
+}
+
+func (s *DonationStore) DeleteDonationToken(ctx context.Context, chainKey, symbol string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM donation_tokens WHERE chain_key = $1 AND symbol = $2`, chainKey, symbol)
+	if err != nil {
+		return fmt.Errorf("delete donation token: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrDonationTokenNotFound
+	}
+	return nil
 }
 
 func (s *DonationStore) DonationChainCursor(ctx context.Context, chainKey string) (int64, error) {

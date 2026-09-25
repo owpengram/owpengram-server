@@ -55,22 +55,23 @@ below).
 
 ## Chains
 
-`donation_chains` is a normal table, seeded by migration
-`20260924140000_donations` with six rows. Only **Ganache** (local dev,
-`http://127.0.0.1:7545`) and **Sepolia** (testnet) ship `enabled = true`.
-Ethereum mainnet, Base, Polygon and BNB Smart Chain ship as disabled
-placeholder rows (empty `rpc_url`) -- an operator fills in the RPC endpoint
-and flips `enabled` once ready, no migration or deploy needed.
+`donation_chains` ships **empty**: migration
+`20260925120000_donations_empty_defaults` deleted the original seed rows
+(all except any that already had deposit history) once the admin panel could
+add chains itself. Nothing is watched, and nothing is offered in
+`/deposit`, until an operator adds a network on the Donations page -- either
+from a curated preset (Ethereum, BSC, Base, Polygon, Arbitrum, Optimism,
+Sepolia; chain id, native currency, a public RPC endpoint, the block
+explorer and the price-source id pre-filled, all still editable) or from a
+blank custom form. Ganache is deliberately **not** a preset: it is a local
+dev node, and the tests that need one create their chain row themselves.
 
-`donation_tokens` holds the USDT/USDC contract per chain. Sepolia's USDC
-row points at Circle's own canonical testnet deployment
-(`0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`, verified against Circle's own
-docs). There is no citable official Sepolia USDT deployment, so that row
-(and every mainnet/L2 token row, and both Ganache rows) ships with an empty
-`contract_address` -- the watcher skips any token row shaped like that
-rather than watching the zero address. Ganache has no real stablecoins at
-all; testing the ERC-20 path there means deploying a mock ERC-20 and writing
-its address into `donation_tokens` by hand.
+`donation_tokens` holds the stablecoin contracts per chain, also added by
+hand from the same page. Contract addresses differ per network for the same
+token, so nothing is ever guessed or pre-filled -- a wrong address would
+mean watching the wrong contract. A token row with an empty
+`contract_address` is listed but skipped by the watcher rather than watched
+at the zero address.
 
 ## Watching
 
@@ -86,8 +87,8 @@ wired up):
    a targeted, cheap query, not a full block scan.
 3. Every still-pending deposit's confirmation count is refreshed against the
    chain's latest block each pass; once it reaches
-   `donation_chains.confirmations_required` (currently 1 for Ganache, 10 for
-   Sepolia and everything else) it flips to `confirmed`.
+   `donation_chains.confirmations_required` (per chain; the presets ship 10
+   for testnets and 12 for mainnets) it flips to `confirmed`.
 4. Confirmed deposits are priced and credited to Stars in the same pass.
 
 A deposit is uniquely identified by `(chain_key, tx_hash, log_index)`
@@ -102,14 +103,34 @@ resulting Stars credit end to end.
 ## Pricing
 
 Stablecoins are priced 1:1 to USD. Native currency uses
-`donation_chains.manual_usd_rate_micros` (USD per one whole unit, ×1e6) --
-an admin-set placeholder rate until a Chainlink price feed is wired in via
-`donation_chains.price_feed_address` (not implemented yet; the column
-exists, reading it doesn't). USD converts to Stars at the same $0.013/Star
-rate this server already uses elsewhere
-(`internal/compat/tdesktop/startup_stubs.go`'s `UsdRate: 0.013`), rounded
-down -- a donor is never credited more Stars than their deposit was
-actually worth.
+`donation_chains.manual_usd_rate_micros` (USD per one whole unit, x1e6),
+which is either typed in by an operator or refreshed automatically:
+
+- `price_source = 'coingecko'` plus a `price_source_id` (the coin's id on
+  CoinGecko, e.g. `ethereum`, `binancecoin`,
+  `polygon-ecosystem-token` -- note POL is *not* `matic-network` any more)
+  makes `internal/app/donations/pricefeed.go` refresh that chain's rate
+  every `TELESRV_DONATION_PRICE_REFRESH_INTERVAL` (default 10m) from the
+  free, keyless `simple/price` endpoint. Every auto-priced chain is fetched
+  in one request. A failed or missing refresh keeps the previous rate
+  rather than zeroing it, and `price_updated_at` makes staleness visible in
+  the panel.
+- `price_source = 'manual'` (the default) is never touched by the
+  refresher. Testnets belong here: Sepolia ETH has no market price, so the
+  operator picks whatever rate makes testing meaningful.
+
+Both are proven against the real API and real Postgres by
+`TestCoinGeckoLivePrices` and `TestDonationsPriceRefreshWritesRate` (opt-in
+with `TELESRV_TEST_LIVE_PRICES=1`, skipped offline) -- a coin id that
+quietly stops resolving is otherwise invisible, since the refresher just
+keeps the old rate forever.
+
+USD converts to Stars at `TELESRV_STARS_USD_PRICE_MICROS`, default
+`5000` = **$0.005 per Star** (200 Stars per dollar), roughly four times
+cheaper than Telegram's own Star packs. Conversion rounds down -- a donor is
+never credited more Stars than their deposit was actually worth. The same
+price drives `/deposit`'s quoted rate and the admin panel's conversions, so
+there is exactly one number to change.
 
 ## Notifications
 
@@ -120,6 +141,12 @@ sends the donor a `@premiumbot` chat message naming the amount, asset, chain
 and Stars credited. Proven end to end (not mocked) by
 `internal/store/postgres/donations_ganache_integration_test.go`, which
 asserts the actual chat message lands after a real Ganache deposit.
+
+`/deposit` answers with the address, then every enabled network as a
+bulleted line naming its watched assets and what one whole unit of its
+native currency is currently worth in Stars, then the headline rate -- so a
+donor can see what they'll get before sending anything
+(`TestPremiumBotDepositListsNetworksAndRate`).
 
 All chat text from `@premiumbot` (the `/deposit` reply included) uses
 `domain.MessageEntity` spans for formatting -- the server has no markdown
@@ -135,7 +162,7 @@ wallet provisioning status and address count, an **Add chain** menu (a
 curated preset -- chain id, native currency and a public RPC endpoint
 pre-filled, still fully editable -- or a blank custom form), every
 configured chain with an editable RPC/WS endpoint, confirmation depth,
-price feed address, manual USD rate, a toggle switch, its live on-chain
+price source (manual rate or CoinGecko), a toggle switch, its live on-chain
 balance (native + every watchable token, with a combined USD estimate --
 `internal/app/donations.Service.ChainBalance`, one RPC round trip per
 address per asset, so it's read fresh every time rather than cached or
@@ -159,11 +186,32 @@ knowing if you're chasing why a real, on-chain-confirmed deposit never got
 credited on a chain that was added or re-enabled without a restart on an
 older build. See `TestDonationsCreateChainStartsWatcherWithoutRestart`.
 
-A chain enabled with `manual_usd_rate_micros` still at 0 (or a token with a
-price of $0) has every deposit price to zero Stars, which the watcher
-silently refuses to credit -- it sits at `confirmed` forever. Both
-`CreateChain` and `UpdateChainConfig` refuse to enable a chain without a
-positive rate.
+A chain enabled with `manual_usd_rate_micros` still at 0 (or too low to be
+worth a single Star) has every deposit price to zero Stars, which the
+watcher silently refuses to credit -- it sits at `confirmed` forever. Three
+things guard that now: `CreateChain`/`UpdateChainConfig` refuse to enable a
+chain without a positive rate; the admin form takes the price in **plain
+dollars per whole coin** and shows the resulting "1 ETH = N Stars"
+conversion, because the stored unit (micro-dollars) is impossible to enter
+correctly by eye -- typing `20000` meaning $20,000 silently means $0.02;
+and both the network card and any uncredited deposit row flag a price that
+rounds ordinary deposits down to zero. Once the price is corrected, the
+already-stuck `confirmed` deposit credits itself on the watcher's next
+poll -- see `TestDonationsWatcherPicksUpRateFixWithoutRestart`.
+
+Each network card carries its price source: **Manual** (a plain-dollar
+rate) or **CoinGecko** (a coin id, with a **Check price** button that
+fetches the live price into the form before saving, so a typo'd id is
+caught immediately instead of silently never refreshing). Chain addresses
+and every deposit's transaction hash link out to that chain's block
+explorer (`explorer_url`, `domain.DonationChain.TxURL`/`AddressURL`), so
+verifying a deposit on Etherscan is one click rather than a copy-paste.
+
+Stablecoins are managed per network from the same page (**Tokens**):
+symbol, contract address and decimals, through
+`UpsertDonationToken`/`DeleteDonationToken`. A token row with no contract
+address is listed but not watched. Contracts differ per network for the
+same token, so they are never guessed or pre-filled.
 
 ### Sweep
 
@@ -193,7 +241,6 @@ end to end against a real Ganache node in
   address today; ideally it'd also send a QR image via `botReply.Media`.
 - **"Support the project"**, the separate single-operator-wallet flow for
   the site and admin panel -- unrelated to per-user crediting, not started.
-- **Chainlink price feeds** for native currency, replacing the manual rate.
 - **Reorg handling.** A deposit currently only moves forward
   (`pending → confirmed → credited`); there is no `orphaned` transition yet
   if a block gets reorganized out before reaching depth. Ganache/Sepolia

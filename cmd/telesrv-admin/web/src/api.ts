@@ -12,6 +12,8 @@ import type {
   DonationWalletStatus,
   DonationDepositListResponse,
   DonationChainBalance,
+  DonationSettings,
+  DonationPricePreview,
   AccountRatingListResponse,
   AccountRatingDetail,
   StarGiftCatalogListResponse,
@@ -197,6 +199,9 @@ export const api = {
   donationWalletStatus: () => request<DonationWalletStatus>("/api/donations/wallet"),
   donationChains: () => request<DonationChainsResponse>("/api/donations/chains"),
   donationDeposits: (params: URLSearchParams) => request<DonationDepositListResponse>(`/api/donations/deposits?${params.toString()}`),
+  donationSettings: () => request<DonationSettings>("/api/donations/settings"),
+  donationPricePreview: (sourceID: string) =>
+    request<DonationPricePreview>(`/api/donations/price-preview?source_id=${encodeURIComponent(sourceID)}`),
   donationChainBalance: (chainKey: string) => request<DonationChainBalance>(`/api/donations/chains/${encodeURIComponent(chainKey)}/balance`),
   accountRatings: (params: URLSearchParams) => request<AccountRatingListResponse>(`/api/account-ratings?${params.toString()}`),
   accountRating: (userID: string) => request<AccountRatingDetail>(`/api/account-ratings/${encodeURIComponent(userID)}`),

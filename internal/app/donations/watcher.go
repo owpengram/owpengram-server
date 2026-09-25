@@ -46,21 +46,6 @@ func (s *Service) WatchChain(ctx context.Context, chainKey string, pollInterval 
 	if !chain.Watchable() {
 		return domain.ErrDonationChainDisabled
 	}
-	tokens, err := s.store.DonationTokens(ctx, chainKey)
-	if err != nil {
-		return err
-	}
-	watchedTokens := make([]domain.DonationToken, 0, len(tokens))
-	for _, t := range tokens {
-		if t.Watchable() {
-			watchedTokens = append(watchedTokens, t)
-		}
-	}
-	client, err := ethclient.DialContext(ctx, chain.RPCURL)
-	if err != nil {
-		return fmt.Errorf("donations: dial %s: %w", chain.Key, err)
-	}
-	defer client.Close()
 
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Second
@@ -71,11 +56,65 @@ func (s *Service) WatchChain(ctx context.Context, chainKey string, pollInterval 
 	log = log.With(zap.String("donation_chain", chain.Key))
 	log.Info("donation watcher started", zap.Int64("chain_id", chain.ChainID), zap.Int("confirmations_required", chain.ConfirmationsRequired))
 
+	// client is dialed lazily and re-dialed whenever the operator edits the
+	// RPC endpoint, since the config below is re-read every pass.
+	var client *ethclient.Client
+	dialedRPC := ""
+	defer func() {
+		if client != nil {
+			client.Close()
+		}
+	}()
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 	for {
-		if err := s.scanOnce(ctx, client, chain, watchedTokens, log); err != nil && !errors.Is(err, context.Canceled) {
-			log.Warn("donation scan pass failed", zap.Error(err))
+		// Re-read chain config and tokens every pass rather than capturing
+		// them once at startup: an operator fixing a wrong USD rate, adding
+		// a stablecoin contract, deepening confirmations or repointing the
+		// RPC in the admin panel must take effect on the next tick, not on
+		// the next server restart. Getting this wrong is not a cosmetic
+		// staleness bug -- a chain whose rate was still 0/too low prices
+		// every deposit to zero Stars and silently refuses to credit it (see
+		// refreshConfirmationsAndCredit), so the fix would appear to do
+		// nothing until someone restarted the process.
+		chain, found, err = s.store.DonationChain(ctx, chainKey)
+		switch {
+		case err != nil:
+			log.Warn("reload donation chain config failed; keeping previous config for this pass", zap.Error(err))
+		case !found:
+			log.Info("donation chain removed; watcher stopping")
+			return nil
+		case !chain.Watchable():
+			log.Info("donation chain disabled or misconfigured; watcher stopping")
+			return nil
+		}
+
+		watchedTokens, err := s.watchableTokens(ctx, chainKey)
+		if err != nil {
+			log.Warn("reload donation tokens failed; skipping token scan this pass", zap.Error(err))
+		}
+
+		if client == nil || dialedRPC != chain.RPCURL {
+			if client != nil {
+				client.Close()
+				client = nil
+			}
+			dialed, derr := ethclient.DialContext(ctx, chain.RPCURL)
+			if derr != nil {
+				if errors.Is(derr, context.Canceled) {
+					return ctx.Err()
+				}
+				log.Warn("dial donation chain RPC failed; retrying next pass", zap.Error(derr))
+			} else {
+				client, dialedRPC = dialed, chain.RPCURL
+			}
+		}
+
+		if client != nil {
+			if err := s.scanOnce(ctx, client, chain, watchedTokens, log); err != nil && !errors.Is(err, context.Canceled) {
+				log.Warn("donation scan pass failed", zap.Error(err))
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -83,6 +122,22 @@ func (s *Service) WatchChain(ctx context.Context, chainKey string, pollInterval 
 		case <-ticker.C:
 		}
 	}
+}
+
+// watchableTokens lists the chain's stablecoin rows that actually have a
+// contract address filled in.
+func (s *Service) watchableTokens(ctx context.Context, chainKey string) ([]domain.DonationToken, error) {
+	tokens, err := s.store.DonationTokens(ctx, chainKey)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.DonationToken, 0, len(tokens))
+	for _, t := range tokens {
+		if t.Watchable() {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 func (s *Service) scanOnce(ctx context.Context, client *ethclient.Client, chain domain.DonationChain, tokens []domain.DonationToken, log *zap.Logger) error {
@@ -93,6 +148,21 @@ func (s *Service) scanOnce(ctx context.Context, client *ethclient.Client, chain 
 	cursor, err := s.store.DonationChainCursor(ctx, chain.Key)
 	if err != nil {
 		return err
+	}
+	if cursor > int64(latest) {
+		// The cursor is ahead of the chain's own tip -- impossible while
+		// following one healthy chain, so the node behind this RPC is not
+		// the one this cursor was built against (repointed endpoint, a
+		// reset dev chain, a node still syncing from behind). Left alone,
+		// every later pass computes an empty range and the watcher silently
+		// stops detecting anything, forever. Resync to the tip instead and
+		// say so.
+		log.Warn("donation chain cursor is ahead of the chain tip; resyncing to tip",
+			zap.Int64("cursor", cursor), zap.Uint64("latest_block", latest))
+		if err := s.store.SetDonationChainCursor(ctx, chain.Key, int64(latest)); err != nil {
+			return err
+		}
+		cursor = int64(latest)
 	}
 	from := uint64(cursor) + 1
 	if cursor == 0 {
@@ -251,7 +321,7 @@ func (s *Service) refreshConfirmationsAndCredit(ctx context.Context, chain domai
 			rateMicros = chain.ManualUSDRateMicros
 		}
 		usdMicros := usdMicrosForAmount(amount, decimals, rateMicros)
-		stars := starsForUSDMicros(usdMicros)
+		stars := s.starsForUSDMicros(usdMicros)
 		if stars <= 0 {
 			log.Warn("donation deposit priced to zero stars, skipping credit", zap.Int64("deposit_id", d.ID), zap.Int64("usd_micros", usdMicros))
 			continue

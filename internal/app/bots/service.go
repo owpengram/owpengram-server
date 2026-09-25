@@ -92,7 +92,11 @@ type donationsSource interface {
 	Ready() bool
 	AddressForUser(ctx context.Context, userID int64) (string, error)
 	EnabledChains(ctx context.Context) ([]domain.DonationChain, error)
+	ChainTokens(ctx context.Context, chainKey string) ([]domain.DonationToken, error)
 	UserDeposits(ctx context.Context, userID int64, limit int) ([]domain.DonationDeposit, error)
+	// StarPriceMicros is what one Star costs in micro-dollars, so /deposit
+	// quotes exactly the rate the watcher will credit at.
+	StarPriceMicros() int64
 }
 
 // verificationApplications is the applicant-side surface of official platform

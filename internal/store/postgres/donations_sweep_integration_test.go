@@ -24,14 +24,15 @@ func TestDonationsSweepGanache(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	client, err := ethclient.DialContext(ctx, "http://127.0.0.1:7545")
+	client, err := ethclient.DialContext(ctx, testGanacheURL())
 	if err != nil {
-		t.Skip("ganache not reachable at 127.0.0.1:7545: " + err.Error())
+		t.Skip("ganache not reachable at " + testGanacheURL() + ": " + err.Error())
 	}
 	if _, err := client.ChainID(ctx); err != nil {
 		t.Skip("ganache not responding: " + err.Error())
 	}
 
+	ensureGanacheChain(t, ctx, pool)
 	suffix := randomSuffix(t)
 	testKey, err := donations.ParseEncryptionKey(testDonationWalletKey)
 	if err != nil {
@@ -178,14 +179,15 @@ func TestDonationsChainBalanceGanache(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 
-	client, err := ethclient.DialContext(ctx, "http://127.0.0.1:7545")
+	client, err := ethclient.DialContext(ctx, testGanacheURL())
 	if err != nil {
-		t.Skip("ganache not reachable at 127.0.0.1:7545: " + err.Error())
+		t.Skip("ganache not reachable at " + testGanacheURL() + ": " + err.Error())
 	}
 	if _, err := client.ChainID(ctx); err != nil {
 		t.Skip("ganache not responding: " + err.Error())
 	}
 
+	ensureGanacheChain(t, ctx, pool)
 	suffix := randomSuffix(t)
 	testKey, err := donations.ParseEncryptionKey(testDonationWalletKey)
 	if err != nil {

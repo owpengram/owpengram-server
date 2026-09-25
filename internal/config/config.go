@@ -736,6 +736,15 @@ type Config struct {
 	// DonationPollInterval is how often each enabled chain's watcher polls
 	// for new blocks.
 	DonationPollInterval time.Duration
+	// DonationPriceRefreshInterval is how often a chain configured with an
+	// automatic price source (CoinGecko) has its USD rate refreshed. One
+	// request covers every such chain, so this can be frequent without
+	// straining a free API.
+	DonationPriceRefreshInterval time.Duration
+	// StarsUSDPriceMicros is what one Star costs when bought with crypto,
+	// in micro-dollars. Default $0.005 (200 Stars per dollar) --
+	// deliberately ~4x cheaper than Telegram's own smallest pack.
+	StarsUSDPriceMicros int64
 	// VerificationEnabled controls official platform verification: the @verifybot
 	// application flow and the panel's review queue. Disabled refuses every
 	// verification use case explicitly; already-verified peers keep their badge,
@@ -1261,6 +1270,8 @@ func Load() (Config, error) {
 		DonationWalletKeyPath:             envOr("TELESRV_DONATION_WALLET_KEY_PATH", "data/donation_wallet.key"),
 		DonationWalletKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_DONATION_WALLET_KEY", "")),
 		DonationPollInterval:              envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),
+		DonationPriceRefreshInterval:      envDurationOr("TELESRV_DONATION_PRICE_REFRESH_INTERVAL", 10*time.Minute),
+		StarsUSDPriceMicros:               envInt64Or("TELESRV_STARS_USD_PRICE_MICROS", 5000),
 
 		CollectibleUsernameURLTemplate: strings.TrimSpace(envAllowEmptyOr("TELESRV_COLLECTIBLE_USERNAME_URL_TEMPLATE", "")),
 

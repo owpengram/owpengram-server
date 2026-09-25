@@ -16,9 +16,11 @@ type stubDonationsSource struct {
 	ready      bool
 	chains     []domain.DonationChain
 	chainsErr  error
+	tokens     map[string][]domain.DonationToken
 	address    string
 	addressErr error
 	deposits   []domain.DonationDeposit
+	starPrice  int64
 }
 
 func (s *stubDonationsSource) Ready() bool { return s.ready }
@@ -28,8 +30,17 @@ func (s *stubDonationsSource) AddressForUser(context.Context, int64) (string, er
 func (s *stubDonationsSource) EnabledChains(context.Context) ([]domain.DonationChain, error) {
 	return s.chains, s.chainsErr
 }
+func (s *stubDonationsSource) ChainTokens(_ context.Context, chainKey string) ([]domain.DonationToken, error) {
+	return s.tokens[chainKey], nil
+}
 func (s *stubDonationsSource) UserDeposits(context.Context, int64, int) ([]domain.DonationDeposit, error) {
 	return s.deposits, nil
+}
+func (s *stubDonationsSource) StarPriceMicros() int64 {
+	if s.starPrice <= 0 {
+		return 5000
+	}
+	return s.starPrice
 }
 
 func TestPremiumBotDepositTextUnconfigured(t *testing.T) {
@@ -149,4 +160,51 @@ func TestPremiumBotRespondsToDepositCommand(t *testing.T) {
 	if !strings.Contains(reply.Body, "0xabc0000000000000000000000000000000dead") {
 		t.Fatalf("premiumbot /deposit reply = %q, want the assigned address", reply.Body)
 	}
+}
+
+// TestPremiumBotDepositListsNetworksAndRate pins the shape an operator
+// actually reads: one bullet per live network with the coins that network
+// really accepts (never a hardcoded "ETH, USDT or USDC" a chain may not
+// have configured), the Stars a whole coin buys, and the Star price
+// itself -- so a donor can work out what they get before sending anything.
+func TestPremiumBotDepositListsNetworksAndRate(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	svc.SetDonationsSource(&stubDonationsSource{
+		ready: true,
+		chains: []domain.DonationChain{
+			{Key: "ethereum", Name: "Ethereum", ChainID: 1, RPCURL: "https://rpc", NativeSymbol: "ETH",
+				NativeDecimals: 18, ConfirmationsRequired: 12, ManualUSDRateMicros: 2_400_000_000, Enabled: true},
+			{Key: "sepolia", Name: "Sepolia (testnet)", ChainID: 11155111, RPCURL: "https://rpc2", NativeSymbol: "ETH",
+				NativeDecimals: 18, ConfirmationsRequired: 6, ManualUSDRateMicros: 0, Enabled: true},
+		},
+		tokens: map[string][]domain.DonationToken{
+			"ethereum": {
+				{ChainKey: "ethereum", Symbol: "USDC", ContractAddress: "0x1111111111111111111111111111111111111111", Decimals: 6},
+				{ChainKey: "ethereum", Symbol: "USDT", ContractAddress: "", Decimals: 6}, // not watched: must not be advertised
+			},
+		},
+		address:   "0x5a32746deacecd21d5614f2ee959925d21bcee19",
+		starPrice: 5000,
+	})
+
+	got := svc.premiumBotDepositReply(context.Background(), 42).Text
+	for _, want := range []string{
+		"• Ethereum — ETH, USDC",
+		"1 ETH ≈ 480,000",
+		"• Sepolia (testnet) — ETH",
+		"Rate: 1 OwpenGram Stars = $0.005",
+		"200 per $1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("deposit text missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "USDT") {
+		t.Fatalf("deposit text advertises USDT, which has no contract address configured:\n%s", got)
+	}
+	// A chain with no usable rate must not quote one.
+	if strings.Contains(got, "1 ETH ≈ 0") {
+		t.Fatalf("deposit text quotes a zero rate:\n%s", got)
+	}
+	t.Logf("deposit reply:\n%s", got)
 }

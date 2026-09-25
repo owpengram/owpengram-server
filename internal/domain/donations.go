@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,7 @@ var (
 	ErrDonationChainNotFound       = errors.New("donations: chain not found")
 	ErrDonationChainAlreadyExists  = errors.New("donations: chain already exists")
 	ErrDonationChainHasDeposits    = errors.New("donations: chain has recorded deposits, refusing to delete")
+	ErrDonationTokenNotFound       = errors.New("donations: token not found")
 	ErrDonationDepositInvalid      = errors.New("donations: deposit invalid")
 	ErrDonationSweepDestination    = errors.New("donations: invalid sweep destination address")
 )
@@ -55,6 +57,47 @@ type DonationChain struct {
 	PriceFeedAddress      string
 	ManualUSDRateMicros   int64
 	Enabled               bool
+	// ExplorerURL is the block explorer's base address
+	// ("https://etherscan.io"), used to turn a recorded transaction hash
+	// into a link. Empty means no explorer configured for this network.
+	ExplorerURL string
+	// PriceSource selects where ManualUSDRateMicros comes from: "" for a
+	// rate an operator typed and maintains by hand, or
+	// DonationPriceSourceCoinGecko to refresh it automatically.
+	PriceSource string
+	// PriceSourceID is the coin id at that source ("ethereum",
+	// "binancecoin"); meaningless when PriceSource is empty.
+	PriceSourceID string
+	// PriceUpdatedAt is the last successful automatic refresh. Zero for a
+	// manual rate, or for an auto rate that has never refreshed yet.
+	PriceUpdatedAt time.Time
+}
+
+// DonationPriceSourceCoinGecko refreshes a chain's USD rate from
+// CoinGecko's free simple/price endpoint -- no API key, no account.
+const DonationPriceSourceCoinGecko = "coingecko"
+
+// TxURL returns the explorer link for one transaction hash, or "" when the
+// network has no explorer configured.
+func (c DonationChain) TxURL(txHash string) string {
+	if c.ExplorerURL == "" || txHash == "" {
+		return ""
+	}
+	return strings.TrimRight(c.ExplorerURL, "/") + "/tx/" + txHash
+}
+
+// AddressURL returns the explorer link for one address, or "" when the
+// network has no explorer configured.
+func (c DonationChain) AddressURL(address string) string {
+	if c.ExplorerURL == "" || address == "" {
+		return ""
+	}
+	return strings.TrimRight(c.ExplorerURL, "/") + "/address/" + address
+}
+
+// AutoPriced reports whether this chain's rate is refreshed automatically.
+func (c DonationChain) AutoPriced() bool {
+	return c.PriceSource == DonationPriceSourceCoinGecko && c.PriceSourceID != ""
 }
 
 // Valid reports whether the chain is enabled and has enough configuration
@@ -127,6 +170,9 @@ type DonationChainConfigUpdate struct {
 	PriceFeedAddress      string
 	ManualUSDRateMicros   int64
 	Enabled               bool
+	ExplorerURL           string
+	PriceSource           string
+	PriceSourceID         string
 }
 
 // DonationChainAssetBalance is the live, on-chain sum of one asset (the

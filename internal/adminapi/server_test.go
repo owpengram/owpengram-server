@@ -337,9 +337,21 @@ func (fakeService) SweepDonationChain(_ context.Context, req admin.SweepDonation
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
 }
 
+func (fakeService) UpsertDonationToken(_ context.Context, req admin.UpsertDonationTokenRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
+func (fakeService) DeleteDonationToken(_ context.Context, req admin.DeleteDonationTokenRequest) (admin.CommandResult, error) {
+	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil
+}
+
 func (fakeService) DonationChainBalance(_ context.Context, chainKey string) (domain.DonationChainBalance, error) {
 	return domain.DonationChainBalance{ChainKey: chainKey}, nil
 }
+
+func (fakeService) DonationPricePreview(_ context.Context, _ string) (int64, error) { return 2_400_000_000, nil }
+
+func (fakeService) DonationStarPriceMicros() int64 { return 5000 }
 
 func (fakeService) SetVerified(_ context.Context, req admin.SetVerifiedRequest) (admin.CommandResult, error) {
 	return admin.CommandResult{CommandID: req.CommandID, Status: "completed", DryRun: req.DryRun}, nil

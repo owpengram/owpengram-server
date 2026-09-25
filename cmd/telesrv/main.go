@@ -1414,6 +1414,7 @@ func run(logger *zap.Logger) error {
 			logger.Warn("generated a new crypto donations wallet -- back up this recovery phrase now, it will not be shown again",
 				zap.String("mnemonic", mnemonic))
 		}
+		donationsService.SetStarPrice(cfg.StarsUSDPriceMicros)
 		botsService.SetDonationsSource(donationsService)
 		donationsService.SetNotifier(botsService)
 	}
@@ -1924,6 +1925,9 @@ func run(logger *zap.Logger) error {
 		if err := donationsService.StartWatchers(ctx, cfg.DonationPollInterval, logger.Named("donations")); err != nil {
 			logger.Warn("list enabled donation chains failed; no donation watchers started", zap.Error(err))
 		}
+		// Chains configured with an automatic price source keep their USD
+		// rate fresh here; manually priced ones are never touched.
+		go donationsService.StartPriceRefresher(ctx, cfg.DonationPriceRefreshInterval, logger.Named("donations").Named("prices"))
 	}
 	if _, err := botapi.Start(ctx, cfg.BotAPIAddr, botsService, usersService, router, router, logger.Named("botapi")); err != nil {
 		return fmt.Errorf("start bot api: %w", err)

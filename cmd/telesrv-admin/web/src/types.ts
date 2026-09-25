@@ -99,6 +99,19 @@ export type DonationChain = {
   PriceFeedAddress: string;
   ManualUSDRateMicros: number;
   Enabled: boolean;
+  ExplorerURL: string;
+  PriceSource: string;
+  PriceSourceID: string;
+  PriceUpdatedAt: string;
+};
+
+export type DonationSettings = {
+  star_price_micros: number;
+};
+
+export type DonationPricePreview = {
+  source_id: string;
+  usd_rate_micros: number;
 };
 
 export type DonationToken = {

@@ -2,10 +2,12 @@ package donations
 
 import "math/big"
 
-// usdPerStar mirrors the real Telegram Stars rate this server already uses
-// elsewhere (internal/compat/tdesktop/startup_stubs.go's UsdRate: 0.013) --
-// $0.013 per Star, i.e. ~76.9 Stars per US dollar.
-const usdPerStarMicros = 13000 // $0.013 * 1e6
+// DefaultUSDPerStarMicros is what one Star costs when a donor buys it with
+// crypto here: $0.005, i.e. 200 Stars per US dollar. Telegram's own
+// smallest pack is 100 Stars for $2.05 ($0.0205 each), so this is
+// deliberately about four times cheaper. Override with
+// TELESRV_STARS_USD_PRICE_MICROS.
+const DefaultUSDPerStarMicros = 5000 // $0.005 * 1e6
 
 // microsPerWhole scales a "USD per one whole unit" rate (native currency or
 // a stablecoin) by 1e6, matching DonationChain.ManualUSDRateMicros and
@@ -30,12 +32,26 @@ func usdMicrosForAmount(amountRaw *big.Int, decimals int, usdRateMicros int64) i
 	return result.Int64()
 }
 
-// starsForUSDMicros converts a priced deposit into Stars at the fixed
-// usdPerStarMicros rate, rounding down -- a donor is never credited more
+// starsForUSDMicros converts a priced deposit into Stars at this service's
+// configured Star price, rounding down -- a donor is never credited more
 // Stars than their deposit was actually worth.
-func starsForUSDMicros(usdMicros int64) int64 {
+func (s *Service) starsForUSDMicros(usdMicros int64) int64 {
 	if usdMicros <= 0 {
 		return 0
 	}
-	return usdMicros / usdPerStarMicros
+	return usdMicros / s.starPriceMicros()
 }
+
+// starPriceMicros is the configured price of one Star in micro-dollars,
+// falling back to the default for a zero-value service (tests that build a
+// Service literal without options).
+func (s *Service) starPriceMicros() int64 {
+	if s == nil || s.usdPerStarMicros <= 0 {
+		return DefaultUSDPerStarMicros
+	}
+	return s.usdPerStarMicros
+}
+
+// StarPriceMicros exposes the configured Star price so the admin panel and
+// the @premiumbot quote the same number this package credits at.
+func (s *Service) StarPriceMicros() int64 { return s.starPriceMicros() }

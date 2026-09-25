@@ -87,6 +87,9 @@ type updateDonationChainAPIRequest struct {
 	ConfirmationsRequired int    `json:"confirmations_required"`
 	PriceFeedAddress      string `json:"price_feed_address"`
 	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
+	ExplorerURL           string `json:"explorer_url"`
+	PriceSource           string `json:"price_source"`
+	PriceSourceID         string `json:"price_source_id"`
 }
 
 func (s *server) handleUpdateDonationChainAPI(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +106,9 @@ func (s *server) handleUpdateDonationChainAPI(w http.ResponseWriter, r *http.Req
 		ConfirmationsRequired: body.ConfirmationsRequired,
 		PriceFeedAddress:      body.PriceFeedAddress,
 		ManualUSDRateMicros:   body.ManualUSDRateMicros,
+		ExplorerURL:           body.ExplorerURL,
+		PriceSource:           body.PriceSource,
+		PriceSourceID:         body.PriceSourceID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/donations/chains/update", req)
 	writeCommandResultAPI(w, result, err)
@@ -123,6 +129,9 @@ type createDonationChainAPIRequest struct {
 	PriceFeedAddress      string `json:"price_feed_address"`
 	ManualUSDRateMicros   int64  `json:"manual_usd_rate_micros"`
 	Enabled               bool   `json:"enabled"`
+	ExplorerURL           string `json:"explorer_url"`
+	PriceSource           string `json:"price_source"`
+	PriceSourceID         string `json:"price_source_id"`
 }
 
 func (s *server) handleCreateDonationChainAPI(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +152,9 @@ func (s *server) handleCreateDonationChainAPI(w http.ResponseWriter, r *http.Req
 		PriceFeedAddress:      body.PriceFeedAddress,
 		ManualUSDRateMicros:   body.ManualUSDRateMicros,
 		Enabled:               body.Enabled,
+		ExplorerURL:           body.ExplorerURL,
+		PriceSource:           body.PriceSource,
+		PriceSourceID:         body.PriceSourceID,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/donations/chains/create", req)
 	writeCommandResultAPI(w, result, err)
@@ -188,6 +200,83 @@ func (s *server) handleSweepDonationChainAPI(w http.ResponseWriter, r *http.Requ
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/donations/sweep", req)
 	writeCommandResultAPI(w, result, err)
+}
+
+type upsertDonationTokenAPIRequest struct {
+	CommandID       string `json:"command_id"`
+	Reason          string `json:"reason"`
+	Confirm         bool   `json:"confirm"`
+	ChainKey        string `json:"chain_key"`
+	Symbol          string `json:"symbol"`
+	ContractAddress string `json:"contract_address"`
+	Decimals        int    `json:"decimals"`
+}
+
+func (s *server) handleUpsertDonationTokenAPI(w http.ResponseWriter, r *http.Request) {
+	var body upsertDonationTokenAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.UpsertDonationTokenRequest{
+		CommandMeta:     s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "donation-token"),
+		ChainKey:        body.ChainKey,
+		Symbol:          body.Symbol,
+		ContractAddress: body.ContractAddress,
+		Decimals:        body.Decimals,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/donations/tokens/upsert", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+type deleteDonationTokenAPIRequest struct {
+	CommandID string `json:"command_id"`
+	Reason    string `json:"reason"`
+	Confirm   bool   `json:"confirm"`
+	ChainKey  string `json:"chain_key"`
+	Symbol    string `json:"symbol"`
+}
+
+func (s *server) handleDeleteDonationTokenAPI(w http.ResponseWriter, r *http.Request) {
+	var body deleteDonationTokenAPIRequest
+	if !decodeAction(w, r, &body) {
+		return
+	}
+	req := admin.DeleteDonationTokenRequest{
+		CommandMeta: s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "donation-token-delete"),
+		ChainKey:    body.ChainKey,
+		Symbol:      body.Symbol,
+	}
+	result, err := s.callAdminAPI(r.Context(), "/v1/donations/tokens/delete", req)
+	writeCommandResultAPI(w, result, err)
+}
+
+// handleDonationSettingsAPI proxies the deployment's Star price so the page
+// quotes the same number the server credits at, instead of a second copy of
+// the constant drifting in the frontend.
+func (s *server) handleDonationSettingsAPI(w http.ResponseWriter, r *http.Request) {
+	var out map[string]any
+	if err := s.callAdminAPIGet(r.Context(), "/v1/donations/settings", &out); err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleDonationPricePreviewAPI proxies a price-source lookup so an
+// operator can confirm a coin id resolves before saving a network against
+// it -- a wrong id otherwise fails silently in the background refresher.
+func (s *server) handleDonationPricePreviewAPI(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.URL.Query().Get("source_id")
+	if sourceID == "" {
+		writeAPIError(w, http.StatusBadRequest, "source_id is required")
+		return
+	}
+	var out map[string]any
+	if err := s.callAdminAPIGet(r.Context(), "/v1/donations/price-preview?source_id="+url.QueryEscape(sourceID), &out); err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleDonationChainBalanceAPI proxies to the main server's live on-chain

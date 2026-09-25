@@ -43,11 +43,22 @@ type Service struct {
 	wallet   *Wallet
 	notifier CreditNotifier
 
+	usdPerStarMicros int64
+
 	watcherMu           sync.Mutex
 	watcherCtx          context.Context
 	watcherPollInterval time.Duration
 	watcherLog          *zap.Logger
 	watcherCancel       map[string]context.CancelFunc
+}
+
+// SetStarPrice sets what one Star costs in micro-dollars (see
+// DefaultUSDPerStarMicros). Zero or negative keeps the default.
+func (s *Service) SetStarPrice(micros int64) {
+	if s == nil || micros <= 0 {
+		return
+	}
+	s.usdPerStarMicros = micros
 }
 
 // SetNotifier wires the chat notification sent after each deposit is
@@ -330,6 +341,58 @@ func (s *Service) stopWatcher(chainKey string) {
 	}
 }
 
+// tokenSymbolRe matches a plain uppercase ticker (USDT, USDC, DAI ...).
+var tokenSymbolRe = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,11}$`)
+
+// evmAddressRe matches a 0x-prefixed 20-byte address in either case; the
+// stored form is lowercased (see normalizeAddress) so watcher comparisons
+// stay case-insensitive.
+var evmAddressRe = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
+
+// UpsertToken adds or updates one stablecoin contract on a chain (the
+// admin panel's per-chain token editor). An empty ContractAddress is
+// allowed and means "configured but not watched yet" -- the watcher skips
+// it rather than watching the zero address.
+func (s *Service) UpsertToken(ctx context.Context, token domain.DonationToken) (domain.DonationToken, error) {
+	if s == nil || s.store == nil {
+		return domain.DonationToken{}, domain.ErrDonationWalletNotConfigured
+	}
+	token.ChainKey = strings.ToLower(strings.TrimSpace(token.ChainKey))
+	token.Symbol = strings.ToUpper(strings.TrimSpace(token.Symbol))
+	token.ContractAddress = strings.TrimSpace(token.ContractAddress)
+	if token.ChainKey == "" {
+		return domain.DonationToken{}, domain.ErrDonationChainNotFound
+	}
+	if !tokenSymbolRe.MatchString(token.Symbol) {
+		return domain.DonationToken{}, fmt.Errorf("donations: token symbol must be 2-12 uppercase letters/digits, e.g. USDT")
+	}
+	if token.Decimals <= 0 || token.Decimals > 30 {
+		return domain.DonationToken{}, fmt.Errorf("donations: token decimals must be between 1 and 30 (USDT/USDC are usually 6)")
+	}
+	if token.ContractAddress != "" {
+		if !evmAddressRe.MatchString(token.ContractAddress) {
+			return domain.DonationToken{}, fmt.Errorf("donations: token contract must be a 0x-prefixed 20-byte address")
+		}
+		token.ContractAddress = normalizeAddress(token.ContractAddress)
+	}
+	return s.store.UpsertDonationToken(ctx, token)
+}
+
+// DeleteToken removes one token row from a chain. Deposits already
+// credited for that symbol keep their history (they store the symbol as
+// plain text, not a reference).
+func (s *Service) DeleteToken(ctx context.Context, chainKey, symbol string) error {
+	if s == nil || s.store == nil {
+		return domain.ErrDonationWalletNotConfigured
+	}
+	chainKey = strings.ToLower(strings.TrimSpace(chainKey))
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if chainKey == "" || symbol == "" {
+		return domain.ErrDonationTokenNotFound
+	}
+	return s.store.DeleteDonationToken(ctx, chainKey, symbol)
+}
+
 // EnabledChains lists every chain configured as enabled, whether or not
 // it's actually watchable yet (see domain.DonationChain.Watchable).
 func (s *Service) EnabledChains(ctx context.Context) ([]domain.DonationChain, error) {
@@ -337,6 +400,15 @@ func (s *Service) EnabledChains(ctx context.Context) ([]domain.DonationChain, er
 		return nil, nil
 	}
 	return s.store.EnabledDonationChains(ctx)
+}
+
+// ChainTokens lists one chain's configured tokens (including ones with no
+// contract address yet -- callers filter with DonationToken.Watchable).
+func (s *Service) ChainTokens(ctx context.Context, chainKey string) ([]domain.DonationToken, error) {
+	if s == nil || s.store == nil {
+		return nil, nil
+	}
+	return s.store.DonationTokens(ctx, chainKey)
 }
 
 // UserDeposits lists a user's donation history, newest first.
