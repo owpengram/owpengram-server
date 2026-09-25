@@ -60,7 +60,10 @@ func (s *Service) NotifyStarsGrantWithheld(ctx context.Context, userID int64) {
 	mu := s.serviceBotReplyLock(domain.PremiumBotUserID, userID)
 	mu.Lock()
 	defer mu.Unlock()
-	text := "Your starting " + branding.StarsName() + " bonus wasn't granted: this device and network are already linked to another account that received it. Multi-accounting to farm free " + branding.StarsName() + " isn't allowed. You can still buy " + branding.StarsName() + " and use every other feature normally."
+	// Deliberately vague about why: naming the device/IP check would just
+	// tell a farmer exactly what to change (a VPN, a different phone
+	// profile) to get past it next time.
+	text := "Your starting " + branding.StarsName() + " bonus isn't available for this account. You can still buy " + branding.StarsName() + " and use every other feature normally."
 	s.sendServiceBotReply(ctx, domain.PremiumBotUserID, userID, botReply{Text: text})
 }
 
@@ -169,8 +172,11 @@ func (s *Service) premiumBotClaimText(ctx context.Context, userID int64) string 
 	if s.stars == nil || s.starsMonthlyClaim <= 0 {
 		return "The free " + branding.StarsName() + " claim is not available right now."
 	}
+	// Deliberately worded the same as the "feature not configured" case
+	// below: naming the device/IP check would just tell a farmer exactly
+	// what to change (a VPN, a different phone profile) to get past it.
 	if withheld, err := s.stars.GuardClaim(ctx, userID); err == nil && withheld {
-		return "Your free " + branding.StarsName() + " claim was withheld: this device and network are already linked to another account that has claimed it. Multi-accounting to farm free " + branding.StarsName() + " isn't allowed."
+		return "The free " + branding.StarsName() + " claim is not available for this account right now."
 	}
 	bal, claimed, nextAt, err := s.stars.ClaimMonthly(ctx, userID, s.starsMonthlyClaim, s.starsMonthlyClaimCooldown)
 	if err != nil {

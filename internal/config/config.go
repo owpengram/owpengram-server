@@ -703,6 +703,13 @@ type Config struct {
 	PremiumSweepInterval time.Duration
 	// PremiumSweepBatch 是单次到期清理的最大行数。
 	PremiumSweepBatch int
+	// DonationsEnabled turns the whole crypto donations feature (the
+	// custodial wallet, /deposit, every chain watcher) on or off. Disabling
+	// it skips wallet provisioning entirely and leaves @premiumbot's
+	// /deposit reporting itself unavailable -- an already-provisioned
+	// wallet and its funds are untouched, just dormant, so re-enabling
+	// later picks up exactly where it left off. True by default.
+	DonationsEnabled bool
 	// DonationWalletKeyPath is where the crypto donations AES-256-GCM
 	// encryption key lives on disk -- generated automatically on first run,
 	// same "works out of the box" pattern as RSAKeyPath. The wallet mnemonic
@@ -1237,6 +1244,7 @@ func Load() (Config, error) {
 		RatingActivityCap:                 envInt64Or("TELESRV_RATING_ACTIVITY_CAP", domain.DefaultAccountRatingWeights().ActivityCap),
 		PremiumSweepInterval:              envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),
 		PremiumSweepBatch:                 envIntOr("TELESRV_PREMIUM_SWEEP_BATCH", 500),
+		DonationsEnabled:                  envBoolOr("TELESRV_DONATIONS_ENABLED", true),
 		DonationWalletKeyPath:             envOr("TELESRV_DONATION_WALLET_KEY_PATH", "data/donation_wallet.key"),
 		DonationWalletKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_DONATION_WALLET_KEY", "")),
 		DonationPollInterval:              envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),

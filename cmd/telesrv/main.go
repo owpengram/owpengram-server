@@ -1389,25 +1389,34 @@ func run(logger *zap.Logger) error {
 	// TELESRV_DONATION_WALLET_KEY overrides it with a literal key; the
 	// wallet mnemonic itself is generated and stored, encrypted, the first
 	// time the server finds none in the database. See docs/donations.md.
-	donationWalletKey, err := donationsWalletKey(cfg)
-	if err != nil {
-		return fmt.Errorf("init donations wallet key: %w", err)
-	}
-	donationStore := postgres.NewDonationStore(pool)
-	donationsService, err := donationsapp.NewService(ctx, donationStore, donationWalletKey)
-	if err != nil {
-		return fmt.Errorf("init donations service: %w", err)
-	}
-	if !donationsService.Ready() {
-		mnemonic, err := donationsService.EnsureWallet(ctx)
+	//
+	// TELESRV_DONATIONS_ENABLED=false skips all of this: no wallet
+	// provisioning, no watchers, and botsService.donations stays nil, so
+	// /deposit just answers that it's unavailable (every method on a nil
+	// *donationsapp.Service is itself nil-safe, so leaving donationsService
+	// as a nil pointer below is enough -- nothing later needs its own guard).
+	var donationsService *donationsapp.Service
+	if cfg.DonationsEnabled {
+		donationWalletKey, err := donationsWalletKey(cfg)
 		if err != nil {
-			return fmt.Errorf("provision donations wallet: %w", err)
+			return fmt.Errorf("init donations wallet key: %w", err)
 		}
-		logger.Warn("generated a new crypto donations wallet -- back up this recovery phrase now, it will not be shown again",
-			zap.String("mnemonic", mnemonic))
+		donationStore := postgres.NewDonationStore(pool)
+		donationsService, err = donationsapp.NewService(ctx, donationStore, donationWalletKey)
+		if err != nil {
+			return fmt.Errorf("init donations service: %w", err)
+		}
+		if !donationsService.Ready() {
+			mnemonic, err := donationsService.EnsureWallet(ctx)
+			if err != nil {
+				return fmt.Errorf("provision donations wallet: %w", err)
+			}
+			logger.Warn("generated a new crypto donations wallet -- back up this recovery phrase now, it will not be shown again",
+				zap.String("mnemonic", mnemonic))
+		}
+		botsService.SetDonationsSource(donationsService)
+		donationsService.SetNotifier(botsService)
 	}
-	botsService.SetDonationsSource(donationsService)
-	donationsService.SetNotifier(botsService)
 	// Passkey:凭据持久化走 postgres;一次性挑战走进程内内存(短 TTL,与 QR 登录 token
 	// 同属进程内一次性凭据,不跨实例)。
 	passkeyStore := postgres.NewPasskeyStore(pool)
