@@ -70,22 +70,49 @@ services:
   # 桶由 telesrv 自己在启动时按需创建（internal/app/files/blobs3.go 的 NewS3FS），
   # 这里不需要额外的 mc 初始化容器。控制台（9001）仅用于本地调试查看已存对象。
   minio:
-    # quay.io, not Docker Hub: MinIO stopped serving minio/minio to anonymous
-    # pulls there, so `docker compose up` failed on a fresh machine with
-    # "pull access denied ... or may require 'docker login'" -- for every tag,
-    # not just latest. quay.io/minio/minio is MinIO's own registry and needs
-    # no login.
-    image: quay.io/minio/minio:latest
+    # bitnamilegacy, not minio/minio: MinIO's own images stopped serving
+    # anonymous pulls on BOTH registries -- Docker Hub answers "pull access
+    # denied ... or may require 'docker login'" and quay.io answers 401
+    # Unauthorized, for every tag, not just latest. Bitnami then moved its
+    # free images out of `bitnami/` (now "not found") into `bitnamilegacy/`,
+    # which still pulls with no login.
+    #
+    # These images are archived: frozen at MinIO 2025.5.24, no further
+    # updates or security patches. That is the trade being made here -- a
+    # working `docker compose up` today, on a store that nobody maintains.
+    #
+    # (chainguard/minio pulls too, but refuses to start without host-side
+    # ownership work on its data directory, so it is not a swap-in.)
+    #
+    # Bitnami's layout differs from the official image: its own entrypoint
+    # (so no `command:` override), data under /bitnami/minio/data rather
+    # than /data, and it runs as uid 1001. MINIO_DEFAULT_BUCKETS is a
+    # Bitnami addition that creates the bucket on first start.
+    #
+    # A FRESH install needs nothing extra: Docker seeds a new named volume
+    # from the image, ownership included. An install that already has a
+    # volume written by the official image does, because that one is
+    # root-owned and uid 1001 cannot write to it -- the container then
+    # restart-loops on
+    # "/bitnami/minio/data/.root_user: Permission denied". Hand it over
+    # once, with the container stopped:
+    #
+    #   docker compose stop minio
+    #   docker run --rm -v <prefix>_miniodata:/d alpine chown -R 1001:1001 /d
+    #   docker compose up -d minio
+    #
+    # The stored objects themselves are untouched by this and stay readable.
+    image: bitnamilegacy/minio:latest
     container_name: ${TELESRV_DOCKER_PREFIX:-owpengram}-minio
-    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${TELESRV_S3_ACCESS_KEY_ID:-owpengram}
       MINIO_ROOT_PASSWORD: ${TELESRV_S3_SECRET_ACCESS_KEY:-owpengram123}
+      MINIO_DEFAULT_BUCKETS: ${TELESRV_S3_BUCKET:-owpengram-media}
     ports:
       - "127.0.0.1:9000:9000" # <-- якщо S3 використовує тільки локальний бекенд
       - "127.0.0.1:9001:9001" # <-- Web UI Minio (можна залишити без 127.0.0.1, якщо потрібен адмін-веб ззовні)
     volumes:
-      - miniodata:/data
+      - miniodata:/bitnami/minio/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
