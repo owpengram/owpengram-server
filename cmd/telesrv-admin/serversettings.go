@@ -359,7 +359,7 @@ func (s *server) handleServerStatusAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDockerStatusAPI backs the Services tab's live container list
-// (postgres/redis/minio) -- see procctl.Manager.DockerStatus. A "docker
+// (postgres/minio) -- see procctl.Manager.DockerStatus. A "docker
 // compose ps" failure (daemon not running, compose file missing) is
 // reported as an API error rather than an empty list, so the frontend can
 // tell "no services" apart from "couldn't ask Docker".

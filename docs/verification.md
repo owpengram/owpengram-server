@@ -139,7 +139,7 @@ whose version is bumped by the triggers shipped in `0001_init`:
 
 The `user_base` notification is consumed by the read-model listener
 (`internal/store/postgres/read_model_listener.go`), which invalidates the RPC
-projections **and** the shared Redis `user:base` row across instances. So any
+projections **and** the in-process `user:base` cache entry. So any
 later authoritative read — `users.getUsers`, `users.getFullUser`,
 `channels.getChannels`, `channels.getFullChannel`, `messages.getDialogs`, or the
 `users`/`chats` vectors attached to a `getDifference` answer — already carries the
@@ -276,8 +276,8 @@ Reviewer access:
   arrive as an *event* — only as *state*.
 - **The live push can be one beat behind the shared base-user cache.** The
   decision writes the user row inside the verification transaction, bypassing the
-  `users` service and therefore its Redis `user:base` refresh; that cache is
-  dropped cross-instance by the asynchronous `user_base` read-model
+  `users` service and therefore its `user:base` cache refresh; that cache entry is
+  dropped by the asynchronous `user_base` read-model
   notification. `NotifyPeerVerified` runs synchronously right after commit, so in
   the small window before the listener processes the event the pushed `user`
   object can still carry the pre-decision flag. The persisted state is always

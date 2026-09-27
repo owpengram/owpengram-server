@@ -392,8 +392,8 @@ func StartupRun(ctx context.Context, cfg StartupRunConfig) (*StartupRunReport, e
 		}{
 			{name: `telesrv_active_channel_ids_batches_total{outcome="error"}`, label: "batch errors"},
 			{name: `telesrv_active_channel_ids_selectors_total{outcome="error"}`, label: "selector errors"},
-			{name: `telesrv_active_channel_ids_cache_total{outcome="read_error"}`, label: "Redis read errors"},
-			{name: `telesrv_active_channel_ids_cache_total{outcome="write_error"}`, label: "Redis write errors"},
+			{name: `telesrv_active_channel_ids_cache_total{outcome="read_error"}`, label: "cache read errors"},
+			{name: `telesrv_active_channel_ids_cache_total{outcome="write_error"}`, label: "cache write errors"},
 		} {
 			if delta := counterDelta(check.name); delta > 0 {
 				report.Failures = append(report.Failures, fmt.Sprintf("active channel IDs %s: %.0f", check.label, delta))

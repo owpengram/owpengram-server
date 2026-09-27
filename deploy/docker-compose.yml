@@ -5,11 +5,11 @@
 #   关停：  docker compose down          （保留数据卷）
 #   清空：  docker compose down -v        （连数据卷一起删，重置 schema/数据）
 #
-# server 端连接串见 internal/config/config.go 的默认值（localhost:5432 / localhost:6399）。
+# server 端连接串见 internal/config/config.go 的默认值（localhost:5432）。
 #
 # 容器/卷命名可通过 TELESRV_DOCKER_PROJECT / TELESRV_DOCKER_PREFIX 覆盖（默认 owpengram）：
 # start-server.sh 对已存在 telesrv_* 卷、且用户拒绝一次性改名迁移的安装，会把这两个变量
-# 固定设为 telesrv，从而永久保留旧命名，不动用户现有的 telesrv_pgdata / telesrv_redisdata。
+# 固定设为 telesrv，从而永久保留旧命名，不动用户现有的 telesrv_pgdata。
 name: ${TELESRV_DOCKER_PROJECT:-owpengram}
 
 services:
@@ -46,21 +46,6 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U owpengram -d owpengram"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    container_name: ${TELESRV_DOCKER_PREFIX:-owpengram}-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "127.0.0.1:6399:6379" # <-- ЗАХИЩЕНО (доступ тільки з 127.0.0.1)
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -123,7 +108,5 @@ services:
 volumes:
   pgdata:
     name: ${TELESRV_DOCKER_PREFIX:-owpengram}_pgdata
-  redisdata:
-    name: ${TELESRV_DOCKER_PREFIX:-owpengram}_redisdata
   miniodata:
     name: ${TELESRV_DOCKER_PREFIX:-owpengram}_miniodata

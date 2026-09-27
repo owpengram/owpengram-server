@@ -141,7 +141,7 @@ func (s PhoneCodeScope) Valid() bool {
 }
 
 // CodeStore 暂存验证码：phone_code_hash → 作用域 + 手机号 + 验证码，带 TTL。
-// 实现见 store/memory（测试替身）、store/redisstore。
+// 实现见 store/memory。
 type CodeStore interface {
 	// Set 对 scoped code 必须原子替换同作用域旧 hash，保证单作用域至多一个
 	// 活跃验证码；普通登录码仍按 hash 独立保存。

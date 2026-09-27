@@ -67,35 +67,6 @@ services:
       - data
       - server_host_access
 
-  redis:
-    image: redis:7-alpine@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
-    environment:
-      REDIS_PASSWORD: ${TELESRV_REDIS_PASSWORD:?set TELESRV_REDIS_PASSWORD in deploy/docker/.env}
-    command:
-      - sh
-      - -ec
-      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
-    volumes:
-      - redis_data:/data
-    ports:
-      - name: server-host-redis
-        target: 6379
-        published: "${TELESRV_REDIS_HOST_PORT:-16379}"
-        host_ip: 127.0.0.1
-        protocol: tcp
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -qx PONG"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 5s
-    restart: unless-stopped
-    stop_grace_period: 30s
-    logging: *app-logging
-    networks:
-      - data
-      - server_host_access
-
   server:
     <<: *app
     image: ${TELESRV_IMAGE_PREFIX:-ghcr.io/iamxvbaba/gramsrv}/server:${TELESRV_IMAGE_TAG:-main}
@@ -114,9 +85,6 @@ services:
       TELESRV_PUBLIC_WEB_BASE_URL: ${TELESRV_PUBLIC_WEB_BASE_URL:?set TELESRV_PUBLIC_WEB_BASE_URL in deploy/docker/.env}
       TELESRV_PUBLIC_LINK_WEB_ADDR: ${TELESRV_LOCAL_LISTEN_HOST:-127.0.0.1}:${TELESRV_PUBLIC_LINK_PORT:-2401}
       TELESRV_POSTGRES_DSN: ${TELESRV_POSTGRES_DSN:?set TELESRV_POSTGRES_DSN in deploy/docker/.env}
-      TELESRV_REDIS_ADDR: ${TELESRV_REDIS_ADDR:-127.0.0.1:16379}
-      TELESRV_REDIS_PASSWORD: ${TELESRV_REDIS_PASSWORD:?set TELESRV_REDIS_PASSWORD in deploy/docker/.env}
-      TELESRV_REDIS_DB: 0
       TELESRV_ADMIN_API_ADDR: 127.0.0.1:${TELESRV_ADMIN_API_PORT:-2599}
       TELESRV_ADMIN_API_TOKEN: ${TELESRV_ADMIN_API_TOKEN:?set TELESRV_ADMIN_API_TOKEN in deploy/docker/.env}
       TELESRV_DEV_AUTH_CODE: ${TELESRV_DEV_AUTH_CODE:-12345}
@@ -162,8 +130,6 @@ services:
       TELESRV_SERVER_HEALTH_URL_HOST: ${TELESRV_SERVER_HEALTH_URL_HOST:-127.0.0.1}
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - server_state:/var/lib/telesrv
@@ -224,5 +190,4 @@ networks:
 
 volumes:
   postgres_data:
-  redis_data:
   server_state:

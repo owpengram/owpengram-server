@@ -362,16 +362,16 @@ go run ./cmd/telegramloginkeygen -mode rotate-code -dir data/telegram-login
 `rotate-signing` 可分别用于 RS256、ES256、EdDSA；`rotate-code` 保留旧 code key 并新增
 active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别生成不一致的 key ring。
 
-## 4. PostgreSQL、Redis、文件与 seed
+## 4. PostgreSQL、文件与 seed
+
+验证码、限流、共享更新/缓存等易失态由进程内实现承载（`internal/store/memory`）——
+服务器本就单进程运行，无需为此单独部署服务，也无需配置地址或密码。
 
 | 参数 | 类型 / 代码默认值 | 说明与约束 |
 |---|---|---|
 | `TELESRV_POSTGRES_DSN` | secret DSN / `postgres://owpengram:owpengram@127.0.0.1:5432/owpengram?sslmode=disable` | 主业务持久库；生产必须替换开发凭证与 TLS 策略。 |
 | `TELESRV_POSTGRES_MAX_CONNS` | int / `50` | pgxpool 最大连接数；`<=0` 使用 pgx 默认值，该默认通常不足以覆盖生产 outbox/RPC 并发。 |
 | `TELESRV_POSTGRES_MIN_CONNS` | int / `16` | pgxpool 预热最小连接数。 |
-| `TELESRV_REDIS_ADDR` | address / `127.0.0.1:6399` | 验证码、限流、共享更新/缓存易失态使用的 Redis。 |
-| `TELESRV_REDIS_PASSWORD` | secret string / 空 | Redis 密码。 |
-| `TELESRV_REDIS_DB` | int / `0` | Redis 逻辑库编号。 |
 | `TELESRV_LANGPACK_SEED_DIR` | path / `data/langpack` | TDesktop `.strings` 语言包 seed 目录。 |
 | `TELESRV_OFFICIAL_GIFTS_DIR` | path / `data/official-gifts` | `cmd/giftfetch` 生成的只读官方礼物快照；供管理后台选择、验哈希并显式导入。 |
 | `TELESRV_BLOB_DIR` | path / `data/blobs` | 本地开发 blob backend 的媒体字节根目录。 |
@@ -611,4 +611,4 @@ active key。不要手工编辑 manifest 或 PEM，不要在各实例上分别�
 
 ## 12. 生产部署最低检查清单
 
-生产至少应显式检查并替换这些开发值：PostgreSQL DSN 与 TLS、Redis 密码和网络暴露、RSA 私钥持久化、固定开发验证码暴露、Admin 凭证/session key、OTP Webhook/SMTP secret、AI/Mapbox API key、TURN secret 与防火墙端口、公开 URL/scheme 与客户端一致性，以及真机所需的非 loopback SFU/TURN advertise IP。
+生产至少应显式检查并替换这些开发值：PostgreSQL DSN 与 TLS、RSA 私钥持久化、固定开发验证码暴露、Admin 凭证/session key、OTP Webhook/SMTP secret、AI/Mapbox API key、TURN secret 与防火墙端口、公开 URL/scheme 与客户端一致性，以及真机所需的非 loopback SFU/TURN advertise IP。

@@ -2,87 +2,41 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-rem Checks prerequisites (Go, Python 3, and its packages), then hands off to
-rem tui-panel\server-panel.py. Run this instead of that script directly so
-rem missing prerequisites get a clear message instead of a Python traceback.
+rem Builds and runs bin\telesrv-ctl.exe (cmd\telesrv-ctl, wrapping
+rem internal\procctl.Manager) -- Go is the only prerequisite this checks for.
+rem Docker is optional and only checked informationally: absent,
+rem TELESRV_POSTGRES_DSN must already point at a reachable PostgreSQL
+rem instead. Python and tui-panel\server-panel.py remain available as a
+rem richer, optional interactive alternative (see README) -- nothing in this
+rem default path depends on them.
 rem
-rem   owpengram-server.bat         bootstraps .env on a fresh install, starts
-rem                                everything, prints the admin panel URL,
-rem                                and exits -- no prompts. First-time setup
-rem                                (branding, SMTP, the admin password) then
-rem                                happens in that web panel, not here.
-rem   owpengram-server.bat panel   the interactive TUI instead -- stop/
-rem                                restart/logs/.env editing from a menu.
+rem   owpengram-server.bat          bootstraps .env on a fresh install,
+rem                                 starts everything, prints the admin
+rem                                 panel URL, and exits -- no prompts.
+rem   owpengram-server.bat stop     stops both processes.
+rem   owpengram-server.bat status   shows whether each process/container is up.
+rem   owpengram-server.bat restart  rebuilds and relaunches both.
+rem   owpengram-server.bat update   git pull --ff-only, then restart.
+rem   owpengram-server.bat logs     prints the current run's startup log.
 
 echo == Checking prerequisites ==
 
-set "PROBLEMS=0"
-
-rem --- Go ---------------------------------------------------------------
 where go >nul 2>&1
 if errorlevel 1 (
-  echo [WARN] Go is not installed ^(needed to build owpengram-server / owpengram-admin-panel^)
-  echo        Install it from: https://go.dev/dl/
-  set "PROBLEMS=1"
-) else (
-  for /f "delims=" %%v in ('go version') do echo [ok] Go found: %%v
-)
-
-rem --- Python -------------------------------------------------------------
-rem Just checking "where" isn't enough: on Windows, python.exe / python3.exe
-rem can resolve to the Microsoft Store app-execution-alias stub, which sits
-rem on PATH but fails as soon as it's actually run instead of launching real
-rem Python. Confirm each candidate's --version actually succeeds too.
-set "PYTHON="
-where py >nul 2>&1
-if not errorlevel 1 (
-  py -3 --version >nul 2>&1
-  if not errorlevel 1 set "PYTHON=py -3"
-)
-if not defined PYTHON (
-  where python >nul 2>&1
-  if not errorlevel 1 (
-    python --version >nul 2>&1
-    if not errorlevel 1 set "PYTHON=python"
-  )
-)
-
-if not defined PYTHON (
-  echo [WARN] Python 3 is not installed ^(needed to run the server-panel TUI^)
-  echo        Install it from: https://www.python.org/downloads/
-  set "PROBLEMS=1"
-) else (
-  for /f "delims=" %%v in ('!PYTHON! --version 2^>^&1') do echo [ok] Python found: %%v ^(!PYTHON!^)
-)
-
-rem --- Python dependencies --------------------------------------------------
-if defined PYTHON (
-  set "MISSING="
-  for /f "delims=" %%m in ('!PYTHON! tui-panel\check_deps.py') do (
-    if not defined MISSING (set "MISSING=%%m") else (set "MISSING=!MISSING!, %%m")
-  )
-  if defined MISSING (
-    echo [WARN] Missing or outdated Python packages: !MISSING!
-    echo        Install them with: !PYTHON! -m pip install -U -r tui-panel\requirements-panel.txt
-    set "PROBLEMS=1"
-  ) else (
-    echo [ok] Python dependencies OK ^(textual, psutil, cryptography^)
-  )
-)
-
-if "%PROBLEMS%"=="1" (
-  rem Hand off to the winget installer rather than stopping at a shopping list.
-  rem OWPENGRAM_PREREQS_TRIED bounds this to a single retry, so something that
-  rem will not install ends in a message instead of a loop.
+  echo [ERROR] Go is not installed ^(needed to build owpengram-server / owpengram-admin-panel^)
+  echo         Install it from: https://go.dev/dl/
+  rem Hand off to the winget installer rather than stopping at a shopping
+  rem list. OWPENGRAM_PREREQS_TRIED bounds this to a single retry, so
+  rem something that will not install ends in a message instead of a loop.
   if defined OWPENGRAM_PREREQS_TRIED (
     echo.
-    echo [ERROR] prerequisites are still missing after the install attempt -- see the messages above
+    echo [ERROR] Go is still missing after the install attempt -- see the messages above
     pause
     exit /b 1
   )
   if not exist "scripts\install-prereqs.ps1" (
     echo.
-    echo [ERROR] missing prerequisites above -- install them and re-run this script
+    echo [ERROR] install Go and re-run this script
     pause
     exit /b 1
   )
@@ -95,17 +49,38 @@ if "%PROBLEMS%"=="1" (
     pause
     exit /b 1
   )
-  rem winget writes the new PATH to the registry, but this console still holds
-  rem the one it started with -- reload it so the re-check below can see what
-  rem was just installed instead of asking for a fresh terminal.
+  rem winget writes the new PATH to the registry, but this console still
+  rem holds the one it started with -- reload it so the re-check below can
+  rem see what was just installed instead of asking for a fresh terminal.
   for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
   set "OWPENGRAM_PREREQS_TRIED=1"
   echo.
   call "%~f0" %*
   exit /b !errorlevel!
 )
+for /f "delims=" %%v in ('go version') do echo [ok] Go found: %%v
+
+where docker >nul 2>&1
+if errorlevel 1 (
+  echo [info] Docker not found -- PostgreSQL/MinIO won't be started automatically.
+  echo        Either install Docker Desktop, or point TELESRV_POSTGRES_DSN at an
+  echo        already-reachable PostgreSQL instance in .env.
+) else (
+  echo [ok] Docker found.
+)
 
 echo.
-echo [cfg] All prerequisites OK.
+echo [cfg] Building telesrv-ctl...
+go build -o bin\telesrv-ctl.exe .\cmd\telesrv-ctl
+if errorlevel 1 (
+  echo.
+  echo [ERROR] failed to build telesrv-ctl -- see the messages above
+  pause
+  exit /b 1
+)
+
 echo.
-!PYTHON! tui-panel\server-panel.py %*
+bin\telesrv-ctl.exe %*
+set "EXITCODE=%errorlevel%"
+if "%~1"=="" if not "%EXITCODE%"=="0" pause
+exit /b %EXITCODE%

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/store"
 )
 
 const ephemeralShardCount = 64
@@ -103,11 +104,19 @@ func (h *ephemeralCallbackExpiryHeap) Pop() any {
 
 // EphemeralMessageStore shards by peer. A create touches one shard, so the ID
 // and random-ID indexes can be updated atomically without a process-wide lock.
+//
+// It also satisfies store.EphemeralPushBroker (see ephemeral_push.go): the
+// Redis-backed version used Pub/Sub for the "process-to-process online
+// accelerator" store.EphemeralPush describes; pushMu/pushSubscribers give the
+// in-process equivalent.
 type EphemeralMessageStore struct {
 	shards          [ephemeralShardCount]ephemeralShard
 	callbackActions [ephemeralShardCount]ephemeralCallbackActionShard
 	messageCursor   atomic.Uint32
 	callbackCursor  atomic.Uint32
+
+	pushMu          sync.Mutex
+	pushSubscribers []func(context.Context, store.EphemeralPush)
 }
 
 func NewEphemeralMessageStore() *EphemeralMessageStore {

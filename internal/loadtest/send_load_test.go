@@ -16,7 +16,6 @@ import (
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	messageapp "telesrv/internal/app/messages"
@@ -24,8 +23,8 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/mtprotoedge"
 	"telesrv/internal/rpc"
+	"telesrv/internal/store/memory"
 	"telesrv/internal/store/postgres"
-	"telesrv/internal/store/redisstore"
 )
 
 // 第一阶段单机 SLO 目标，来自 docs/message-module.md 的 Next Execution Plan。
@@ -38,7 +37,7 @@ const (
 	diffSampleGoal = 500
 )
 
-// TestMessageSendBaseline 用真实 PostgreSQL + Redis 压测私聊文本发送热路径，
+// TestMessageSendBaseline 用真实 PostgreSQL 压测私聊文本发送热路径，
 // 并发跑 outbox dispatcher 排空在线推送，最后采样 getDifference 读路径。
 //
 // 这是 closed-loop 饱和压测：concurrency 个 worker 各自不停发，直到发满 messages 条。
@@ -46,9 +45,8 @@ const (
 // 固定到达率（open-loop）的版本留作后续细化（见 docs/message-module.md）。
 func TestMessageSendBaseline(t *testing.T) {
 	dsn := os.Getenv("TELESRV_TEST_POSTGRES_DSN")
-	redisAddr := os.Getenv("TELESRV_TEST_REDIS_ADDR")
-	if dsn == "" || redisAddr == "" {
-		t.Skip("set TELESRV_TEST_POSTGRES_DSN and TELESRV_TEST_REDIS_ADDR to run message load baseline")
+	if dsn == "" {
+		t.Skip("set TELESRV_TEST_POSTGRES_DSN to run message load baseline")
 	}
 
 	// 默认用户池取较大值：用户太少会把写集中到少数 dialog/message_box 行造成行锁争用，
@@ -83,24 +81,18 @@ func TestMessageSendBaseline(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	rdb, err := redisstore.Open(ctx, redisAddr, os.Getenv("TELESRV_TEST_REDIS_PASSWORD"), 0)
-	if err != nil {
-		t.Fatalf("open redis: %v", err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-
-	// 装配与 main.go 一致的消息热路径：Redis box_id 分配器 + PG 消息存储 + transactional outbox。
+	// 装配与 main.go 一致的消息热路径：进程内 box_id 分配器 + PG 消息存储 + transactional outbox。
 	userStore := postgres.NewUserStore(pool)
 	updateEventStore := postgres.NewUpdateEventStore(pool)
 	dispatchOutboxStore := postgres.NewDispatchOutboxStore(pool, postgres.WithLeaseTimeout(leaseTimeout))
 	dialogStore := postgres.NewDialogStore(pool)
-	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
+	boxIDAllocator := memory.NewBoxIDAllocator(postgres.NewMessageBoxCounterSource(pool))
 	messageStore := postgres.NewMessageStore(pool, postgres.WithMessageAllocators(boxIDAllocator))
 	svc := messageapp.NewService(messageStore, dialogStore)
 
 	// 创建独立的测试用户池；用随机 salt 隔离历史残留，结束按 FK 依赖序清理。
 	ids := seedUsers(t, ctx, userStore, users)
-	t.Cleanup(func() { cleanup(t, pool, rdb, ids) })
+	t.Cleanup(func() { cleanup(t, pool, ids) })
 
 	// 在线推送 binder 用真实 SessionManager（零连接），PushToUserExceptSession 返回 0，
 	// 让 outbox 走完整 claim→ListAfter→MarkDelivered 的 PG 往返，测排空而非网络 fanout。
@@ -368,10 +360,11 @@ func seedUsers(t *testing.T, ctx context.Context, store *postgres.UserStore, n i
 	return ids
 }
 
-// cleanup 按 FK 依赖序删除测试数据：outbox→events→boxes→private_messages→dialogs→users，
-// 再清 Redis box_id 计数。message_boxes.from_user_id 为 ON DELETE RESTRICT，必须先删盒子。
+// cleanup 按 FK 依赖序删除测试数据：outbox→events→boxes→private_messages→dialogs→users。
+// box_id 分配器现为进程内实现，随进程退出即释放，无需单独清理。
+// message_boxes.from_user_id 为 ON DELETE RESTRICT，必须先删盒子。
 // cleanup 在断言之后运行，出错只告警不影响已得结果。
-func cleanup(t *testing.T, pool *pgxpool.Pool, rdb *redis.Client, ids []int64) {
+func cleanup(t *testing.T, pool *pgxpool.Pool, ids []int64) {
 	t.Helper()
 	ctx := context.Background()
 	stmts := []string{
@@ -386,13 +379,6 @@ func cleanup(t *testing.T, pool *pgxpool.Pool, rdb *redis.Client, ids []int64) {
 		if _, err := pool.Exec(ctx, sql, ids); err != nil {
 			t.Logf("cleanup %q: %v", sql, err)
 		}
-	}
-	keys := make([]string, 0, len(ids))
-	for _, id := range ids {
-		keys = append(keys, fmt.Sprintf("counter:box_id:{%d}", id))
-	}
-	if err := rdb.Del(ctx, keys...).Err(); err != nil {
-		t.Logf("cleanup redis counters: %v", err)
 	}
 }
 

@@ -84,7 +84,6 @@ import (
 	storepkg "telesrv/internal/store"
 	"telesrv/internal/store/memory"
 	"telesrv/internal/store/postgres"
-	"telesrv/internal/store/redisstore"
 	"telesrv/internal/telegramloginhttp"
 	"telesrv/internal/turnsrv"
 	"telesrv/internal/updatecdn"
@@ -701,30 +700,14 @@ func run(logger *zap.Logger) error {
 		}
 	}
 
-	rdb, err := redisstore.Open(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
-	if err != nil {
-		return fmt.Errorf("connect redis: %w", err)
-	}
-	defer func() { _ = rdb.Close() }()
-	metricRegistry.AddGaugeProvider(func() []obsmetrics.GaugeSample {
-		stat := rdb.PoolStats()
-		return []obsmetrics.GaugeSample{
-			{Name: "telesrv_redis_pool_connections", Labels: []obsmetrics.Label{{Name: "state", Value: "total"}}, Value: float64(stat.TotalConns)},
-			{Name: "telesrv_redis_pool_connections", Labels: []obsmetrics.Label{{Name: "state", Value: "idle"}}, Value: float64(stat.IdleConns)},
-			{Name: "telesrv_redis_pool_pending_requests", Value: float64(stat.PendingRequests)},
-			{Name: "telesrv_redis_pool_hits", Value: float64(stat.Hits)},
-			{Name: "telesrv_redis_pool_misses", Value: float64(stat.Misses)},
-			{Name: "telesrv_redis_pool_timeouts", Value: float64(stat.Timeouts)},
-			{Name: "telesrv_redis_pool_wait_count", Value: float64(stat.WaitCount)},
-			{Name: "telesrv_redis_pool_wait_seconds", Value: time.Duration(stat.WaitDurationNs).Seconds()},
-		}
-	})
-	logger.Info("persistence dependencies ready", zap.String("redis", cfg.RedisAddr))
+	rateLimiter := memory.NewRateLimiter()
+	sweeper := memory.NewSweeper()
+	logger.Info("persistence dependencies ready", zap.String("store", "in-process"))
 	if cfg.TelegramLoginEnabled {
 		telegramLoginHTTPHandler, err = telegramloginhttp.NewHandler(telegramloginhttp.Config{
 			Service: telegramLoginService, Tokens: telegramLoginIDTokens,
 			BotUsernames: postgres.NewUserStore(pool),
-			Limiter:      redisstore.NewRateLimiter(rdb), AppName: cfg.PublicAppName,
+			Limiter:      rateLimiter, AppName: cfg.PublicAppName,
 			Logger: logger.Named("telegram-login-http"), TrustedProxyCIDRs: cfg.TelegramLoginTrustedProxyCIDRs,
 			AllowHTTP: cfg.TelegramLoginAllowHTTP,
 		})
@@ -781,8 +764,9 @@ func run(logger *zap.Logger) error {
 		0,
 		cfg.ReadModelVersionCacheMaxEntries,
 	)
-	dialogListSnapshotCache := redisstore.NewDialogListSnapshotCache(rdb, cfg.DialogListSnapshotRedisTTL)
-	activeChannelIDsPageCache := redisstore.NewActiveChannelIDsPageCache(rdb, cfg.ActiveChannelIDsRedisTTL)
+	dialogListSnapshotCache := memory.NewDialogListSnapshotCache(cfg.DialogListSnapshotRedisTTL)
+	activeChannelIDsPageCache := memory.NewActiveChannelIDsPageCache(cfg.ActiveChannelIDsRedisTTL)
+	sweeper.Register(dialogListSnapshotCache, activeChannelIDsPageCache)
 	dispatchOutboxStore := postgres.NewDispatchOutboxStore(pool, postgres.WithLeaseTimeout(cfg.OutboxLeaseTimeout))
 	bootstrapUpdateStore, err := postgres.NewBatchedBootstrapUpdateJobStore(
 		postgres.NewBootstrapUpdateJobStore(pool),
@@ -797,16 +781,17 @@ func run(logger *zap.Logger) error {
 	}
 	defer bootstrapUpdateStore.Close()
 	botAPIUpdateStore := postgres.NewBotAPIUpdateStore(pool)
-	botCallbackStore := redisstore.NewBotCallbackRegistryStore(rdb)
-	ephemeralStore := redisstore.NewEphemeralMessageStore(rdb)
+	botCallbackStore := memory.NewBotCallbackRegistryStore()
+	ephemeralStore := memory.NewEphemeralMessageStore()
+	sweeper.Register(botCallbackStore)
 	ephemeralReportStore := postgres.NewEphemeralReportStore(pool)
 	welcomeMessageStore := postgres.NewWelcomeMessageStore(pool)
 	moderationReportStore := postgres.NewModerationReportStore(pool)
 	authDeliveryReportStore := postgres.NewAuthDeliveryReportStore(pool)
 	clientTelemetryStore := postgres.NewClientTelemetryStore(pool)
-	boxIDAllocator := redisstore.NewBoxIDAllocator(rdb, postgres.NewMessageBoxCounterSource(pool))
-	channelIDAllocator := redisstore.NewChannelIDAllocator(rdb, postgres.NewChannelIDCounterSource(pool))
-	channelMessageIDAllocator := redisstore.NewChannelMessageIDAllocator(rdb, postgres.NewChannelMessageIDCounterSource(pool))
+	boxIDAllocator := memory.NewBoxIDAllocator(postgres.NewMessageBoxCounterSource(pool))
+	channelIDAllocator := memory.NewChannelIDAllocator(postgres.NewChannelIDCounterSource(pool))
+	channelMessageIDAllocator := memory.NewChannelMessageIDAllocator(postgres.NewChannelMessageIDCounterSource(pool))
 	reverseContactStore, err := storepkg.NewBatchedReverseContactStore(
 		postgres.NewContactStore(pool),
 		storepkg.ReverseContactBatchConfig{
@@ -1087,11 +1072,11 @@ func run(logger *zap.Logger) error {
 	helpStore := postgres.NewHelpStore(pool)
 	aiComposeStore := postgres.NewAIComposeStore(pool)
 	tempAuthKeyStore := postgres.NewTempAuthKeyBindingStore(pool)
-	inlineRegistryStore := redisstore.NewInlineRegistryStore(rdb)
-	codeStore := redisstore.NewCodeStore(rdb)
+	inlineRegistryStore := memory.NewInlineRegistryStore()
+	codeStore := memory.NewCodeStore()
+	sweeper.Register(inlineRegistryStore)
 	authDeliveryReportService := authdiagnosticsapp.NewService(codeStore, authDeliveryReportStore)
 	clientTelemetryService := clienttelemetryapp.NewService(clientTelemetryStore)
-	rateLimiter := redisstore.NewRateLimiter(rdb)
 	activeSessions := mtprotoedge.NewSessionManager(logger.Named("mtprotoedge").Named("sessions"))
 	adminService := adminapp.NewService(adminapp.Dependencies{
 		Commands:     adminStore,
@@ -1184,7 +1169,8 @@ func run(logger *zap.Logger) error {
 	botStore := postgres.NewBotStore(pool)
 	// userCache 与 users 服务共享同一实例：bot 元数据写入（version bump）后必须
 	// 失效缓存，否则 TTL 内 getUsers 回旧 first_name/旧 bot_info_version。
-	userCache := redisstore.NewUserCache(rdb, redisstore.DefaultUserCacheTTL)
+	userCache := memory.NewUserCache(memory.DefaultUserCacheTTL)
+	sweeper.Register(userCache)
 	accountLifecycleStore := postgres.NewAccountLifecycleStore(pool)
 	accountOptions := []account.ServiceOption{
 		account.WithReactionSettings(passwordStore),
@@ -1201,6 +1187,7 @@ func run(logger *zap.Logger) error {
 		account.WithEmailSignup(cfg.EmailSignupEnable),
 		account.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes),
 	}
+	go sweeper.Run(ctx, time.Minute)
 	var webhookSender otpdelivery.Sender
 	// EmailSignupEnable also needs a sender: "email as identity" sign-up/login
 	// codes go out on the same loginEmailSender channel as LoginEmailEnable

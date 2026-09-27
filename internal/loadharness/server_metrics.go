@@ -66,13 +66,6 @@ var selectedServerMetrics = map[string]struct{}{
 	"telesrv_postgres_pool_empty_acquire_count":                {},
 	"telesrv_postgres_pool_canceled_acquire_count":             {},
 	"telesrv_postgres_pool_max_connections":                    {},
-	"telesrv_redis_pool_connections":                           {},
-	"telesrv_redis_pool_hits":                                  {},
-	"telesrv_redis_pool_misses":                                {},
-	"telesrv_redis_pool_pending_requests":                      {},
-	"telesrv_redis_pool_timeouts":                              {},
-	"telesrv_redis_pool_wait_count":                            {},
-	"telesrv_redis_pool_wait_seconds":                          {},
 	"telesrv_rpc_db_queries_total":                             {},
 	"telesrv_rpc_db_errors_total":                              {},
 	"telesrv_rpc_db_time_seconds_sum":                          {},
@@ -274,7 +267,7 @@ func isPerMethodOutcomeServerMetric(name string) bool {
 func isStateServerMetric(name string) bool {
 	switch name {
 	case "telesrv_mtproto_sessions", "telesrv_mtproto_logical_sessions",
-		"telesrv_postgres_pool_connections", "telesrv_redis_pool_connections":
+		"telesrv_postgres_pool_connections":
 		return true
 	default:
 		return false

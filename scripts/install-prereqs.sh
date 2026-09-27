@@ -102,7 +102,7 @@ for item in "${NEEDED[@]}"; do
     go)      echo "  - Go 1.${GO_MIN_MINOR}+ (builds owpengram-server and the admin panel)" ;;
     python)  echo "  - Python 3 (runs the server-panel TUI)" ;;
     pydeps)  echo "  - Python packages: textual, psutil, cryptography (into ./.venv)" ;;
-    docker)  echo "  - Docker (runs PostgreSQL, Redis and MinIO)" ;;
+    docker)  echo "  - Docker (runs PostgreSQL and MinIO)" ;;
     openssl) echo "  - OpenSSL (exports the server's RSA public key for clients)" ;;
   esac
 done

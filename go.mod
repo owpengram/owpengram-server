@@ -13,7 +13,6 @@ require (
 	github.com/iamxvbaba/td v1.3.2
 	github.com/jackc/pgerrcode v0.0.0-20220416144525-469b46aa5efa
 	github.com/jackc/pgx/v5 v5.9.2
-	github.com/klauspost/compress v1.19.1
 	github.com/lestrrat-go/jwx/v3 v3.1.1
 	github.com/miguelmota/go-ethereum-hdwallet v0.1.3
 	github.com/minio/minio-go/v7 v7.2.1
@@ -28,7 +27,7 @@ require (
 	github.com/pion/srtp/v3 v3.0.12
 	github.com/pion/transport/v4 v4.0.2
 	github.com/pion/turn/v5 v5.0.12
-	github.com/redis/go-redis/v9 v9.20.0
+	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/yutopp/go-rtmp v0.0.7
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.28.0
@@ -79,6 +78,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.11 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
@@ -108,7 +108,6 @@ require (
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
-	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect

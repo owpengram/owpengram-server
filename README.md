@@ -87,7 +87,7 @@ or sponsored by Telegram or the official Telegram team.
 | ✅ | Collectible usernames and verification | Fragment-style NFT/collectible usernames (mint, transfer, activate/deactivate), the official platform-checkmark flow (`@verifybot`), and a third-party bot-verification mark mechanism (`@marksbot`, icon + description before a name) — the latter is experimental and hidden by default. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
-| ✅ | Admin and operations | Admin API/UI backend, a first-run web setup wizard (server identity, public network fields, optional Bot API gateway, first operator account), named operator accounts with per-section permissions and a wildcard "full access" grant, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), editable welcome and login-code message templates, storage management (usage breakdown, retention rules, guarded purge), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, Redis volatile state, retention workers, pprof/debug hooks, load-test helpers, one-click update with a dry run before it applies, and a bundled TUI server panel as an alternative to the web UI. |
+| ✅ | Admin and operations | Admin API/UI backend, a first-run web setup wizard (server identity, public network fields, optional Bot API gateway, first operator account), named operator accounts with per-section permissions and a wildcard "full access" grant, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), editable welcome and login-code message templates, storage management (usage breakdown, retention rules, guarded purge), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, in-process volatile state, retention workers, pprof/debug hooks, load-test helpers, one-click update with a dry run before it applies, and a bundled TUI server panel as an alternative to the web UI. |
 | ✅ | Desktop, Android, iOS, and Web focus | Telegram Desktop is the primary target, with Android, iOS, and Web compatibility paths actively covered by the same server. |
 
 Some items are compatibility-first or experimental, but they are real open
@@ -121,25 +121,27 @@ cd owpengram-server
 .\owpengram-server.bat    # Windows
 ```
 
-The launcher checks what the server needs — Go 1.25+, Python 3, Docker,
-OpenSSL — and **installs whatever is missing** instead of handing you a
-shopping list: `scripts/install-prereqs.sh` on Arch and Ubuntu/Debian (asks for
-root once, then works unattended) or `scripts/install-prereqs.ps1` on Windows
-via winget. Run either directly with `--dry-run` to see what it would install
-without touching anything.
+The launcher checks for the one thing it truly needs — **Go 1.25+** — and
+**installs it for you** instead of handing you a shopping list:
+`scripts/install-prereqs.sh` on Arch and Ubuntu/Debian (asks for root once,
+then works unattended) or `scripts/install-prereqs.ps1` on Windows via winget.
+Run either directly with `--dry-run` to see what it would install without
+touching anything. Docker is checked too, but only reported — it's optional
+(see below).
 
 > Docker on Windows is the one thing the script will not install for you: its
 > containers are Linux images, so the daemon needs Docker Desktop's WSL2
 > backend. The launcher reports it with a link instead of starting it.
 
-**3. Answer the first-run form**
+**3. Let it bootstrap**
 
-With the prerequisites in place the launcher opens the server panel. On a fresh
-clone it shows a short form instead of the menu — only the values that need a
-human decision, with `.env.example` defaults for everything else; the admin API
-token and session key are generated for you. Confirm it and the panel writes
-`.env`, starts PostgreSQL/Redis, builds both binaries, runs them, and shows the
-admin panel address and password ready to copy.
+With Go in place the launcher builds and runs `telesrv-ctl` (`cmd/telesrv-ctl`,
+plain Go, no Docker or Python involved). On a fresh clone it writes `.env`
+from `.env.example`, generating the admin API token, session key, and — if
+you haven't set one yourself — an admin password, then starts PostgreSQL (if
+Docker is available), builds both binaries, runs them, and prints the admin
+panel address and that password ready to copy. Re-running the launcher later
+is safe: it only builds and (re)launches whatever isn't already running.
 
 **4. Finish setup in the browser**
 
@@ -152,10 +154,10 @@ hand-edited to get going.
 <details>
 <summary><b>🔧 Prefer to do it manually? (click to expand)</b></summary>
 
-Requirements: **Go 1.25+**, **Docker** (or Docker Desktop) for PostgreSQL and
-Redis, and OpenSSL.
+Requirements: **Go 1.25+**, **Docker** (or Docker Desktop) for PostgreSQL,
+and OpenSSL.
 
-**Start the infrastructure** (PostgreSQL + Redis)
+**Start the infrastructure** (PostgreSQL)
 
 ```powershell
 docker compose -f deploy/docker-compose.yml up -d
@@ -279,7 +281,6 @@ variables. Most commonly used variables:
 | `TELESRV_DEV_AUTH_CODE` | `12345` | fixed login code for local development |
 | `TELESRV_AUTH_CODE_MAX_ATTEMPTS` | `5` | wrong-code attempts before the code hash is deleted |
 | `TELESRV_POSTGRES_DSN` | local Compose DSN | PostgreSQL connection string |
-| `TELESRV_REDIS_ADDR` | `127.0.0.1:6399` | Redis address |
 | `TELESRV_BLOB_DIR` | `data/blobs` | local media blob directory |
 | `TELESRV_PUBLIC_LINK_WEB_ADDR` | empty | optional public link landing listener, for example `127.0.0.1:2401` |
 | `TELESRV_BOT_API_ADDR` | empty | optional HTTP Bot API gateway listen address, for example `127.0.0.1:8081` |
@@ -407,7 +408,6 @@ features you enable.
 |---|---|---|
 | 6060 | `127.0.0.1:6060` | pprof debugging endpoint |
 | 5432 | `127.0.0.1:5432` | PostgreSQL |
-| 6399 | `127.0.0.1:6399` | Redis |
 | 9000 | `127.0.0.1:9000` | MinIO S3 API (only when `TELESRV_BLOB_BACKEND=s3` and self-hosting MinIO) |
 | 9001 | `127.0.0.1:9001` | MinIO web console |
 
@@ -500,19 +500,21 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 ## 📂 Repository layout
 
 ```text
-owpengram-server.sh/.bat  one-command launcher (installs prerequisites, then the panel)
+owpengram-server.sh/.bat  one-command launcher (checks/installs Go, then builds+runs telesrv-ctl)
 scripts/install-prereqs.* unattended prerequisite installers (Arch/Ubuntu, Windows)
 cmd/telesrv/              server entrypoint
+cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update (what the launcher runs)
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
-tui-panel/                interactive TUI server panel (setup, start/stop, update, logs, .env editor)
+tui-panel/                optional interactive TUI server panel (start/stop, update, logs, .env editor) --
+                          needs Python 3 in addition to Go; run with `python tui-panel/server-panel.py panel`
 deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
 data/                     bundled language packs and optional seed data
 internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints
 internal/rpc/             TL router and client compatibility handlers
 internal/app/             domain services
 internal/domain/          protocol-independent domain models
-internal/store/           memory/postgres/redis storage backends
+internal/store/           memory/postgres storage backends
 internal/identity/        admin-editable server name, description, and icon
 internal/botapi/          minimal HTTP Bot API gateway
 internal/seed/            bundled seed catalog loaders

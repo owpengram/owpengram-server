@@ -6,7 +6,7 @@ Installs everything owpengram-server.bat checks for, via winget: Go, Python 3
 
 .DESCRIPTION
 Docker is the deliberate exception. It is only reported, with a link: on Windows
-the containers this server needs (PostgreSQL, Redis, MinIO) are Linux images, so
+the containers this server needs (PostgreSQL, MinIO) are Linux images, so
 the daemon has to sit on a Linux kernel -- which means Docker Desktop with WSL2,
 an install that wants a reboot and carries its own licence terms. That is not a
 thing to start behind someone's back.
@@ -127,7 +127,7 @@ foreach ($item in $needed) {
         'openssl' { Write-Host "  - OpenSSL (exports the server's RSA public key for clients)" }
     }
 }
-if ($dockerMissing) { Write-Host '  - Docker (runs PostgreSQL, Redis and MinIO) -- install this one yourself, see below' }
+if ($dockerMissing) { Write-Host '  - Docker (runs PostgreSQL and MinIO) -- install this one yourself, see below' }
 Write-Host ''
 
 if ($DryRun) {
@@ -179,7 +179,7 @@ if ($needed -contains 'pydeps' -or $needed -contains 'python') {
 Write-Host ''
 if ($dockerMissing) {
     Write-Warn 'Docker still has to be installed by hand.'
-    Write-Host "     The server's PostgreSQL, Redis and MinIO are Linux containers, so Windows"
+    Write-Host "     The server's PostgreSQL and MinIO are Linux containers, so Windows"
     Write-Host '     needs Docker Desktop (it brings the WSL2 backend that runs them).'
     Write-Host "     $DockerDocs"
     Write-Host '     Install it, reboot if it asks, then run this script again.'

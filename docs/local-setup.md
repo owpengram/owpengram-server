@@ -41,17 +41,16 @@ Review at least these values in `.env`:
 - `TELESRV_DEV_AUTH_CODE=12345` is convenient for local development but must not
   be exposed as a production login code.
 
-## 3. Start Postgres and Redis
+## 3. Start Postgres
 
-The development compose file exposes Postgres on `127.0.0.1:5432` and Redis on
-`127.0.0.1:6399`, matching the defaults in `.env.example`.
+The development compose file exposes Postgres on `127.0.0.1:5432`, matching the
+default in `.env.example`.
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-If you use external Postgres or Redis, update `TELESRV_POSTGRES_DSN` and
-`TELESRV_REDIS_ADDR` in `.env`.
+If you use an external Postgres, update `TELESRV_POSTGRES_DSN` in `.env`.
 
 ## 4. Build and run the server
 
@@ -76,7 +75,7 @@ After startup, confirm:
 - migrations completed successfully;
 - `data/server_rsa.pem` was created if it did not already exist;
 - MTProto is listening on `TELESRV_LISTEN`;
-- Postgres and Redis connections are healthy;
+- the Postgres connection is healthy;
 - patched clients use the matching DC address, port, and server RSA key.
 
 For the complete configuration reference, see

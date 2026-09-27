@@ -237,7 +237,7 @@ func (m *Manager) StartupLogTail() ([]string, error) {
 	return nil, nil
 }
 
-// --- Docker infrastructure (Postgres/Redis/MinIO) -------------------------
+// --- Docker infrastructure (Postgres/MinIO) --------------------------------
 
 const (
 	postgresWaitTimeout  = 60 * time.Second
@@ -249,14 +249,22 @@ const (
 // pg_isready. Restart/Update run this every time, same as the TUI: it's a
 // no-op when the containers are already up (compose up -d on a running
 // stack just confirms state), but skipping it entirely was the actual bug
-// report this addresses -- a Restart/Update landing while Postgres/Redis/
-// MinIO are down (host reboot, containers manually stopped, etc.) would
+// report this addresses -- a Restart/Update landing while Postgres/MinIO
+// are down (host reboot, containers manually stopped, etc.) would
 // otherwise relaunch owpengram-server straight into a DB-connect failure
 // with no clear signal why, instead of surfacing "Postgres not ready" here.
 func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
 	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
 		return "", nil
+	}
+	// Docker is optional (see cmd/telesrv-ctl and the Go-only launcher
+	// scripts): a checkout with no Docker on PATH is expected to point
+	// TELESRV_POSTGRES_DSN at an already-reachable PostgreSQL instead, so
+	// skip straight past infra bootstrap here rather than failing on an
+	// exec error a self-hoster without Docker has no way to act on.
+	if _, err := exec.LookPath("docker"); err != nil {
+		return "Docker not found on PATH -- skipping infrastructure bootstrap. Make sure TELESRV_POSTGRES_DSN already points at a reachable PostgreSQL.\n", nil
 	}
 
 	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "up", "-d")
@@ -294,7 +302,7 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 // `docker compose ps`. State is Docker's raw container state ("running",
 // "exited", ...); Health is the healthcheck status ("healthy", "starting",
 // "unhealthy") or "" for a container/image with no healthcheck defined --
-// all three services in deploy/docker-compose.yml (postgres/redis/minio)
+// both services in deploy/docker-compose.yml (postgres/minio)
 // declare one, so "" in practice means Docker hasn't reported yet.
 type DockerService struct {
 	Name   string `json:"name"`   // compose service name, e.g. "postgres"
@@ -318,6 +326,9 @@ type dockerComposePsRow struct {
 func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
 	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
 	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
+		return nil, nil
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, nil
 	}
 	st := m.loadState()

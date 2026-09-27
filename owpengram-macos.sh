@@ -1,120 +1,63 @@
 #!/usr/bin/env bash
-# Checks prerequisites (Go, Python 3, and its packages), then hands off to
-# tui-panel/server-panel.py. Run this instead of that script directly so
-# missing prerequisites get a clear message instead of a Python traceback.
+# Builds and runs bin/telesrv-ctl (cmd/telesrv-ctl, wrapping
+# internal/procctl.Manager) -- Go is the only prerequisite this checks for.
+# Docker is optional and only checked informationally: absent,
+# TELESRV_POSTGRES_DSN must already point at a reachable PostgreSQL instead.
+# Python and tui-panel/server-panel.py remain available as a richer,
+# optional interactive alternative (see README) -- nothing in this default
+# path depends on them.
 #
-#   ./owpengram-macos.sh         bootstraps .env on a fresh install, starts
+#   ./owpengram-macos.sh          bootstraps .env on a fresh install, starts
 #                                  everything, prints the admin panel URL,
-#                                  and exits -- no prompts. First-time setup
-#                                  (branding, SMTP, the admin password) then
-#                                  happens in that web panel, not here.
-#   ./owpengram-macos.sh panel   the interactive TUI instead -- stop/
-#                                  restart/logs/.env editing from a menu.
+#                                  and exits -- no prompts.
+#   ./owpengram-macos.sh stop     stops both processes.
+#   ./owpengram-macos.sh status   shows whether each process/container is up.
+#   ./owpengram-macos.sh restart  rebuilds and relaunches both.
+#   ./owpengram-macos.sh update   git pull --ff-only, then restart.
+#   ./owpengram-macos.sh logs     prints the current run's startup log.
 set -uo pipefail
 cd "$(dirname "$0")"
 
 ok()   { echo "[ok] $*"; }
-warn() { echo "[WARN] $*"; }
+info() { echo "[info] $*"; }
 die()  { echo "[ERROR] $*" >&2; exit 1; }
 
 echo "== Checking prerequisites =="
 
-PROBLEMS=0
-
-# --- Go -----------------------------------------------------------------
+# --- Go (mandatory) ---------------------------------------------------------
 if command -v go >/dev/null 2>&1; then
   ok "Go found: $(go version)"
 else
-  warn "Go is not installed (needed to build owpengram-server / owpengram-admin-panel)"
-  echo "       Install it from: https://go.dev/dl/"
-  PROBLEMS=1
-fi
-
-# --- Python ---------------------------------------------------------------
-PYTHON=""
-PYTHON_VERSION=""
-if [[ -x ".venv/bin/python" ]]; then
-  if VER_OUT="$(.venv/bin/python --version 2>&1)" && [[ "$VER_OUT" == Python\ 3* ]]; then
-    PYTHON=".venv/bin/python"
-    PYTHON_VERSION="$VER_OUT"
-  fi
-fi
-if [[ -z "$PYTHON" ]]; then
-  for cand in python3 python; do
-    if command -v "$cand" >/dev/null 2>&1; then
-      if VER_OUT="$("$cand" --version 2>&1)" && [[ "$VER_OUT" == Python\ 3* ]]; then
-        PYTHON="$cand"
-        PYTHON_VERSION="$VER_OUT"
-        break
-      fi
-    fi
-  done
-fi
-
-if [[ -z "$PYTHON" ]]; then
-  warn "Python 3 is not installed (needed to run the server-panel TUI)"
-  echo "       Install it from: https://www.python.org/downloads/ (or brew install python)"
-  PROBLEMS=1
-else
-  ok "Python found: ${PYTHON_VERSION} (${PYTHON})"
-fi
-
-# --- Python dependencies ----------------------------------------------------
-if [[ -n "$PYTHON" ]]; then
-  MISSING="$("$PYTHON" tui-panel/check_deps.py)"
-  if [[ -n "$MISSING" ]]; then
-    warn "Missing or outdated Python packages: $(echo "$MISSING" | tr '\n' ' ')"
-    PROBLEMS=1
-  else
-    ok "Python dependencies OK (textual, psutil, cryptography)"
-  fi
-fi
-
-# --- Docker Desktop ---------------------------------------------------------
-if ! command -v docker >/dev/null 2>&1; then
-  warn "Docker is not installed (needed to run PostgreSQL, Redis and MinIO)"
-  echo "       Install Docker Desktop for Mac: https://docs.docker.com/desktop/install/mac-install/"
-  PROBLEMS=1
-fi
-
-if [[ "$PROBLEMS" -ne 0 ]]; then
-  echo
+  echo "[ERROR] Go is not installed (needed to build owpengram-server / owpengram-admin-panel)"
+  echo "        Install it from: https://go.dev/dl/ (or brew install go)"
   if [[ -n "${OWPENGRAM_PREREQS_TRIED:-}" ]]; then
-    die "Prerequisites are still missing after the install attempt -- see the messages above."
+    die "Go is still missing after the install attempt -- see the messages above"
   fi
-
-  echo "== Installing missing prerequisites via Homebrew =="
   if ! command -v brew >/dev/null 2>&1; then
-    die "Homebrew is not installed. Please install Homebrew (https://brew.sh/) or install the prerequisites manually."
+    die "Homebrew is not installed. Install Homebrew (https://brew.sh/) or Go manually, then re-run this script."
   fi
-
-  if ! command -v go >/dev/null 2>&1; then
-    echo "[..] brew install go"
-    brew install go
+  echo "== Installing Go via Homebrew =="
+  if ! brew install go; then
+    die "could not install Go -- see the messages above"
   fi
-
-  if [[ -z "$PYTHON" ]]; then
-    echo "[..] brew install python3"
-    brew install python3
-  fi
-
-  # Attempt to create venv and install Python dependencies if needed
-  if [[ -n "$PYTHON" || -x "$(command -v python3)" ]]; then
-    ACTUAL_PYTHON="${PYTHON:-python3}"
-    MISSING="$("$ACTUAL_PYTHON" tui-panel/check_deps.py 2>/dev/null || echo "missing")"
-    if [[ -n "$MISSING" ]]; then
-      echo "[..] Setting up Python virtual environment in .venv/"
-      "$ACTUAL_PYTHON" -m venv .venv
-      .venv/bin/pip install --quiet --upgrade pip
-      .venv/bin/pip install --quiet -r tui-panel/requirements-panel.txt
-    fi
-  fi
-
   echo
   OWPENGRAM_PREREQS_TRIED=1 exec "$0" "$@"
 fi
 
+# --- Docker (optional, informational only) ----------------------------------
+if command -v docker >/dev/null 2>&1; then
+  ok "Docker found."
+else
+  info "Docker not found -- PostgreSQL/MinIO won't be started automatically."
+  echo "       Install Docker Desktop for Mac (https://docs.docker.com/desktop/install/mac-install/),"
+  echo "       or point TELESRV_POSTGRES_DSN at an already-reachable PostgreSQL instance in .env."
+fi
+
 echo
-echo "[cfg] All prerequisites OK."
+echo "[cfg] Building telesrv-ctl..."
+if ! go build -o bin/telesrv-ctl ./cmd/telesrv-ctl; then
+  die "failed to build telesrv-ctl -- see the messages above"
+fi
+
 echo
-exec "$PYTHON" tui-panel/server-panel.py "$@"
+exec bin/telesrv-ctl "$@"

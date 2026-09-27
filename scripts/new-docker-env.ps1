@@ -143,7 +143,6 @@ $values = [ordered]@{
     TELESRV_BUILD_DATE                      = [DateTime]::UtcNow.ToString("o")
     POSTGRES_PASSWORD                       = $postgresPassword
     TELESRV_POSTGRES_DSN                    = "postgres://telesrv:${postgresPassword}@127.0.0.1:15432/telesrv_main?sslmode=disable"
-    TELESRV_REDIS_PASSWORD                  = New-HexSecret 32
     TELESRV_ADMIN_API_TOKEN                 = New-HexSecret 32
     TELESRV_ADMIN_UI_PASSWORD               = New-HexSecret 24
     TELESRV_ADMIN_SESSION_KEY               = New-HexSecret 32

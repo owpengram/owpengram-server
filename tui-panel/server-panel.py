@@ -164,8 +164,8 @@ class Status:
     admin_pid: int | None
     admin_alive: bool
     containers: list[tuple[str, str | None]]
-    # Whether Postgres and Redis -- the two containers nothing here works
-    # without -- both actually report "running", not just exist. Separate
+    # Whether Postgres -- the one container nothing here works without --
+    # actually reports "running", not just exists. Separate
     # from server_alive/admin_alive on purpose: a Go process can stay alive
     # as an OS process for a good while after losing its database, so PID
     # aliveness alone was reporting a deployment as fine when Docker (e.g.
@@ -205,14 +205,12 @@ class ServerManager:
         # shows something sensible even before Start has ever run.
         prefix = self.cached_docker_naming() or state.get("docker_prefix") or "owpengram"
         postgres_state = self.container_status(f"{prefix}-postgres")
-        redis_state = self.container_status(f"{prefix}-redis")
         containers = [
             (f"{prefix}-postgres", postgres_state),
-            (f"{prefix}-redis", redis_state),
         ]
         # MinIO is optional (only relevant when TELESRV_BLOB_BACKEND=s3 points
         # at the self-hosted container rather than AWS S3), so unlike
-        # postgres/redis above it's only added to the list when the container
+        # postgres above it's only added to the list when the container
         # actually exists -- no "not created" row cluttering a deployment that
         # never uses it.
         minio_name = f"{prefix}-minio"
@@ -224,7 +222,7 @@ class ServerManager:
             server_alive=pid_alive(server_pid),
             admin_pid=admin_pid,
             admin_alive=pid_alive(admin_pid),
-            docker_healthy=(postgres_state == "running" and redis_state == "running"),
+            docker_healthy=(postgres_state == "running"),
             containers=containers,
         )
 
@@ -809,7 +807,7 @@ def quickstart() -> int:
         print("[ok] Already running.")
     else:
         if status.running:
-            # The binaries are alive but Postgres/Redis aren't -- Docker
+            # The binaries are alive but Postgres isn't -- Docker
             # Desktop not up yet, a container that crashed, whatever the
             # cause, the running processes have been failing every database
             # call. Stop them first: launching the fresh ones below without

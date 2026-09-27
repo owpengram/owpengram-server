@@ -74,7 +74,6 @@ case "$command_name" in
     require_value TELESRV_PUBLIC_BASE_URL
     require_value TELESRV_PUBLIC_WEB_BASE_URL
     require_secret TELESRV_POSTGRES_DSN
-    require_secret TELESRV_REDIS_PASSWORD
     require_secret TELESRV_ADMIN_API_TOKEN
     require_secret TELESRV_TURN_SECRET
     initialize_server_key

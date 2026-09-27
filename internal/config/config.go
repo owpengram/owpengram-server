@@ -191,13 +191,6 @@ type Config struct {
 	PostgresMaxConns int
 	// PostgresMinConns 是启动时预热的 pgxpool 连接数，降低 TDesktop 冷启动并发 RPC 的建连等待。
 	PostgresMinConns int
-	// RedisAddr 是高频易失态（验证码、限流计数、update 队列）的 Redis 地址。
-	RedisAddr string
-	// RedisPassword 是 Redis 密码；开发默认空。
-	RedisPassword string
-	// RedisDB 是 Redis 逻辑库编号。
-	RedisDB int
-
 	// DevAuthCode 是开发固定验证码；生产短信/风控不在当前范围内。
 	DevAuthCode string
 	// WelcomeMessagePhoneTemplate/WelcomeMessageEmailTemplate are the
@@ -227,7 +220,7 @@ type Config struct {
 	AuthCodeMaxAttempts int
 	// AuthCodePhoneRateLimit / AuthCodeAuthKeyRateLimit 对未授权验证码签发按规范化手机号摘要
 	// 与连接实际 raw auth_key 分别限流。两个维度共用 AuthCodeRateWindow；<=0 关闭对应维度。
-	// 手机号只以 SHA-256 摘要进入限流 key，禁止把原文写入 Redis key 或日志。
+	// 手机号只以 SHA-256 摘要进入限流 key，禁止把原文写入限流 key 或日志。
 	AuthCodePhoneRateLimit   int
 	AuthCodeAuthKeyRateLimit int
 	AuthCodeRateWindow       time.Duration
@@ -495,13 +488,15 @@ type Config struct {
 	DialogListSnapshotCacheMaxEntries int
 	DialogListSnapshotCacheMaxHeaders int64
 	DialogListSnapshotCacheTTL        time.Duration
-	// DialogListSnapshotRedisTTL controls the cross-process, version-addressed
-	// materialized owner snapshot lifetime. Correctness comes from durable read-model
-	// generations rather than this TTL.
+	// DialogListSnapshotRedisTTL controls the shared L2 in-process,
+	// version-addressed materialized owner snapshot lifetime (the field name
+	// predates removing Redis; the backing store is now internal/store/memory).
+	// Correctness comes from durable read-model generations rather than this TTL.
 	DialogListSnapshotRedisTTL time.Duration
 	// ActiveChannelIDs* controls the session-readiness owner membership page.
-	// L1 and Redis share the exact durable-generation/page identity; Redis miss
-	// uses a bounded synchronous multi-owner PostgreSQL batch.
+	// L1 and the shared L2 in-process cache share the exact
+	// durable-generation/page identity; an L2 miss uses a bounded synchronous
+	// multi-owner PostgreSQL batch.
 	ActiveChannelIDsCacheMaxEntries int
 	ActiveChannelIDsCacheTTL        time.Duration
 	ActiveChannelIDsRedisTTL        time.Duration
@@ -1061,9 +1056,6 @@ func Load() (Config, error) {
 		PostgresDSN:      envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable"),
 		PostgresMaxConns: envIntOr("TELESRV_POSTGRES_MAX_CONNS", 50),
 		PostgresMinConns: envIntOr("TELESRV_POSTGRES_MIN_CONNS", 16),
-		RedisAddr:        envOr("TELESRV_REDIS_ADDR", "127.0.0.1:6399"), // 同理避开 localhost→IPv6 回退延迟
-		RedisPassword:    envOr("TELESRV_REDIS_PASSWORD", ""),
-		RedisDB:          envIntOr("TELESRV_REDIS_DB", 0),
 
 		DevAuthCode:                 envOr("TELESRV_DEV_AUTH_CODE", "12345"),
 		WelcomeMessagePhoneTemplate: envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),

@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Database, Download, HardDrive, ImageOff, ImagePlus, Layers, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Database, Download, HardDrive, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
@@ -509,7 +509,7 @@ function sleep(ms: number): Promise<void> {
 const STARTUP_LOG_STEPS: { match: RegExp; label: string }[] = [
   { match: /telesrv starting/, label: "Starting server process" },
   { match: /PostgreSQL schema migrated/, label: "Applying database migrations" },
-  { match: /persistence dependencies ready/, label: "Connecting to Postgres and Redis" },
+  { match: /persistence dependencies ready/, label: "Connecting to Postgres" },
   { match: /blob backend ready/, label: "Connecting to media storage" },
   { match: /media seed phase complete phase=reactions/, label: "Seeded reactions" },
   { match: /media seed phase complete phase=sticker_sets/, label: "Seeded sticker sets" },
@@ -692,7 +692,6 @@ function ServiceCard({
 
 const dockerServiceIcon: Record<string, React.ReactNode> = {
   postgres: <Database size={18} />,
-  redis: <Layers size={18} />,
   minio: <HardDrive size={18} />
 };
 
