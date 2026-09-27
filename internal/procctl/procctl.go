@@ -86,10 +86,15 @@ type State struct {
 func (m *Manager) loadState() State {
 	var st State
 	data, err := os.ReadFile(filepath.Join(m.Root, stateFileName))
-	if err != nil {
-		return st
+	if err == nil {
+		_ = json.Unmarshal(data, &st)
 	}
-	_ = json.Unmarshal(data, &st)
+	// Applied whether or not the state file exists yet -- a brand-new
+	// install (no .server_panel.json at all) used to fall through with
+	// DockerPrefix == "", which turns "-postgres" into a bare
+	// leading-dash argument that docker's CLI parses as a flag
+	// ("unknown shorthand flag: 'p' in -postgres") instead of a
+	// container name.
 	if st.DockerProject == "" {
 		st.DockerProject = "owpengram"
 	}
@@ -282,7 +287,7 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 
 	deadline := time.Now().Add(postgresWaitTimeout)
 	for {
-		pgCmd := exec.CommandContext(ctx, "docker", "exec", st.DockerPrefix+"-postgres", "pg_isready", "-U", "telesrv", "-d", "telesrv")
+		pgCmd := exec.CommandContext(ctx, "docker", "exec", st.DockerPrefix+"-postgres", "pg_isready", "-U", "owpengram", "-d", "owpengram")
 		hideWindow(pgCmd)
 		if pgCmd.Run() == nil {
 			return log + "\nPostgreSQL ready\n", nil
