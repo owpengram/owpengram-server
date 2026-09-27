@@ -16,6 +16,7 @@ import (
 	"telesrv/internal/app/files"
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
+	"telesrv/internal/embeddedpg"
 	"telesrv/internal/links"
 )
 
@@ -183,6 +184,17 @@ type Config struct {
 	// granting or dropping rights.
 	AdminScopedTokens []AdminScopedToken
 
+	// Edition 是 "standard"（默认，Postgres/MinIO 跑在 Docker，二进制裸进程运行）还是
+	// "portable"（内嵌 Postgres 由 telesrv 自己启动/停止，blob 用 localfs，完全不需要
+	// Docker）。见 internal/embeddedpg。portable 下 PostgresDSN 会被 main.go 启动内嵌
+	// Postgres 后得到的连接串覆盖，这里的默认值不生效。
+	Edition string
+	// EmbeddedPostgresDataDir 是 portable edition 下内嵌 Postgres 的数据目录（相对路径
+	// 相对当前工作目录解析，和其它 data/* 路径一致）。standard edition 下不使用。
+	EmbeddedPostgresDataDir string
+	// EmbeddedPostgresPort 是 portable edition 下内嵌 Postgres 监听的本机端口，与 5432
+	// 默认值分开，避免和同机可能还在跑的 Docker/系统 Postgres 撞端口。
+	EmbeddedPostgresPort int
 	// PostgresDSN 是业务数据（auth_key / user / authorization 等）持久化的 PostgreSQL 连接串。
 	// 依赖由 deploy/docker-compose.yml 启动；职责划分见 docs/persistence-layer.md。
 	PostgresDSN string
@@ -1053,6 +1065,9 @@ func Load() (Config, error) {
 		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost
 		// 建连 1.0s vs 127.0.0.1 6ms）。冷连接洪峰下池扩容的新连接各等 1s → pre-handler 惊群卡顿。
 		// 生产由 TELESRV_POSTGRES_DSN 覆盖；该默认值仅作用于本地开发。
+		Edition:                 strings.ToLower(strings.TrimSpace(envOr("TELESRV_EDITION", "standard"))),
+		EmbeddedPostgresDataDir: envOr("TELESRV_EMBEDDED_POSTGRES_DIR", "data/postgres"),
+		EmbeddedPostgresPort:    envIntOr("TELESRV_EMBEDDED_POSTGRES_PORT", 15433),
 		PostgresDSN:      envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable"),
 		PostgresMaxConns: envIntOr("TELESRV_POSTGRES_MAX_CONNS", 50),
 		PostgresMinConns: envIntOr("TELESRV_POSTGRES_MIN_CONNS", 16),
@@ -1319,6 +1334,20 @@ func Load() (Config, error) {
 		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),
 		LiveStreamSegmentKeep: envIntOr("TELESRV_LIVESTREAM_SEGMENT_KEEP", 32),
 	}
+	// portable edition: PostgresDSN always points at the embedded server
+	// cmd/telesrv starts itself (see internal/embeddedpg) -- whatever
+	// TELESRV_POSTGRES_DSN happens to be set to is ignored, the same way
+	// TELESRV_BLOB_BACKEND effectively can't be anything but localfs there
+	// (see cmd/telesrv/main.go and cmd/telesrv-admin/main.go, which force
+	// it). cmd/telesrv-admin computes the identical DSN here without ever
+	// starting its own embedded server -- there must be exactly one.
+	if cfg.Edition == "portable" {
+		cfg.PostgresDSN = embeddedpg.DSN(cfg.EmbeddedPostgresPort)
+		// No MinIO in portable edition (no Docker at all) -- localfs is the
+		// only backend that can work, regardless of what TELESRV_BLOB_BACKEND
+		// says.
+		cfg.BlobBackendKind = "localfs"
+	}
 	if err := validateLoginEmailConfig(cfg); err != nil {
 		return Config{}, err
 	}
@@ -1351,6 +1380,11 @@ func Load() (Config, error) {
 	}
 	if err := validateBlobStorageConfig(cfg); err != nil {
 		return Config{}, err
+	}
+	switch cfg.Edition {
+	case "standard", "portable":
+	default:
+		return Config{}, fmt.Errorf("TELESRV_EDITION must be \"standard\" or \"portable\", got %q", cfg.Edition)
 	}
 	if err := validateAccountRatingConfig(cfg); err != nil {
 		return Config{}, err

@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -29,9 +30,12 @@ func main() {
 	// install, otherwise just make sure everything is up -- same default
 	// entry point tui-panel/server-panel.py's quickstart() is for that
 	// script.
+	args := flag.Args()
 	command := "start"
-	if args := flag.Args(); len(args) > 0 {
+	var commandArgs []string
+	if len(args) > 0 {
 		command = args[0]
+		commandArgs = args[1:]
 	}
 
 	m := procctl.NewManager(*root)
@@ -52,6 +56,8 @@ func main() {
 		err = cmdLogs(m)
 	case "update":
 		err = cmdUpdate(ctx, m)
+	case "set-edition":
+		err = cmdSetEdition(m, commandArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "telesrv-ctl: unknown command %q\n\n", command)
 		usage()
@@ -70,14 +76,19 @@ Usage:
   telesrv-ctl [-root PATH] <command>
 
 Commands:
-  start    bootstrap .env on a fresh install, then build and launch
-           whatever isn't already running (safe to run repeatedly)
-  stop     stop owpengram-server and owpengram-admin-panel
-  restart  rebuild and relaunch both from the current working tree
-  status   show whether each process (and, if Docker is in use, each
-           container) is up
-  logs     print the current run's startup log
-  update   git pull --ff-only, then rebuild and relaunch both
+  start        bootstrap .env on a fresh install (asking once whether to
+               use Docker for PostgreSQL/MinIO, or run a fully portable
+               install with an embedded PostgreSQL and no Docker at all),
+               then build and launch whatever isn't already running
+               (safe to run repeatedly)
+  stop         stop owpengram-server and owpengram-admin-panel
+  restart      rebuild and relaunch both from the current working tree
+  status       show whether each process (and, if Docker is in use, each
+               container) is up
+  logs         print the current run's startup log
+  update       git pull --ff-only, then rebuild and relaunch both
+  set-edition  standard|portable -- change the edition choice made at
+               start without re-prompting for it
 
 `)
 }
@@ -86,6 +97,9 @@ func cmdStart(ctx context.Context, m *procctl.Manager) error {
 	generatedPassword, err := m.BootstrapEnv()
 	if err != nil {
 		return fmt.Errorf("bootstrap .env: %w", err)
+	}
+	if err := resolveEdition(m); err != nil {
+		return err
 	}
 
 	fmt.Println("== Starting OwpenGram ==")
@@ -113,6 +127,91 @@ func cmdStart(ctx context.Context, m *procctl.Manager) error {
 	fmt.Println()
 	fmt.Println("For the interactive TUI (stop/restart/logs/.env editing) instead: python tui-panel/server-panel.py panel")
 	return nil
+}
+
+func cmdSetEdition(m *procctl.Manager, args []string) error {
+	if len(args) != 1 || (args[0] != "standard" && args[0] != "portable") {
+		return fmt.Errorf("usage: telesrv-ctl set-edition standard|portable")
+	}
+	if err := m.SetEdition(args[0]); err != nil {
+		return err
+	}
+	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", args[0])
+	return nil
+}
+
+// resolveEdition makes sure TELESRV_EDITION is set before Start ever needs
+// it, asking interactively when stdin is a real terminal and no choice was
+// made yet, or picking automatically (and saying so) for a non-interactive
+// run -- e.g. a scripted install, or a launcher double-click on a console
+// that hasn't attached a real terminal.
+func resolveEdition(m *procctl.Manager) error {
+	if _, ok := m.Edition(); ok {
+		return nil
+	}
+	dockerAvailable := m.DockerAvailable()
+	// Docker available: "standard" is the existing default behaviour, most
+	// self-hosters already have Docker if they got this far. No Docker:
+	// "portable" needs nothing else installed at all.
+	recommended := "standard"
+	if !dockerAvailable {
+		recommended = "portable"
+	}
+
+	var edition string
+	if isInteractiveTerminal() {
+		fmt.Println("How should this install get PostgreSQL and blob storage?")
+		if dockerAvailable {
+			fmt.Println("  1) Standard (recommended) -- PostgreSQL and MinIO run in Docker")
+		} else {
+			fmt.Println("  1) Standard -- needs Docker, which was not found on PATH; install it to use this")
+		}
+		fmt.Println("  2) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
+		fmt.Printf("Choice [%s]: ", editionMenuDefault(recommended))
+		reader := bufio.NewReader(os.Stdin)
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		switch line {
+		case "":
+			edition = recommended
+		case "1", "standard":
+			if !dockerAvailable {
+				return fmt.Errorf("docker was not found on PATH -- install Docker, or choose 2 (portable)")
+			}
+			edition = "standard"
+		case "2", "portable":
+			edition = "portable"
+		default:
+			return fmt.Errorf("unrecognized choice %q", line)
+		}
+	} else {
+		edition = recommended
+		fmt.Printf("[cfg] No TTY attached -- defaulting to edition %q (%s). Change later with `telesrv-ctl set-edition standard|portable`.\n",
+			edition, map[bool]string{true: "Docker available", false: "Docker not found"}[dockerAvailable])
+	}
+
+	if err := m.SetEdition(edition); err != nil {
+		return fmt.Errorf("save edition: %w", err)
+	}
+	return nil
+}
+
+func editionMenuDefault(edition string) string {
+	if edition == "standard" {
+		return "1"
+	}
+	return "2"
+}
+
+// isInteractiveTerminal reports whether stdin looks like a real terminal
+// rather than a pipe/redirect -- the no-extra-dependency way to do this in
+// Go (golang.org/x/term isn't otherwise a dependency of this repo).
+func isInteractiveTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return stat.Mode()&os.ModeCharDevice != 0
 }
 
 func cmdStop(m *procctl.Manager) error {

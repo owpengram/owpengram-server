@@ -18,6 +18,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zapio"
 
 	"github.com/iamxvbaba/td/clock"
 	"github.com/iamxvbaba/td/exchange"
@@ -71,6 +72,7 @@ import (
 	"telesrv/internal/botapi"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
+	"telesrv/internal/embeddedpg"
 	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
 	obsmetrics "telesrv/internal/observability/metrics"
@@ -622,9 +624,33 @@ func run(logger *zap.Logger) error {
 	// goroutine/锁竞争的定位全靠此端点。早于重负载初始化启动，连 seed/预热阶段也可剖析。
 	startDebugServer(ctx, cfg.DebugAddr, metricRegistry, logger)
 
+	// portable edition: telesrv owns the embedded Postgres server's whole
+	// lifecycle -- started here, before anything opens a connection to it;
+	// stopped by the deferred Stop() below, which (defer being LIFO) only
+	// runs after the pgx pool's own `defer pool.Close()` further down, so
+	// the server never gets torn down while a connection is still open.
+	// cfg.PostgresDSN already points at it (see config.Load) by the time we
+	// get here. A nil *embeddedpg.Server (standard edition) makes Stop() a
+	// no-op.
+	var embeddedPostgres *embeddedpg.Server
+	if cfg.Edition == "portable" {
+		pgLog := &zapio.Writer{Log: logger.Named("embeddedpg"), Level: zap.DebugLevel}
+		embeddedPostgres, err = embeddedpg.Start(cfg.EmbeddedPostgresDataDir, cfg.EmbeddedPostgresPort, pgLog)
+		if err != nil {
+			return fmt.Errorf("start embedded postgres: %w", err)
+		}
+		logger.Info("embedded postgres ready", zap.Int("port", cfg.EmbeddedPostgresPort), zap.String("data_dir", cfg.EmbeddedPostgresDataDir))
+	}
+	defer func() {
+		if err := embeddedPostgres.Stop(); err != nil {
+			logger.Warn("embedded postgres stop failed", zap.Error(err))
+		}
+	}()
+
 	// 持久化依赖：先迁移 schema，再建立连接。auth key 与业务事实落 PostgreSQL，
 	// Redis 只承载可重建的短 TTL 状态、缓存、计数器和限流。
-	// 依赖由 deploy/docker-compose.yml 启动；连不上则启动失败（开发期须先 docker compose up）。
+	// standard edition 由 deploy/docker-compose.yml 启动（连不上则启动失败，开发期须先
+	// docker compose up）；portable edition 由上面的内嵌 Postgres 提供。
 	migrationStatus, err := postgres.MigrateAndStatus(cfg.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("postgres migrate: %w", err)

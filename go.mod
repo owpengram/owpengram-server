@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/ethereum/go-ethereum v1.17.6
+	github.com/fergusstrange/embedded-postgres v1.34.0
 	github.com/fxamacker/cbor/v2 v2.8.0
 	github.com/go-faster/errors v0.7.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
@@ -87,6 +88,7 @@ require (
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.5 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
@@ -111,6 +113,7 @@ require (
 	github.com/valyala/fastjson v1.6.10 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	github.com/yuin/goldmark v1.8.4 // indirect
 	github.com/yutopp/go-amf0 v0.1.0 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

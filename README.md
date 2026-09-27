@@ -136,12 +136,24 @@ touching anything. Docker is checked too, but only reported — it's optional
 **3. Let it bootstrap**
 
 With Go in place the launcher builds and runs `telesrv-ctl` (`cmd/telesrv-ctl`,
-plain Go, no Docker or Python involved). On a fresh clone it writes `.env`
-from `.env.example`, generating the admin API token, session key, and — if
-you haven't set one yourself — an admin password, then starts PostgreSQL (if
-Docker is available), builds both binaries, runs them, and prints the admin
-panel address and that password ready to copy. Re-running the launcher later
-is safe: it only builds and (re)launches whatever isn't already running.
+plain Go, no Python involved). On a fresh clone it writes `.env` from
+`.env.example`, generating the admin API token, session key, and — if you
+haven't set one yourself — an admin password, then asks **once** how this
+install should get PostgreSQL and blob storage:
+
+- **Standard (recommended when Docker is available)** — PostgreSQL and
+  MinIO run in Docker, same as before.
+- **Portable** — no Docker at all: `telesrv-ctl` starts and owns a real,
+  natively-compiled embedded PostgreSQL server (see `internal/embeddedpg`),
+  and blob storage is local disk instead of MinIO.
+
+The choice is shown disabled with an explanation if Docker isn't installed,
+is remembered in `.env` (`TELESRV_EDITION`) so you're never asked again,
+and can be changed later with `telesrv-ctl set-edition standard|portable`.
+Either way `telesrv-ctl` then builds both binaries, runs them, and prints
+the admin panel address and password ready to copy. Re-running the launcher
+later is safe: it only builds and (re)launches whatever isn't already
+running.
 
 **4. Finish setup in the browser**
 
@@ -515,6 +527,7 @@ internal/rpc/             TL router and client compatibility handlers
 internal/app/             domain services
 internal/domain/          protocol-independent domain models
 internal/store/           memory/postgres storage backends
+internal/embeddedpg/      embedded PostgreSQL for the portable edition (TELESRV_EDITION=portable)
 internal/identity/        admin-editable server name, description, and icon
 internal/botapi/          minimal HTTP Bot API gateway
 internal/seed/            bundled seed catalog loaders

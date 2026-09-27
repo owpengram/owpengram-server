@@ -67,11 +67,11 @@ func (m *Manager) Stop() string {
 	st := m.loadState()
 	var log string
 	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID)
+		killPID(st.ServerPID, true)
 		log += fmt.Sprintf("owpengram-server (pid=%d) stopped.\n", st.ServerPID)
 	}
 	if pidAlive(st.AdminPID) {
-		killPID(st.AdminPID)
+		killPID(st.AdminPID, false)
 		log += fmt.Sprintf("owpengram-admin-panel (pid=%d) stopped.\n", st.AdminPID)
 	}
 	if log == "" {
