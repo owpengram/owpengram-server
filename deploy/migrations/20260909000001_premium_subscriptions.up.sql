@@ -177,7 +177,7 @@ INSERT INTO public.users (
 ) VALUES (
     1250000017, 8117747505266431888, '', 'Premium Bot', '', 'premiumbot', '',
     now(), now(), true, false,
-    'Buy Premium for yourself or gift it to someone else with Telegram Stars.',
+    'Buy Premium for yourself or gift it to someone else with OwpenGram Stars.',
     0, 0, true, 1, NULL, 0, 0, false, 0, 0, false, 0, 0
 )
 ON CONFLICT (id) DO UPDATE SET
