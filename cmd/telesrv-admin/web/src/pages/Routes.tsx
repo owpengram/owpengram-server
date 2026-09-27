@@ -33,6 +33,7 @@ import { BotVerificationRequestPage } from "./BotVerificationRequestPage";
 import { VerificationDetailPage } from "./VerificationDetailPage";
 import { VerificationPage } from "./VerificationPage";
 import {
+  DonationsHiddenGate,
   PermissionGate,
   ThirdPartyVerificationHiddenGate,
   permissionAccountsRead,
@@ -173,7 +174,11 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
     return gate(permissionPremiumManage, <PremiumPlansPage />);
   }
   if (route.path === "/donations") {
-    return gate(permissionDonationsManage, <DonationsPage />);
+    return (
+      <DonationsHiddenGate navigate={navigate}>
+        {gate(permissionDonationsManage, <DonationsPage />)}
+      </DonationsHiddenGate>
+    );
   }
   if (accountRatingUserID) {
     return gate(permissionRatingsRead, <AccountRatingDetailPage userID={accountRatingUserID} navigate={navigate} />);

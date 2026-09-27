@@ -52,20 +52,34 @@ type SessionFlags = {
   // granted (even "*"), because the feature is not fully finished rather than
   // merely restricted.
   hideThirdPartyVerification: boolean;
+  // Mirrors AdminSession.donations_enabled. Same reasoning as
+  // hideThirdPartyVerification: this is a server-wide feature switch
+  // (TELESRV_DONATIONS_ENABLED), not a right that can be granted, so it is
+  // never overridden by "*" either.
+  donationsEnabled: boolean;
 };
 
-const PermissionsContext = createContext<SessionFlags>({ permissions: [], hideThirdPartyVerification: true });
+const PermissionsContext = createContext<SessionFlags>({
+  permissions: [],
+  hideThirdPartyVerification: true,
+  donationsEnabled: true
+});
 
 export function PermissionsProvider({
   permissions,
   hideThirdPartyVerification = true,
+  donationsEnabled = true,
   children
 }: {
   permissions: readonly string[];
   hideThirdPartyVerification?: boolean;
+  donationsEnabled?: boolean;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({ permissions, hideThirdPartyVerification }), [permissions, hideThirdPartyVerification]);
+  const value = useMemo(
+    () => ({ permissions, hideThirdPartyVerification, donationsEnabled }),
+    [permissions, hideThirdPartyVerification, donationsEnabled]
+  );
   return <PermissionsContext.Provider value={value}>{children}</PermissionsContext.Provider>;
 }
 
@@ -89,6 +103,13 @@ export function useCan(permission: string): boolean {
 // useCan, this is never overridden by a "*" session -- see SessionFlags.
 export function useThirdPartyVerificationHidden(): boolean {
   return useContext(PermissionsContext).hideThirdPartyVerification;
+}
+
+// useDonationsEnabled reports the server's TELESRV_DONATIONS_ENABLED setting
+// (default true). Unlike useCan, this is never overridden by a "*" session --
+// see SessionFlags.
+export function useDonationsEnabled(): boolean {
+  return useContext(PermissionsContext).donationsEnabled;
 }
 
 // PermissionGate is what a direct URL hits: without the right the operator gets
@@ -150,6 +171,33 @@ export function ThirdPartyVerificationHiddenGate({
       navigate={navigate}
     >
       {"Third-party bot verification is not finished and is hidden on this server. It is a server setting, not a permission -- no account can see it while it is off."}
+    </StatusScreen>
+  );
+}
+
+// DonationsHiddenGate is what a direct URL to the donations page hits while
+// TELESRV_DONATIONS_ENABLED=false -- distinct from PermissionGate because no
+// permission grant (not even "*") changes this.
+export function DonationsHiddenGate({
+  navigate,
+  children
+}: {
+  navigate?: Navigate;
+  children: ReactNode;
+}) {
+  const enabled = useDonationsEnabled();
+  if (enabled) {
+    return <>{children}</>;
+  }
+  return (
+    <StatusScreen
+      code="404"
+      icon={EyeOff}
+      title={"This section is switched off"}
+      detail="TELESRV_DONATIONS_ENABLED=false"
+      navigate={navigate}
+    >
+      {"Crypto donations are turned off on this server. It is a server setting, not a permission -- no account can see it while it is off."}
     </StatusScreen>
   );
 }

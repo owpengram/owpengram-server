@@ -9,6 +9,24 @@ import (
 	"telesrv/internal/domain"
 )
 
+// requireDonationsVisible refuses every donations route while the feature is
+// disabled (TELESRV_DONATIONS_ENABLED, default true), regardless of session
+// permissions -- mirrors requireThirdPartyVerificationVisible. The
+// server-side donations service is already a nil-safe no-op when disabled
+// (see cmd/telesrv/main.go), so this isn't a safety boundary; it's what
+// keeps a direct URL from landing on a section whose every action would
+// just fail with "donations dependency is not configured", instead of the
+// panel simply not offering it.
+func (s *server) requireDonationsVisible(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.cfg.DonationsEnabled {
+			http.NotFound(w, r)
+			return
+		}
+		handler(w, r)
+	}
+}
+
 // handleDonationWalletStatusAPI reports whether a crypto donations wallet
 // exists and how many deposit addresses have been assigned. The wallet is
 // auto-provisioned at server startup if missing (see docs/donations.md) --

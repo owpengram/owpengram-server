@@ -755,6 +755,15 @@ export type AdminSession = {
   // 404, so this is a UI convenience on top of a real enforcement, not the
   // enforcement itself.
   hide_third_party_verification?: boolean;
+  // Mirrors the server's TELESRV_DONATIONS_ENABLED (default true): while
+  // false, the panel drops the "Donations" nav entry and its route,
+  // regardless of what permissions the session carries -- the feature
+  // itself is switched off server-wide, so every action under it would just
+  // fail. The server also refuses the underlying routes with 404, so this
+  // is a UI convenience on top of a real enforcement, not the enforcement
+  // itself. Missing/undefined is treated as true (an admin binary older
+  // than this field never gates on it), matching the config default.
+  donations_enabled?: boolean;
   // False until the first-run setup wizard has been finished -- see
   // identity.Store.SetupPending. Missing/undefined is treated as true (an
   // admin binary older than this field never gates on it), so only an

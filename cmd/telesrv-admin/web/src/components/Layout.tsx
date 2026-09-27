@@ -53,7 +53,7 @@ import { permissionBotVerificationReview, permissionServerManage, permissionAdmi
   permissionStorageRead,
   permissionContentRead,
   permissionUsernamesRead,
-  permissionVerificationReview, useCan, useThirdPartyVerificationHidden } from "../permissions";
+  permissionVerificationReview, useCan, useDonationsEnabled, useThirdPartyVerificationHidden } from "../permissions";
 import { type Navigate, type RouteState, routeTitle } from "../routing";
 import { ThemeSwitch } from "../theme";
 import { AddServerLinkModal } from "./AddServerLinkModal";
@@ -264,6 +264,10 @@ export function Shell({
   // Third-party verification is additionally hidden by default (not fully
   // finished) regardless of what the session was granted -- see permissions.tsx.
   const thirdPartyVerificationHidden = useThirdPartyVerificationHidden();
+  // Donations are a server-wide feature switch (TELESRV_DONATIONS_ENABLED),
+  // not a right -- see permissions.tsx. Off by default only if the operator
+  // turned it off; the config default is on.
+  const donationsEnabled = useDonationsEnabled();
   async function logout() {
     await api.logout().catch(() => undefined);
     // Drop the cached figures with the session. Without this the next operator
@@ -345,13 +349,13 @@ export function Shell({
             </NavSection>
           )}
 
-          {(canManagePremium || canManageDonations || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
+          {(canManagePremium || (canManageDonations && donationsEnabled) || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
             <NavSection title={"Economy"} icon={<Landmark size={14} />} route={route} collapsed={navCollapsed}
               paths={["/premium", "/donations", "/account-ratings", "/star-gift-catalog", "/give-gifts", "/collectible-usernames"]}>
               {canManagePremium && (
                 <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
               )}
-              {canManageDonations && (
+              {canManageDonations && donationsEnabled && (
                 <NavLink icon={<Wallet size={16} />} href="/donations" route={route} navigate={navigate}>{"Donations"}</NavLink>
               )}
               {canReadRatings && (

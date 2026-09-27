@@ -125,18 +125,18 @@ func (s *server) routes() http.Handler {
 	mux.Handle("GET /api/premium/payments/{id}", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handlePremiumPaymentAPI)))
 	mux.Handle("POST /api/actions/premium-upsert-plan", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handleUpsertPremiumPlanAPI)))
 	mux.Handle("POST /api/actions/premium-refund", s.scopedRoute(permissionPremiumManage, http.HandlerFunc(s.handleRefundPremiumAPI)))
-	mux.Handle("GET /api/donations/wallet", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationWalletStatusAPI)))
-	mux.Handle("GET /api/donations/chains", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationChainsAPI)))
-	mux.Handle("GET /api/donations/deposits", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationDepositsAPI)))
-	mux.Handle("POST /api/actions/donation-chain-update", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleUpdateDonationChainAPI)))
-	mux.Handle("POST /api/actions/donation-chain-create", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleCreateDonationChainAPI)))
-	mux.Handle("POST /api/actions/donation-chain-delete", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDeleteDonationChainAPI)))
-	mux.Handle("POST /api/actions/donation-sweep", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleSweepDonationChainAPI)))
-	mux.Handle("POST /api/actions/donation-token-upsert", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleUpsertDonationTokenAPI)))
-	mux.Handle("POST /api/actions/donation-token-delete", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDeleteDonationTokenAPI)))
-	mux.Handle("GET /api/donations/settings", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationSettingsAPI)))
-	mux.Handle("GET /api/donations/price-preview", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationPricePreviewAPI)))
-	mux.Handle("GET /api/donations/chains/{key}/balance", s.scopedRoute(permissionDonationsManage, http.HandlerFunc(s.handleDonationChainBalanceAPI)))
+	mux.Handle("GET /api/donations/wallet", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationWalletStatusAPI)))
+	mux.Handle("GET /api/donations/chains", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationChainsAPI)))
+	mux.Handle("GET /api/donations/deposits", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationDepositsAPI)))
+	mux.Handle("POST /api/actions/donation-chain-update", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleUpdateDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-chain-create", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleCreateDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-chain-delete", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDeleteDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-sweep", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleSweepDonationChainAPI)))
+	mux.Handle("POST /api/actions/donation-token-upsert", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleUpsertDonationTokenAPI)))
+	mux.Handle("POST /api/actions/donation-token-delete", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDeleteDonationTokenAPI)))
+	mux.Handle("GET /api/donations/settings", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationSettingsAPI)))
+	mux.Handle("GET /api/donations/price-preview", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationPricePreviewAPI)))
+	mux.Handle("GET /api/donations/chains/{key}/balance", s.scopedRoute(permissionDonationsManage, s.requireDonationsVisible(s.handleDonationChainBalanceAPI)))
 	mux.Handle("POST /api/actions/recompute-account-rating", s.scopedRoute(permissionRatingsManage, http.HandlerFunc(s.handleRecomputeAccountRatingAPI)))
 	mux.Handle("POST /api/actions/adjust-account-rating", s.scopedRoute(permissionRatingsManage, http.HandlerFunc(s.handleAdjustAccountRatingAPI)))
 	mux.Handle("POST /api/actions/set-verified", s.scopedRoute(permissionVerificationReview, http.HandlerFunc(s.handleSetVerifiedAPI)))
@@ -348,6 +348,7 @@ func (s *server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		"permissions":                   permissions.List(),
 		"csrf_token":                    csrfToken,
 		"hide_third_party_verification": s.cfg.HideThirdPartyVerification,
+		"donations_enabled":             s.cfg.DonationsEnabled,
 	})
 }
 
@@ -401,6 +402,7 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		"actor":                         actorFromContext(r.Context()),
 		"permissions":                   permissionsFromContext(r.Context()).List(),
 		"hide_third_party_verification": s.cfg.HideThirdPartyVerification,
+		"donations_enabled":             s.cfg.DonationsEnabled,
 		// setup_completed gates the first-run wizard -- see
 		// identity.Store.SetupPending's doc comment for why this reads a
 		// sentinel file rather than anything in identity.json itself.

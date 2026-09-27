@@ -114,6 +114,14 @@ type uiConfig struct {
 	// permissions, and the session/login response tells the frontend to hide
 	// the "Third-party marks" nav entry and its routes.
 	HideThirdPartyVerification bool
+	// DonationsEnabled mirrors config.DonationsEnabled (TELESRV_DONATIONS_ENABLED,
+	// default true): while false, every donations.* route refuses with 404
+	// regardless of session permissions, and the session/login response tells
+	// the frontend to hide the "Donations" nav entry and its route. The
+	// server-side feature itself is already a no-op when disabled (see
+	// cmd/telesrv/main.go's donationsService wiring) -- this only keeps the
+	// panel from offering a section whose every action would just fail.
+	DonationsEnabled bool
 	// IdentityDir mirrors config.IdentityDir -- must point at the same
 	// directory owpengram-server reads, so an identity edit here is visible
 	// over /owpengram/server-info immediately (see internal/identity).
@@ -200,6 +208,7 @@ func loadConfig() (uiConfig, error) {
 		DiskStatsPath:              dashboardDiskPath(appCfg),
 		Permissions:                appCfg.AdminUIPermissions,
 		HideThirdPartyVerification: appCfg.HideThirdPartyVerification,
+		DonationsEnabled:           appCfg.DonationsEnabled,
 		IdentityDir:                appCfg.IdentityDir,
 		WelcomeMessagePhoneDefault: appCfg.WelcomeMessagePhoneTemplate,
 		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,
