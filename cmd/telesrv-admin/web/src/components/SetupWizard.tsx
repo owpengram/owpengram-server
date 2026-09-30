@@ -333,27 +333,18 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
 }
 
 const BOT_API_KEY = "TELESRV_BOT_API_ADDR";
-const BOT_API_DEFAULT_ADDR = "127.0.0.1:2500";
+const BOT_API_PORT = "2500";
 
-// An empty TELESRV_BOT_API_ADDR is what disables the gateway: botapi.Start
-// returns early on a blank address. A malformed or already-taken one is worth
-// catching here rather than server-side, because cmd/telesrv/main.go turns a
-// failed botapi.Start into a fatal "start bot api" error -- and the step that
-// applies this is the wizard's own restart, so a typo would leave the operator
-// staring at a server that never comes back.
-function botApiAddrError(addr: string): string {
-  const value = addr.trim();
-  if (value === "") return "Enter an address like " + BOT_API_DEFAULT_ADDR + ".";
-  const colon = value.lastIndexOf(":");
-  if (colon < 0) return "Include a port, for example " + BOT_API_DEFAULT_ADDR + ".";
-  const port = Number(value.slice(colon + 1));
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return "Port must be a whole number between 1 and 65535.";
-  return "";
+// Same "reuse the one IP you already told us" pattern as the public base
+// URL on the Network step -- turning bots on doesn't need a second typed
+// address, just the server's own IP with the gateway's fixed default port.
+function defaultBotApiAddr(ip: string): string {
+  return `${ip.trim() || "127.0.0.1"}:${BOT_API_PORT}`;
 }
 
 function BotApiStep({ onNext }: { onNext: () => void }) {
   const [enabled, setEnabled] = useState(false);
-  const [addr, setAddr] = useState("");
+  const [ip, setIp] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -363,29 +354,29 @@ function BotApiStep({ onNext }: { onNext: () => void }) {
     api.serverEnv()
       .then((groups) => {
         if (cancelled) return;
+        let nextIp = "";
+        let botApiValue = "";
         for (const group of groups) {
           for (const field of group.fields) {
-            if (field.key !== BOT_API_KEY) continue;
-            setEnabled(field.value.trim() !== "");
-            setAddr(field.value.trim());
+            if (field.key === ADVERTISE_IP_KEY) nextIp = field.value;
+            if (field.key === BOT_API_KEY) botApiValue = field.value.trim();
           }
         }
+        setIp(nextIp);
+        setEnabled(botApiValue !== "");
         setLoaded(true);
       })
       .catch((err) => { if (!cancelled) { setError(errorMessage(err)); setLoaded(true); } });
     return () => { cancelled = true; };
   }, []);
 
-  const addrError = enabled ? botApiAddrError(addr) : "";
-
   async function submit() {
-    if (addrError) return;
     setBusy(true);
     setError("");
     try {
       const result = await api.action("/api/actions/update-server-env", {
         command_id: "", reason: WIZARD_REASON, confirm: true,
-        values: { [BOT_API_KEY]: enabled ? addr.trim() : "" }
+        values: { [BOT_API_KEY]: enabled ? defaultBotApiAddr(ip) : "" }
       });
       if (result.error) {
         setError(result.error);
@@ -403,7 +394,8 @@ function BotApiStep({ onNext }: { onNext: () => void }) {
     <div className="wizard-step-body">
       <p className="wizard-step-hint">
         {"An HTTP gateway that lets bot libraries -- python-telegram-bot, aiogram and friends -- "}
-        {"talk to this server. Leave it off if you are not running bots; you can turn it on later in Server Settings."}
+        {"talk to this server. Leave it off if you are not running bots; you can turn it on later in Server Settings, "}
+        {"where the listen address is also editable if the default (this server's own IP, port " + BOT_API_PORT + ") doesn't fit."}
       </p>
       {error && <Alert>{error}</Alert>}
       <label className="checkline">
@@ -411,34 +403,12 @@ function BotApiStep({ onNext }: { onNext: () => void }) {
           type="checkbox"
           checked={enabled}
           disabled={!loaded}
-          onChange={(event) => {
-            const next = event.target.checked;
-            setEnabled(next);
-            if (next && addr.trim() === "") setAddr(BOT_API_DEFAULT_ADDR);
-          }}
+          onChange={(event) => setEnabled(event.target.checked)}
         />
         {" Enable the Bot API gateway"}
       </label>
-      {enabled && (
-        <label className="form-field env-field">
-          <span>{"Listen address"}</span>
-          <span className="env-field-desc">
-            {"Keep 127.0.0.1 to accept only local bots; use 0.0.0.0 to expose it. "}
-            {"The server will refuse to start if this port is already taken."}
-          </span>
-          <input
-            value={addr}
-            placeholder={BOT_API_DEFAULT_ADDR}
-            disabled={!loaded}
-            spellCheck={false}
-            autoCapitalize="none"
-            onChange={(event) => setAddr(event.target.value)}
-          />
-          {addrError && <span className="env-field-desc">{addrError}</span>}
-        </label>
-      )}
       <WizardActions>
-        <button className="btn primary icon-text" type="button" disabled={busy || !loaded || addrError !== ""} onClick={() => void submit()}>
+        <button className="btn primary icon-text" type="button" disabled={busy || !loaded} onClick={() => void submit()}>
           {busy ? <Loader2 className="spin" size={15} /> : <ArrowRight size={15} />}
           {"Continue"}
         </button>

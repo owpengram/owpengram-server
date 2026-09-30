@@ -1047,10 +1047,17 @@ func run(logger *zap.Logger) error {
 	// SetOfficialSystemUserDisplayName just above -- a name that fails
 	// branding's own (stricter, 64-char) validation just keeps the
 	// default rather than failing the whole server start over cosmetics.
+	//
+	// Every *Name field in branding.DefaultConfig() is either exactly
+	// "OwpenGram" or "OwpenGram <something>" (Premium, Stars, Desktop,
+	// Android, ...) -- overriding only ProductName left every one of
+	// those still reading "OwpenGram" (e.g. @premiumbot's /help text
+	// buying "<custom name> Premium" but pricing it "in OwpenGram
+	// Stars"). Replacing the shared "OwpenGram" prefix everywhere it
+	// appears keeps the whole branding set consistent with the one name
+	// the operator actually configured.
 	if name := strings.TrimSpace(serverIdentity.Name); name != "" {
-		brandingCfg := branding.DefaultConfig()
-		brandingCfg.ProductName = name
-		if err := branding.Configure(brandingCfg); err != nil {
+		if err := branding.Configure(brandedConfig(name)); err != nil {
 			logger.Warn("server identity name not usable as product branding, keeping default", zap.String("name", name), zap.Error(err))
 		}
 	}
