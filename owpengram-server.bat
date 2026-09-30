@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 cd /d "%~dp0"
 
 rem Builds and runs bin\telesrv-ctl.exe (cmd\telesrv-ctl, wrapping
@@ -24,39 +24,9 @@ echo == Checking prerequisites ==
 where go >nul 2>&1
 if errorlevel 1 (
   echo [ERROR] Go is not installed ^(needed to build owpengram-server / owpengram-admin-panel^)
-  echo         Install it from: https://go.dev/dl/
-  rem Hand off to the winget installer rather than stopping at a shopping
-  rem list. OWPENGRAM_PREREQS_TRIED bounds this to a single retry, so
-  rem something that will not install ends in a message instead of a loop.
-  if defined OWPENGRAM_PREREQS_TRIED (
-    echo.
-    echo [ERROR] Go is still missing after the install attempt -- see the messages above
-    pause
-    exit /b 1
-  )
-  if not exist "scripts\install-prereqs.ps1" (
-    echo.
-    echo [ERROR] install Go and re-run this script
-    pause
-    exit /b 1
-  )
-  echo.
-  echo == Installing the missing prerequisites ==
-  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\install-prereqs.ps1"
-  if errorlevel 1 (
-    echo.
-    echo [ERROR] could not install the prerequisites -- see the messages above
-    pause
-    exit /b 1
-  )
-  rem winget writes the new PATH to the registry, but this console still
-  rem holds the one it started with -- reload it so the re-check below can
-  rem see what was just installed instead of asking for a fresh terminal.
-  for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p"
-  set "OWPENGRAM_PREREQS_TRIED=1"
-  echo.
-  call "%~f0" %*
-  exit /b !errorlevel!
+  echo         Install it from: https://go.dev/dl/ and re-run this script
+  pause
+  exit /b 1
 )
 for /f "delims=" %%v in ('go version') do echo [ok] Go found: %%v
 

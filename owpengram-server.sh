@@ -28,23 +28,7 @@ if command -v go >/dev/null 2>&1; then
   ok "Go found: $(go version)"
 else
   echo "[ERROR] Go is not installed (needed to build owpengram-server / owpengram-admin-panel)"
-  echo "        Install it from: https://go.dev/dl/"
-  # Hand off to the installer rather than stopping at a shopping list.
-  # OWPENGRAM_PREREQS_TRIED bounds it to a single retry, so a package that
-  # still will not install ends in a message instead of a loop.
-  if [[ -n "${OWPENGRAM_PREREQS_TRIED:-}" ]]; then
-    die "Go is still missing after the install attempt -- see the messages above"
-  fi
-  if [[ ! -x scripts/install-prereqs.sh ]]; then
-    die "install Go and re-run this script"
-  fi
-  echo "== Installing the missing prerequisites =="
-  if ! scripts/install-prereqs.sh; then
-    die "could not install the prerequisites -- see the messages above"
-  fi
-  [[ -d /usr/local/go/bin ]] && export PATH="$PATH:/usr/local/go/bin"
-  echo
-  OWPENGRAM_PREREQS_TRIED=1 exec "$0" "$@"
+  die "install Go from https://go.dev/dl/ and re-run this script"
 fi
 
 # --- Docker (optional, informational only) ----------------------------------

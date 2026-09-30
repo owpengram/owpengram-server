@@ -28,19 +28,7 @@ if command -v go >/dev/null 2>&1; then
   ok "Go found: $(go version)"
 else
   echo "[ERROR] Go is not installed (needed to build owpengram-server / owpengram-admin-panel)"
-  echo "        Install it from: https://go.dev/dl/ (or brew install go)"
-  if [[ -n "${OWPENGRAM_PREREQS_TRIED:-}" ]]; then
-    die "Go is still missing after the install attempt -- see the messages above"
-  fi
-  if ! command -v brew >/dev/null 2>&1; then
-    die "Homebrew is not installed. Install Homebrew (https://brew.sh/) or Go manually, then re-run this script."
-  fi
-  echo "== Installing Go via Homebrew =="
-  if ! brew install go; then
-    die "could not install Go -- see the messages above"
-  fi
-  echo
-  OWPENGRAM_PREREQS_TRIED=1 exec "$0" "$@"
+  die "install Go from https://go.dev/dl/ (or: brew install go) and re-run this script"
 fi
 
 # --- Docker (optional, informational only) ----------------------------------

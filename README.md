@@ -39,9 +39,9 @@ or sponsored by Telegram or the official Telegram team.
 - 🛡️ **Censorship-resistant** — no central authority can shut you down.
 - ⚙️ **Single binary** — one Go program prepares keys, runs migrations, serves
   MTProto, and dispatches updates and background workers.
-- 📦 **One command to install** — the launcher installs the prerequisites
-  it needs (Go, Docker, OpenSSL), brings the stack up, and hands you a
-  browser setup wizard.
+- 📦 **One command to install** — the launcher builds and runs the server
+  (Go is the only thing you install yourself), brings the stack up, and
+  hands you a browser setup wizard.
 - 🆓 **Free & open source** — Apache-2.0, audit and extend it freely.
 
 ## 🎯 What works today
@@ -122,16 +122,9 @@ cd owpengram-server
 ```
 
 The launcher checks for the one thing it truly needs — **Go 1.25+** — and
-**installs it for you** instead of handing you a shopping list:
-`scripts/install-prereqs.sh` on Arch and Ubuntu/Debian (asks for root once,
-then works unattended) or `scripts/install-prereqs.ps1` on Windows via winget.
-Run either directly with `--dry-run` to see what it would install without
-touching anything. Docker is checked too, but only reported — it's optional
-(see below).
-
-> Docker on Windows is the one thing the script will not install for you: its
-> containers are Linux images, so the daemon needs Docker Desktop's WSL2
-> backend. The launcher reports it with a link instead of starting it.
+points you at https://go.dev/dl/ if it's missing; install it yourself and
+re-run the launcher. Docker is checked too, but only reported — it's
+optional (see below).
 
 **3. Let it bootstrap**
 
@@ -167,10 +160,11 @@ hand-edited to get going.
 <details>
 <summary><b>🔧 Prefer to do it manually? (click to expand)</b></summary>
 
-Requirements: **Go 1.25+**, **Docker** (or Docker Desktop) for PostgreSQL,
-and OpenSSL.
+Requirements: **Go 1.25+**, and **Docker** (or Docker Desktop) if you want
+PostgreSQL/MinIO in containers instead of the portable edition's embedded
+PostgreSQL.
 
-**Start the infrastructure** (PostgreSQL)
+**Start the infrastructure** (PostgreSQL + MinIO, "classic" edition only)
 
 ```powershell
 docker compose -f deploy/docker-compose.yml up -d
@@ -181,15 +175,15 @@ docker compose -f deploy/docker-compose.yml up -d
 Windows (PowerShell):
 
 ```powershell
-go build -o bin/gramsrv.exe ./cmd/telesrv
-.\bin\gramsrv.exe
+go build -o bin/owpengram-server.exe ./cmd/telesrv
+.\bin\owpengram-server.exe
 ```
 
 Linux / macOS:
 
 ```bash
-go build -o bin/gramsrv ./cmd/telesrv
-./bin/gramsrv
+go build -o bin/owpengram-server ./cmd/telesrv
+./bin/owpengram-server
 ```
 
 On first start, the server creates `data/server_rsa.pem`, applies database
@@ -206,29 +200,28 @@ Without the web wizard you also have to fill in `.env` yourself; see
 
 ### 🖥️ Server Panel
 
-The launcher from step 2 is also a cross-platform interactive TUI: once the
-prerequisites are in place it drops into a menu that wraps everything above —
-Docker naming migration, `docker compose up`, `go build`, and launching both
-`owpengram-server` and `owpengram-admin-panel` — so you don't re-run commands
-from scratch every time.
+Run `telesrv-ctl` (what the launcher from step 2 runs) with no arguments
+from a real terminal and it drops into `internal/panel`'s interactive TUI
+instead of just exiting — a Bubble Tea app, not a shell script, so it stays
+responsive while it works.
 
 What it does:
 
-- 🧙 **First-run setup** — the short `.env` form from step 3. It is the
-  only thing the panel offers on a fresh clone; once `.env` exists the menu
-  below replaces it, and later changes go through the `.env` editor.
-- ▶️ **Start / Stop / Restart** — launches `owpengram-server` and
-  `owpengram-admin-panel` as detached background processes; closing the panel
-  does **not** stop them, only "Stop" does. Reopening the panel later picks
-  the same processes back up and reports live status.
-- ⬆️ **Update** — `git pull --ff-only`, rebuilds both binaries, restarts them,
-  and re-execs the panel itself so it also picks up any change to its own
-  code — one menu action instead of a manual pull/build/restart sequence. The
-  web panel has the same action, with a dry run that reports what an update
-  would do before anything is applied.
-- 📜 **Live log viewer** — tail either binary's log, or both in a split view.
+- 🧙 **First-run setup** — the edition prompt from step 3 (Portable/Classic).
+  It runs once, before the menu appears; a later change goes through
+  "Change edition" in the menu instead.
+- ▶️ **Start / Stop / Restart / Update** — launches `owpengram-server` and
+  `owpengram-admin-panel` as detached background processes; closing the
+  panel does **not** stop them, only "Stop" does. Reopening the panel later
+  picks the same processes back up and reports live status. "Update" runs
+  `git pull --ff-only`, rebuilds both binaries, and relaunches them.
+- 📜 **Live log viewer** — scrollable tail of `owpengram-server`'s current
+  run, auto-following new lines as they arrive.
 - ⚙️ **`.env` editor** — edit configuration from inside the panel, grouped by
   feature, without hand-editing the file.
+- 📋 **Copy address / public key / admin password** — straight to your
+  clipboard, without ever printing the value itself to the screen; works
+  over SSH too (falls back to the terminal's own OSC 52 clipboard support).
 
 ### 🏷️ Version and build
 
@@ -513,8 +506,7 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 ## 📂 Repository layout
 
 ```text
-owpengram-server.sh/.bat  one-command launcher (checks/installs Go, then builds+runs telesrv-ctl)
-scripts/install-prereqs.* unattended prerequisite installers (Arch/Ubuntu, Windows)
+owpengram-server.sh/.bat  one-command launcher (checks for Go, then builds+runs telesrv-ctl)
 cmd/telesrv/              server entrypoint
 cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update/edition -- run with no
                           arguments from a terminal for the interactive TUI (what the launcher runs)

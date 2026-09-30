@@ -1,7 +1,7 @@
 # Local setup
 
-This guide shows the shortest safe path for running gramsrv on a development
-machine or a small test server.
+This guide shows the shortest safe path for running owpengram-server on a
+development machine or a small test server.
 
 ## 1. Prepare local configuration
 
@@ -57,15 +57,15 @@ If you use an external Postgres, update `TELESRV_POSTGRES_DSN` in `.env`.
 Linux / macOS:
 
 ```bash
-go build -o bin/gramsrv ./cmd/telesrv
-./bin/gramsrv
+go build -o bin/owpengram-server ./cmd/telesrv
+./bin/owpengram-server
 ```
 
 Windows PowerShell:
 
 ```powershell
-go build -o bin/gramsrv.exe ./cmd/telesrv
-.\bin\gramsrv.exe
+go build -o bin/owpengram-server.exe ./cmd/telesrv
+.\bin\owpengram-server.exe
 ```
 
 ## 5. First-start checklist
