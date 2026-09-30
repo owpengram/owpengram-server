@@ -98,6 +98,15 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 		// matching.
 		Locale("C").
 		Encoding("UTF8").
+		// A release archive (see .github/workflows/build.yml) pre-places
+		// the exact cache file the library would otherwise fetch from
+		// Maven Central on first run -- same filename scheme
+		// (embedded-postgres-binaries-<os>-<arch>-<version>.txz) computed
+		// from CachePath, so Start() below finds it already "downloaded"
+		// and never touches the network. A git-clone install has no such
+		// file here; the library just downloads it once as it always did,
+		// straight into this same directory.
+		CachePath(filepath.Join(filepath.Dir(dataDir), "pgcache")).
 		DataPath(filepath.Join(dataDir, "data")).
 		RuntimePath(filepath.Join(dataDir, "runtime")).
 		StartTimeout(60 * time.Second)

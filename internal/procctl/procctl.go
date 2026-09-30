@@ -205,6 +205,15 @@ func (m *Manager) launch(exePath, logPath string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir logs: %w", err)
 	}
+	// A release archive (see .github/workflows/build.yml and
+	// scripts/build-release.ps1) may have been packaged on a different OS
+	// than it runs on -- NTFS has no executable bit at all, so a Linux
+	// binary zipped/tarred up from a Windows build machine can land on
+	// disk world-readable but not executable, and exec below would fail
+	// with "permission denied". Best-effort and cheap: os.Chmod is a
+	// near-no-op on Windows, and a normal git-clone install where the
+	// binary is already 0755 from `go build` just gets this set again.
+	_ = os.Chmod(exePath, 0o755)
 	logf, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return 0, fmt.Errorf("open log: %w", err)
@@ -437,7 +446,27 @@ func (m *Manager) buildBoth(ctx context.Context) (string, error) {
 	return serverLog + "\n" + adminLog, err
 }
 
+// goBuild rebuilds outPath from pkg, unless this install has no Go source
+// tree to build from at all -- a release archive (see
+// .github/workflows/build.yml) ships prebuilt bin/owpengram-server and
+// bin/owpengram-admin-panel binaries plus this same owpengram-ctl, but none
+// of the actual ./cmd/... source, so a "go build" here would either fail
+// outright (no go.mod) or, if the user happens to also have Go installed,
+// fail confusingly (no such package). In that case the existing binary
+// already on disk *is* the build; only report an error if it's missing too.
 func (m *Manager) goBuild(ctx context.Context, outPath, pkg string) (string, error) {
+	if !m.hasSourceTree() {
+		if _, err := os.Stat(outPath); err == nil {
+			return fmt.Sprintf("$ %s already present (prebuilt release install, no source tree to rebuild from)\n", filepath.Base(outPath)), nil
+		}
+		return "", fmt.Errorf("%s is missing and there is no source tree at %s to build it from -- redownload the release archive", filepath.Base(outPath), m.Root)
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		if _, statErr := os.Stat(outPath); statErr == nil {
+			return fmt.Sprintf("$ %s already present (Go toolchain not found, keeping existing binary)\n", filepath.Base(outPath)), nil
+		}
+		return "", fmt.Errorf("%s is missing and Go is not installed to build it -- install Go from https://go.dev/dl/", filepath.Base(outPath))
+	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir bin: %w", err)
 	}
@@ -446,6 +475,14 @@ func (m *Manager) goBuild(ctx context.Context, outPath, pkg string) (string, err
 	hideWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	return fmt.Sprintf("$ go build -o %s %s\n%s", filepath.Base(outPath), pkg, string(out)), err
+}
+
+// hasSourceTree reports whether this install has a Go module checked out at
+// all (a git clone) as opposed to being a prebuilt release archive (bin/ +
+// data/ + .env.example, no go.mod, no cmd/ sources).
+func (m *Manager) hasSourceTree() bool {
+	_, err := os.Stat(filepath.Join(m.Root, "go.mod"))
+	return err == nil
 }
 
 // --- high-level actions ----------------------------------------------------

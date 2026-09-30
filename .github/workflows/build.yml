@@ -1,91 +1,151 @@
 name: Build and Release
-
 on:
   workflow_dispatch:
   push:
     tags:
       - 'v*'
-
 permissions:
   contents: read
-
 concurrency:
   group: build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
-
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-
     strategy:
       fail-fast: false
       matrix:
         include:
+          # pg_os/pg_arch select the zonkyio/embedded-postgres-binaries
+          # artifact pre-bundled into data/pgcache/ so the portable
+          # edition's first start needs no network access at all (see
+          # internal/embeddedpg.Start's CachePath doc comment). Empty
+          # values mean "no published artifact for this platform" -- the
+          # archive still works, portable edition just falls back to its
+          # normal one-time download on first start instead.
           - goos: linux
             goarch: amd64
+            pg_os: linux
+            pg_arch: amd64
           - goos: linux
             goarch: arm64
+            pg_os: linux
+            pg_arch: arm64v8
           - goos: windows
             goarch: amd64
+            pg_os: windows
+            pg_arch: amd64
           - goos: windows
             goarch: arm64
-
+            pg_os: ''
+            pg_arch: ''
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: cmd/telesrv-admin/web/package-lock.json
-
       - name: Build admin web assets
         working-directory: cmd/telesrv-admin/web
         run: |
           npm ci
           npm run build
-
       - name: Download Go modules
         run: go mod download
 
+      # --- compile the three binaries release-branded names ------------------
       - name: Build binaries
         env:
           CGO_ENABLED: '0'
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          mkdir -p dist
-
+          set -euo pipefail
           suffix=""
           if [ "${GOOS}" = "windows" ]; then
             suffix=".exe"
           fi
+          mkdir -p "stage/bin"
+          go build -trimpath -ldflags="-s -w" -o "stage/bin/owpengram-server${suffix}" ./cmd/telesrv
+          go build -trimpath -ldflags="-s -w" -o "stage/bin/owpengram-admin-panel${suffix}" ./cmd/telesrv-admin
+          go build -trimpath -ldflags="-s -w" -o "stage/owpengram-ctl${suffix}" ./cmd/telesrv-ctl
 
-          go build \
-            -trimpath \
-            -ldflags="-s -w" \
-            -o "dist/gramsrv-${GOOS}-${GOARCH}${suffix}" \
-            ./cmd/telesrv
+      # --- assemble the self-contained archive contents -----------------------
+      - name: Assemble release contents
+        run: |
+          set -euo pipefail
+          cp .env.example stage/.env.example
+          cp release/README.md stage/README.md
+          mkdir -p stage/deploy
+          cp deploy/docker-compose.yml stage/deploy/docker-compose.yml
+          mkdir -p stage/data
+          cp -r data/langpack stage/data/langpack
+          cp -r data/sticker-seed stage/data/sticker-seed
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp release/start.bat stage/start.bat
+          else
+            cp release/start.sh stage/start.sh
+            chmod +x stage/start.sh stage/owpengram-ctl
+          fi
 
-          go build \
-            -trimpath \
-            -ldflags="-s -w" \
-            -o "dist/gramsrv-admin-${GOOS}-${GOARCH}${suffix}" \
-            ./cmd/telesrv-admin
+      # --- pre-bundle the embedded-PostgreSQL binaries (best-effort) ----------
+      # Mirrors exactly what github.com/fergusstrange/embedded-postgres's
+      # own CacheLocator/RemoteFetchStrategy do on first run (see
+      # internal/embeddedpg.go's CachePath doc comment): download the
+      # zonkyio jar, pull out its single *.txz member, and drop it at the
+      # exact path+filename the library computes from CachePath so it finds
+      # a "cache hit" immediately and never touches the network. The
+      # version string (17.5.0) must match internal/embeddedpg.go's
+      # pgVersion constant -- there is no automated check for that here.
+      - name: Pre-bundle embedded PostgreSQL binaries
+        if: matrix.pg_os != ''
+        run: |
+          set -euo pipefail
+          version="17.5.0"
+          pg_os="${{ matrix.pg_os }}"
+          pg_arch="${{ matrix.pg_arch }}"
+          jar_url="https://repo1.maven.org/maven2/io/zonky/test/postgres/embedded-postgres-binaries-${pg_os}-${pg_arch}/${version}/embedded-postgres-binaries-${pg_os}-${pg_arch}-${version}.jar"
+          out="embedded-postgres-binaries-${pg_os}-${pg_arch}-${version}.txz"
+          echo "Fetching $jar_url"
+          if curl -fsSL -o pg.jar "$jar_url"; then
+            mkdir -p stage/data/pgcache
+            unzip -p pg.jar '*.txz' > "stage/data/pgcache/${out}"
+            rm -f pg.jar
+            echo "Bundled ${out}"
+          else
+            echo "::warning::no embedded-postgres binaries published for ${pg_os}/${pg_arch} -- portable edition will download them on first start instead"
+          fi
+
+      # --- package into one archive per platform -------------------------------
+      - name: Package archive
+        id: package
+        run: |
+          set -euo pipefail
+          name="owpengram-server-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mv stage "$name"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            archive="${name}.zip"
+            zip -r -q "$archive" "$name"
+          else
+            archive="${name}.tar.gz"
+            tar -czf "$archive" "$name"
+          fi
+          mkdir -p dist
+          mv "$archive" "dist/$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -94,19 +154,14 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 7
-
   release:
     name: Publish GitHub Release
-    needs:
-      - ci
-      - build
+    needs: [ci, build]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-
     permissions:
       contents: write
-
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -114,12 +169,10 @@ jobs:
           pattern: gramsrv-*
           path: dist
           merge-multiple: true
-
       - name: Generate combined checksums
         working-directory: dist
         run: |
-          sha256sum gramsrv-* > SHA256SUMS
-
+          sha256sum owpengram-server-* > SHA256SUMS
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
