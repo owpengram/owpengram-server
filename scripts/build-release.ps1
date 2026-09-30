@@ -196,9 +196,18 @@ try {
             Pop-Location
         }
         Info "-> $OutDir/$stageName$(if ($goos -eq 'windows') { '.zip' } else { '.tar.gz' })"
+
+        # The archive above already has everything this held -- no reason
+        # to leave a second, uncompressed copy (bin/ alone can be 100MB+)
+        # lying around after every run.
+        Remove-Item -Recurse -Force $stageDir
     }
 
-    Info "Done. Archives are in $OutDir/. Staging directories under $OutDir/staging/ can be deleted."
+    $stagingRoot = Join-Path $OutDir 'staging'
+    if ((Test-Path $stagingRoot) -and -not (Get-ChildItem $stagingRoot -Force)) {
+        Remove-Item -Force $stagingRoot
+    }
+    Info "Done. Archives are in $OutDir/."
 } finally {
     Pop-Location
 }
