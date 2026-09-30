@@ -1320,6 +1320,38 @@
   font-weight: 600;
 }
 
+/* The one line shown by default -- current status, not the full history
+   (that's restart-overlay-log-toggle below). */
+.restart-overlay-status {
+  margin-top: -2px;
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.restart-overlay-log-toggle {
+  width: auto;
+  margin-top: 4px;
+  padding: 6px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.restart-overlay-log-toggle .env-group-toggle-text {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* .env-group-chevron's own rotation rule is scoped to a .env-group
+   ancestor (the .env editor's own collapsible groups) -- this toggle has
+   no such ancestor, so it gets the "open" class straight on the chevron
+   instead. */
+.restart-overlay-log-toggle .env-group-chevron.open {
+  transform: rotate(180deg);
+}
+
 /* Server Settings' Settings/Services tab bar. */
 .tab-bar {
   display: flex;

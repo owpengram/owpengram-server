@@ -70,6 +70,7 @@ import (
 	verificationapp "telesrv/internal/app/verification"
 	welcomemessagesapp "telesrv/internal/app/welcomemessages"
 	"telesrv/internal/botapi"
+	"telesrv/internal/branding"
 	"telesrv/internal/config"
 	"telesrv/internal/domain"
 	"telesrv/internal/embeddedpg"
@@ -1037,6 +1038,22 @@ func run(logger *zap.Logger) error {
 		return fmt.Errorf("read server identity: %w", err)
 	}
 	domain.SetOfficialSystemUserDisplayName(serverIdentity.Name)
+	// branding.ProductName() (the built-in service bots' /help text,
+	// welcome messages, and every other user-visible "OwpenGram" string
+	// that isn't the official system account above) otherwise never
+	// reflects Server Settings -> Server identity at all: nothing ever
+	// called branding.Configure, so it stayed on the compiled-in default
+	// forever. Same "read once at startup, empty -> default" contract as
+	// SetOfficialSystemUserDisplayName just above -- a name that fails
+	// branding's own (stricter, 64-char) validation just keeps the
+	// default rather than failing the whole server start over cosmetics.
+	if name := strings.TrimSpace(serverIdentity.Name); name != "" {
+		brandingCfg := branding.DefaultConfig()
+		brandingCfg.ProductName = name
+		if err := branding.Configure(brandingCfg); err != nil {
+			logger.Warn("server identity name not usable as product branding, keeping default", zap.String("name", name), zap.Error(err))
+		}
+	}
 	var customSystemIcon []byte
 	if iconData, _, ok := identityStore.Icon(); ok {
 		customSystemIcon = iconData

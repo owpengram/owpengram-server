@@ -566,6 +566,13 @@ export function useAdminRestartWatcher() {
           if (options?.beforeReload) {
             await Promise.resolve(options.beforeReload()).catch(() => undefined);
           }
+          // A restarted server is worth landing on the dashboard for,
+          // regardless of which tab was open when Restart/Update/Finish
+          // setup was clicked -- same replaceState-then-reload pattern
+          // LoginPage's onLogin uses for the same reason. replaceState
+          // (not pushState) so this doesn't add a "the tab that was open
+          // before the restart" entry to browser history either.
+          window.history.replaceState(null, "", "/");
           window.location.reload();
           return;
         }
@@ -608,12 +615,30 @@ export function useAdminRestartWatcher() {
 // of a restart's wall-clock time is the new owpengram-server working
 // through migrations and, on a fresh install, the one-time media seed, and
 // an operator staring at a plain spinner for that long has no way to tell
-// "still working" from "stuck".
+// "still working" from "stuck". Only the *current* step is shown by
+// default -- "Connecting to Postgres", not a scrolling transcript of every
+// step so far -- with the full history one click away behind "Show full
+// log" for whoever actually wants it, same collapsed-by-default pattern
+// the .env editor's groups use.
 export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: boolean; onDismiss: () => void; logLines?: string[] }) {
-  const steps = logLines && logLines.length > 0 && (
+  const [logExpanded, setLogExpanded] = useState(false);
+  const hasLog = !!logLines && logLines.length > 0;
+  const currentStatus = hasLog ? logLines[logLines.length - 1] : undefined;
+  const log = hasLog && logExpanded && (
     <ul className="restart-overlay-log">
       {logLines.map((line, index) => <li key={index}>{line}</li>)}
     </ul>
+  );
+  const logToggle = hasLog && logLines.length > 1 && (
+    <button
+      className="env-group-toggle restart-overlay-log-toggle"
+      type="button"
+      aria-expanded={logExpanded}
+      onClick={() => setLogExpanded((prev) => !prev)}
+    >
+      <span className="env-group-toggle-text">{logExpanded ? "Hide full log" : "Show full log"}</span>
+      <ChevronDown size={16} className={`env-group-chevron ${logExpanded ? "open" : ""}`} />
+    </button>
   );
   return createPortal(
     <div className="modal-backdrop" role="presentation">
@@ -625,7 +650,9 @@ export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: bo
             </div>
             <h2 className="restart-overlay-heading">{"Still restarting..."}</h2>
             <Alert>{"The admin panel did not come back within the expected time. It may still be building/restarting -- reload manually in a bit, or check the server logs."}</Alert>
-            {steps}
+            {currentStatus && <p className="restart-overlay-status">{currentStatus}</p>}
+            {logToggle}
+            {log}
             <div className="gift-table-actions restart-overlay-actions">
               <button className="btn" type="button" onClick={onDismiss}>{"Dismiss"}</button>
               <button className="btn primary" type="button" onClick={() => window.location.reload()}>{"Reload now"}</button>
@@ -638,7 +665,9 @@ export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: bo
             </div>
             <h2 className="restart-overlay-heading">{"Restarting"}</h2>
             <div className="loader-bar restart-overlay-progress" />
-            {steps}
+            {currentStatus && <p className="restart-overlay-status">{currentStatus}</p>}
+            {logToggle}
+            {log}
           </div>
         )}
       </section>

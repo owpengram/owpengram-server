@@ -196,29 +196,30 @@ function IdentityStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-const NETWORK_FIELDS: { key: string; label: string; hint: string; placeholder: string }[] = [
-  {
-    key: "TELESRV_ADVERTISE_IP",
-    label: "Server public IP or hostname",
-    hint: "What clients connect to. Fine to leave as 127.0.0.1 for local testing.",
-    placeholder: "127.0.0.1"
-  },
-  {
-    key: "TELESRV_PUBLIC_BASE_URL",
-    label: "Public base URL",
-    hint: "Used for links this server generates -- invites, sticker packs. e.g. https://example.com",
-    placeholder: "http://127.0.0.1:2401"
-  },
-  {
-    key: "TELESRV_PUBLIC_APP_SCHEME",
-    label: "Custom app link scheme",
-    hint: "Must match what your client builds were compiled with.",
-    placeholder: "owpg"
-  }
-];
+// The public base URL (invite/sticker-pack links) is just the advertise
+// IP wrapped in "http://<ip>:2401" for the overwhelming majority of
+// installs -- :2401 matches the Public Web Listener's default port (see
+// .env.example). Deriving it means the operator types their IP exactly
+// once; "Use a different public URL" below is the escape hatch for anyone
+// who actually has a domain + HTTPS in front of it.
+function defaultPublicBaseURL(ip: string): string {
+  const trimmed = ip.trim();
+  return trimmed ? `http://${trimmed}:2401` : "";
+}
 
+const ADVERTISE_IP_KEY = "TELESRV_ADVERTISE_IP";
+const PUBLIC_BASE_URL_KEY = "TELESRV_PUBLIC_BASE_URL";
+
+// TELESRV_PUBLIC_APP_SCHEME (the custom "owpg://"-style deep-link scheme)
+// used to be a wizard field, but it's not something a fresh install has an
+// opinion on -- it only matters once you've compiled your own client
+// builds with a non-default scheme, at which point you're already editing
+// .env by hand or through Server Settings anyway. Leaving it out here
+// means the default (already correct for the official clients) just works.
 function NetworkStep({ onNext }: { onNext: () => void }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [ip, setIp] = useState("");
+  const [customBaseURL, setCustomBaseURL] = useState(false);
+  const [baseURL, setBaseURL] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -228,13 +229,25 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
     api.serverEnv()
       .then((groups) => {
         if (cancelled) return;
-        const next: Record<string, string> = {};
+        let nextIp = "";
+        let nextBaseURL = "";
         for (const group of groups) {
           for (const field of group.fields) {
-            if (NETWORK_FIELDS.some((f) => f.key === field.key)) next[field.key] = field.value;
+            if (field.key === ADVERTISE_IP_KEY) nextIp = field.value;
+            if (field.key === PUBLIC_BASE_URL_KEY) nextBaseURL = field.value;
           }
         }
-        setValues(next);
+        setIp(nextIp);
+        // Only switches the toggle on when the saved URL genuinely diverges
+        // from what this IP derives on its own -- otherwise every existing
+        // install would reopen this step looking like it already has a
+        // custom URL, when it's really just today's default.
+        if (nextBaseURL && nextBaseURL !== defaultPublicBaseURL(nextIp)) {
+          setCustomBaseURL(true);
+          setBaseURL(nextBaseURL);
+        } else {
+          setBaseURL(nextBaseURL || defaultPublicBaseURL(nextIp));
+        }
         setLoaded(true);
       })
       .catch((err) => { if (!cancelled) { setError(errorMessage(err)); setLoaded(true); } });
@@ -246,7 +259,11 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
     setError("");
     try {
       const result = await api.action("/api/actions/update-server-env", {
-        command_id: "", reason: WIZARD_REASON, confirm: true, values
+        command_id: "", reason: WIZARD_REASON, confirm: true,
+        values: {
+          [ADVERTISE_IP_KEY]: ip.trim(),
+          [PUBLIC_BASE_URL_KEY]: customBaseURL ? baseURL.trim() : defaultPublicBaseURL(ip)
+        }
       });
       if (result.error) {
         setError(result.error);
@@ -264,18 +281,47 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
     <div className="wizard-step-body">
       <p className="wizard-step-hint">{"Takes effect once setup finishes below -- that last step restarts the server."}</p>
       {error && <Alert>{error}</Alert>}
-      {NETWORK_FIELDS.map((field) => (
-        <label key={field.key} className="form-field env-field">
-          <span>{field.label}</span>
-          <span className="env-field-desc">{field.hint}</span>
+      <label className="form-field env-field">
+        <span>{"Server public IP or hostname"}</span>
+        <span className="env-field-desc">{"What clients connect to. Fine to leave as 127.0.0.1 for local testing."}</span>
+        <input
+          value={ip}
+          placeholder={"127.0.0.1"}
+          disabled={!loaded}
+          spellCheck={false}
+          autoCapitalize="none"
+          onChange={(event) => {
+            const next = event.target.value;
+            setIp(next);
+            if (!customBaseURL) setBaseURL(defaultPublicBaseURL(next));
+          }}
+        />
+      </label>
+      <label className="checkline">
+        <input
+          type="checkbox"
+          checked={customBaseURL}
+          disabled={!loaded}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setCustomBaseURL(next);
+            if (!next) setBaseURL(defaultPublicBaseURL(ip));
+          }}
+        />
+        {" Use a different public URL for invite/sticker links (custom domain, HTTPS)"}
+      </label>
+      {customBaseURL && (
+        <label className="form-field env-field">
+          <span>{"Public base URL"}</span>
+          <span className="env-field-desc">{"Used for links this server generates -- invites, sticker packs. e.g. https://example.com"}</span>
           <input
-            value={values[field.key] ?? ""}
-            placeholder={field.placeholder}
+            value={baseURL}
+            placeholder={"http://127.0.0.1:2401"}
             disabled={!loaded}
-            onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+            onChange={(event) => setBaseURL(event.target.value)}
           />
         </label>
-      ))}
+      )}
       <WizardActions>
         <button className="btn primary icon-text" type="button" disabled={busy || !loaded} onClick={() => void submit()}>
           {busy ? <Loader2 className="spin" size={15} /> : <ArrowRight size={15} />}
