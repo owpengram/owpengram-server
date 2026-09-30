@@ -14,29 +14,13 @@
   start need zero network access), and packages the result into a .zip
   (Windows targets) or .tar.gz (everything else) under dist/.
 
-.PARAMETER Platforms
-  One or more "goos/goarch" pairs, e.g. "linux/amd64". Defaults to just the
-  host platform (fast local iteration). Pass -All for the same 4-platform
-  matrix CI builds.
-
-.PARAMETER All
-  Build for linux/amd64, linux/arm64, windows/amd64 and windows/arm64 -- same
-  as CI. Copies data/langpack + data/sticker-seed (~200MB) once per platform,
-  so this takes a while and uses a few GB of disk under dist/.
-
-.PARAMETER Version
-  Embedded in the archive/file names only (no ldflags version stamping
-  today). Defaults to "dev".
-
-.PARAMETER SkipPgCache
-  Skip pre-bundling embedded-PostgreSQL binaries (skips the network fetch --
-  useful for a fast local dry run; portable edition just downloads them on
-  first start instead, same as a git-clone install).
-
-.PARAMETER SkipWebBuild
-  Skip `npm ci && npm run build` for the admin panel's web assets. Only
-  safe if cmd/telesrv-admin/web/dist is already up to date -- otherwise the
-  admin binary embeds a stale UI.
+Accepts both PowerShell-style (-All, -Platform, -Version, ...) and the
+Unix-style double-dash spelling scripts/build-release.sh uses (--all,
+--platform, --version, ...) -- so a command copied from one script's
+example works unchanged in the other. Deliberately NOT a declarative
+param() block: PowerShell's own parameter binder has no concept of "--"
+flags at all (it would silently bind "--all" as a positional value
+instead of recognizing it), so arguments are parsed by hand below instead.
 
 .EXAMPLE
   ./scripts/build-release.ps1
@@ -44,18 +28,67 @@
 
 .EXAMPLE
   ./scripts/build-release.ps1 -All -Version v1.4.0
-  Builds all 4 platform archives, named owpengram-server-v1.4.0-<os>-<arch>.
+  ./scripts/build-release.ps1 --all --version v1.4.0
+  Both build all 4 platform archives, named owpengram-server-v1.4.0-<os>-<arch>.
+
+.EXAMPLE
+  ./scripts/build-release.ps1 -Platform linux/amd64 -Platform windows/amd64
+  Builds just those two, repeating -Platform/--platform for each one.
 #>
-param(
-    [string[]]$Platforms,
-    [switch]$All,
-    [string]$Version = 'dev',
-    [string]$OutDir = 'dist',
-    [switch]$SkipPgCache,
-    [switch]$SkipWebBuild
-)
 
 $ErrorActionPreference = 'Stop'
+
+function Show-Usage {
+    Write-Host @'
+Usage: build-release.ps1 [options]
+
+  -All, --all                  build linux/amd64, linux/arm64, windows/amd64
+                                and windows/arm64 (same as CI)
+  -Platform, --platform GOOS/GOARCH
+                                build this one platform; repeat for more.
+                                Defaults to just the host platform.
+  -Version, --version V        embedded in the archive/file names (default: dev)
+  -OutDir, --out-dir PATH      where archives go (default: dist)
+  -SkipPgCache, --skip-pgcache skip pre-bundling embedded-PostgreSQL binaries
+  -SkipWebBuild, --skip-web-build
+                                skip npm ci && npm run build for the admin UI
+  -Help, --help, -h            show this message
+'@
+}
+
+$Platforms = @()
+$All = $false
+$Version = 'dev'
+$OutDir = 'dist'
+$SkipPgCache = $false
+$SkipWebBuild = $false
+
+$i = 0
+while ($i -lt $args.Count) {
+    $arg = $args[$i]
+    switch ($arg) {
+        { $_ -in '-All', '--all' } { $All = $true; $i++ }
+        { $_ -in '-Platform', '--platform' } {
+            if ($i + 1 -ge $args.Count) { throw "$arg requires a value" }
+            $Platforms += $args[$i + 1]
+            $i += 2
+        }
+        { $_ -in '-Version', '--version' } {
+            if ($i + 1 -ge $args.Count) { throw "$arg requires a value" }
+            $Version = $args[$i + 1]
+            $i += 2
+        }
+        { $_ -in '-OutDir', '--out-dir' } {
+            if ($i + 1 -ge $args.Count) { throw "$arg requires a value" }
+            $OutDir = $args[$i + 1]
+            $i += 2
+        }
+        { $_ -in '-SkipPgCache', '--skip-pgcache' } { $SkipPgCache = $true; $i++ }
+        { $_ -in '-SkipWebBuild', '--skip-web-build' } { $SkipWebBuild = $true; $i++ }
+        { $_ -in '-Help', '--help', '-h' } { Show-Usage; exit 0 }
+        default { throw "unknown argument: $arg (see -Help)" }
+    }
+}
 
 # Must match internal/embeddedpg.go's pgVersion constant -- there is no
 # automated check tying these together, same caveat as the CI workflow.
@@ -87,7 +120,7 @@ try {
             $hostGoos = (go env GOOS).Trim()
             $hostGoarch = (go env GOARCH).Trim()
             $Platforms = @("$hostGoos/$hostGoarch")
-            Info "No -Platforms given, building only for the host platform: $hostGoos/$hostGoarch (pass -All for every CI platform)."
+            Info "No -Platform given, building only for the host platform: $hostGoos/$hostGoarch (pass -All/--all for every CI platform)."
         }
     }
 
