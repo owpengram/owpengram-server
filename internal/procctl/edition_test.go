@@ -1,6 +1,7 @@
 package procctl
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,6 +96,25 @@ func TestStopEmbeddedPostgresIsNoopOutsidePortable(t *testing.T) {
 	}
 	// Must not panic or touch anything; there is no runtime/data dir here.
 	m.StopEmbeddedPostgres()
+}
+
+// Portable never runs `docker compose up` (see ensureDocker), so
+// DockerStatus must not even try `docker compose ps` for it -- Docker
+// merely being installed but not running (a real setup: Docker Desktop
+// present for something else, portable edition not using it) would
+// otherwise surface as a spurious error in the admin panel's Services tab.
+func TestDockerStatusSkipsDockerEntirelyForPortableEdition(t *testing.T) {
+	m := newEditionTestManager(t)
+	if err := m.SetEdition("portable"); err != nil {
+		t.Fatal(err)
+	}
+	services, err := m.DockerStatus(context.Background())
+	if err != nil {
+		t.Fatalf("DockerStatus() error = %v, want nil", err)
+	}
+	if services != nil {
+		t.Fatalf("DockerStatus() = %v, want nil", services)
+	}
 }
 
 func TestEmbeddedPostgresDataDirDefaultsUnderRoot(t *testing.T) {

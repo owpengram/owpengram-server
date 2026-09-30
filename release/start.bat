@@ -7,7 +7,8 @@ rem for this platform. This just forwards to owpengram-ctl.exe, which
 rem bootstraps .env on the very first run and otherwise starts/stops/
 rem restarts both processes.
 rem
-rem   start.bat            first run: bootstrap + start. later: just start.
+rem   start.bat            bootstrap + start, then an interactive menu for
+rem                        stop/restart/status/update/logs/edition.
 rem   start.bat stop
 rem   start.bat status
 rem   start.bat restart

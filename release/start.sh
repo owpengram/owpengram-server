@@ -10,7 +10,9 @@
 # and no Docker at all -- "portable" edition) and otherwise starts/stops/
 # restarts both processes.
 #
-#   ./start.sh           first run: bootstrap + start. later runs: just start.
+#   ./start.sh           bootstrap + start, then (from a real terminal) an
+#                        interactive menu for stop/restart/status/update/
+#                        logs/edition.
 #   ./start.sh stop
 #   ./start.sh status
 #   ./start.sh restart

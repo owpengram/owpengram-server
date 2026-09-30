@@ -30,7 +30,16 @@ to pick an edition:
 Once it's up, the admin panel URL and generated password are printed to the
 terminal -- open that URL to finish setup (branding, SMTP, etc.).
 
+Run from a real terminal (not piped/redirected), `start.sh`/`start.bat`
+then drops into an interactive menu -- Start, Stop, Restart, Status, Update,
+Logs, Change edition -- so you don't need to remember any of the commands
+below. Closing that window later stops responding to it, but does not stop
+the server: it keeps running detached in the background regardless.
+
 ## Commands
+
+Each of these also works as a one-shot, non-interactive call (e.g. from
+another script), without the menu:
 
 ```
 ./start.sh status     (or: start.bat status)

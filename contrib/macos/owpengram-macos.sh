@@ -9,7 +9,9 @@
 #
 #   ./owpengram-macos.sh          bootstraps .env on a fresh install, starts
 #                                  everything, prints the admin panel URL,
-#                                  and exits -- no prompts.
+#                                  then (from a real terminal) drops into an
+#                                  interactive menu for stop/restart/status/
+#                                  update/logs/edition.
 #   ./owpengram-macos.sh stop     stops both processes.
 #   ./owpengram-macos.sh status   shows whether each process/container is up.
 #   ./owpengram-macos.sh restart  rebuilds and relaunches both.

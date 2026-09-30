@@ -3,8 +3,13 @@
 // panel already calls into for Restart/Update, given a plain main() so a
 // self-hoster (or a launcher script) can drive start/stop/restart/status/
 // logs/update from a terminal without Docker or Python being involved at
-// all. tui-panel/server-panel.py remains available as a richer, optional
-// interactive alternative; this is the minimum every install can rely on.
+// all. Run with no arguments from a real terminal (a double-clicked
+// owpengram-server.bat/start.bat/start.sh included) and it drops into an
+// interactive menu after the initial start, covering everything
+// tui-panel/server-panel.py's own Start/Stop/Restart/Update/Logs bindings
+// do. tui-panel remains available only for what this menu doesn't cover
+// yet -- a live dashboard and an in-place .env editor (the admin web
+// panel's Server Settings page already covers .env editing too).
 package main
 
 import (
@@ -29,10 +34,14 @@ func main() {
 	// double-clicked shortcut): behave like "start" -- bootstrap on a fresh
 	// install, otherwise just make sure everything is up -- same default
 	// entry point tui-panel/server-panel.py's quickstart() is for that
-	// script.
+	// script. When that bare invocation is also a real terminal (as
+	// opposed to a script piping/redirecting stdin, or `telesrv-ctl start`
+	// typed explicitly), it then drops into the interactive menu instead
+	// of just exiting -- see cmdMenu.
 	args := flag.Args()
 	command := "start"
 	var commandArgs []string
+	bareInvocation := len(args) == 0
 	if len(args) > 0 {
 		command = args[0]
 		commandArgs = args[1:]
@@ -45,7 +54,11 @@ func main() {
 	var err error
 	switch command {
 	case "start":
-		err = cmdStart(ctx, m)
+		if bareInvocation && isInteractiveTerminal() {
+			err = cmdMenu(ctx, m)
+		} else {
+			err = cmdStart(ctx, m)
+		}
 	case "stop":
 		err = cmdStop(m)
 	case "restart":
@@ -80,7 +93,9 @@ Commands:
                use Docker for PostgreSQL/MinIO, or run a fully portable
                install with an embedded PostgreSQL and no Docker at all),
                then build and launch whatever isn't already running
-               (safe to run repeatedly)
+               (safe to run repeatedly). Run with no arguments at all from
+               a real terminal and this is followed by an interactive menu
+               (stop/restart/status/update/logs/edition) instead of exiting.
   stop         stop owpengram-server and owpengram-admin-panel
   restart      rebuild and relaunch both from the current working tree
   status       show whether each process (and, if Docker is in use, each
@@ -124,9 +139,101 @@ func cmdStart(ctx context.Context, m *procctl.Manager) error {
 			fmt.Println("[WARN] TELESRV_ADMIN_UI_ADDR is not set -- can't show the admin panel URL.")
 		}
 	}
-	fmt.Println()
-	fmt.Println("For the interactive TUI (stop/restart/logs/.env editing) instead: python tui-panel/server-panel.py panel")
 	return nil
+}
+
+// cmdMenu runs cmdStart once (identical to a bare `telesrv-ctl` call today),
+// then loops an interactive menu covering the actions a self-hoster
+// previously had to leave this binary for: stop/restart/status/update/
+// logs/edition, the same set tui-panel/server-panel.py's own Start/Stop/
+// Restart/Update/Logs key bindings cover. Only reached for a genuinely
+// bare invocation on a real terminal (see main()) -- `telesrv-ctl start`
+// typed explicitly, or any non-interactive invocation (a script, a
+// launcher running headless), still just starts and returns, unchanged.
+func cmdMenu(ctx context.Context, m *procctl.Manager) error {
+	if err := cmdStart(ctx, m); err != nil {
+		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Println()
+		fmt.Println("== OwpenGram control menu ==")
+		st := m.Status()
+		fmt.Printf("  owpengram-server:       %s\n", aliveLabel(st.ServerAlive, st.ServerPID))
+		fmt.Printf("  owpengram-admin-panel:  %s\n", aliveLabel(st.AdminAlive, st.AdminPID))
+		fmt.Println()
+		fmt.Println("  1) Start")
+		fmt.Println("  2) Stop")
+		fmt.Println("  3) Restart")
+		fmt.Println("  4) Status (incl. Docker containers, if in use)")
+		fmt.Println("  5) Update (git pull --ff-only, rebuild, relaunch)")
+		fmt.Println("  6) Logs (current run's startup log)")
+		fmt.Println("  7) Change edition (standard/portable)")
+		fmt.Println("  8) Exit")
+		fmt.Print("\nChoice: ")
+
+		line, readErr := reader.ReadString('\n')
+		choice := strings.TrimSpace(line)
+
+		var actionErr error
+		switch choice {
+		case "1":
+			actionErr = cmdStart(ctx, m)
+		case "2":
+			actionErr = cmdStop(m)
+		case "3":
+			actionErr = cmdRestart(ctx, m)
+		case "4":
+			actionErr = cmdStatus(ctx, m)
+		case "5":
+			actionErr = cmdUpdate(ctx, m)
+		case "6":
+			actionErr = cmdLogs(m)
+		case "7":
+			actionErr = menuChangeEdition(m, reader)
+		case "8", "q", "quit", "exit":
+			return nil
+		case "":
+			if readErr != nil {
+				// stdin closed (e.g. piped in from something that ran dry)
+				// -- leave quietly instead of spinning on empty reads.
+				return nil
+			}
+			continue
+		default:
+			fmt.Printf("Unrecognized choice %q\n", choice)
+			continue
+		}
+		if actionErr != nil {
+			fmt.Fprintln(os.Stderr, "telesrv-ctl:", actionErr)
+		}
+		fmt.Print("\nPress Enter to continue...")
+		reader.ReadString('\n')
+	}
+}
+
+// menuChangeEdition is option 7's prompt -- a thin interactive wrapper
+// around cmdSetEdition so the menu doesn't need the caller to already know
+// the standard/portable argument syntax.
+func menuChangeEdition(m *procctl.Manager, reader *bufio.Reader) error {
+	current, ok := m.Edition()
+	if ok {
+		fmt.Printf("Current edition: %s\n", current)
+	}
+	fmt.Println("  1) Standard -- PostgreSQL and MinIO run in Docker")
+	fmt.Println("  2) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
+	fmt.Print("Choice: ")
+	line, _ := reader.ReadString('\n')
+	switch strings.TrimSpace(line) {
+	case "1", "standard":
+		return cmdSetEdition(m, []string{"standard"})
+	case "2", "portable":
+		return cmdSetEdition(m, []string{"portable"})
+	default:
+		fmt.Println("Not a recognized choice -- edition left unchanged.")
+		return nil
+	}
 }
 
 func cmdSetEdition(m *procctl.Manager, args []string) error {

@@ -515,11 +515,13 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 owpengram-server.sh/.bat  one-command launcher (checks/installs Go, then builds+runs telesrv-ctl)
 scripts/install-prereqs.* unattended prerequisite installers (Arch/Ubuntu, Windows)
 cmd/telesrv/              server entrypoint
-cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update (what the launcher runs)
+cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update/edition -- run with no
+                          arguments from a terminal for an interactive menu (what the launcher runs)
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
-tui-panel/                optional interactive TUI server panel (start/stop, update, logs, .env editor) --
-                          needs Python 3 in addition to Go; run with `python tui-panel/server-panel.py panel`
+tui-panel/                optional interactive TUI server panel with a live dashboard and an in-place
+                          .env editor -- needs Python 3 in addition to Go; run with
+                          `python tui-panel/server-panel.py panel`
 deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
 data/                     bundled language packs and optional seed data
 internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints

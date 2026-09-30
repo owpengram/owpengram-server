@@ -12,7 +12,9 @@ rem default path depends on them.
 rem
 rem   owpengram-server.bat          bootstraps .env on a fresh install,
 rem                                 starts everything, prints the admin
-rem                                 panel URL, and exits -- no prompts.
+rem                                 panel URL, then drops into an interactive
+rem                                 menu for stop/restart/status/update/logs/
+rem                                 edition.
 rem   owpengram-server.bat stop     stops both processes.
 rem   owpengram-server.bat status   shows whether each process/container is up.
 rem   owpengram-server.bat restart  rebuilds and relaunches both.

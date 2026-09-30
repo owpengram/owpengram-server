@@ -197,10 +197,18 @@ func killPID(pid int) {
 }
 
 // launch starts exePath detached, cwd=Root, stdout/stderr appended to
-// logPath, and returns its PID. Unlike the Python TUI this does not set a
-// new session/process group (that needs OS-specific SysProcAttr) -- started
-// via Start() (not Run()), the child outlives this function's return either
-// way, which is all a request/response HTTP handler needs.
+// logPath, and returns its PID. Started via Start() (not Run()), the child
+// outlives this function's return either way -- but without detachFromConsole
+// below it would NOT outlive the console/terminal that launched telesrv-ctl
+// itself: a plain child process stays attached to whatever console it
+// inherited (Windows: CTRL_CLOSE_EVENT kills every attached process when
+// that console's window is closed; Unix: SIGHUP on the controlling terminal
+// hanging up, e.g. an SSH session dropping). owpengram-server.bat/start.sh
+// both exit almost immediately after launching this (telesrv-ctl's default
+// command is fire-and-forget), so whether that turns into "the server dies
+// the moment you close the window" depends entirely on whether the console
+// happened to still be open with nothing else attached to it -- exactly the
+// launcher-vs-launcher inconsistency this exists to remove.
 func (m *Manager) launch(exePath, logPath string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir logs: %w", err)
@@ -225,6 +233,7 @@ func (m *Manager) launch(exePath, logPath string) (int, error) {
 	cmd.Stderr = logf
 	cmd.Stdin = nil
 	hideWindow(cmd)
+	detachFromConsole(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("start %s: %w", exePath, err)
 	}
@@ -353,8 +362,18 @@ type dockerComposePsRow struct {
 // DockerStatus reports the live state of every service in
 // deploy/docker-compose.yml, for the admin panel's "Services" tab. Returns
 // an empty slice (not an error) when the compose file doesn't exist, same
-// convention as ensureDocker.
+// convention as ensureDocker -- and, for the same reason, when the edition
+// is "portable": that install owns its own embedded PostgreSQL and never
+// runs `docker compose up` at all (see ensureDocker), so `docker compose
+// ps` has nothing real to report. Docker being present on PATH but its
+// daemon not running (the common case for a portable install that happens
+// to have Docker Desktop installed for something else) would otherwise
+// surface as a scary "docker compose ps failed: exit status 1" error in
+// the Services tab for a condition that isn't actually a problem.
 func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
+	if edition, ok := m.Edition(); ok && edition == "portable" {
+		return nil, nil
+	}
 	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
 	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
 		return nil, nil
