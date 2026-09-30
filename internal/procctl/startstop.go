@@ -67,13 +67,17 @@ func (m *Manager) Stop() string {
 	st := m.loadState()
 	var log string
 	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID, true)
+		killPID(st.ServerPID)
 		log += fmt.Sprintf("owpengram-server (pid=%d) stopped.\n", st.ServerPID)
 	}
 	if pidAlive(st.AdminPID) {
-		killPID(st.AdminPID, false)
+		killPID(st.AdminPID)
 		log += fmt.Sprintf("owpengram-admin-panel (pid=%d) stopped.\n", st.AdminPID)
 	}
+	// Runs even when neither PID was alive: a previous hard kill or crash
+	// can have left the embedded postmaster behind without a recorded
+	// server PID to notice it by.
+	m.StopEmbeddedPostgres()
 	if log == "" {
 		log = "Nothing was running.\n"
 	}

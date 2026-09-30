@@ -151,39 +151,38 @@ func pidAlive(pid int) bool {
 	return cmd.Run() == nil
 }
 
-// killPID mirrors kill_pid() in server-panel.py, with one deliberate
-// difference on Windows: whether to pass taskkill "/T" (tree-kill,
-// following recorded parent-PID down to every descendant) depends on
-// which PID this is, via tree.
+// killPID mirrors kill_pid() in server-panel.py, MINUS its "/T" tree-kill
+// on Windows -- deliberately different here, not an oversight, and NOT
+// something to "fix" by adding /T for one of the two PIDs either. Neither
+// process is reliably the other's ancestor, so a tree-kill of either one
+// can take out the other:
 //
-// tree must be false for the ADMIN PID: HandlePendingAdminRestart runs
-// *inside* the freshly launched owpengram-server, which was itself spawned
-// as a child of the *old* owpengram-admin-panel process by the
-// Restart/Update call that got it here. Killing that old admin PID with
-// "/T" would tree-kill its entire descendant chain -- including this very
-// owpengram-server process, since it's a child of the PID being killed.
+//   - server launched by admin: Restart/Update called from the admin
+//     panel's own HTTP handler spawns the new owpengram-server as a child
+//     of owpengram-admin-panel.
+//   - admin launched by server: HandlePendingAdminRestart then runs inside
+//     that new server and spawns the replacement admin panel as a child of
+//     itself.
+//   - both launched by telesrv-ctl: a plain `start` parents both to a
+//     process that exits immediately.
 //
-// tree should be true for the SERVER PID: portable edition
-// (TELESRV_EDITION=portable) makes owpengram-server the parent of a real
-// child process tree of its own now -- the embedded PostgreSQL postmaster
-// and its forked workers (see internal/embeddedpg) -- which Stop()'s
-// graceful shutdown never gets a chance to run for if the *server* process
-// itself is force-killed from outside (exactly what Restart/Update/Stop do
-// here). Without "/T" those survive as orphans still holding
-// TELESRV_EMBEDDED_POSTGRES_PORT, so the next start fails with "process
-// already listening on port ...". No caller kills the server PID from a
-// process descended from it, so this carries none of the risk described
-// above for the admin PID.
-func killPID(pid int, tree bool) {
+// So "/T" on the admin PID can kill the server that is running the kill,
+// and "/T" on the server PID can kill the admin panel that is running it --
+// the latter observed for real: clicking Restart in the admin UI
+// tree-killed the admin process mid-request, so Restart never got past
+// killing the old server (no rebuild, no relaunch, no saved state).
+// Windows' taskkill walks that chain by recorded parent-PID regardless of
+// any process-group flags on launch, so exact-PID kill only, both ways.
+//
+// The portable edition's embedded PostgreSQL (the one genuinely-owned
+// child process tree in play) is handled separately and gracefully by
+// Manager.StopEmbeddedPostgres, which every caller here pairs with this.
+func killPID(pid int) {
 	if pid <= 0 {
 		return
 	}
 	if runtime.GOOS == "windows" {
-		args := []string{"/PID", strconv.Itoa(pid), "/F"}
-		if tree {
-			args = append(args, "/T")
-		}
-		cmd := exec.Command("taskkill", args...)
+		cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F")
 		hideWindow(cmd)
 		_ = cmd.Run()
 		return
@@ -195,17 +194,6 @@ func killPID(pid int, tree bool) {
 	kill := exec.Command("kill", "-KILL", strconv.Itoa(pid))
 	hideWindow(kill)
 	_ = kill.Run()
-	if tree {
-		// No process group was set up at launch (see launch()'s doc
-		// comment), so a plain kill above only ever reached the exact PID.
-		// pkill -P catches the embedded PostgreSQL postmaster specifically
-		// (a direct child, same portable-edition reasoning as the Windows
-		// branch above) -- best-effort, errors ignored, same as the two
-		// kill calls above.
-		pkill := exec.Command("pkill", "-9", "-P", strconv.Itoa(pid))
-		hideWindow(pkill)
-		_ = pkill.Run()
-	}
 }
 
 // launch starts exePath detached, cwd=Root, stdout/stderr appended to
@@ -472,8 +460,9 @@ func (m *Manager) goBuild(ctx context.Context, outPath, pkg string) (string, err
 func (m *Manager) Restart(ctx context.Context) (string, error) {
 	st := m.loadState()
 	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID, true)
+		killPID(st.ServerPID)
 	}
+	m.StopEmbeddedPostgres()
 	dockerLog, err := m.ensureDocker(ctx, st)
 	if err != nil {
 		return dockerLog, err
@@ -507,8 +496,9 @@ func (m *Manager) Update(ctx context.Context) (string, error) {
 	}
 	st := m.loadState()
 	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID, true)
+		killPID(st.ServerPID)
 	}
+	m.StopEmbeddedPostgres()
 	dockerLog, err := m.ensureDocker(ctx, st)
 	fullLog := pullLog + "\n" + dockerLog
 	if err != nil {
@@ -545,7 +535,7 @@ func (m *Manager) HandlePendingAdminRestart(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if pidAlive(st.AdminPID) {
-		killPID(st.AdminPID, false)
+		killPID(st.AdminPID)
 	}
 	pid, err := m.launch(m.adminExe(), m.adminLog())
 	if err != nil {

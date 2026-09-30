@@ -1,6 +1,11 @@
 package procctl
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+)
 
 // DockerAvailable reports whether the docker CLI is reachable on PATH --
 // used by cmd/telesrv-ctl's edition picker to know whether "standard"
@@ -39,6 +44,75 @@ func (m *Manager) Edition() (edition string, ok bool) {
 
 // SetEdition persists the chosen edition to .env, so a future start/restart
 // doesn't need to ask again.
+//
+// Choosing "portable" also pins TELESRV_BLOB_BACKEND to localfs, because
+// internal/config.Load forces exactly that anyway (there is no MinIO in the
+// portable edition) -- leaving a stale "s3" in .env only bought a scary
+// "s3 blob backend configured but failed to initialize" warning on every
+// single start, describing a backend that was never going to be used.
+// Switching back to "standard" deliberately does NOT restore s3: by then
+// blobs may well have been written to disk under TELESRV_BLOB_DIR, and
+// silently pointing the server back at an object store that doesn't have
+// them is worse than leaving the working setting alone for the operator to
+// change on purpose (admin panel -> Server Settings, or .env directly).
 func (m *Manager) SetEdition(edition string) error {
-	return m.WriteEnvValues(map[string]string{"TELESRV_EDITION": edition})
+	values := map[string]string{"TELESRV_EDITION": edition}
+	if edition == "portable" {
+		values["TELESRV_BLOB_BACKEND"] = "localfs"
+	}
+	return m.WriteEnvValues(values)
+}
+
+// embeddedPostgresDataDir resolves TELESRV_EMBEDDED_POSTGRES_DIR exactly
+// the way internal/config does -- default data/postgres, relative paths
+// against the checkout root.
+func (m *Manager) embeddedPostgresDataDir() string {
+	dir := ""
+	if values, err := m.readEnvFile(); err == nil {
+		dir = values["TELESRV_EMBEDDED_POSTGRES_DIR"]
+	}
+	if dir == "" {
+		dir = "data/postgres"
+	}
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+	return filepath.Join(m.Root, dir)
+}
+
+// StopEmbeddedPostgres gracefully stops the portable edition's embedded
+// PostgreSQL, if one is running for this checkout.
+//
+// killPID deliberately never tree-kills (see its doc comment: neither
+// owpengram-server nor owpengram-admin-panel is reliably the other's
+// ancestor, so a tree-kill either way can take out the process doing the
+// killing). That leaves the embedded postmaster -- a genuine child of
+// owpengram-server -- alive after the server itself is gone, still holding
+// TELESRV_EMBEDDED_POSTGRES_PORT. So every Stop/Restart/Update pairs the
+// server kill with this: a real `pg_ctl stop -m fast`, which is also
+// strictly better than any kill would be, since the database gets a clean
+// checkpoint instead of crash recovery on the next start.
+//
+// Silent no-op outside the portable edition, or when there's nothing
+// running (no postmaster.pid, no downloaded runtime yet). Best-effort:
+// errors are ignored, because embeddedpg.Start's own stopStaleInstance is
+// the backstop that makes the next start work regardless.
+func (m *Manager) StopEmbeddedPostgres() {
+	if edition, ok := m.Edition(); !ok || edition != "portable" {
+		return
+	}
+	dir := m.embeddedPostgresDataDir()
+	if _, err := os.Stat(filepath.Join(dir, "data", "postmaster.pid")); err != nil {
+		return
+	}
+	pgCtl := filepath.Join(dir, "runtime", "bin", "pg_ctl")
+	if runtime.GOOS == "windows" {
+		pgCtl += ".exe"
+	}
+	if _, err := os.Stat(pgCtl); err != nil {
+		return
+	}
+	cmd := exec.Command(pgCtl, "stop", "-D", filepath.Join(dir, "data"), "-m", "fast")
+	hideWindow(cmd)
+	_ = cmd.Run()
 }

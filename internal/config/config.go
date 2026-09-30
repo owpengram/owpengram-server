@@ -4,6 +4,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -1347,6 +1348,19 @@ func Load() (Config, error) {
 		// only backend that can work, regardless of what TELESRV_BLOB_BACKEND
 		// says.
 		cfg.BlobBackendKind = "localfs"
+		// A *loopback* S3 endpoint in the portable edition can only mean the
+		// MinIO container the standard edition's compose file would have
+		// started -- which, portable meaning "no Docker at all", is by
+		// definition not running. cmd/telesrv still builds the s3 backend
+		// whenever one is configured (to keep blobs written before a backend
+		// switch readable), so leaving this set bought nothing but a
+		// dial timeout on every single start plus a warning about a backend
+		// that was never going to answer. An external endpoint (real S3, a
+		// MinIO on another host) is deliberately left alone: portable
+		// Postgres with cloud object storage is a perfectly coherent setup.
+		if isLoopbackHostPort(cfg.S3Endpoint) {
+			cfg.S3Endpoint = ""
+		}
 	}
 	if err := validateLoginEmailConfig(cfg); err != nil {
 		return Config{}, err
@@ -2357,4 +2371,30 @@ func (e envSource) envDurationOr(key string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+// isLoopbackHostPort reports whether hostPort ("host", "host:port" or
+// "[ipv6]:port") names this machine's loopback interface -- used by the
+// portable edition to tell "the MinIO the standard edition's compose file
+// starts" apart from a genuinely external object store. A bare
+// "localhost"/"127.x"/"::1" counts; anything unparseable or non-loopback
+// does not.
+func isLoopbackHostPort(hostPort string) bool {
+	s := strings.TrimSpace(hostPort)
+	if s == "" {
+		return false
+	}
+	host := s
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return addr.IsLoopback()
 }
