@@ -1,8 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-Installs everything owpengram-server.bat checks for, via winget: Go, Python 3
-(+ the panel's packages in a venv) and OpenSSL.
+Installs everything owpengram-server.bat checks for, via winget: Go and OpenSSL.
 
 .DESCRIPTION
 Docker is the deliberate exception. It is only reported, with a link: on Windows
@@ -25,7 +24,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $DockerDocs = 'https://docs.docker.com/desktop/setup/install/windows-install/'
 $GoMinMinor = 25
 
@@ -37,28 +35,12 @@ function Write-Err  { param([string]$Text) Write-Host "[ERROR] $Text" -Foregroun
 function Test-Command { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # winget puts new tools on the machine/user PATH, but this process was started
-# with the old one -- without this the venv step cannot find the Python it just
-# installed, and the closing "go version" would report the absence of Go.
+# with the old one -- without this the closing "go version" would report the
+# absence of Go.
 function Update-PathFromRegistry {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user    = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = (@($machine, $user) | Where-Object { $_ }) -join ';'
-}
-
-# python.exe on a stock Windows is often the Microsoft Store's app-execution
-# alias: present on PATH, and it opens the Store instead of running anything.
-# Only a real version string counts, which is the same trap owpengram-server.bat
-# documents.
-function Get-WorkingPython {
-    foreach ($candidate in @('py -3', 'python3', 'python')) {
-        $parts = $candidate.Split(' ')
-        if (-not (Test-Command $parts[0])) { continue }
-        try {
-            $out = & $parts[0] @($parts[1..($parts.Length - 1)] + '--version') 2>&1 | Out-String
-        } catch { continue }
-        if ($out -match 'Python 3\.') { return $candidate }
-    }
-    return $null
 }
 
 function Test-GoRecentEnough {
@@ -66,24 +48,6 @@ function Test-GoRecentEnough {
     try { $version = (& go env GOVERSION 2>$null | Out-String).Trim() } catch { return $false }
     if ($version -match '^go1\.(\d+)') { return [int]$Matches[1] -ge $GoMinMinor }
     return $false
-}
-
-# Same precedence owpengram-server.bat uses when it picks an interpreter: the
-# venv when one exists, otherwise whatever Python is on PATH. Checking only the
-# venv would report the packages missing on a machine that already has them
-# installed system-wide, and build a venv nobody asked for.
-function Test-PanelDepsInstalled {
-    $checker = Join-Path $RepoRoot 'tui-panel\check_deps.py'
-    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    if (Test-Path $venvPython) {
-        $missing = & $venvPython $checker 2>$null | Out-String
-        return [string]::IsNullOrWhiteSpace($missing)
-    }
-    $fallback = Get-WorkingPython
-    if (-not $fallback) { return $false }
-    $parts = $fallback.Split(' ')
-    $missing = & $parts[0] @($parts[1..($parts.Length - 1)] + $checker) 2>$null | Out-String
-    return [string]::IsNullOrWhiteSpace($missing)
 }
 
 function Install-WingetPackage {
@@ -104,12 +68,9 @@ if (-not (Test-Command 'winget')) {
 }
 
 # --- what is missing ---------------------------------------------------------
-$python = Get-WorkingPython
 $needed = [System.Collections.Generic.List[string]]::new()
-if (-not (Test-GoRecentEnough))     { $needed.Add('go') }
-if (-not $python)                   { $needed.Add('python') }
-if (-not (Test-Command 'openssl'))  { $needed.Add('openssl') }
-if (-not (Test-PanelDepsInstalled)) { $needed.Add('pydeps') }
+if (-not (Test-GoRecentEnough))    { $needed.Add('go') }
+if (-not (Test-Command 'openssl')) { $needed.Add('openssl') }
 $dockerMissing = -not (Test-Command 'docker')
 
 if ($needed.Count -eq 0 -and -not $dockerMissing) {
@@ -122,8 +83,6 @@ Write-Host '== Missing prerequisites ==' -ForegroundColor Yellow
 foreach ($item in $needed) {
     switch ($item) {
         'go'      { Write-Host "  - Go 1.$GoMinMinor+ (builds owpengram-server and the admin panel)" }
-        'python'  { Write-Host '  - Python 3 (runs the server-panel TUI)' }
-        'pydeps'  { Write-Host '  - Python packages: textual, psutil, cryptography (into .\.venv)' }
         'openssl' { Write-Host "  - OpenSSL (exports the server's RSA public key for clients)" }
     }
 }
@@ -151,30 +110,7 @@ if ($needed.Count -gt 0 -and -not $Yes) {
 }
 
 if ($needed -contains 'go')      { Install-WingetPackage -Id 'GoLang.Go' -Label 'Go' }
-if ($needed -contains 'python')  { Install-WingetPackage -Id 'Python.Python.3.13' -Label 'Python 3.13' }
 if ($needed -contains 'openssl') { Install-WingetPackage -Id 'ShiningLight.OpenSSL.Light' -Label 'OpenSSL' }
-
-# --- the panel's Python packages ---------------------------------------------
-# A venv rather than the machine-wide interpreter, to match what the Linux side
-# does and what owpengram-server.bat already prefers once one exists.
-if ($needed -contains 'pydeps' -or $needed -contains 'python') {
-    $python = Get-WorkingPython
-    if (-not $python) {
-        Write-Err 'Python still is not callable. Open a new terminal and run this script again.'
-        exit 1
-    }
-    Write-Info 'Installing the panel''s Python packages into .\.venv'
-    $venvPython = Join-Path $RepoRoot '.venv\Scripts\python.exe'
-    if (-not (Test-Path $venvPython)) {
-        $parts = $python.Split(' ')
-        & $parts[0] @($parts[1..($parts.Length - 1)] + @('-m', 'venv', (Join-Path $RepoRoot '.venv')))
-        if ($LASTEXITCODE -ne 0) { throw 'could not create .venv' }
-    }
-    & $venvPython -m pip install --quiet --upgrade pip
-    & $venvPython -m pip install --quiet -r (Join-Path $RepoRoot 'tui-panel\requirements-panel.txt')
-    if ($LASTEXITCODE -ne 0) { throw 'could not install the panel''s Python packages' }
-    Write-Ok 'Python packages installed'
-}
 
 Write-Host ''
 if ($dockerMissing) {

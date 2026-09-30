@@ -6,9 +6,7 @@ rem Builds and runs bin\telesrv-ctl.exe (cmd\telesrv-ctl, wrapping
 rem internal\procctl.Manager) -- Go is the only prerequisite this checks for.
 rem Docker is optional and only checked informationally: absent,
 rem TELESRV_POSTGRES_DSN must already point at a reachable PostgreSQL
-rem instead. Python and tui-panel\server-panel.py remain available as a
-rem richer, optional interactive alternative (see README) -- nothing in this
-rem default path depends on them.
+rem instead.
 rem
 rem   owpengram-server.bat          bootstraps .env on a fresh install,
 rem                                 starts everything, prints the admin

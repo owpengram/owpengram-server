@@ -3,9 +3,6 @@
 # internal/procctl.Manager) -- Go is the only prerequisite this checks for.
 # Docker is optional and only checked informationally: absent,
 # TELESRV_POSTGRES_DSN must already point at a reachable PostgreSQL instead.
-# Python and tui-panel/server-panel.py remain available as a richer,
-# optional interactive alternative (see README) -- nothing in this default
-# path depends on them.
 #
 #   ./owpengram-macos.sh          bootstraps .env on a fresh install, starts
 #                                  everything, prints the admin panel URL,

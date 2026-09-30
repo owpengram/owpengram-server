@@ -4,12 +4,11 @@
 // self-hoster (or a launcher script) can drive start/stop/restart/status/
 // logs/update from a terminal without Docker or Python being involved at
 // all. Run with no arguments from a real terminal (a double-clicked
-// owpengram-server.bat/start.bat/start.sh included) and it drops into an
-// interactive menu after the initial start, covering everything
-// tui-panel/server-panel.py's own Start/Stop/Restart/Update/Logs bindings
-// do. tui-panel remains available only for what this menu doesn't cover
-// yet -- a live dashboard and an in-place .env editor (the admin web
-// panel's Server Settings page already covers .env editing too).
+// owpengram-server.bat/start.bat/start.sh included) and it drops into
+// internal/panel's interactive TUI after the initial start: a live
+// dashboard, start/stop/restart/update, a log viewer, an edition switch,
+// and a grouped .env editor -- everything tui-panel/server-panel.py's own
+// Textual app covered, without needing Python installed at all.
 package main
 
 import (
@@ -22,6 +21,7 @@ import (
 	"strings"
 	"syscall"
 
+	"telesrv/internal/panel"
 	"telesrv/internal/procctl"
 )
 
@@ -129,7 +129,7 @@ func cmdStart(ctx context.Context, m *procctl.Manager) error {
 	fmt.Println()
 	groups, envErr := m.ReadEnvGroups()
 	if envErr == nil {
-		if url, ok := adminUIURL(groups); ok {
+		if url, ok := procctl.AdminUIURL(groups); ok {
 			fmt.Printf("Open %s to finish setting up your server.\n", url)
 			if generatedPassword != "" {
 				fmt.Printf("Login: %s\n", procctl.AdminBreakGlassUsername)
@@ -154,98 +154,11 @@ func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 	if err := cmdStart(ctx, m); err != nil {
 		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
 	}
-
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Println()
-		fmt.Println("== OwpenGram control menu ==")
-		st := m.Status()
-		fmt.Printf("  owpengram-server:       %s\n", aliveLabel(st.ServerAlive, st.ServerPID))
-		fmt.Printf("  owpengram-admin-panel:  %s\n", aliveLabel(st.AdminAlive, st.AdminPID))
-		fmt.Println()
-		fmt.Println("  1) Start")
-		fmt.Println("  2) Stop")
-		fmt.Println("  3) Restart")
-		fmt.Println("  4) Status (incl. Docker containers, if in use)")
-		fmt.Println("  5) Update (git pull --ff-only, rebuild, relaunch)")
-		fmt.Println("  6) Logs (current run's startup log)")
-		fmt.Println("  7) Change edition (portable/classic)")
-		fmt.Println("  8) Exit")
-		fmt.Print("\nChoice: ")
-
-		line, readErr := reader.ReadString('\n')
-		choice := strings.TrimSpace(line)
-
-		var actionErr error
-		switch choice {
-		case "1":
-			actionErr = cmdStart(ctx, m)
-		case "2":
-			actionErr = cmdStop(m)
-		case "3":
-			actionErr = cmdRestart(ctx, m)
-		case "4":
-			actionErr = cmdStatus(ctx, m)
-		case "5":
-			actionErr = cmdUpdate(ctx, m)
-		case "6":
-			actionErr = cmdLogs(m)
-		case "7":
-			actionErr = menuChangeEdition(m, reader)
-		case "8", "q", "quit", "exit":
-			return nil
-		case "":
-			if readErr != nil {
-				// stdin closed (e.g. piped in from something that ran dry)
-				// -- leave quietly instead of spinning on empty reads.
-				return nil
-			}
-			continue
-		default:
-			fmt.Printf("Unrecognized choice %q\n", choice)
-			continue
-		}
-		if actionErr != nil {
-			fmt.Fprintln(os.Stderr, "telesrv-ctl:", actionErr)
-		}
-		fmt.Print("\nPress Enter to continue...")
-		reader.ReadString('\n')
-	}
-}
-
-// menuChangeEdition is option 7's prompt -- a thin interactive wrapper
-// around cmdSetEdition so the menu doesn't need the caller to already know
-// the portable/classic argument syntax.
-func menuChangeEdition(m *procctl.Manager, reader *bufio.Reader) error {
-	current, ok := m.Edition()
-	if ok {
-		fmt.Printf("Current edition: %s\n", displayEditionName(current))
-	}
-	fmt.Println("  1) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
-	fmt.Println("  2) Classic -- PostgreSQL and MinIO run in Docker")
-	fmt.Print("Choice: ")
-	line, _ := reader.ReadString('\n')
-	switch strings.TrimSpace(line) {
-	case "1", "portable":
-		return cmdSetEdition(m, []string{"portable"})
-	case "2", "classic", "standard":
-		return cmdSetEdition(m, []string{"classic"})
-	default:
-		fmt.Println("Not a recognized choice -- edition left unchanged.")
-		return nil
-	}
-}
-
-// displayEditionName maps the value persisted in .env (TELESRV_EDITION,
-// still "standard" internally -- see internal/procctl/edition.go) to the
-// name shown to a human: "classic" reads better than "standard" now that
-// portable is the recommended default, and changing the .env value itself
-// would break every install that already has TELESRV_EDITION=standard set.
-func displayEditionName(edition string) string {
-	if edition == "standard" {
-		return "classic"
-	}
-	return edition
+	// panel.Run takes the terminal into raw mode for the rest of this
+	// process's life -- nothing after this point may read os.Stdin itself
+	// (see cmdStart/resolveEdition's own bufio.Reader use, which is why
+	// that runs to completion above, before this call, not after it).
+	return panel.Run(ctx, m)
 }
 
 // cmdSetEdition accepts "classic" as the documented spelling for the
@@ -268,7 +181,7 @@ func cmdSetEdition(m *procctl.Manager, args []string) error {
 	if err := m.SetEdition(edition); err != nil {
 		return err
 	}
-	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", displayEditionName(edition))
+	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", procctl.DisplayEditionName(edition))
 	return nil
 }
 
@@ -318,7 +231,7 @@ func resolveEdition(m *procctl.Manager) error {
 	} else {
 		edition = recommended
 		fmt.Printf("[cfg] No TTY attached -- defaulting to edition %q. Change later with `telesrv-ctl set-edition portable|classic`.\n",
-			displayEditionName(edition))
+			procctl.DisplayEditionName(edition))
 	}
 
 	if err := m.SetEdition(edition); err != nil {
@@ -399,65 +312,5 @@ func cmdLogs(m *procctl.Manager) error {
 	return nil
 }
 
-// adminUIURL rewrites TELESRV_ADMIN_UI_ADDR into something a browser can
-// actually open, same as server-panel.py's browsable_host_port(): a
-// wildcard bind (0.0.0.0, ::, empty) displays as loopback, since the bind
-// itself is never something to type into a browser.
-func adminUIURL(groups []procctl.EnvGroup) (string, bool) {
-	addr := envGroupValue(groups, "TELESRV_ADMIN_UI_ADDR")
-	if addr == "" {
-		return "", false
-	}
-	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
-		scheme, rest, _ := strings.Cut(addr, "://")
-		netloc, slash, path := cutFirst(rest, "/")
-		return scheme + "://" + browsableHostPort(netloc) + slash + path, true
-	}
-	return "http://" + browsableHostPort(addr), true
-}
-
-func cutFirst(s, sep string) (before, sepFound, after string) {
-	if i := strings.Index(s, sep); i >= 0 {
-		return s[:i], sep, s[i+len(sep):]
-	}
-	return s, "", ""
-}
-
-func browsableHostPort(hostPort string) string {
-	s := strings.TrimSpace(hostPort)
-	if strings.HasPrefix(s, "[") {
-		closeIdx := strings.Index(s, "]")
-		if closeIdx == -1 {
-			return s
-		}
-		host, rest := s[1:closeIdx], s[closeIdx+1:]
-		if host == "::" || host == "" {
-			return "[::1]" + rest
-		}
-		return "[" + host + "]" + rest
-	}
-	lastColon := strings.LastIndex(s, ":")
-	if lastColon < 0 {
-		return s
-	}
-	host, port := s[:lastColon], s[lastColon+1:]
-	switch host {
-	case "0.0.0.0", "", "*":
-		return "127.0.0.1:" + port
-	case "::":
-		return "[::1]:" + port
-	default:
-		return s
-	}
-}
-
-func envGroupValue(groups []procctl.EnvGroup, key string) string {
-	for _, g := range groups {
-		for _, f := range g.Fields {
-			if f.Key == key {
-				return f.Value
-			}
-		}
-	}
-	return ""
-}
+// Admin UI URL display -- see internal/procctl.AdminUIURL, shared with
+// internal/panel's TUI so the two never drift on how they show it.

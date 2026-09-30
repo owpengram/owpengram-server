@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Installs everything owpengram-server.sh checks for, so a fresh machine needs
-# one command instead of a shopping list: Go, Python 3 (+ the panel's packages
-# in a venv), Docker and OpenSSL.
+# one command instead of a shopping list: Go, Docker and OpenSSL.
 #
 #   ./scripts/install-prereqs.sh            install whatever is missing
 #   ./scripts/install-prereqs.sh --dry-run  only report what it would install
@@ -16,7 +15,6 @@
 # machines happen.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-REPO_ROOT="$PWD"
 
 ok()   { printf '[ok] %s\n' "$*"; }
 info() { printf '[..] %s\n' "$*"; }
@@ -65,31 +63,10 @@ go_is_recent_enough() {
   [[ "$minor" =~ ^[0-9]+$ ]] && (( minor >= GO_MIN_MINOR ))
 }
 
-venv_python() { printf '%s/.venv/bin/python' "$REPO_ROOT"; }
-
-# Same precedence owpengram-server.sh uses when it picks an interpreter: the
-# venv when one exists, otherwise whatever python3 is on PATH. Checking only the
-# venv would report the packages missing on a machine that already has them
-# installed system-wide, and build a venv nobody asked for.
-pydeps_satisfied() {
-  local py
-  if [[ -x "$(venv_python)" ]]; then
-    py="$(venv_python)"
-  elif have python3; then
-    py="python3"
-  else
-    return 1
-  fi
-  [[ -z "$("$py" tui-panel/check_deps.py 2>/dev/null)" ]]
-}
-
 NEEDED=()
 go_is_recent_enough                || NEEDED+=("go")
-have python3                       || NEEDED+=("python")
 have docker                        || NEEDED+=("docker")
 have openssl                       || NEEDED+=("openssl")
-# The venv is built with python3, so it can only be settled after Python is.
-pydeps_satisfied                   || NEEDED+=("pydeps")
 
 if [[ ${#NEEDED[@]} -eq 0 ]]; then
   ok "All prerequisites are already installed."
@@ -100,8 +77,6 @@ echo "== Missing prerequisites on ${DISTRO_NAME} =="
 for item in "${NEEDED[@]}"; do
   case "$item" in
     go)      echo "  - Go 1.${GO_MIN_MINOR}+ (builds owpengram-server and the admin panel)" ;;
-    python)  echo "  - Python 3 (runs the server-panel TUI)" ;;
-    pydeps)  echo "  - Python packages: textual, psutil, cryptography (into ./.venv)" ;;
     docker)  echo "  - Docker (runs PostgreSQL and MinIO)" ;;
     openssl) echo "  - OpenSSL (exports the server's RSA public key for clients)" ;;
   esac
@@ -154,6 +129,9 @@ ensure_installer_tools() {
   if [[ "$FAMILY" == "debian" && ! -e /etc/ssl/certs/ca-certificates.crt ]]; then
     wanted+=("ca-certificates")
   fi
+  # install_go_tarball below picks the published checksum out of go.dev's
+  # JSON release index with this -- tiny package, always worth having.
+  have jq || wanted+=("jq")
   [[ ${#wanted[@]} -eq 0 ]] && return 0
   info "Installing what this script needs first: ${wanted[*]}"
   pkg_install "${wanted[@]}"
@@ -176,19 +154,7 @@ pkg_install() {
 
 ensure_installer_tools
 
-# --- Python + OpenSSL --------------------------------------------------------
-if needs python; then
-  info "Installing Python 3"
-  case "$FAMILY" in
-    arch)   pkg_install python ;;
-    # python3-venv is separate on Debian/Ubuntu and is what the panel's
-    # dependencies go into: both distros mark the system Python
-    # externally-managed, so pip into it is refused by design.
-    debian) pkg_install python3 python3-venv python3-pip ;;
-  esac
-  ok "Python installed: $(python3 --version)"
-fi
-
+# --- OpenSSL -------------------------------------------------------------
 if needs openssl; then
   info "Installing OpenSSL"
   pkg_install openssl
@@ -219,14 +185,8 @@ install_go_tarball() {
   # The published checksum lives in go.dev's release index, so the download is
   # verified against the site's metadata rather than trusted on arrival.
   expected="$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' \
-    | python3 -c 'import json,sys
-want = sys.argv[1]
-for release in json.load(sys.stdin):
-    for f in release.get("files", []):
-        if f.get("filename") == want:
-            print(f.get("sha256", ""))
-            raise SystemExit
-' "$tarball")"
+    | jq -r --arg want "$tarball" '.[].files[] | select(.filename == $want) | .sha256' \
+    | head -n1)"
   [[ -n "$expected" ]] || die "no published checksum for ${tarball}"
   actual="$(sha256sum "$tmp/$tarball" | cut -d' ' -f1)"
   [[ "$actual" == "$expected" ]] || die "checksum mismatch for ${tarball}: expected ${expected}, got ${actual}"
@@ -289,7 +249,8 @@ if needs docker; then
   else
     warn "systemd not found -- start the Docker daemon yourself before running ./owpengram-server.sh"
   fi
-  # Without this every docker call needs sudo, which the panel does not use.
+  # Without this every docker call needs sudo, which owpengram-server.sh
+  # ("classic" edition) does not use.
   if [[ $EUID -ne 0 ]] && ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
     $SUDO usermod -aG docker "$USER"
     DOCKER_NEEDS_RELOGIN=1
@@ -305,37 +266,6 @@ if needs docker; then
     fi
   fi
   ok "Docker installed: $(docker --version)"
-fi
-
-# --- the panel's Python packages ---------------------------------------------
-# Always a venv, never the system interpreter: Arch and Debian both refuse pip
-# into it (PEP 668), and owpengram-server.sh already prefers ./.venv when present.
-if needs pydeps; then
-  info "Installing the panel's Python packages into ./.venv"
-  # Debian/Ubuntu ship venv separately from python3, so an interpreter that was
-  # already installed (and therefore skipped the Python step above) can still be
-  # missing ensurepip -- `python3 -m venv` then fails halfway through, leaving a
-  # broken .venv behind. The package is named for the interpreter's version;
-  # the unversioned metapackage is the fallback for Debian releases that have it.
-  if [[ "$FAMILY" == "debian" ]] && ! python3 -c 'import ensurepip' 2>/dev/null; then
-    PYVER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-    info "Installing python${PYVER}-venv"
-    pkg_install "python${PYVER}-venv" 2>/dev/null || pkg_install python3-venv
-  fi
-  # A venv built while ensurepip was missing still has a working interpreter --
-  # it is pip that is absent, so "is there a python in there" answers yes and
-  # the repair never happens. Usable means pip runs; anything else gets thrown
-  # away and rebuilt, which costs nothing when there was nothing there.
-  venv_ok() {
-    local py
-    py="$(venv_python)"
-    [[ -x "$py" ]] && "$py" -m pip --version >/dev/null 2>&1
-  }
-  venv_ok || rm -rf "$REPO_ROOT/.venv"
-  venv_ok || python3 -m venv "$REPO_ROOT/.venv"
-  "$(venv_python)" -m pip install --quiet --upgrade pip
-  "$(venv_python)" -m pip install --quiet -r tui-panel/requirements-panel.txt
-  ok "Python packages installed"
 fi
 
 echo

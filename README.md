@@ -40,8 +40,8 @@ or sponsored by Telegram or the official Telegram team.
 - ⚙️ **Single binary** — one Go program prepares keys, runs migrations, serves
   MTProto, and dispatches updates and background workers.
 - 📦 **One command to install** — the launcher installs the prerequisites
-  it needs (Go, Python, Docker, OpenSSL), brings the stack up, and hands you
-  a browser setup wizard.
+  it needs (Go, Docker, OpenSSL), brings the stack up, and hands you a
+  browser setup wizard.
 - 🆓 **Free & open source** — Apache-2.0, audit and extend it freely.
 
 ## 🎯 What works today
@@ -517,12 +517,11 @@ owpengram-server.sh/.bat  one-command launcher (checks/installs Go, then builds+
 scripts/install-prereqs.* unattended prerequisite installers (Arch/Ubuntu, Windows)
 cmd/telesrv/              server entrypoint
 cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update/edition -- run with no
-                          arguments from a terminal for an interactive menu (what the launcher runs)
+                          arguments from a terminal for the interactive TUI (what the launcher runs)
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
-tui-panel/                optional interactive TUI server panel with a live dashboard and an in-place
-                          .env editor -- needs Python 3 in addition to Go; run with
-                          `python tui-panel/server-panel.py panel`
+internal/panel/           the TUI itself (Bubble Tea): live dashboard, start/stop/restart/update,
+                          log viewer, edition switch, .env editor -- no Python involved
 deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
 data/                     bundled language packs and optional seed data
 internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints

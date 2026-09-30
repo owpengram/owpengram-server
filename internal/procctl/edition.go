@@ -116,3 +116,17 @@ func (m *Manager) StopEmbeddedPostgres() {
 	hideWindow(cmd)
 	_ = cmd.Run()
 }
+
+// DisplayEditionName maps the value persisted in .env (TELESRV_EDITION,
+// still "standard" internally) to the name shown to a human: "classic"
+// reads better than "standard" now that portable is the recommended
+// default, and changing the .env value itself would break every install
+// that already has TELESRV_EDITION=standard set. Shared by telesrv-ctl's
+// plain-text output and internal/panel's TUI, so neither shows a
+// different name for the same edition than the other.
+func DisplayEditionName(edition string) string {
+	if edition == "standard" {
+		return "classic"
+	}
+	return edition
+}
