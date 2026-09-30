@@ -80,11 +80,10 @@ the frontend decides what to render (`web/src/pages/Routes.tsx`).
 | `/messages/detail`, `/messages/private/detail` | Private message detail (`?owner_user_id=&msg_id=`). |
 | `/messages/groups` | Group/channel message audit. |
 | `/messages/groups/detail` | Group message detail (`?channel_id=&msg_id=`). |
-| `/gifts` | Star gifts: catalog, collectibles, auctions. |
+| `/gifts` | Star gifts: catalog, collectibles. |
 | `/give-gifts` | Gift granting. |
 | `/collectible-usernames` | Collectible usernames. |
 | `/collectible-usernames/{id}` | Collectible username card. |
-| `/collectible-phones` | Anonymous numbers. |
 | `/account-ratings` | Account ratings. |
 | `/account-ratings/{user_id}` | Account rating card. |
 | `/storage` | Object storage: stats. |
@@ -173,17 +172,14 @@ Every mutating request carries in its body:
 
 | Method | Path | Parameters / response |
 | --- | --- | --- |
-| GET | `/api/gifts` | Response: `Gifts` (gift list). |
-| GET | `/api/auctions` | Response: `Auctions` — live state of all operator-authored auctions and scheduled drops. |
-| GET | `/api/official-gifts` | Response: proxied from Admin API (`/v1/official-gifts`). |
-| GET | `/api/official-gifts/{id}/animation` | Official gift animation (file). |
-| GET | `/api/gifts/{id}/animation` | Gift animation (file). |
-| GET | `/api/gifts/{id}/collectibles` | Response: proxied from Admin API (`/v1/gifts/{id}/collectibles`). |
-| GET | `/api/gifts/{id}/collectibles/{kind}/{attribute_id}/animation` | Collectible attribute animation (file). `kind` ∈ {`model`, `pattern`}. |
+| GET | `/api/star-gift-catalog` | Response: `StarGiftCatalogListResponse` (gift list). |
+| GET | `/api/star-gift-catalog/{gift_id}/animation` | Gift animation (file). |
+| GET | `/api/star-gift-catalog/{gift_id}/collectibles` | Response: `StarGiftCollectiblePreview`. |
+| GET | `/api/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation` | Collectible attribute animation (file). `kind` ∈ {`model`, `pattern`}. |
+| GET | `/api/gift-packs` | Response: `GiftPack` list. |
+| GET | `/api/gift-packs/{pack_id}/animations/{slug}` | Gift pack animation (file). |
 | GET | `/api/collectible-usernames` | Params: `status` (`` | `vault` | `owned` | `burned`), `owner_user_id` (int64), `before_id` (int64), `limit` (int), `q`. Response: `rows`, `has_more`, `next_before_id`. |
 | GET | `/api/collectible-usernames/{id}` | Response: `asset`, `transfers`. |
-| GET | `/api/collectible-phones` | Params are passed through to the Admin API as-is (`/v1/collectible-phones?...`). |
-| GET | `/api/collectible-phones/{id}` | Params are passed through to the Admin API (`/v1/collectible-phones/{id}?...`). |
 
 ## API: Premium
 
