@@ -115,53 +115,6 @@ func TestDashboardMenuShortcutSwitchesToLogsScreen(t *testing.T) {
 	}
 }
 
-func TestEnvEditorNavigationSkipsGroupHeaders(t *testing.T) {
-	m := newTestModel(t)
-	m.current = screenEnv
-	m.env = newEnvState(m.mgr)
-
-	if len(m.env.rows) == 0 {
-		t.Fatal("expected at least one row from the test .env.example groups")
-	}
-	if m.env.rows[m.env.cursor].fieldIdx < 0 {
-		t.Fatal("cursor landed on a group header row, want a field row")
-	}
-
-	start := m.env.cursor
-	m.env, _ = m.env.updateBrowsing(m, key("down"))
-	if m.env.cursor == start {
-		// Only one field total is a legitimate reason this wouldn't move;
-		// the test template has multiple groups/fields, so this is real.
-		t.Fatalf("cursor did not move on down from row %d", start)
-	}
-	if m.env.rows[m.env.cursor].fieldIdx < 0 {
-		t.Fatalf("cursor landed on a group header row %d after moving down", m.env.cursor)
-	}
-}
-
-func TestEnvEditorEnterEntersEditModeWithCurrentValue(t *testing.T) {
-	m := newTestModel(t)
-	m.current = screenEnv
-	m.env = newEnvState(m.mgr)
-
-	row := m.env.rows[m.env.cursor]
-	field := m.env.field(row)
-	m.env.values[field.Key] = "example-value"
-
-	m.env, _ = m.env.updateBrowsing(m, key("enter"))
-	if !m.env.editing {
-		t.Fatal("expected editing=true after enter on a field row")
-	}
-	if got := m.env.input.Value(); got != "example-value" {
-		t.Fatalf("input value = %q, want %q", got, "example-value")
-	}
-
-	m.env, _ = m.env.updateEditing(key("esc"))
-	if m.env.editing {
-		t.Fatal("expected editing=false after esc")
-	}
-}
-
 func TestEditionScreenAppliesChoiceOnEnter(t *testing.T) {
 	m := newTestModel(t)
 	m.current = screenEdition

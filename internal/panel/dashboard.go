@@ -19,7 +19,6 @@ var dashboardMenu = []struct {
 	{"Restart", "rebuild and relaunch"},
 	{"Update", "git pull --ff-only, rebuild, relaunch"},
 	{"Logs", "view the current run's startup log"},
-	{"Configure .env", ""},
 	{"Change edition", "portable / classic"},
 	{"Quit", "server keeps running"},
 }
@@ -30,7 +29,6 @@ const (
 	menuRestart
 	menuUpdate
 	menuLogs
-	menuEnv
 	menuEdition
 	menuQuit
 )
@@ -162,7 +160,7 @@ func (d dashboardState) update(m Model, msg tea.Msg) (dashboardState, tea.Cmd) {
 		case "down", "j":
 			d.cursor = (d.cursor + 1) % len(dashboardMenu)
 			return d, nil
-		case "1", "2", "3", "4", "5", "6", "7", "8":
+		case "1", "2", "3", "4", "5", "6", "7":
 			d.cursor = int(msg.String()[0] - '1')
 			return d.trigger(m)
 		case "a":
@@ -205,8 +203,6 @@ func (d dashboardState) trigger(m Model) (dashboardState, tea.Cmd) {
 		return d, runAction(m.ctx, m.mgr, "Update", func() (string, error) { return m.mgr.Update(m.ctx) })
 	case menuLogs:
 		return d, switchTo(screenLogs)
-	case menuEnv:
-		return d, switchTo(screenEnv)
 	case menuEdition:
 		return d, switchTo(screenEdition)
 	case menuQuit:

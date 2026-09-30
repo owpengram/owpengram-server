@@ -40,7 +40,6 @@ type screen int
 const (
 	screenDashboard screen = iota
 	screenLogs
-	screenEnv
 	screenEdition
 )
 
@@ -58,7 +57,6 @@ type Model struct {
 
 	dash dashboardState
 	logs logsState
-	env  envState
 	ed   editionState
 
 	quitting bool
@@ -114,9 +112,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenLogs:
 			m.logs = newLogsState()
 			return m, m.logs.refreshCmd(m.mgr)
-		case screenEnv:
-			m.env = newEnvState(m.mgr)
-			return m, nil
 		case screenEdition:
 			m.ed = newEditionState(m.mgr)
 			return m, nil
@@ -132,8 +127,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dash, cmd = m.dash.update(m, msg)
 	case screenLogs:
 		m.logs, cmd = m.logs.update(m, msg)
-	case screenEnv:
-		m.env, cmd = m.env.update(m, msg)
 	case screenEdition:
 		m.ed, cmd = m.ed.update(m, msg)
 	}
@@ -147,8 +140,6 @@ func (m Model) View() string {
 	switch m.current {
 	case screenLogs:
 		return m.logs.view(m)
-	case screenEnv:
-		return m.env.view(m)
 	case screenEdition:
 		return m.ed.view(m)
 	default:
