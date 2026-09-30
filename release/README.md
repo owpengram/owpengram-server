@@ -20,11 +20,11 @@ start.bat
 The first run bootstraps `.env` (generates admin credentials) and asks you
 to pick an edition:
 
-- **portable** -- embedded PostgreSQL, local disk for media storage. No
-  Docker, no external database, nothing else to install. This is what
-  "download and run" actually means; pick this unless you already run
-  Docker infrastructure.
-- **standard** -- PostgreSQL + MinIO via `deploy/docker-compose.yml`
+- **portable (recommended)** -- embedded PostgreSQL, local disk for media
+  storage. No Docker, no external database, nothing else to install. This
+  is what "download and run" actually means; pick this unless you already
+  run Docker infrastructure.
+- **classic** -- PostgreSQL + MinIO via `deploy/docker-compose.yml`
   (included in this archive). Requires Docker installed separately.
 
 Once it's up, the admin panel URL and generated password are printed to the
@@ -59,7 +59,7 @@ data/langpack/              language pack strings shipped with every install
 data/sticker-seed/          default sticker packs seeded on first start
 data/pgcache/                pre-bundled embedded-PostgreSQL binaries (portable
                             edition's first start needs no network access)
-deploy/docker-compose.yml  PostgreSQL + MinIO, only used by "standard" edition
+deploy/docker-compose.yml  PostgreSQL + MinIO, only used by "classic" edition
 ```
 
 ## Updating
@@ -67,7 +67,7 @@ deploy/docker-compose.yml  PostgreSQL + MinIO, only used by "standard" edition
 This archive has no git history, so `owpengram-ctl update` doesn't apply
 here -- download the next release archive instead, and copy your `.env` and
 `data/` (except `data/pgcache`, `data/postgres`, `data/blobs` if you're on
-"standard" edition with its own storage) into it.
+"classic" edition with its own storage) into it.
 
 ## Full documentation
 

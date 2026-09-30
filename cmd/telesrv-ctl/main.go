@@ -102,7 +102,7 @@ Commands:
                container) is up
   logs         print the current run's startup log
   update       git pull --ff-only, then rebuild and relaunch both
-  set-edition  standard|portable -- change the edition choice made at
+  set-edition  portable|classic -- change the edition choice made at
                start without re-prompting for it
 
 `)
@@ -169,7 +169,7 @@ func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 		fmt.Println("  4) Status (incl. Docker containers, if in use)")
 		fmt.Println("  5) Update (git pull --ff-only, rebuild, relaunch)")
 		fmt.Println("  6) Logs (current run's startup log)")
-		fmt.Println("  7) Change edition (standard/portable)")
+		fmt.Println("  7) Change edition (portable/classic)")
 		fmt.Println("  8) Exit")
 		fmt.Print("\nChoice: ")
 
@@ -215,35 +215,60 @@ func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 
 // menuChangeEdition is option 7's prompt -- a thin interactive wrapper
 // around cmdSetEdition so the menu doesn't need the caller to already know
-// the standard/portable argument syntax.
+// the portable/classic argument syntax.
 func menuChangeEdition(m *procctl.Manager, reader *bufio.Reader) error {
 	current, ok := m.Edition()
 	if ok {
-		fmt.Printf("Current edition: %s\n", current)
+		fmt.Printf("Current edition: %s\n", displayEditionName(current))
 	}
-	fmt.Println("  1) Standard -- PostgreSQL and MinIO run in Docker")
-	fmt.Println("  2) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
+	fmt.Println("  1) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
+	fmt.Println("  2) Classic -- PostgreSQL and MinIO run in Docker")
 	fmt.Print("Choice: ")
 	line, _ := reader.ReadString('\n')
 	switch strings.TrimSpace(line) {
-	case "1", "standard":
-		return cmdSetEdition(m, []string{"standard"})
-	case "2", "portable":
+	case "1", "portable":
 		return cmdSetEdition(m, []string{"portable"})
+	case "2", "classic", "standard":
+		return cmdSetEdition(m, []string{"classic"})
 	default:
 		fmt.Println("Not a recognized choice -- edition left unchanged.")
 		return nil
 	}
 }
 
-func cmdSetEdition(m *procctl.Manager, args []string) error {
-	if len(args) != 1 || (args[0] != "standard" && args[0] != "portable") {
-		return fmt.Errorf("usage: telesrv-ctl set-edition standard|portable")
+// displayEditionName maps the value persisted in .env (TELESRV_EDITION,
+// still "standard" internally -- see internal/procctl/edition.go) to the
+// name shown to a human: "classic" reads better than "standard" now that
+// portable is the recommended default, and changing the .env value itself
+// would break every install that already has TELESRV_EDITION=standard set.
+func displayEditionName(edition string) string {
+	if edition == "standard" {
+		return "classic"
 	}
-	if err := m.SetEdition(args[0]); err != nil {
+	return edition
+}
+
+// cmdSetEdition accepts "classic" as the documented spelling for the
+// Docker-backed edition and "standard" as a silent alias (the actual value
+// persisted to .env -- see displayEditionName's doc comment for why that
+// doesn't change).
+func cmdSetEdition(m *procctl.Manager, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic")
+	}
+	edition := args[0]
+	switch edition {
+	case "classic":
+		edition = "standard"
+	case "standard", "portable":
+		// already canonical
+	default:
+		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic")
+	}
+	if err := m.SetEdition(edition); err != nil {
 		return err
 	}
-	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", args[0])
+	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", displayEditionName(edition))
 	return nil
 }
 
@@ -257,23 +282,22 @@ func resolveEdition(m *procctl.Manager) error {
 		return nil
 	}
 	dockerAvailable := m.DockerAvailable()
-	// Docker available: "standard" is the existing default behaviour, most
-	// self-hosters already have Docker if they got this far. No Docker:
-	// "portable" needs nothing else installed at all.
-	recommended := "standard"
-	if !dockerAvailable {
-		recommended = "portable"
-	}
+	// Portable is the recommended default regardless of whether Docker
+	// happens to be available: it needs nothing else installed at all, and
+	// is the simpler path for most self-hosters. Classic (Docker) remains
+	// a fully supported choice for anyone who wants PostgreSQL/MinIO as
+	// separate containers -- just no longer the one offered first.
+	recommended := "portable"
 
 	var edition string
 	if isInteractiveTerminal() {
 		fmt.Println("How should this install get PostgreSQL and blob storage?")
+		fmt.Println("  1) Portable (recommended) -- embedded PostgreSQL and local disk storage, no Docker at all")
 		if dockerAvailable {
-			fmt.Println("  1) Standard (recommended) -- PostgreSQL and MinIO run in Docker")
+			fmt.Println("  2) Classic -- PostgreSQL and MinIO run in Docker")
 		} else {
-			fmt.Println("  1) Standard -- needs Docker, which was not found on PATH; install it to use this")
+			fmt.Println("  2) Classic -- needs Docker, which was not found on PATH; install it to use this")
 		}
-		fmt.Println("  2) Portable -- embedded PostgreSQL and local disk storage, no Docker at all")
 		fmt.Printf("Choice [%s]: ", editionMenuDefault(recommended))
 		reader := bufio.NewReader(os.Stdin)
 		line, _ := reader.ReadString('\n')
@@ -281,20 +305,20 @@ func resolveEdition(m *procctl.Manager) error {
 		switch line {
 		case "":
 			edition = recommended
-		case "1", "standard":
+		case "1", "portable":
+			edition = "portable"
+		case "2", "classic", "standard":
 			if !dockerAvailable {
-				return fmt.Errorf("docker was not found on PATH -- install Docker, or choose 2 (portable)")
+				return fmt.Errorf("docker was not found on PATH -- install Docker, or choose 1 (portable)")
 			}
 			edition = "standard"
-		case "2", "portable":
-			edition = "portable"
 		default:
 			return fmt.Errorf("unrecognized choice %q", line)
 		}
 	} else {
 		edition = recommended
-		fmt.Printf("[cfg] No TTY attached -- defaulting to edition %q (%s). Change later with `telesrv-ctl set-edition standard|portable`.\n",
-			edition, map[bool]string{true: "Docker available", false: "Docker not found"}[dockerAvailable])
+		fmt.Printf("[cfg] No TTY attached -- defaulting to edition %q. Change later with `telesrv-ctl set-edition portable|classic`.\n",
+			displayEditionName(edition))
 	}
 
 	if err := m.SetEdition(edition); err != nil {
@@ -304,7 +328,7 @@ func resolveEdition(m *procctl.Manager) error {
 }
 
 func editionMenuDefault(edition string) string {
-	if edition == "standard" {
+	if edition == "portable" {
 		return "1"
 	}
 	return "2"

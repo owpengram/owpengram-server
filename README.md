@@ -141,15 +141,16 @@ plain Go, no Python involved). On a fresh clone it writes `.env` from
 haven't set one yourself — an admin password, then asks **once** how this
 install should get PostgreSQL and blob storage:
 
-- **Standard (recommended when Docker is available)** — PostgreSQL and
-  MinIO run in Docker, same as before.
-- **Portable** — no Docker at all: `telesrv-ctl` starts and owns a real,
-  natively-compiled embedded PostgreSQL server (see `internal/embeddedpg`),
-  and blob storage is local disk instead of MinIO.
+- **Portable (recommended)** — no Docker at all: `telesrv-ctl` starts and
+  owns a real, natively-compiled embedded PostgreSQL server (see
+  `internal/embeddedpg`), and blob storage is local disk instead of MinIO.
+  The simplest path for most self-hosters — nothing else to install.
+- **Classic** — PostgreSQL and MinIO run in Docker, same as before. Pick
+  this if you already run Docker infrastructure you'd rather reuse.
 
 The choice is shown disabled with an explanation if Docker isn't installed,
 is remembered in `.env` (`TELESRV_EDITION`) so you're never asked again,
-and can be changed later with `telesrv-ctl set-edition standard|portable`.
+and can be changed later with `telesrv-ctl set-edition portable|classic`.
 Either way `telesrv-ctl` then builds both binaries, runs them, and prints
 the admin panel address and password ready to copy. Re-running the launcher
 later is safe: it only builds and (re)launches whatever isn't already
