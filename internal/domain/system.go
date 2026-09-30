@@ -284,6 +284,17 @@ func StickersBotDescription() string {
 	return "Create custom sticker and emoji packs for " + branding.ProductName() + "."
 }
 
+// PremiumBotDescription matches premiumBotHelpText()'s own opening line
+// (internal/app/bots/premiumbot.go) -- the text @premiumbot's /help
+// command sends is computed fresh from branding on every reply, but its
+// profile bio (users.about) and pre-chat description (bots.description)
+// are seeded once into Postgres by a migration and never touched again on
+// their own; this is what the startup sync loop in cmd/telesrv/main.go
+// (mirroring the same for ChatBot/StickersBot) keeps aligned with it.
+func PremiumBotDescription() string {
+	return "Buy " + branding.ProductName() + " Premium for yourself or as a gift. All prices are in " + branding.StarsName() + "."
+}
+
 // BotFatherUser 返回内置 BotFather 账号。username 不以 bot 结尾属种子例外（与官方一致）。
 func BotFatherUser() User {
 	u := User{

@@ -140,6 +140,15 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   }
   const response = await fetch(url, {
     credentials: "same-origin",
+    // This is an operator console showing live server state -- GET /api/session
+    // in particular is polled by the Restart/Update overlay specifically to
+    // notice a new process (a fresh boot_id) came up, and a browser serving a
+    // cached response for it (no Cache-Control/ETag on the server's side to
+    // tell it not to) means that poll can sit reporting the *old* boot_id
+    // forever, never reloading -- "Still restarting..." even though the new
+    // process has been up and answering for minutes. Nothing this panel calls
+    // should ever be served from the HTTP cache.
+    cache: "no-store",
     ...init,
     headers
   });

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -214,9 +215,22 @@ func (s *server) requireAuthAPI(next http.Handler) http.Handler {
 		// belong to may have been disabled, demoted or had its password changed
 		// since. Re-read it and use what the database says now, so revocation
 		// takes effect on the next request rather than at session expiry.
-		permissions, ok := s.currentSessionPermissions(r.Context(), claims)
+		permissions, ok, revoked := s.currentSessionPermissions(r.Context(), claims)
 		if !ok {
-			clearSessionCookie(w)
+			// Only a *confirmed* revocation (the account was disabled,
+			// deleted, or its epoch moved) clears the cookie -- a bare
+			// query failure (Postgres pool still warming up right after
+			// this very process restarted, a transient network blip)
+			// does not, or the operator's very next request -- the one
+			// made once whatever was transient has passed -- would find
+			// itself logged out for no reason it could ever recover
+			// from on its own. This is exactly the window the
+			// Restart/Update overlay polls through: clearing the cookie
+			// here turned one slow request into a permanent 401 storm
+			// until the operator logged back in by hand.
+			if revoked {
+				clearSessionCookie(w)
+			}
 			writeAPIError(w, http.StatusUnauthorized, "session is no longer valid")
 			return
 		}
@@ -235,19 +249,47 @@ func (s *server) requireAuthAPI(next http.Handler) http.Handler {
 // A named account is re-read every request. Anything that moved its token
 // epoch invalidates the session; anything that narrowed its permissions
 // narrows this request. A read failure is treated as a refusal rather than as
-// permission, so a database outage cannot silently widen access.
-func (s *server) currentSessionPermissions(ctx context.Context, claims sessionClaims) (panelPermissions, bool) {
+// permission, so a database outage cannot silently widen access -- but it is
+// deliberately NOT treated the same as a confirmed revocation: ok=false
+// refuses this one request either way, while revoked=true is reserved for
+// "the database was reachable and said this account is disabled/deleted or
+// its epoch moved", the only case worth requireAuthAPI actually clearing the
+// session cookie over. Conflating the two used to mean a single transient
+// query failure -- most likely right after an admin-panel restart, exactly
+// when the Restart/Update overlay is polling and the fresh connection pool
+// may still be warming up -- logged the operator out for good, with no
+// retry able to recover a cookie that was already gone.
+func (s *server) currentSessionPermissions(ctx context.Context, claims sessionClaims) (perms panelPermissions, ok bool, revoked bool) {
 	if claims.UserID == 0 {
-		return newPanelPermissions(claims.Permissions), true
+		return newPanelPermissions(claims.Permissions), true, false
 	}
 	if s.read == nil {
-		return panelPermissions{}, false
+		return panelPermissions{}, false, false
 	}
 	enabled, epoch, permissions, err := s.read.AdminConsoleSessionState(ctx, claims.UserID)
-	if err != nil || !enabled || epoch != claims.Epoch {
-		return panelPermissions{}, false
+	ok, revoked = classifySessionState(enabled, epoch, claims.Epoch, err)
+	if !ok {
+		return panelPermissions{}, false, revoked
 	}
-	return newPanelPermissions(permissions), true
+	return newPanelPermissions(permissions), true, false
+}
+
+// classifySessionState turns the result of re-reading a named account's row
+// (or the error trying to) into (ok, revoked). ok=false always refuses the
+// request, same fail-closed behavior as before; revoked is the narrower
+// signal, true only when the database was actually reachable and confirmed
+// the account is disabled/deleted or its epoch moved -- the one case worth
+// requireAuthAPI clearing the session cookie over. A pure function so the
+// distinction (see currentSessionPermissions' doc comment for why it
+// matters) is directly testable without a real database.
+func classifySessionState(enabled bool, epoch, claimEpoch int32, err error) (ok, revoked bool) {
+	if err != nil {
+		return false, errors.Is(err, errAdminUserNotFound)
+	}
+	if !enabled || epoch != claimEpoch {
+		return false, true
+	}
+	return true, false
 }
 
 // requirePermission refuses a session that was not granted the right, before the

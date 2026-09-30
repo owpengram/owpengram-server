@@ -1300,12 +1300,14 @@ func run(logger *zap.Logger) error {
 		botsapp.WithPublicBaseURL(cfg.PublicBaseURL),
 		botsapp.WithHideThirdPartyVerification(cfg.HideThirdPartyVerification),
 		botsapp.WithStarsMonthlyClaim(cfg.StarsMonthlyClaimAmount, cfg.StarsMonthlyClaimInterval))
-	// The built-in ChatBot and StickersBot are seeded with the default product
-	// name in their bio (users.about) and description (bots.description). Align
-	// them with the active branding on startup so the seeded "telesrv" text is
-	// replaced. SetBotInfo writes both fields; the sync is a no-op when the text
+	// The built-in ChatBot, StickersBot and PremiumBot are seeded with the
+	// default product name (and, for PremiumBot, "Telegram Stars" --
+	// literally unbranded even in the original seed) in their bio
+	// (users.about) and description (bots.description). Align them with
+	// the active branding on startup so the seeded text is replaced.
+	// SetBotInfo writes both fields; the sync is a no-op when the text
 	// already matches.
-	for _, botID := range []int64{domain.ChatBotUserID, domain.StickersBotUserID} {
+	for _, botID := range []int64{domain.ChatBotUserID, domain.StickersBotUserID, domain.PremiumBotUserID} {
 		var wantAbout, wantDesc string
 		switch botID {
 		case domain.ChatBotUserID:
@@ -1313,6 +1315,9 @@ func run(logger *zap.Logger) error {
 			wantDesc = wantAbout
 		case domain.StickersBotUserID:
 			wantAbout = domain.StickersBotDescription()
+			wantDesc = wantAbout
+		case domain.PremiumBotUserID:
+			wantAbout = domain.PremiumBotDescription()
 			wantDesc = wantAbout
 		}
 		if _, curAbout, curDesc, err := botsService.GetBotInfo(ctx, botID); err == nil && curAbout == wantAbout && curDesc == wantDesc {

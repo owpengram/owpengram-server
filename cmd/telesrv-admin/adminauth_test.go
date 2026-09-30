@@ -260,15 +260,21 @@ func TestValidSecretRetiresOnlyTheGeneratedPassword(t *testing.T) {
 
 // A session for a named account must not be trusted on the strength of its
 // signature alone: the account's rights are re-read per request, and a nil read
-// store has to fail closed rather than fall back to the claims.
+// store has to fail closed rather than fall back to the claims. A nil store is
+// an infrastructure gap, not a confirmed revocation, so it must not report
+// revoked=true either -- see TestCurrentSessionPermissionsTransientErrorDoesNotRevoke.
 func TestCurrentSessionPermissionsFailsClosedWithoutStore(t *testing.T) {
 	s := &server{}
-	if _, ok := s.currentSessionPermissions(t.Context(), sessionClaims{
+	_, ok, revoked := s.currentSessionPermissions(t.Context(), sessionClaims{
 		UserID:      7,
 		Epoch:       1,
 		Permissions: []string{permissionAll},
-	}); ok {
+	})
+	if ok {
 		t.Fatal("a named-account session was accepted with no store to verify it against")
+	}
+	if revoked {
+		t.Fatal("no read store is an infrastructure gap, not a confirmed revocation -- must not report revoked")
 	}
 }
 
@@ -276,17 +282,67 @@ func TestCurrentSessionPermissionsFailsClosedWithoutStore(t *testing.T) {
 // rights -- that login is the way back in when the database is unreachable.
 func TestCurrentSessionPermissionsAllowsBreakGlass(t *testing.T) {
 	s := &server{}
-	perms, ok := s.currentSessionPermissions(t.Context(), sessionClaims{
+	perms, ok, revoked := s.currentSessionPermissions(t.Context(), sessionClaims{
 		UserID:      0,
 		Permissions: []string{permissionServerManage},
 	})
 	if !ok {
 		t.Fatal("break-glass session rejected")
 	}
+	if revoked {
+		t.Fatal("break-glass session must never report revoked")
+	}
 	if !perms.Has(permissionServerManage) {
 		t.Fatal("break-glass session lost its configured permission")
 	}
 	if perms.Has(permissionAdminsManage) {
 		t.Fatal("break-glass session gained a permission it was not configured with")
+	}
+}
+
+// A transient failure re-reading a named account's row (the database pool
+// still warming up right after an admin-panel restart, a dropped connection,
+// ...) must refuse this one request without telling requireAuthAPI to clear
+// the session cookie -- otherwise a single slow query outlives its own
+// request and logs the operator out for good, exactly the "Still
+// restarting..." lockout this was written to stop recurring.
+func TestClassifySessionStateTransientErrorDoesNotRevoke(t *testing.T) {
+	ok, revoked := classifySessionState(false, 0, 1, errors.New("dial tcp: connection refused"))
+	if ok {
+		t.Fatal("a failed read must not be accepted")
+	}
+	if revoked {
+		t.Fatal("a transient read error must not be reported as a confirmed revocation")
+	}
+}
+
+// A row that genuinely does not exist any more (the account was deleted) is
+// a real revocation, unlike a bare connection failure -- this is the one
+// error case that must still clear the cookie.
+func TestClassifySessionStateMissingAccountRevokes(t *testing.T) {
+	ok, revoked := classifySessionState(false, 0, 1, errAdminUserNotFound)
+	if ok {
+		t.Fatal("a session for a deleted account must not be accepted")
+	}
+	if !revoked {
+		t.Fatal("a deleted account must be reported as a confirmed revocation")
+	}
+}
+
+// A disabled account or a moved token_epoch (password reset, rights edited)
+// is also a confirmed revocation, with no error involved at all.
+func TestClassifySessionStateDisabledOrEpochMismatchRevokes(t *testing.T) {
+	if ok, revoked := classifySessionState(false, 1, 1, nil); ok || !revoked {
+		t.Fatalf("disabled account: ok=%v revoked=%v, want ok=false revoked=true", ok, revoked)
+	}
+	if ok, revoked := classifySessionState(true, 2, 1, nil); ok || !revoked {
+		t.Fatalf("epoch mismatch: ok=%v revoked=%v, want ok=false revoked=true", ok, revoked)
+	}
+}
+
+func TestClassifySessionStateEnabledMatchingEpochAllows(t *testing.T) {
+	ok, revoked := classifySessionState(true, 1, 1, nil)
+	if !ok || revoked {
+		t.Fatalf("ok=%v revoked=%v, want ok=true revoked=false", ok, revoked)
 	}
 }

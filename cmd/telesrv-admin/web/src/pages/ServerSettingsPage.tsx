@@ -623,7 +623,12 @@ export function useAdminRestartWatcher() {
 export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: boolean; onDismiss: () => void; logLines?: string[] }) {
   const [logExpanded, setLogExpanded] = useState(false);
   const hasLog = !!logLines && logLines.length > 0;
-  const currentStatus = hasLog ? logLines[logLines.length - 1] : undefined;
+  // Before the new process has written its first log line at all -- most
+  // of that gap is `go build` compiling both binaries from scratch, which
+  // has nothing to report from yet -- a blank spinner with no text reads
+  // as stuck rather than "still working", especially on a cold build
+  // cache. Say so explicitly instead of showing nothing.
+  const currentStatus = hasLog ? logLines[logLines.length - 1] : (timedOut ? undefined : "Building...");
   const log = hasLog && logExpanded && (
     <ul className="restart-overlay-log">
       {logLines.map((line, index) => <li key={index}>{line}</li>)}
