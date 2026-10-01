@@ -1,12 +1,12 @@
 // Package panel is the interactive terminal control panel telesrv-ctl opens
 // when run with no arguments from a real terminal -- the Go, dependency-
 // light replacement for tui-panel/server-panel.py's Textual app. It covers
-// the same ground that app's own Start/Stop/Restart/Update/Logs bindings
-// and its .env editor did: a live dashboard, process start/stop/restart/
-// update, a log viewer, an edition switch, and a grouped .env editor --
-// built on Bubble Tea (github.com/charmbracelet/bubbletea) plus lipgloss
-// for styling, so it still looks right over a plain SSH session, not just
-// a modern local terminal.
+// a live dashboard, process start/stop/restart/update, and an edition
+// switch -- built on Bubble Tea (github.com/charmbracelet/bubbletea) plus
+// lipgloss for styling, so it still looks right over a plain SSH session,
+// not just a modern local terminal. Log viewing and .env editing are
+// deliberately not here; both stay better served by the admin web panel's
+// own Services/Server Settings pages.
 //
 // Every action here goes through internal/procctl.Manager -- the same code
 // path the admin web panel's Server Settings page and telesrv-ctl's plain
@@ -39,7 +39,6 @@ type screen int
 
 const (
 	screenDashboard screen = iota
-	screenLogs
 	screenEdition
 )
 
@@ -56,7 +55,6 @@ type Model struct {
 	height  int
 
 	dash dashboardState
-	logs logsState
 	ed   editionState
 
 	quitting bool
@@ -109,9 +107,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case switchScreenMsg:
 		m.current = msg.to
 		switch msg.to {
-		case screenLogs:
-			m.logs = newLogsState()
-			return m, m.logs.refreshCmd(m.mgr)
 		case screenEdition:
 			m.ed = newEditionState(m.mgr)
 			return m, nil
@@ -125,8 +120,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.current {
 	case screenDashboard:
 		m.dash, cmd = m.dash.update(m, msg)
-	case screenLogs:
-		m.logs, cmd = m.logs.update(m, msg)
 	case screenEdition:
 		m.ed, cmd = m.ed.update(m, msg)
 	}
@@ -138,8 +131,6 @@ func (m Model) View() string {
 		return ""
 	}
 	switch m.current {
-	case screenLogs:
-		return m.logs.view(m)
 	case screenEdition:
 		return m.ed.view(m)
 	default:

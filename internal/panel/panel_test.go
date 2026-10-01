@@ -86,32 +86,27 @@ func TestDashboardCursorWrapsBothDirections(t *testing.T) {
 	}
 }
 
-func TestDashboardMenuShortcutSwitchesToLogsScreen(t *testing.T) {
+func TestDashboardMenuShortcutSwitchesToEditionScreen(t *testing.T) {
 	m := newTestModel(t)
 	m.dash.loaded = true
 
-	// menuLogs is 1-indexed as "5" in the UI (Start/Stop/Restart/Update/Logs).
+	// menuEdition is 1-indexed as "5" in the UI (Start/Stop/Restart/Update/
+	// Change edition).
 	m = send(t, m, key("5"))
-	if m.dash.cursor != menuLogs {
-		t.Fatalf("cursor after pressing 5 = %d, want menuLogs (%d)", m.dash.cursor, menuLogs)
+	if m.dash.cursor != menuEdition {
+		t.Fatalf("cursor after pressing 5 = %d, want menuEdition (%d)", m.dash.cursor, menuEdition)
 	}
 	// dashboardState.trigger returned a switchScreenMsg via a tea.Cmd;
 	// Model.Update only changes m.current once that message is actually
 	// delivered back through Update, exactly as the real event loop does.
 	_, cmd := m.Update(key("5"))
 	if cmd == nil {
-		t.Fatal("expected a tea.Cmd from pressing the Logs shortcut")
+		t.Fatal("expected a tea.Cmd from pressing the Change edition shortcut")
 	}
 	msg := cmd()
 	m = send(t, m, msg)
-	if m.current != screenLogs {
-		t.Fatalf("current screen = %v, want screenLogs", m.current)
-	}
-	if !m.logs.ready && m.logs.err == nil && len(m.logs.lines) == 0 {
-		// Nothing to assert on content (no server has ever run in this
-		// temp dir), just that entering the screen didn't panic and left
-		// it in a sane, non-ready-but-not-broken state until the first
-		// logDataMsg lands.
+	if m.current != screenEdition {
+		t.Fatalf("current screen = %v, want screenEdition", m.current)
 	}
 }
 

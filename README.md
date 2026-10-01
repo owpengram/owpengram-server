@@ -215,13 +215,15 @@ What it does:
   panel does **not** stop them, only "Stop" does. Reopening the panel later
   picks the same processes back up and reports live status. "Update" runs
   `git pull --ff-only`, rebuilds both binaries, and relaunches them.
-- 📜 **Live log viewer** — scrollable tail of `owpengram-server`'s current
-  run, auto-following new lines as they arrive.
-- ⚙️ **`.env` editor** — edit configuration from inside the panel, grouped by
-  feature, without hand-editing the file.
 - 📋 **Copy address / public key / admin password** — straight to your
   clipboard, without ever printing the value itself to the screen; works
   over SSH too (falls back to the terminal's own OSC 52 clipboard support).
+
+Log viewing and `.env` editing are deliberately not in this menu — run
+`telesrv-ctl logs` for a quick non-interactive tail, or use the admin web
+panel's own Services/Server Settings pages, which cover both with a real
+UI (live-following logs, grouped fields with validation) instead of a
+terminal-constrained approximation of one.
 
 ### 🏷️ Version and build
 
@@ -513,7 +515,7 @@ cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update/
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
 internal/panel/           the TUI itself (Bubble Tea): live dashboard, start/stop/restart/update,
-                          log viewer, edition switch, .env editor -- no Python involved
+                          edition switch -- no Python involved
 deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
 data/                     bundled language packs and optional seed data
 internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints

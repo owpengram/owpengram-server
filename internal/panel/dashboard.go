@@ -18,7 +18,6 @@ var dashboardMenu = []struct {
 	{"Stop", ""},
 	{"Restart", "rebuild and relaunch"},
 	{"Update", "git pull --ff-only, rebuild, relaunch"},
-	{"Logs", "view the current run's startup log"},
 	{"Change edition", "portable / classic"},
 	{"Quit", "server keeps running"},
 }
@@ -28,7 +27,6 @@ const (
 	menuStop
 	menuRestart
 	menuUpdate
-	menuLogs
 	menuEdition
 	menuQuit
 )
@@ -160,7 +158,7 @@ func (d dashboardState) update(m Model, msg tea.Msg) (dashboardState, tea.Cmd) {
 		case "down", "j":
 			d.cursor = (d.cursor + 1) % len(dashboardMenu)
 			return d, nil
-		case "1", "2", "3", "4", "5", "6", "7":
+		case "1", "2", "3", "4", "5", "6":
 			d.cursor = int(msg.String()[0] - '1')
 			return d.trigger(m)
 		case "a":
@@ -201,8 +199,6 @@ func (d dashboardState) trigger(m Model) (dashboardState, tea.Cmd) {
 	case menuUpdate:
 		d.busy, d.busyLabel = true, "Updating"
 		return d, runAction(m.ctx, m.mgr, "Update", func() (string, error) { return m.mgr.Update(m.ctx) })
-	case menuLogs:
-		return d, switchTo(screenLogs)
 	case menuEdition:
 		return d, switchTo(screenEdition)
 	case menuQuit:
@@ -284,7 +280,7 @@ func (d dashboardState) view(m Model) string {
 		}
 	}
 	b.WriteString("\n\n")
-	b.WriteString(keyHintStyle.Render("↑/↓ navigate · enter/1-8 select · a/p/w copy address/key/password · q quit"))
+	b.WriteString(keyHintStyle.Render("↑/↓ navigate · enter/1-6 select · a/p/w copy address/key/password · q quit"))
 	return b.String()
 }
 

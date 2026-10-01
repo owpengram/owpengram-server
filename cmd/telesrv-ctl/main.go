@@ -6,9 +6,10 @@
 // all. Run with no arguments from a real terminal (a double-clicked
 // owpengram-server.bat/start.bat/start.sh included) and it drops into
 // internal/panel's interactive TUI after the initial start: a live
-// dashboard, start/stop/restart/update, a log viewer, an edition switch,
-// and a grouped .env editor -- everything tui-panel/server-panel.py's own
-// Textual app covered, without needing Python installed at all.
+// dashboard, start/stop/restart/update, and an edition switch. Log
+// viewing (this binary's own non-interactive `logs` subcommand still
+// covers that) and .env editing stay the admin web panel's job -- see
+// internal/panel's own package doc comment for why.
 package main
 
 import (
@@ -143,13 +144,14 @@ func cmdStart(ctx context.Context, m *procctl.Manager) error {
 }
 
 // cmdMenu runs cmdStart once (identical to a bare `telesrv-ctl` call today),
-// then loops an interactive menu covering the actions a self-hoster
-// previously had to leave this binary for: stop/restart/status/update/
-// logs/edition, the same set tui-panel/server-panel.py's own Start/Stop/
-// Restart/Update/Logs key bindings cover. Only reached for a genuinely
-// bare invocation on a real terminal (see main()) -- `telesrv-ctl start`
-// typed explicitly, or any non-interactive invocation (a script, a
-// launcher running headless), still just starts and returns, unchanged.
+// then opens internal/panel's interactive dashboard: start/stop/restart/
+// update/edition, the control actions tui-panel/server-panel.py's own
+// Start/Stop/Restart/Update key bindings covered (its log viewer and .env
+// editor are deliberately not replicated here -- see internal/panel's
+// package doc comment). Only reached for a genuinely bare invocation on a
+// real terminal (see main()) -- `telesrv-ctl start` typed explicitly, or
+// any non-interactive invocation (a script, a launcher running headless),
+// still just starts and returns, unchanged.
 func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 	if err := cmdStart(ctx, m); err != nil {
 		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
