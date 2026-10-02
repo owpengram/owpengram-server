@@ -1,0 +1,43 @@
+name: Build OwpenGram Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Linux AMD64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+
+          go build \
+            -p 2 \
+            -trimpath \
+            -ldflags="-s -w" \
+            -o dist/server \
+            ./cmd/telesrv
+
+          file dist/server
+          ls -lh dist/server
+
+      - name: Upload server
+        uses: actions/upload-artifact@v4
+        with:
+          name: owpengram-server-linux-amd64
+          path: dist/server
+          if-no-files-found: error

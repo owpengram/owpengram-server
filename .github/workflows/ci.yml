@@ -46,12 +46,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: cmd/telesrv-admin/web/package-lock.json
+      - name: Setup Node
+  uses: actions/setup-node@v6
+  with:
+    node-version: '22'
+    cache: npm
+cache-dependency-path: ...
 
       - name: Install dependencies
         working-directory: cmd/telesrv-admin/web

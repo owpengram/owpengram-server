@@ -1,0 +1,42 @@
+name: Build OwpenGram Admin Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build Android ARM64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: android
+          GOARCH: arm64
+        run: |
+          mkdir -p dist
+
+          go build -p 4 \
+            -trimpath \
+            -ldflags="-s -w" \
+            -o dist/admin-panel \
+            ./cmd/telesrv-admin
+
+          file dist/admin-panel
+          ls -lh dist/admin-panel
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: OwpenGram-Admin-Android-ARM64
+          path: dist/admin-panel
+          if-no-files-found: error
