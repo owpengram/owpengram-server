@@ -116,8 +116,13 @@ func TestEditionScreenAppliesChoiceOnEnter(t *testing.T) {
 	m.ed = newEditionState(m.mgr)
 	m.ed.cursor = 1 // "Classic" (stored as "standard")
 
+	// Classic asks what to do with the media before doing anything.
 	var cmd tea.Cmd
 	m.ed, cmd = m.ed.update(m, key("enter"))
+	if cmd != nil || !m.ed.askBlobs {
+		t.Fatalf("choosing classic should ask about media first; cmd=%v askBlobs=%v", cmd != nil, m.ed.askBlobs)
+	}
+	m.ed, cmd = m.ed.update(m, key("1"))
 	if cmd == nil {
 		t.Fatal("expected a tea.Cmd from applying an edition choice")
 	}
@@ -130,6 +135,33 @@ func TestEditionScreenAppliesChoiceOnEnter(t *testing.T) {
 	got, ok := m.mgr.Edition()
 	if !ok || got != "standard" {
 		t.Fatalf("Manager.Edition() = %q, %v, want \"standard\", true", got, ok)
+	}
+}
+
+func TestEditionScreenMediaPromptCanBeCancelled(t *testing.T) {
+	m := newTestModel(t)
+	m.current = screenEdition
+	m.ed = newEditionState(m.mgr)
+	m.ed.cursor = 1
+
+	m.ed, _ = m.ed.update(m, key("enter"))
+	var cmd tea.Cmd
+	m.ed, cmd = m.ed.update(m, key("esc"))
+	if cmd != nil || m.ed.askBlobs || m.ed.busy {
+		t.Fatalf("esc should cancel the prompt without switching; cmd=%v askBlobs=%v busy=%v", cmd != nil, m.ed.askBlobs, m.ed.busy)
+	}
+}
+
+func TestEditionScreenPortableDoesNotAskAboutMedia(t *testing.T) {
+	m := newTestModel(t)
+	m.current = screenEdition
+	m.ed = newEditionState(m.mgr)
+	m.ed.cursor = 0
+
+	var cmd tea.Cmd
+	m.ed, cmd = m.ed.update(m, key("enter"))
+	if cmd == nil || m.ed.askBlobs {
+		t.Fatalf("portable has no MinIO, so media must move without asking; cmd=%v askBlobs=%v", cmd != nil, m.ed.askBlobs)
 	}
 }
 

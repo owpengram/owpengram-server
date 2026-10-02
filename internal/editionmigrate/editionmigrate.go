@@ -45,8 +45,14 @@ type Snapshot struct {
 	Accounts int
 }
 
-const accountProbeSQL = `select case when to_regclass('public.users') is null then -1 ` +
-	`else (select count(*) from public.users where not is_bot and id <> $1) end`
+// Two statements rather than one "case when to_regclass(...) is null then -1
+// else (select count(*) from public.users)": PostgreSQL resolves every
+// relation in a statement at parse time, so the guarded branch still fails
+// with "relation does not exist" on a database that was never migrated.
+const (
+	schemaProbeSQL  = `select to_regclass('public.users') is not null`
+	accountProbeSQL = `select count(*) from public.users where not is_bot and id <> $1`
+)
 
 // Probe reports what the database behind dsn holds.
 func Probe(ctx context.Context, dsn string) (Snapshot, error) {
@@ -56,12 +62,17 @@ func Probe(ctx context.Context, dsn string) (Snapshot, error) {
 	}
 	defer conn.Close(ctx)
 
+	var hasSchema bool
+	if err := conn.QueryRow(ctx, schemaProbeSQL).Scan(&hasSchema); err != nil {
+		return Snapshot{}, fmt.Errorf("probe schema: %w", err)
+	}
+	if !hasSchema {
+		return Snapshot{HasSchema: false}, nil
+	}
+
 	var accounts int
 	if err := conn.QueryRow(ctx, accountProbeSQL, domain.OfficialSystemUserID).Scan(&accounts); err != nil {
 		return Snapshot{}, fmt.Errorf("probe accounts: %w", err)
-	}
-	if accounts < 0 {
-		return Snapshot{HasSchema: false}, nil
 	}
 	return Snapshot{HasSchema: true, Accounts: accounts}, nil
 }

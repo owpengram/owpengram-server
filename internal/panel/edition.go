@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"telesrv/internal/procctl"
 )
@@ -20,6 +21,11 @@ type editionState struct {
 	// second one started on top of it would be dumping from a server the
 	// first one is in the middle of shutting down.
 	busy bool
+	// askBlobs is set after picking classic: moving the media there is
+	// optional (the server reads each file from whichever storage holds it),
+	// so the choice is asked rather than assumed. Portable never asks --
+	// without MinIO the media has to move.
+	askBlobs bool
 }
 
 var editionChoices = []struct {
@@ -66,6 +72,18 @@ func (s editionState) update(m Model, msg tea.Msg) (editionState, tea.Cmd) {
 		if s.busy {
 			return s, nil
 		}
+		if s.askBlobs {
+			switch msg.String() {
+			case "esc", "b":
+				s.askBlobs = false
+				s.message = ""
+			case "1", "m", "enter":
+				return s.start(m, procctl.BlobsMove)
+			case "2", "k":
+				return s.start(m, procctl.BlobsKeep)
+			}
+			return s, nil
+		}
 		switch msg.String() {
 		case "esc", "b":
 			return s, switchTo(screenDashboard)
@@ -92,11 +110,6 @@ func (s editionState) update(m Model, msg tea.Msg) (editionState, tea.Cmd) {
 // the other edition's PostgreSQL before persisting the choice -- without
 // that, picking the other entry here pointed the server at an unrelated
 // database and every signed-in client saw the server as unreachable.
-//
-// force stays false: the refusal it would override means both editions hold
-// real sessions, and one keypress in a menu is the wrong place to resolve
-// that. The error names `telesrv-ctl set-edition ... --force` for whoever
-// genuinely wants it.
 func (s editionState) apply(m Model) (editionState, tea.Cmd) {
 	choice := editionChoices[s.cursor].value
 	if choice == s.current {
@@ -105,16 +118,29 @@ func (s editionState) apply(m Model) (editionState, tea.Cmd) {
 		s.message = "Already running the " + procctl.DisplayEditionName(choice) + " edition."
 		return s, nil
 	}
+	if choice == "standard" {
+		s.askBlobs = true
+		s.saved = false
+		s.message = ""
+		return s, nil
+	}
+	return s.start(m, procctl.BlobsMove)
+}
+
+// start runs the switch with the chosen handling of media files.
+func (s editionState) start(m Model, blobs procctl.BlobMode) (editionState, tea.Cmd) {
+	choice := editionChoices[s.cursor].value
 	mgr := m.mgr
 	ctx := m.ctx
+	s.askBlobs = false
 	s.busy = true
 	s.saved = false
 	// Rendered before the command below starts, so the wait is explained:
 	// stopping, dumping, restoring and rebuilding takes far longer than
 	// anything else this panel does.
-	s.message = "Switching to " + procctl.DisplayEditionName(choice) + ": moving the database over and restarting, this can take a while..."
+	s.message = "Switching to " + procctl.DisplayEditionName(choice) + ": moving the database and media over and restarting, this can take a while..."
 	return s, func() tea.Msg {
-		return editionSetMsg{edition: choice, err: mgr.ChangeEdition(ctx, choice, false, nil)}
+		return editionSetMsg{edition: choice, err: mgr.ChangeEdition(ctx, choice, procctl.EditionChange{Blobs: blobs}, nil)}
 	}
 }
 
@@ -138,14 +164,31 @@ func (s editionState) view(m Model) string {
 	}
 
 	b.WriteString("\n")
+	if s.askBlobs {
+		b.WriteString(panelTitleStyle.Render("What about the media files (photos, documents, stickers)?"))
+		b.WriteString("\n\n")
+		b.WriteString(menuItemStyle.Render("1) Move them to MinIO (recommended) -- everything in one place"))
+		b.WriteString("\n")
+		b.WriteString(menuItemStyle.Render("2) Keep them on local disk -- still readable, only new uploads go to MinIO"))
+		b.WriteString("\n\n")
+		b.WriteString(keyHintStyle.Render("enter/1-2 select · esc/b cancel"))
+		return b.String()
+	}
 	if s.message != "" {
+		// Wrapped to the terminal: a long error (a blob key, a path) was cut
+		// off at the screen edge, taking the part that explains it with it.
+		wrap := lipgloss.NewStyle()
+		if m.width > 4 {
+			wrap = wrap.Width(m.width - 2)
+		}
+		msg := wrap.Render(s.message)
 		switch {
 		case s.busy:
-			b.WriteString(panelTitleStyle.Render(s.message))
+			b.WriteString(panelTitleStyle.Render(msg))
 		case s.saved:
-			b.WriteString(okBannerStyle.Render(s.message))
+			b.WriteString(okBannerStyle.Render(msg))
 		default:
-			b.WriteString(errBannerStyle.Render(s.message))
+			b.WriteString(errBannerStyle.Render(msg))
 		}
 		b.WriteString("\n")
 	}

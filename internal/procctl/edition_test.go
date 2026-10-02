@@ -70,9 +70,9 @@ func TestSetEditionPortablePinsBlobBackendToLocalfs(t *testing.T) {
 	}
 }
 
-// Switching back must not silently re-point the server at an object store
-// that doesn't have the blobs written while it was portable.
-func TestSetEditionStandardLeavesBlobBackendAlone(t *testing.T) {
+// Switching back undoes the localfs pin SetEdition("portable") applied, so
+// the standard edition's MinIO is used again for new uploads.
+func TestSetEditionStandardRestoresS3AfterPortable(t *testing.T) {
 	m := newEditionTestManager(t)
 	if err := m.SetEdition("portable"); err != nil {
 		t.Fatal(err)
@@ -84,8 +84,27 @@ func TestSetEditionStandardLeavesBlobBackendAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if values["TELESRV_BLOB_BACKEND"] != "s3" {
+		t.Fatalf("TELESRV_BLOB_BACKEND = %q after portable->standard, want s3", values["TELESRV_BLOB_BACKEND"])
+	}
+}
+
+// A choice made while already on standard (or on a fresh install) is the
+// operator's own and must survive re-selecting standard.
+func TestSetEditionStandardKeepsExplicitLocalfs(t *testing.T) {
+	m := newEditionTestManager(t)
+	if err := os.WriteFile(filepath.Join(m.Root, ".env"), []byte("TELESRV_EDITION=standard\nTELESRV_BLOB_BACKEND=localfs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetEdition("standard"); err != nil {
+		t.Fatal(err)
+	}
+	values, err := m.readEnvFile()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if values["TELESRV_BLOB_BACKEND"] != "localfs" {
-		t.Fatalf("TELESRV_BLOB_BACKEND = %q after portable->standard, want it left at localfs", values["TELESRV_BLOB_BACKEND"])
+		t.Fatalf("TELESRV_BLOB_BACKEND = %q, want localfs left alone", values["TELESRV_BLOB_BACKEND"])
 	}
 }
 

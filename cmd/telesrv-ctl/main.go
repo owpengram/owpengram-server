@@ -103,10 +103,14 @@ Commands:
                container) is up
   logs         print the current run's startup log
   update       git pull --ff-only, then rebuild and relaunch both
-  set-edition  portable|classic [--force] -- switch edition, carrying the
-               database over to the other edition's PostgreSQL and
-               restarting. Refuses when the target edition already has
-               sessions of its own; --force overwrites them.
+  set-edition  portable|classic [--blobs=move|keep] [--force] -- switch
+               edition, carrying the database over to the other edition's
+               PostgreSQL and restarting. Media files move to the new
+               edition's storage (--blobs=move, the default) or stay where
+               they are and are read from there (--blobs=keep; classic
+               only -- portable has no MinIO). The other edition's old data
+               is replaced. --force skips media files that cannot be moved
+               instead of aborting, and allows --blobs=keep for portable.
 
 `)
 }
@@ -176,24 +180,28 @@ func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 // database it now connects to.
 func cmdSetEdition(ctx context.Context, m *procctl.Manager, args []string) error {
 	edition := ""
-	force := false
+	opts := procctl.EditionChange{}
 	for _, arg := range args {
 		switch arg {
 		case "--force", "-f":
-			force = true
+			opts.Force = true
+		case "--blobs=move":
+			opts.Blobs = procctl.BlobsMove
+		case "--blobs=keep":
+			opts.Blobs = procctl.BlobsKeep
 		case "classic", "standard":
 			edition = "standard"
 		case "portable":
 			edition = "portable"
 		default:
-			return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--force]")
+			return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--blobs=move|keep] [--force]")
 		}
 	}
 	if edition == "" {
-		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--force]")
+		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--blobs=move|keep] [--force]")
 	}
 
-	if err := m.ChangeEdition(ctx, edition, force, func(text string) {
+	if err := m.ChangeEdition(ctx, edition, opts, func(text string) {
 		fmt.Print(strings.TrimRight(text, "\n") + "\n")
 	}); err != nil {
 		return err

@@ -50,15 +50,22 @@ func (m *Manager) Edition() (edition string, ok bool) {
 // portable edition) -- leaving a stale "s3" in .env only bought a scary
 // "s3 blob backend configured but failed to initialize" warning on every
 // single start, describing a backend that was never going to be used.
-// Switching back to "standard" deliberately does NOT restore s3: by then
-// blobs may well have been written to disk under TELESRV_BLOB_DIR, and
-// silently pointing the server back at an object store that doesn't have
-// them is worse than leaving the working setting alone for the operator to
-// change on purpose (admin panel -> Server Settings, or .env directly).
+// Switching from portable back to "standard" restores s3, the standard
+// edition's default: the pin above is this function's own doing, so leaving
+// it in place would keep writing new media to disk under TELESRV_BLOB_DIR
+// while the MinIO container sits unused. Media written to disk in the
+// meantime stays readable -- cmd/telesrv registers the local filesystem as
+// the additional backend whenever s3 is active, and file_blobs.backend is
+// recorded per row.
 func (m *Manager) SetEdition(edition string) error {
 	values := map[string]string{"TELESRV_EDITION": edition}
-	if edition == "portable" {
+	switch edition {
+	case "portable":
 		values["TELESRV_BLOB_BACKEND"] = "localfs"
+	case "standard":
+		if current, ok := m.Edition(); ok && current == "portable" {
+			values["TELESRV_BLOB_BACKEND"] = "s3"
+		}
 	}
 	return m.WriteEnvValues(values)
 }

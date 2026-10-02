@@ -143,7 +143,13 @@ install should get PostgreSQL and blob storage:
 
 The choice is shown disabled with an explanation if Docker isn't installed,
 is remembered in `.env` (`TELESRV_EDITION`) so you're never asked again,
-and can be changed later with `telesrv-ctl set-edition portable|classic`.
+and can be changed later with `telesrv-ctl set-edition portable|classic`
+(or from the launcher's "Change edition" screen). Switching carries the
+database over and, by default, the stored media too (MinIO ⇄ `TELESRV_BLOB_DIR`);
+the old copies are left in place. The edition you are leaving is the source of
+truth: whatever the other edition's database held is replaced. Moving to classic can instead keep the media
+where it is with `--blobs=keep` — the server reads each file from whichever
+storage holds it. Portable always moves it, since it has no MinIO.
 Either way `telesrv-ctl` then builds both binaries, runs them, and prints
 the admin panel address and password ready to copy. Re-running the launcher
 later is safe: it only builds and (re)launches whatever isn't already
