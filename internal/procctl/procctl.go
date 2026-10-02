@@ -294,6 +294,17 @@ func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
 	if edition, ok := m.Edition(); ok && edition == "portable" {
 		return "", nil
 	}
+	return m.composeUpWaitPostgres(ctx, st)
+}
+
+// composeUpWaitPostgres is ensureDocker without the edition gate: bring the
+// compose stack up and block until PostgreSQL answers.
+//
+// Split out because an edition migration has to reach the Docker-backed
+// PostgreSQL while .env still names the *other* edition (see
+// maintenancePGFor) -- the gate above would skip the bring-up in exactly
+// the case that needs it.
+func (m *Manager) composeUpWaitPostgres(ctx context.Context, st State) (string, error) {
 	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
 	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
 		return "", nil

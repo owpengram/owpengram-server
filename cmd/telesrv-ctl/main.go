@@ -71,7 +71,7 @@ func main() {
 	case "update":
 		err = cmdUpdate(ctx, m)
 	case "set-edition":
-		err = cmdSetEdition(m, commandArgs)
+		err = cmdSetEdition(ctx, m, commandArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "telesrv-ctl: unknown command %q\n\n", command)
 		usage()
@@ -103,8 +103,10 @@ Commands:
                container) is up
   logs         print the current run's startup log
   update       git pull --ff-only, then rebuild and relaunch both
-  set-edition  portable|classic -- change the edition choice made at
-               start without re-prompting for it
+  set-edition  portable|classic [--force] -- switch edition, carrying the
+               database over to the other edition's PostgreSQL and
+               restarting. Refuses when the target edition already has
+               sessions of its own; --force overwrites them.
 
 `)
 }
@@ -167,23 +169,36 @@ func cmdMenu(ctx context.Context, m *procctl.Manager) error {
 // Docker-backed edition and "standard" as a silent alias (the actual value
 // persisted to .env -- see displayEditionName's doc comment for why that
 // doesn't change).
-func cmdSetEdition(m *procctl.Manager, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic")
+//
+// Goes through ChangeEdition rather than SetEdition so the data moves with
+// the choice: the edition decides which PostgreSQL the server talks to, and
+// changing it on its own leaves every existing client unknown to the
+// database it now connects to.
+func cmdSetEdition(ctx context.Context, m *procctl.Manager, args []string) error {
+	edition := ""
+	force := false
+	for _, arg := range args {
+		switch arg {
+		case "--force", "-f":
+			force = true
+		case "classic", "standard":
+			edition = "standard"
+		case "portable":
+			edition = "portable"
+		default:
+			return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--force]")
+		}
 	}
-	edition := args[0]
-	switch edition {
-	case "classic":
-		edition = "standard"
-	case "standard", "portable":
-		// already canonical
-	default:
-		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic")
+	if edition == "" {
+		return fmt.Errorf("usage: telesrv-ctl set-edition portable|classic [--force]")
 	}
-	if err := m.SetEdition(edition); err != nil {
+
+	if err := m.ChangeEdition(ctx, edition, force, func(text string) {
+		fmt.Print(strings.TrimRight(text, "\n") + "\n")
+	}); err != nil {
 		return err
 	}
-	fmt.Printf("Edition set to %q. Run `telesrv-ctl restart` to apply it.\n", procctl.DisplayEditionName(edition))
+	fmt.Printf("Now running the %q edition.\n", procctl.DisplayEditionName(edition))
 	return nil
 }
 
