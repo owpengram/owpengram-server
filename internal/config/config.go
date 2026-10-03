@@ -990,7 +990,17 @@ func Load() (Config, error) {
 	cfg := Config{
 		ListenAddr:      envOr("TELESRV_LISTEN", "0.0.0.0:2398"),
 		WebSocketEnable: envBoolOr("TELESRV_WEBSOCKET_ENABLE", true),
+		// Only local web-client dev servers, because a real deployment's own
+		// origin cannot be guessed and has to be added by whoever sets it up
+		// (a browser always sends Origin, so an unlisted one is a 403 and
+		// not a silent fallback -- see mtprotoedge.websocketRouteHandler).
+		// Both spellings of each: which one the browser sends depends on
+		// what was typed in the address bar, and matching is exact.
+		//   :8080 -- tweb / owpengram-web-client (`pnpm start`)
+		//   :1234 -- telegram-tt (WebA)
 		WebSocketAllowedOrigins: envListOr("TELESRV_WEBSOCKET_ALLOWED_ORIGINS", []string{
+			"http://localhost:8080",
+			"http://127.0.0.1:8080",
 			"http://localhost:1234",
 			"http://127.0.0.1:1234",
 		}),
