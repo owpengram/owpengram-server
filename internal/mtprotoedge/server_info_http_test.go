@@ -103,3 +103,30 @@ func TestServeServerIcon(t *testing.T) {
 		t.Fatalf("Content-Type = %q", ct)
 	}
 }
+
+func TestServerInfoEndpointsAllowCrossOriginRead(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	h := serverInfoHTTPHandler(fallback, 2, rsaPublicKeyPEM(key), identity.NewStore(t.TempDir()))
+
+	// The icon 404s here (nothing uploaded), which must not drop the header:
+	// a browser would otherwise report a CORS failure instead of "no icon".
+	for _, path := range []string{ServerInfoPath, ServerIconPath} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+			t.Fatalf("%s: Access-Control-Allow-Origin = %q, want \"*\"", path, got)
+		}
+	}
+
+	// Every other path (the WebSocket route's fallback) stays closed: it is
+	// guarded by an origin allowlist, not by this header.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/apiws", nil))
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("/apiws: unexpected Access-Control-Allow-Origin %q", got)
+	}
+}

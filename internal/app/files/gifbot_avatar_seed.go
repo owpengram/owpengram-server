@@ -25,7 +25,7 @@ var gifBotAvatarPNG []byte
 // actually (re)wrote the photo.
 func (s *Service) SeedGifBotAvatar(ctx context.Context) (bool, error) {
 	photoID := domain.GifBotUserPhotoID
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, gifBotAvatarPNG, photoSizeSpecsForAvatar(gifBotAvatarPNG))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, gifBotAvatarPNG)
 	if err != nil {
 		return false, err
 	}

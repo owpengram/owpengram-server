@@ -26,7 +26,7 @@ var botFatherAvatarJPG []byte
 // right there. Returns true if it actually (re)wrote the photo.
 func (s *Service) SeedBotFatherAvatar(ctx context.Context) (bool, error) {
 	photoID := domain.BotFatherUserPhotoID
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, botFatherAvatarJPG, photoSizeSpecsForAvatar(botFatherAvatarJPG))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, botFatherAvatarJPG)
 	if err != nil {
 		return false, err
 	}

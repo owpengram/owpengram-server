@@ -25,7 +25,7 @@ var verifyBotAvatarPNG []byte
 // actually (re)wrote the photo.
 func (s *Service) SeedVerifyBotAvatar(ctx context.Context) (bool, error) {
 	photoID := domain.VerifyBotUserPhotoID
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, verifyBotAvatarPNG, photoSizeSpecsForAvatar(verifyBotAvatarPNG))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, verifyBotAvatarPNG)
 	if err != nil {
 		return false, err
 	}

@@ -476,7 +476,6 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			FolderID
 		_ = folderID
 
-		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
 			return nil, internalErr()
@@ -485,13 +484,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 		if err != nil {
 			return nil, internalErr()
 		}
-		st := domain.UpdateState{Date: int(r.clock.Now().Unix())}
-		if r.deps.Updates != nil {
-			var err error
-			st, err = r.deps.Updates.GetState(ctx, id, userID)
-			if err != nil {
-				return nil, internalErr()
-			}
+		st, err := r.peerDialogsState(ctx, userID)
+		if err != nil {
+			return nil, internalErr()
 		}
 		return r.tgPeerDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list), st), nil
 	})
@@ -500,7 +495,6 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			Peers
 		_ = peers
 
-		id, _ := AuthKeyIDFrom(ctx)
 		userID, _, err := r.currentUserID(ctx)
 		if err != nil {
 			return nil, internalErr()
@@ -550,13 +544,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			list.Communities = append(list.Communities, views...)
 			list.Count += len(views)
 		}
-		st := domain.UpdateState{Date: int(r.clock.Now().Unix())}
-		if r.deps.Updates != nil {
-			var err error
-			st, err = r.deps.Updates.GetState(ctx, id, userID)
-			if err != nil {
-				return nil, internalErr()
-			}
+		st, err := r.peerDialogsState(ctx, userID)
+		if err != nil {
+			return nil, internalErr()
 		}
 		r.trackChannelInterest(ctx, userID, channelIDsFromDialogs(list)...)
 		return r.tgPeerDialogs(ctx, userID, r.withDialogListPresence(ctx, userID, list), st), nil
@@ -921,6 +911,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 	})
 	registerRPC[*tg.MessagesGetMessageReactionsListRequest](d, tlprofile.SemanticMethodMessagesGetMessageReactionsList, func(ctx context.Context, layerRequest *tg.MessagesGetMessageReactionsListRequest) (any, error) {
 		return r.onMessagesGetMessageReactionsList(ctx, layerRequest)
+	})
+	registerRPC[*tg.MessagesGetPaidReactionPrivacyRequest](d, tlprofile.SemanticMethodMessagesGetPaidReactionPrivacy, func(ctx context.Context, layerRequest *tg.MessagesGetPaidReactionPrivacyRequest) (any, error) {
+		return r.onMessagesGetPaidReactionPrivacy(ctx)
 	})
 	registerRPC[*tg.MessagesSetDefaultReactionRequest](d, tlprofile.SemanticMethodMessagesSetDefaultReaction, func(ctx context.Context, layerRequest *tg.MessagesSetDefaultReactionRequest) (any, error) {
 		return r.onMessagesSetDefaultReaction(ctx, layerRequest.

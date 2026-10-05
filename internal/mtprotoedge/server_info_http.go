@@ -74,13 +74,31 @@ func serverInfoHTTPHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ServerInfoPath:
+			allowCrossOriginRead(w)
 			serveServerInfo(w, r, dc, pubKeyPEM, identityStore)
 		case ServerIconPath:
+			allowCrossOriginRead(w)
 			serveServerIcon(w, r, identityStore)
 		default:
 			next.ServeHTTP(w, r)
 		}
 	})
+}
+
+// allowCrossOriginRead lets a web client served from another origin (the
+// dev server, or a CDN in front of the static files) read this public
+// identity. Everything these two endpoints return is already public -- the
+// RSA key is a public key, the name/description/icon are what the server
+// advertises -- and they only ever answer GET/HEAD without credentials, so
+// the wildcard exposes nothing a direct request would not.
+//
+// This is deliberately NOT the WebSocket route's origin allowlist: that one
+// guards a stateful connection that can act as a user, this one is a read of
+// public data. A key read here is also never trusted at runtime by the web
+// client (it pins the key at build time), so a hostile page reading it gains
+// nothing either.
+func allowCrossOriginRead(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 }
 
 func serveServerInfo(

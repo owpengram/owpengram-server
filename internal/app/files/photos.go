@@ -933,6 +933,31 @@ func photoSizeSpecsForAvatar(data []byte) []photoSizeSpec {
 	}
 }
 
+// seedAvatarMaxSide caps the big ('c') size of the server's own avatars at
+// what Telegram serves for profile photos.
+const seedAvatarMaxSide = 640
+
+// putSeedAvatarSizes stores one of the server's own avatars (system user,
+// built-in bots, the operator's identity icon) with every advertised size
+// rendered from the source, the way uploaded avatars are, instead of the
+// source bytes under every size. Peer photo locations carry no size, so Web K
+// fetches an avatar as a single 512 KiB part: the ~1 MB bundled PNG behind
+// the 160px size came out cut off halfway down. A source that cannot be
+// decoded (an identity icon in a format without a Go decoder) is stored as-is,
+// as before.
+func (s *Service) putSeedAvatarSizes(ctx context.Context, photoID int64, data []byte) ([]domain.PhotoSize, error) {
+	if _, _, err := image.DecodeConfig(bytes.NewReader(data)); err != nil {
+		return s.putPhotoStaticSizes(ctx, photoID, data, photoSizeSpecsForAvatar(data))
+	}
+	specs := photoSizeSpecsForAvatar(data)
+	for i := range specs {
+		if specs[i].Type == "c" {
+			specs[i].W, specs[i].H = scaleDown(specs[i].W, specs[i].H, seedAvatarMaxSide)
+		}
+	}
+	return s.putAvatarStaticSizes(ctx, photoID, data, specs)
+}
+
 // photoSizeSpecsForMessage 给图片消息生成下载尺寸（'m' 缩略 + 'x'/'y' 大图）。
 func photoSizeSpecsForMessage(data []byte) []photoSizeSpec {
 	w, h := imageDimensions(data, 1280, 1280)

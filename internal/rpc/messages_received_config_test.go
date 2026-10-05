@@ -131,3 +131,49 @@ func TestMessagesReceivedMessagesIsRegistered(t *testing.T) {
 		t.Fatalf("result = %#v (%T), want non-nil empty ReceivedNotifyMessageVector", result, result)
 	}
 }
+
+func TestGetPaidReactionPrivacyReturnsStoredSettingAsUpdate(t *testing.T) {
+	account := &reactionSettingsAccountStub{settings: domain.DefaultAccountReactionSettings()}
+	r := New(Config{}, Deps{Account: account}, zaptest.NewLogger(t), clock.System)
+	ctx := WithUserID(context.Background(), 42)
+
+	privacyOf := func(t *testing.T) tg.PaidReactionPrivacyClass {
+		t.Helper()
+		got, err := r.onMessagesGetPaidReactionPrivacy(ctx)
+		if err != nil {
+			t.Fatalf("getPaidReactionPrivacy: %v", err)
+		}
+		updates, ok := got.(*tg.Updates)
+		if !ok || len(updates.Updates) != 1 {
+			t.Fatalf("result = %#v, want Updates with one update", got)
+		}
+		update, ok := updates.Updates[0].(*tg.UpdatePaidReactionPrivacy)
+		if !ok {
+			t.Fatalf("update = %T, want *tg.UpdatePaidReactionPrivacy", updates.Updates[0])
+		}
+		return update.Private
+	}
+
+	if _, ok := privacyOf(t).(*tg.PaidReactionPrivacyDefault); !ok {
+		t.Fatal("fresh account: want paidReactionPrivacyDefault")
+	}
+
+	account.settings.PaidPrivacy = domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyAnonymous}
+	if _, ok := privacyOf(t).(*tg.PaidReactionPrivacyAnonymous); !ok {
+		t.Fatal("anonymous setting: want paidReactionPrivacyAnonymous")
+	}
+
+	// A peer the account can no longer address falls back instead of failing the call
+	account.settings.PaidPrivacy = domain.PaidReactionPrivacy{Kind: domain.PaidReactionPrivacyPeer}
+	if _, ok := privacyOf(t).(*tg.PaidReactionPrivacyDefault); !ok {
+		t.Fatal("peer setting without a peer: want the default")
+	}
+}
+
+func TestGetPaidReactionPrivacyFailsClosedOnReadError(t *testing.T) {
+	account := &reactionSettingsAccountStub{getErr: errors.New("db down")}
+	r := New(Config{}, Deps{Account: account}, zaptest.NewLogger(t), clock.System)
+	if _, err := r.onMessagesGetPaidReactionPrivacy(WithUserID(context.Background(), 42)); !tgerr.Is(err, "INTERNAL_SERVER_ERROR") {
+		t.Fatalf("err = %v, want INTERNAL_SERVER_ERROR", err)
+	}
+}

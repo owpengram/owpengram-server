@@ -25,7 +25,7 @@ var premiumBotAvatarPNG []byte
 // actually (re)wrote the photo.
 func (s *Service) SeedPremiumBotAvatar(ctx context.Context) (bool, error) {
 	photoID := domain.PremiumBotUserPhotoID
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, premiumBotAvatarPNG, photoSizeSpecsForAvatar(premiumBotAvatarPNG))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, premiumBotAvatarPNG)
 	if err != nil {
 		return false, err
 	}

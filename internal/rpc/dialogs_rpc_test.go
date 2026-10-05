@@ -160,6 +160,43 @@ func TestMessagesGetPeerDialogsReturnsRequestedDialogsAndState(t *testing.T) {
 	}
 }
 
+// A device's confirmed cursor trails the updates it already took from pushes;
+// peerDialogs must carry the account's current pts or Web K, which waits for
+// the two to match, never applies a reloaded dialog.
+func TestMessagesPeerDialogsStateIsAccountCurrentNotDeviceCursor(t *testing.T) {
+	dialogs := &captureDialogs{}
+	current := domain.UpdateState{Pts: 79, Date: 1700000300}
+	updates := &captureUpdates{state: domain.UpdateState{Pts: 78, Date: 1700000200}, currentState: &current}
+	r := New(Config{}, Deps{Dialogs: dialogs, Updates: updates}, zaptest.NewLogger(t), clock.System)
+	ctx := WithAuthKeyID(WithUserID(context.Background(), 1000000001), [8]byte{3})
+
+	for name, req := range map[string]bin.Encoder{
+		"getPeerDialogs": &tg.MessagesGetPeerDialogsRequest{Peers: []tg.InputDialogPeerClass{&tg.InputDialogPeer{
+			Peer: &tg.InputPeerUser{UserID: domain.OfficialSystemUserID, AccessHash: domain.OfficialSystemUser().AccessHash},
+		}}},
+		"getPinnedDialogs": &tg.MessagesGetPinnedDialogsRequest{},
+	} {
+		var in bin.Buffer
+		if err := req.Encode(&in); err != nil {
+			t.Fatalf("%s: encode request: %v", name, err)
+		}
+		enc, err := r.Dispatch(ctx, [8]byte{3}, 0, &in)
+		if err != nil {
+			t.Fatalf("%s: dispatch: %v", name, err)
+		}
+		got, ok := enc.(*tg.MessagesPeerDialogs)
+		if !ok {
+			t.Fatalf("%s: response = %T, want *tg.MessagesPeerDialogs", name, enc)
+		}
+		if got.State.Pts != current.Pts {
+			t.Fatalf("%s: state pts = %d, want account current %d (device cursor is %d)", name, got.State.Pts, current.Pts, updates.state.Pts)
+		}
+		if updates.commitCalls != 0 {
+			t.Fatalf("%s: committed the device cursor %d times, want none", name, updates.commitCalls)
+		}
+	}
+}
+
 func TestDialogSettingRPCsRecordDurableUpdates(t *testing.T) {
 	var authKeyID [8]byte
 	authKeyID[0] = 9
@@ -1373,8 +1410,10 @@ func TestMessagesGetPinnedDialogsIncludesArchiveAndReferencedPeers(t *testing.T)
 	if dialogs.filter != (domain.DialogFilter{PinnedOnly: true, HasFolderID: true, FolderID: 0, Limit: 100}) {
 		t.Fatalf("filter = %+v, want pinned folder 0 limit 100", dialogs.filter)
 	}
-	if updates.authKeyID != authKeyID || updates.userID != viewer.ID {
-		t.Fatalf("state lookup auth/user = %x/%d, want %x/%d", updates.authKeyID, updates.userID, authKeyID, viewer.ID)
+	// The attached state is the account's current one, so it is looked up by
+	// user, not by this auth key's cursor.
+	if updates.userID != viewer.ID {
+		t.Fatalf("state lookup user = %d, want %d", updates.userID, viewer.ID)
 	}
 	if len(out.Dialogs) != 3 {
 		t.Fatalf("dialogs = %d, want archive + two pinned peers", len(out.Dialogs))

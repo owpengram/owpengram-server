@@ -24,8 +24,8 @@ var officialSystemAvatarPNG []byte
 //
 // customIcon, when non-empty, is the operator's own Server Settings ->
 // Server identity icon (any of the formats Server Settings accepts --
-// putPhotoStaticSizes stores it as-is, no re-encoding, so format doesn't
-// matter here); it replaces the bundled default OwpenGram logo. This
+// putSeedAvatarSizes renders its sizes, or stores it as-is when Go cannot
+// decode it, so format doesn't matter here); it replaces the bundled default OwpenGram logo. This
 // deliberately re-upserts the same fixed photo ID on *every* boot (not just
 // the first) rather than skipping once a row exists, so switching the
 // custom icon on/off in the admin panel is reflected here on the next
@@ -40,7 +40,7 @@ func (s *Service) SeedOfficialSystemAvatar(ctx context.Context, customIcon []byt
 	if usingCustom {
 		data = customIcon
 	}
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, data, photoSizeSpecsForAvatar(data))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, data)
 	if err != nil {
 		return false, err
 	}

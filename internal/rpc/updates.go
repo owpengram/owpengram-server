@@ -55,6 +55,21 @@ func (r *Router) onUpdatesGetState(ctx context.Context) (*tg.UpdatesState, error
 	return ptr(out), nil
 }
 
+// peerDialogsState is the state attached to messages.peerDialogs: the
+// account's current pts, as Telegram returns it, not this device's confirmed
+// cursor. That cursor only moves on getState/getDifference, so it trails every
+// update the client has already taken from a push. Web K compares this pts with
+// its own before applying a reloaded dialog and retries until they match: with
+// the trailing cursor they never did, so the first message to a new peer never
+// got a dialog and every later reload queued behind it. The value commits
+// nothing; only getState/getDifference move the device cursor.
+func (r *Router) peerDialogsState(ctx context.Context, userID int64) (domain.UpdateState, error) {
+	if r.deps.Updates == nil {
+		return domain.UpdateState{Date: int(r.clock.Now().Unix())}, nil
+	}
+	return r.deps.Updates.CurrentState(ctx, userID)
+}
+
 func getStateEstablishesObservedBaseline(ctx context.Context) bool {
 	switch ClientTypeFrom(ctx) {
 	case ClientTypeTDesktop, ClientTypeAndroid:

@@ -25,7 +25,7 @@ var chatBotAvatarPNG []byte
 // actually (re)wrote the photo.
 func (s *Service) SeedChatBotAvatar(ctx context.Context) (bool, error) {
 	photoID := domain.ChatBotUserPhotoID
-	sizes, err := s.putPhotoStaticSizes(ctx, photoID, chatBotAvatarPNG, photoSizeSpecsForAvatar(chatBotAvatarPNG))
+	sizes, err := s.putSeedAvatarSizes(ctx, photoID, chatBotAvatarPNG)
 	if err != nil {
 		return false, err
 	}
