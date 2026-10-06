@@ -43,6 +43,9 @@ type Config struct {
 	WebSocketEnable bool
 	// WebSocketAllowedOrigins 是允许浏览器发起 WS upgrade 的页面 origin；"*" 仅用于临时调试。
 	WebSocketAllowedOrigins []string
+	// WebClientEnable serves the web client embedded in the binary (see
+	// internal/webclient) on the same port. Needs WebSocketEnable.
+	WebClientEnable bool
 	// AdvertiseIP 是写入 help.getConfig DCOptions 的对外可达 IP（客户端据此连接本 DC）。
 	AdvertiseIP string
 	// RSAKeyPath 是 server RSA 私钥的 PEM 路径；不存在时自动生成。
@@ -1004,6 +1007,7 @@ func Load() (Config, error) {
 			"http://localhost:1234",
 			"http://127.0.0.1:1234",
 		}),
+		WebClientEnable: envBoolOr("TELESRV_WEB_CLIENT_ENABLE", true),
 		// help.getConfig 必须下发至少一个可重连的主 DC 地址；远端部署不能
 		// 沿用 loopback 默认值，需显式设置客户端实际可达的 IP。
 		AdvertiseIP:                       advertiseIP,

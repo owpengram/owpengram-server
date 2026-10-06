@@ -76,6 +76,7 @@ import (
 	"telesrv/internal/embeddedpg"
 	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
+	"telesrv/internal/webclient"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
@@ -317,6 +318,27 @@ func goSchedulerBusySeconds() float64 {
 		return 0
 	}
 	return total - idle
+}
+
+// embeddedWebClient returns the web client built into the binary, or nil when
+// it is switched off, needs the WebSocket it connects over, or this binary was
+// built without one (a checkout that never ran owpengram-web-client's embed
+// build). Each case says so once at startup instead of leaving a 404 to explain.
+func embeddedWebClient(cfg config.Config, logger *zap.Logger) http.Handler {
+	switch {
+	case !cfg.WebClientEnable:
+		return nil
+	case !cfg.WebSocketEnable:
+		logger.Warn("web client not served: it connects over WebSocket, which is off (TELESRV_WEBSOCKET_ENABLE)")
+		return nil
+	}
+	handler := webclient.Handler()
+	if handler == nil {
+		logger.Info("web client not served: none built into this binary (see owpengram-web-client: node scripts/owpengram-web.mjs embed)")
+		return nil
+	}
+	logger.Info("web client served at the server's own address")
+	return handler
 }
 
 func mtprotoRuntimeGaugeSamples(snapshot mtprotoedge.RuntimeSnapshot) []obsmetrics.GaugeSample {
@@ -2028,6 +2050,7 @@ func run(logger *zap.Logger) error {
 		ObfuscatedTCP:                 true,
 		WebSocket:                     cfg.WebSocketEnable,
 		WebSocketAllowedOrigins:       cfg.WebSocketAllowedOrigins,
+		WebClient:                     embeddedWebClient(cfg, logger),
 		MaxConnections:                cfg.MTProtoMaxConnections,
 		MaxConnectionsPerIP:           cfg.MTProtoMaxConnectionsPerIP,
 		MaxConcurrentHandshakes:       cfg.MTProtoMaxConcurrentHandshakes,

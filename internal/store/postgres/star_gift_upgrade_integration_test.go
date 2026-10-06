@@ -164,6 +164,14 @@ func TestStarGiftPrepaidUpgradeServiceMessageIsAuthoredByOwner(t *testing.T) {
 			t.Fatalf("user %d upgrade action = %+v, want upgrade+prepaid_upgrade with no from_id", copy.OwnerUserID, action)
 		}
 	}
+	// Web K tells which gift an upgrade finished from this reply; a user's gift
+	// has no saved_id to match on
+	if reply := sent.SenderMessage.ReplyTo; reply == nil || reply.MessageID != purchase.Saved.MsgID {
+		t.Fatalf("owner's upgrade message reply = %+v, want it to answer the gift message %d", reply, purchase.Saved.MsgID)
+	}
+	if reply := sent.RecipientMessage.ReplyTo; reply == nil || reply.MessageID <= 0 {
+		t.Fatalf("giver's upgrade message reply = %+v, want it to answer the giver's copy of the gift message", reply)
+	}
 	if result.Saved.UpgradeMsgID != sent.SenderMessage.ID {
 		t.Fatalf("saved upgrade_msg_id = %d, want the owner's box id %d", result.Saved.UpgradeMsgID, sent.SenderMessage.ID)
 	}

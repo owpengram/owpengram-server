@@ -261,6 +261,10 @@ type Options struct {
 	// WebSocketAllowedOrigins 是允许浏览器发起 WebSocket upgrade 的页面 origin。
 	// 空列表表示只接受无 Origin 的非浏览器客户端；"*" 表示允许所有来源（仅调试）。
 	WebSocketAllowedOrigins []string
+	// WebClient, when set, serves the embedded web client for every HTTP path
+	// that is not a WebSocket route, on the same port. Needs WebSocket: the
+	// client reaches the server over it.
+	WebClient http.Handler
 	// ReadTimeout 单次读取超时。默认 5m。
 	ReadTimeout time.Duration
 	// HandshakeIdleTimeout 是连接「建立 session 前」（握手 + 首个加密消息之前）的读超时，
@@ -507,6 +511,7 @@ type Server struct {
 	obfuscated               bool
 	websocket                bool
 	websocketOrigins         []string
+	webClient                http.Handler
 	readTimeout              time.Duration
 	handshakeTimeout         time.Duration
 	handshakeMaxDur          time.Duration
@@ -574,6 +579,7 @@ func New(opts Options) *Server {
 		obfuscated:               opts.ObfuscatedTCP,
 		websocket:                opts.WebSocket,
 		websocketOrigins:         append([]string(nil), opts.WebSocketAllowedOrigins...),
+		webClient:                opts.WebClient,
 		readTimeout:              opts.ReadTimeout,
 		handshakeTimeout:         opts.HandshakeIdleTimeout,
 		handshakeMaxDur:          opts.HandshakeMaxDuration,
@@ -761,7 +767,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 
 	httpServer := &http.Server{
 		Handler: serverInfoHTTPHandler(
-			websocketRouteHandler(wsHandler, s.websocketOrigins),
+			webClientRouteHandler(websocketRouteHandler(wsHandler, s.websocketOrigins), s.webClient),
 			s.dc,
 			s.pubKeyPEM,
 			s.identityStore,
@@ -778,6 +784,7 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 		zap.String("tcp_transport_mode", intakeTransport(s.obfuscated)),
 		zap.Bool("websocket", true),
 		zap.Strings("websocket_origins", s.websocketOrigins),
+		zap.Bool("web_client", s.webClient != nil),
 	)
 	defer s.log.Info("Stopped")
 

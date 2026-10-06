@@ -392,6 +392,14 @@ func (s *StarGiftUpgradeStore) UpgradeStarGift(ctx context.Context, req domain.S
 		OriginUserID:           req.UserID,
 		IdempotencyFingerprint: fingerprint[:],
 	}
+	// The upgrade message answers the gift message it upgraded, as Telegram
+	// does. Web K matches the upgrade to the open "Upgrade Gift" sheet by this
+	// reply (a user's gift carries no saved_id to match on); without it the
+	// sheet never learns the upgrade finished and its button stays dead.
+	// Channel gifts are not in any history, so there is nothing to reply to.
+	if saved.Owner.Type == domain.PeerTypeUser && saved.MsgID > 0 {
+		messageReq.ReplyTo = &domain.MessageReply{MessageID: saved.MsgID}
+	}
 
 	var result domain.StarGiftUpgradeResult
 	hooks := privateSendTxHooks{

@@ -244,10 +244,15 @@ func (r *Router) onPaymentsGetStarGiftUpgradePreview(ctx context.Context, giftID
 	// message can remain open while another user takes the final serial; rejecting
 	// the preview as STARGIFT_INVALID leaves every client on a generic error sheet.
 	// The later form/upgrade transaction still enforces issued < supply_total.
+	// next_prices always carries the price in effect now. Web K reads its button
+	// price from the first entry and throws on an empty list, leaving an inert
+	// "Upgrade" with no price. A single entry is a flat price: desktop treats
+	// the decay UI as present only with more than one entry, and Android only
+	// when `prices` is non-empty, which stays empty.
 	return &tg.PaymentsStarGiftUpgradePreview{
 		SampleAttributes: tgStarGiftPreviewAttributes(preview),
 		Prices:           []tg.StarGiftUpgradePrice{},
-		NextPrices:       []tg.StarGiftUpgradePrice{},
+		NextPrices:       []tg.StarGiftUpgradePrice{{Date: int(r.clock.Now().Unix()), UpgradeStars: preview.UpgradeStars}},
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -272,7 +273,7 @@ func websocketRouteHandler(handler http.Handler, allowedOrigins []string) http.H
 		//
 		// 白名单确认后再把 Origin 改写成与 Host 同源，让 Accept 放行且无需 fork gotd。
 		// 无 Origin 的非浏览器客户端允许通过；浏览器来源必须显式配置，"*" 仅用于临时调试。
-		if !websocketOriginAllowed(origins, r.Header.Get("Origin")) {
+		if !websocketOriginAllowed(origins, r.Header.Get("Origin")) && !sameOrigin(r.Header.Get("Origin"), r.Host) {
 			http.Error(w, "websocket origin forbidden", http.StatusForbidden)
 			return
 		}
@@ -280,6 +281,35 @@ func websocketRouteHandler(handler http.Handler, allowedOrigins []string) http.H
 			r.Header.Set("Origin", "http://"+r.Host)
 		}
 		handler.ServeHTTP(w, r)
+	})
+}
+
+// sameOrigin reports whether origin is this very server's own address, i.e. the
+// page that opened the socket was served by us -- the embedded web client. No
+// allowlist entry is needed for it (and none could be written ahead of time:
+// the server does not know the address it is reached by). A page on any other
+// origin cannot claim to be this one, since the browser sets Origin itself.
+func sameOrigin(origin, host string) bool {
+	u, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+// webClientRouteHandler sends the WebSocket paths to ws and everything else to
+// web, the embedded web client. With no web client it is just ws, which
+// answers every other path with 404 as before.
+func webClientRouteHandler(ws, web http.Handler) http.Handler {
+	if web == nil {
+		return ws
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := websocketAllowedPaths[r.URL.Path]; ok {
+			ws.ServeHTTP(w, r)
+			return
+		}
+		web.ServeHTTP(w, r)
 	})
 }
 
