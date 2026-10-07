@@ -98,7 +98,7 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 		// matching.
 		Locale("C").
 		Encoding("UTF8").
-		// A release archive (see .github/workflows/build.yml) pre-places
+		// A release archive (see scripts/build-release.sh) pre-places
 		// the exact cache file the library would otherwise fetch from
 		// Maven Central on first run -- same filename scheme
 		// (embedded-postgres-binaries-<os>-<arch>-<version>.txz) computed

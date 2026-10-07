@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
-  Builds the same self-contained release archives .github/workflows/build.yml
-  produces in CI, locally.
+  Builds the self-contained release archives.
 
 .DESCRIPTION
   For each target platform: cross-compiles owpengram-server, owpengram-admin-panel
@@ -43,7 +42,7 @@ function Show-Usage {
 Usage: build-release.ps1 [options]
 
   -All, --all                  build linux/amd64, linux/arm64, windows/amd64
-                                and windows/arm64 (same as CI)
+                                and windows/arm64
   -Platform, --platform GOOS/GOARCH
                                 build this one platform; repeat for more.
                                 Defaults to just the host platform.
@@ -52,7 +51,18 @@ Usage: build-release.ps1 [options]
   -SkipPgCache, --skip-pgcache skip pre-bundling embedded-PostgreSQL binaries
   -SkipWebBuild, --skip-web-build
                                 skip npm ci && npm run build for the admin UI
+  -WebClient, --web-client PATH
+                                owpengram-web-client checkout to build and embed
+                                in the server (default: ../owpengram-web-client)
+  -SkipWebClient, --skip-web-client
+                                do not build the web client; embed whatever is
+                                already in internal/webclient/dist
   -Help, --help, -h            show this message
+
+The web client is built once with its `embed` script into
+internal/webclient/dist before any binary is compiled, so every
+owpengram-server in the archives serves it at its own address. Needs Node and
+pnpm, like the admin panel build needs npm.
 '@
 }
 
@@ -62,6 +72,9 @@ $Version = 'dev'
 $OutDir = 'dist'
 $SkipPgCache = $false
 $SkipWebBuild = $false
+$WebClientDir = '../owpengram-web-client'
+$WebClientExplicit = $false
+$SkipWebClient = $false
 
 $i = 0
 while ($i -lt $args.Count) {
@@ -85,6 +98,13 @@ while ($i -lt $args.Count) {
         }
         { $_ -in '-SkipPgCache', '--skip-pgcache' } { $SkipPgCache = $true; $i++ }
         { $_ -in '-SkipWebBuild', '--skip-web-build' } { $SkipWebBuild = $true; $i++ }
+        { $_ -in '-WebClient', '--web-client' } {
+            if ($i + 1 -ge $args.Count) { throw "$arg requires a value" }
+            $WebClientDir = $args[$i + 1]
+            $WebClientExplicit = $true
+            $i += 2
+        }
+        { $_ -in '-SkipWebClient', '--skip-web-client' } { $SkipWebClient = $true; $i++ }
         { $_ -in '-Help', '--help', '-h' } { Show-Usage; exit 0 }
         default { throw "unknown argument: $arg (see -Help)" }
     }
@@ -137,6 +157,35 @@ try {
         }
     } else {
         Warn "Skipping web asset build (-SkipWebBuild) -- the admin binary will embed whatever is already in cmd/telesrv-admin/web/dist."
+    }
+
+    if ($SkipWebClient) {
+        Warn "Skipping the web client (-SkipWebClient) -- the binaries will embed whatever is already in internal/webclient/dist."
+    } elseif (-not (Test-Path (Join-Path $WebClientDir 'scripts/owpengram-web.mjs'))) {
+        # A default path that is simply not there is a warning, an explicitly
+        # requested one is a mistake worth stopping for: shipping a release
+        # without the web client by accident is what this step exists to prevent.
+        $msg = "Web client not found at $WebClientDir -- the release will have NO web client (pass -WebClient PATH, or -SkipWebClient to silence this)."
+        if ($WebClientExplicit) { throw $msg } else { Warn $msg }
+    } else {
+        if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+            throw "Node is not on PATH -- needed to build the web client (or pass -SkipWebClient)"
+        }
+        Info "Building the web client from $WebClientDir and embedding it..."
+        Push-Location $WebClientDir
+        # Windows PowerShell 5.1 turns any line a native command writes to
+        # stderr into an error, and under 'Stop' that aborts the script: Vite
+        # prints plain warnings there. Only the exit code says whether it failed.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            node scripts/owpengram-web.mjs embed --server-dir $repoRoot
+            $webClientExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
+            Pop-Location
+        }
+        if ($webClientExit -ne 0) { throw "web client build failed" }
     }
 
     if (Test-Path $OutDir) {

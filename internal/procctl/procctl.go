@@ -213,7 +213,7 @@ func (m *Manager) launch(exePath, logPath string) (int, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return 0, fmt.Errorf("mkdir logs: %w", err)
 	}
-	// A release archive (see .github/workflows/build.yml and
+	// A release archive (see scripts/build-release.sh and
 	// scripts/build-release.ps1) may have been packaged on a different OS
 	// than it runs on -- NTFS has no executable bit at all, so a Linux
 	// binary zipped/tarred up from a Windows build machine can land on
@@ -478,7 +478,7 @@ func (m *Manager) buildBoth(ctx context.Context) (string, error) {
 
 // goBuild rebuilds outPath from pkg, unless this install has no Go source
 // tree to build from at all -- a release archive (see
-// .github/workflows/build.yml) ships prebuilt bin/owpengram-server and
+// scripts/build-release.sh) ships prebuilt bin/owpengram-server and
 // bin/owpengram-admin-panel binaries plus this same owpengram-ctl, but none
 // of the actual ./cmd/... source, so a "go build" here would either fail
 // outright (no go.mod) or, if the user happens to also have Go installed,

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// A release archive install (see .github/workflows/build.yml) has bin/
+// A release archive install (see scripts/build-release.sh) has bin/
 // binaries and no go.mod/cmd sources at all -- goBuild must treat the
 // existing binary as already built rather than trying (and failing) to
 // "go build" a package that isn't there.
