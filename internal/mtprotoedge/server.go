@@ -773,6 +773,10 @@ func (s *Server) serveMixed(ctx context.Context, ln net.Listener) error {
 			s.identityStore,
 		),
 		ReadHeaderTimeout: minDuration(10*time.Second, s.handshakeTimeout),
+		// An idle keep-alive connection (a browser that opened the web client and
+		// went away) must not hold a slot for good. WebSocket connections are
+		// hijacked out of the http.Server, so this does not touch them.
+		IdleTimeout: 2 * time.Minute,
 		BaseContext: func(net.Listener) context.Context {
 			return ctx
 		},
