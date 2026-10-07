@@ -111,15 +111,22 @@ type entry struct {
 	name string
 }
 
+// slot is one file's place in the cache. Each file has its own, so reading and
+// compressing one never makes a request for another wait.
+type slot struct {
+	once  sync.Once
+	entry *entry // nil: does not exist
+}
+
 type handler struct {
 	root fs.FS
 
-	mu      sync.Mutex
-	entries map[string]*entry // nil value: known not to exist
+	mu    sync.Mutex
+	slots map[string]*slot
 }
 
 func newHandler(root fs.FS) http.Handler {
-	return &handler{root: root, entries: map[string]*entry{}}
+	return &handler{root: root, slots: map[string]*slot{}}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -176,13 +183,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // process: the content is immutable, being part of the binary.
 func (h *handler) load(name string) *entry {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if e, ok := h.entries[name]; ok {
-		return e
+	s, ok := h.slots[name]
+	if !ok {
+		s = &slot{}
+		h.slots[name] = s
 	}
-	e := h.read(name)
-	h.entries[name] = e
-	return e
+	h.mu.Unlock()
+
+	// A page asks for hundreds of files at once on a cold start. The map lock
+	// above is held only to find the slot; the work happens here, per file.
+	s.once.Do(func() { s.entry = h.read(name) })
+	return s.entry
 }
 
 func (h *handler) read(name string) *entry {
@@ -215,7 +226,7 @@ func (h *handler) read(name string) *entry {
 	}
 	if compressible[ext] && len(body) > 512 {
 		var buf bytes.Buffer
-		zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		zw, _ := gzip.NewWriterLevel(&buf, gzip.DefaultCompression)
 		_, _ = zw.Write(body)
 		if zw.Close() == nil && buf.Len() < len(body) {
 			e.gz = buf.Bytes()

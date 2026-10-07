@@ -3,10 +3,12 @@ package webclient
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 )
@@ -176,5 +178,34 @@ func TestPlaceholderOnlyIsNotAvailable(t *testing.T) {
 	}
 	if !available(fstest.MapFS{"index.html": {Data: []byte("x")}}) {
 		t.Fatal("a tree with index.html is not seen")
+	}
+}
+
+// A page asks for hundreds of files at once on a cold start; every one has to be
+// answered correctly and read only once, however many ask for it together.
+func TestConcurrentColdRequests(t *testing.T) {
+	files := fstest.MapFS{}
+	for i := 0; i < 40; i++ {
+		files[fmt.Sprintf("chunk-%08d.js", i)] = &fstest.MapFile{Data: []byte(strings.Repeat(fmt.Sprintf("var a%d=1;", i), 400))}
+	}
+	h := newHandler(files)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		for n := 0; n < 5; n++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				rec := get(t, h, http.MethodGet, fmt.Sprintf("/chunk-%08d.js", i), http.Header{"Accept-Encoding": {"gzip"}})
+				if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" {
+					t.Errorf("chunk %d = %d encoding %q", i, rec.Code, rec.Header().Get("Content-Encoding"))
+				}
+			}(i)
+		}
+	}
+	wg.Wait()
+
+	if got := len(h.(*handler).slots); got != 40 {
+		t.Fatalf("slots = %d, want one per file (40)", got)
 	}
 }
