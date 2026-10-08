@@ -188,7 +188,7 @@ type Config struct {
 	// granting or dropping rights.
 	AdminScopedTokens []AdminScopedToken
 
-	// PostgresMode is "embedded" (a PostgreSQL that telesrv-ctl starts and stops
+	// PostgresMode is "embedded" (a PostgreSQL that owpengram-ctl starts and stops
 	// itself, see internal/embeddedpg) or "external" (the server in PostgresDSN,
 	// which the operator runs). Set with TELESRV_POSTGRES_MODE; when unset it is
 	// inferred so an install made before the setting existed keeps working: the
@@ -1384,7 +1384,7 @@ func Load() (Config, error) {
 	legacyPortable := strings.EqualFold(strings.TrimSpace(envOr("TELESRV_EDITION", "")), "portable")
 	cfg.PostgresMode = ResolvePostgresMode(cfg.PostgresMode, envOr("TELESRV_EDITION", ""), envOr("TELESRV_POSTGRES_DSN", ""))
 	// With the embedded PostgreSQL the DSN is not a setting: it always points at
-	// the server telesrv-ctl starts (see internal/embeddedpg), whatever
+	// the server owpengram-ctl starts (see internal/embeddedpg), whatever
 	// TELESRV_POSTGRES_DSN says. telesrv-admin computes the identical DSN here
 	// without ever starting a server of its own -- there must be exactly one.
 	if cfg.PostgresMode == PostgresModeEmbedded {

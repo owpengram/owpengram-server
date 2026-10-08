@@ -65,7 +65,7 @@ or sponsored by Telegram or the official Telegram team.
 - 👋 Welcome messages and login-code templates you can edit from the panel
 - 🧙 **First-run web setup wizard** — server identity, public address, Bot API
   and your operator account, then a restart, all from the browser
-- 🖥️ Admin API and web UI for operations, run by one foreground `telesrv-ctl`
+- 🖥️ Admin API and web UI for operations, run by one foreground `owpengram-ctl`
 
 <details>
 <summary><b>📋 Full feature checklist (click to expand)</b></summary>
@@ -127,7 +127,7 @@ re-run the launcher. Nothing else has to be installed: no Docker, no database.
 
 **3. Open the admin panel**
 
-The launcher builds and runs `telesrv-ctl` (`cmd/telesrv-ctl`, plain Go). It
+The launcher builds and runs `owpengram-ctl` (`cmd/owpengram-ctl`, plain Go). It
 stays in the foreground and runs the server and its admin panel for as long
 as it runs — **Ctrl+C (or closing the window) stops both**. On a fresh clone
 it writes `.env` from `.env.example`, generating the admin API token, session
@@ -141,7 +141,7 @@ Open that address. On a fresh install the panel opens a **web setup wizard**.
 Its first step is where the server keeps its data:
 
 - **Database** — the **built-in PostgreSQL** (the default; nothing to
-  install, `telesrv-ctl` runs it next to the server and stops it with the
+  install, `owpengram-ctl` runs it next to the server and stops it with the
   server), or **your own PostgreSQL**, given as a connection string.
 - **Media** (photos, files, stickers) — **local disk** (a folder) or
   **S3-compatible storage** (AWS S3, MinIO, …: endpoint, bucket, keys).
@@ -153,7 +153,7 @@ address clients will connect to, the optional Bot API gateway and your own
 operator account. Nothing has to be hand-edited to get going.
 
 From then on everything is done in the admin panel: restarting the server,
-checking for updates, editing settings. (`telesrv-ctl status`, `stop`,
+checking for updates, editing settings. (`owpengram-ctl status`, `stop`,
 `restart`, `update` and `logs` exist too, from another terminal.)
 
 **Running PostgreSQL or MinIO in Docker?** The server never starts Docker.
@@ -165,7 +165,7 @@ PostgreSQL" / S3 in the wizard. They must be running before the server is.
 **Upgrading an install from before this change?** Nothing to do for most
 setups: an `.env` that already names a PostgreSQL (`TELESRV_POSTGRES_DSN`) or
 S3 endpoint keeps using exactly those, and an old `TELESRV_EDITION=portable`
-keeps using its built-in database. What changed is that `telesrv-ctl` no
+keeps using its built-in database. What changed is that `owpengram-ctl` no
 longer starts the Docker containers: if yours were started by it, run
 `docker compose -f deploy/docker-compose.yml up -d` once (they restart with
 Docker after that) — see the note about volume names at the top of that file.
@@ -488,9 +488,9 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 ## 📂 Repository layout
 
 ```text
-owpengram-server.sh/.bat  one-command launcher (checks for Go, then builds+runs telesrv-ctl)
+owpengram-server.sh/.bat  one-command launcher (checks for Go, then builds+runs owpengram-ctl)
 cmd/telesrv/              server entrypoint
-cmd/telesrv-ctl/          the foreground supervisor: runs the server and the admin panel (and the built-in
+cmd/owpengram-ctl/          the foreground supervisor: runs the server and the admin panel (and the built-in
                           PostgreSQL) until stopped; also status/stop/restart/update/logs
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
@@ -501,7 +501,7 @@ internal/rpc/             TL router and client compatibility handlers
 internal/app/             domain services
 internal/domain/          protocol-independent domain models
 internal/store/           memory/postgres storage backends
-internal/embeddedpg/      the built-in PostgreSQL (TELESRV_POSTGRES_MODE=embedded), run by telesrv-ctl
+internal/embeddedpg/      the built-in PostgreSQL (TELESRV_POSTGRES_MODE=embedded), run by owpengram-ctl
 internal/identity/        admin-editable server name, description, and icon
 internal/botapi/          minimal HTTP Bot API gateway
 internal/seed/            bundled seed catalog loaders

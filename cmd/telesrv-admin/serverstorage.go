@@ -20,7 +20,7 @@ import (
 	"telesrv/internal/config"
 )
 
-// requestShutdown makes this process exit cleanly; telesrv-ctl starts it
+// requestShutdown makes this process exit cleanly; owpengram-ctl starts it
 // again. Set by run(). It is how the panel "restarts itself" after a change
 // the new process has to read from .env (storage, update).
 var requestShutdown = func() {}
@@ -121,7 +121,7 @@ type configureStorageAPIRequest struct {
 }
 
 // handleConfigureStorageAPI saves the storage choice to .env and restarts the
-// panel; telesrv-ctl then starts the server (and the embedded PostgreSQL)
+// panel; owpengram-ctl then starts the server (and the embedded PostgreSQL)
 // against it. Everything is checked first -- the database answers, the folder
 // is writable, the bucket exists -- so a typo is reported here instead of as a
 // server that will not start.

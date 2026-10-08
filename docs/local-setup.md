@@ -46,7 +46,7 @@ Review at least these values in `.env`:
 Set `TELESRV_POSTGRES_MODE` in `.env`:
 
 - `embedded` (the default for a new install) uses the built-in PostgreSQL.
-  `telesrv-ctl` starts it before the server, so run the server through
+  `owpengram-ctl` starts it before the server, so run the server through
   `./owpengram-server.sh` / `owpengram-server.bat` rather than directly.
 - `external` uses a PostgreSQL you run, at `TELESRV_POSTGRES_DSN`. For a
   throwaway one in Docker, the example compose file exposes it on

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds and runs bin/telesrv-ctl (cmd/telesrv-ctl) -- Go is the only
-# prerequisite. telesrv-ctl stays in the foreground and runs the server and
+# Builds and runs bin/owpengram-ctl (cmd/owpengram-ctl) -- Go is the only
+# prerequisite. owpengram-ctl stays in the foreground and runs the server and
 # its admin panel until it is stopped (Ctrl+C); everything else is set up in
 # the admin panel, whose address it prints.
 #
@@ -23,10 +23,10 @@ else
   die "install Go from https://go.dev/dl/ (or: brew install go) and re-run this script"
 fi
 
-echo "[cfg] Building telesrv-ctl..."
-if ! go build -o bin/telesrv-ctl ./cmd/telesrv-ctl; then
-  die "failed to build telesrv-ctl -- see the messages above"
+echo "[cfg] Building owpengram-ctl..."
+if ! go build -o bin/owpengram-ctl ./cmd/owpengram-ctl; then
+  die "failed to build owpengram-ctl -- see the messages above"
 fi
 
 echo
-exec bin/telesrv-ctl "$@"
+exec bin/owpengram-ctl "$@"

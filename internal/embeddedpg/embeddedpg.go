@@ -1,9 +1,9 @@
 // Package embeddedpg wraps github.com/fergusstrange/embedded-postgres so a
 // server can run with a natively compiled PostgreSQL and nothing to install:
-// telesrv-ctl starts it before owpengram-server and owpengram-admin-panel
+// owpengram-ctl starts it before owpengram-server and owpengram-admin-panel
 // and stops it on exit (TELESRV_POSTGRES_MODE=embedded, see internal/config).
 //
-// telesrv-ctl OWNS the server's lifecycle. owpengram-server and
+// owpengram-ctl OWNS the server's lifecycle. owpengram-server and
 // owpengram-admin-panel are ordinary clients: internal/config.Load computes
 // the same deterministic DSN (this package's DSN function) for both, so
 // neither needs to be told where it is, and a restart of either leaves the
@@ -63,7 +63,7 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 	}
 	// A previous run's embedded server can still be alive and holding this
 	// exact port -- not from a clean Stop() (that always precedes releasing
-	// it), but from telesrv-ctl itself being killed or crashing: Postgres is a
+	// it), but from owpengram-ctl itself being killed or crashing: Postgres is a
 	// real child process of telesrv on every platform, and nothing here
 	// sets up the OS-level linkage (a Windows Job Object, a process group
 	// on Unix) that would make it die automatically alongside its parent --

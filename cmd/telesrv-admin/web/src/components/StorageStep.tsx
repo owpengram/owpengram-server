@@ -26,7 +26,7 @@ const DEFAULT_STORAGE: StorageSettings = {
 };
 
 // Where the server keeps its data. Nothing runs until this is saved: the
-// supervisor (telesrv-ctl) starts PostgreSQL and the server once .env names
+// supervisor (owpengram-ctl) starts PostgreSQL and the server once .env names
 // them, so this is also what brings the server up for the first time. The
 // panel restarts itself on save and the page reloads into the next step.
 export function StorageStep() {

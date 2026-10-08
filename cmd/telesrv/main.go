@@ -646,7 +646,7 @@ func run(logger *zap.Logger) error {
 
 	// 持久化依赖：先迁移 schema，再建立连接。auth key 与业务事实落 PostgreSQL，
 	// Redis 只承载可重建的短 TTL 状态、缓存、计数器和限流。
-	// The PostgreSQL (embedded or external) must already be up: telesrv-ctl starts
+	// The PostgreSQL (embedded or external) must already be up: owpengram-ctl starts
 	// the embedded one before this process, and an external one is the operator's.
 	migrationStatus, err := postgres.MigrateAndStatus(cfg.PostgresDSN)
 	if err != nil {

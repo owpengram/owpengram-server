@@ -1,7 +1,7 @@
-// Command telesrv-ctl is the whole owpengram server as one foreground
+// Command owpengram-ctl is the whole owpengram server as one foreground
 // program: it runs the admin panel and owpengram-server, starts the embedded
 // PostgreSQL when that is what was chosen, and keeps them running until it is
-// stopped (Ctrl+C, closing its window, or `telesrv-ctl stop`). Everything
+// stopped (Ctrl+C, closing its window, or `owpengram-ctl stop`). Everything
 // else -- where PostgreSQL and media live, the server's name, mail, operators
 // -- is set in the admin panel; see internal/procctl for how the pieces fit.
 package main
@@ -33,13 +33,13 @@ func main() {
 
 	absRoot, err := filepath.Abs(*root)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
+		fmt.Fprintln(os.Stderr, "owpengram-ctl:", err)
 		os.Exit(1)
 	}
 	// Relative paths in .env (data/..., logs/...) are meant against the root,
 	// for this process and for the ones it starts.
 	if err := os.Chdir(absRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
+		fmt.Fprintln(os.Stderr, "owpengram-ctl:", err)
 		os.Exit(1)
 	}
 	m := procctl.NewManager(absRoot)
@@ -61,33 +61,33 @@ func main() {
 	case "update":
 		err = cmdUpdate(ctx, m)
 	default:
-		fmt.Fprintf(os.Stderr, "telesrv-ctl: unknown command %q\n\n", command)
+		fmt.Fprintf(os.Stderr, "owpengram-ctl: unknown command %q\n\n", command)
 		usage()
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "telesrv-ctl:", err)
+		fmt.Fprintln(os.Stderr, "owpengram-ctl:", err)
 		os.Exit(1)
 	}
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `telesrv-ctl -- runs the OwpenGram server and its admin panel
+	fmt.Fprint(os.Stderr, `owpengram-ctl -- runs the OwpenGram server and its admin panel
 
 Usage:
-  telesrv-ctl [-root PATH] [command]
+  owpengram-ctl [-root PATH] [command]
 
 Commands:
   run      (default) start the admin panel and the server and keep them
            running until this program is stopped. On a fresh install it
            creates .env and prints the admin panel address and first password;
            everything else is configured in the admin panel.
-  stop     stop a running telesrv-ctl (and with it the server and admin panel)
-  restart  restart the server and the admin panel of a running telesrv-ctl
-  status   show whether telesrv-ctl, the server and the admin panel are up
+  stop     stop a running owpengram-ctl (and with it the server and admin panel)
+  restart  restart the server and the admin panel of a running owpengram-ctl
+  status   show whether owpengram-ctl, the server and the admin panel are up
   logs     print the current run's startup log
   update   git pull, rebuild, and restart the server and admin panel of a
-           running telesrv-ctl
+           running owpengram-ctl
 `)
 }
 
@@ -126,7 +126,7 @@ func cmdStop(m *procctl.Manager) error {
 		return err
 	}
 	if !wasRunning {
-		fmt.Println("telesrv-ctl is not running.")
+		fmt.Println("owpengram-ctl is not running.")
 		return nil
 	}
 	fmt.Println("Stopped.")
@@ -135,7 +135,7 @@ func cmdStop(m *procctl.Manager) error {
 
 func cmdRestart(m *procctl.Manager) error {
 	if !m.Status().CtlAlive {
-		return fmt.Errorf("telesrv-ctl is not running -- start it with `telesrv-ctl`")
+		return fmt.Errorf("owpengram-ctl is not running -- start it with `owpengram-ctl`")
 	}
 	m.StopChildren()
 	fmt.Println("Restarting the server and the admin panel.")
@@ -153,14 +153,14 @@ func cmdUpdate(ctx context.Context, m *procctl.Manager) error {
 		m.StopChildren()
 		fmt.Println("Restarting the server and the admin panel.")
 	} else {
-		fmt.Println("telesrv-ctl is not running; the new build is used the next time it starts.")
+		fmt.Println("owpengram-ctl is not running; the new build is used the next time it starts.")
 	}
 	return nil
 }
 
 func cmdStatus(m *procctl.Manager) error {
 	st := m.Status()
-	fmt.Printf("telesrv-ctl:            %s\n", aliveLabel(st.CtlAlive, st.CtlPID))
+	fmt.Printf("owpengram-ctl:            %s\n", aliveLabel(st.CtlAlive, st.CtlPID))
 	fmt.Printf("owpengram-server:       %s\n", aliveLabel(st.ServerAlive, st.ServerPID))
 	fmt.Printf("owpengram-admin-panel:  %s\n", aliveLabel(st.AdminAlive, st.AdminPID))
 	return nil

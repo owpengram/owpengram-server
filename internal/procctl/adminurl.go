@@ -8,7 +8,7 @@ import "strings"
 // empty) displays as loopback, since the bind itself is never something to
 // type into a browser. ok is false when the field is empty (unset).
 //
-// Shared by cmd/telesrv-ctl's plain-text output and internal/panel's TUI,
+// Shared by cmd/owpengram-ctl's plain-text output and internal/panel's TUI,
 // so the two never drift apart on how they display the same address.
 func AdminUIURL(groups []EnvGroup) (url string, ok bool) {
 	addr := EnvGroupValue(groups, "TELESRV_ADMIN_UI_ADDR")

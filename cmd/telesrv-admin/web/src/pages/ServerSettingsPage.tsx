@@ -495,7 +495,7 @@ function sleep(ms: number): Promise<void> {
 
 // useAdminRestartWatcher backs the "the admin panel is bouncing itself"
 // flow after Restart/Update/saving the storage step: those actions stop the
-// server and make the admin process exit, and telesrv-ctl starts both again,
+// server and make the admin process exit, and owpengram-ctl starts both again,
 // so from the browser's side this just means polling /api/session until a
 // *different* boot_id answers -- proof a genuinely new process is up, not just
 // that the old one is still slow -- and the server it started is listening

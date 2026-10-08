@@ -1,5 +1,5 @@
-// Package procctl runs owpengram as one foreground program. telesrv-ctl
-// (cmd/telesrv-ctl) calls Manager.Run, which starts the admin panel at once
+// Package procctl runs owpengram as one foreground program. owpengram-ctl
+// (cmd/owpengram-ctl) calls Manager.Run, which starts the admin panel at once
 // and owpengram-server as soon as the first-run wizard has chosen where its
 // data lives, starts the embedded PostgreSQL when that was chosen, and starts
 // whichever of them stops again. Everything stops with it.
@@ -10,7 +10,7 @@
 // exiting on its own after it has answered the request.
 //
 // The shared .server_panel.json records the PIDs so the admin panel and
-// `telesrv-ctl status/stop` can find the processes without being their parent.
+// `owpengram-ctl status/stop` can find the processes without being their parent.
 package procctl
 
 import (
@@ -62,7 +62,7 @@ func (m *Manager) adminLog() string {
 // --- state file (shared with tui-panel/server-panel.py) --------------------
 
 type State struct {
-	// CtlPID is the telesrv-ctl supervisor that owns the other two.
+	// CtlPID is the owpengram-ctl supervisor that owns the other two.
 	CtlPID    int `json:"ctl_pid,omitempty"`
 	ServerPID int `json:"server_pid"`
 	AdminPID  int `json:"admin_pid"`
@@ -299,7 +299,7 @@ func (m *Manager) Update(ctx context.Context) (string, error) {
 func (m *Manager) RestartServer() error {
 	st := m.loadState()
 	if !pidAlive(st.CtlPID) {
-		return fmt.Errorf("telesrv-ctl is not running, so nothing would start the server again -- start it with telesrv-ctl")
+		return fmt.Errorf("owpengram-ctl is not running, so nothing would start the server again -- start it with owpengram-ctl")
 	}
 	if !pidAlive(st.ServerPID) {
 		return nil

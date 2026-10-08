@@ -132,7 +132,7 @@ for platform in "${PLATFORMS[@]}"; do
   ok "Building binaries..."
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/bin/owpengram-server$suffix" ./cmd/telesrv
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/bin/owpengram-admin-panel$suffix" ./cmd/telesrv-admin
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/owpengram-ctl$suffix" ./cmd/telesrv-ctl
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/owpengram-ctl$suffix" ./cmd/owpengram-ctl
 
   ok "Assembling archive contents..."
   cp .env.example "$stage_dir/.env.example"

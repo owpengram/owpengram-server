@@ -396,7 +396,7 @@ func (s *server) handleRestartServerAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "restart-server")
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- stops owpengram-server and this panel; telesrv-ctl starts both again", nil))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- stops owpengram-server and this panel; owpengram-ctl starts both again", nil))
 		return
 	}
 	err := s.serverCtl.RestartServer()
@@ -420,7 +420,7 @@ func (s *server) handleUpdateServerAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server")
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update", nil, "update validated -- git pull, rebuild both binaries; telesrv-ctl then starts the server and this panel again", nil))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update", nil, "update validated -- git pull, rebuild both binaries; owpengram-ctl then starts the server and this panel again", nil))
 		return
 	}
 	log, err := s.serverCtl.Update(r.Context())

@@ -217,7 +217,7 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-server failed" }
             & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "bin/owpengram-admin-panel$suffix") ./cmd/telesrv-admin
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-admin-panel failed" }
-            & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "owpengram-ctl$suffix") ./cmd/telesrv-ctl
+            & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "owpengram-ctl$suffix") ./cmd/owpengram-ctl
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-ctl failed" }
         } finally {
             Remove-Item Env:\CGO_ENABLED, Env:\GOOS, Env:\GOARCH -ErrorAction SilentlyContinue

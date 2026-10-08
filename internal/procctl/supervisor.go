@@ -15,7 +15,7 @@ import (
 	"telesrv/internal/embeddedpg"
 )
 
-// stopRequestFileName is how `telesrv-ctl stop` asks a running supervisor to
+// stopRequestFileName is how `owpengram-ctl stop` asks a running supervisor to
 // shut down. A file rather than a signal because Windows has no signal that
 // lets a process clean up after itself (the embedded PostgreSQL must be
 // stopped gracefully, not killed).
@@ -81,7 +81,7 @@ func (m *Manager) RequestStop(timeout time.Duration) (bool, error) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return true, fmt.Errorf("telesrv-ctl (pid %d) did not stop within %s", st.CtlPID, timeout)
+	return true, fmt.Errorf("owpengram-ctl (pid %d) did not stop within %s", st.CtlPID, timeout)
 }
 
 // Run is the whole program: it blocks until ctx is cancelled (or a stop is
@@ -90,7 +90,7 @@ func (m *Manager) RequestStop(timeout time.Duration) (bool, error) {
 func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any)) error {
 	st := m.loadState()
 	if st.CtlPID != os.Getpid() && pidAlive(st.CtlPID) {
-		return fmt.Errorf("telesrv-ctl is already running (pid %d) -- stop it first with `telesrv-ctl stop`", st.CtlPID)
+		return fmt.Errorf("owpengram-ctl is already running (pid %d) -- stop it first with `owpengram-ctl stop`", st.CtlPID)
 	}
 	// Left over from a version that started both detached, or from a ctl that
 	// was killed: they would hold the ports the new ones need.

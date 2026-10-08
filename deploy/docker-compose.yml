@@ -16,7 +16,7 @@
 #
 # Container and volume names default to "owpengram"; override them with
 # TELESRV_DOCKER_PROJECT / TELESRV_DOCKER_PREFIX. An install that used to be
-# started by telesrv-ctl with the older "telesrv" names (volumes
+# started by owpengram-ctl with the older "telesrv" names (volumes
 # telesrv_pgdata / telesrv_miniodata) must set both to "telesrv" here, or this
 # file would create new, empty volumes next to the old ones.
 name: ${TELESRV_DOCKER_PROJECT:-owpengram}
