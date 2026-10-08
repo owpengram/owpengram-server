@@ -1,0 +1,1 @@
+var e=new Set([`all`,`web`,`webk`]),t=new Set;function n(n){return n.find(n=>e.has(n.platform)&&!t.has(n.reason))}function r(e){return!t.has(`sensitive`)&&e.some(e=>e.reason===`sensitive`)}function i(e){return!!n(e)}function a(e){t.clear(),e.forEach(e=>{t.add(e)})}export{r as i,a as n,i as r,n as t};

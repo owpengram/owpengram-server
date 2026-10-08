@@ -1,0 +1,1 @@
+import{A as e,F as t,d as n}from"./solid-WnanT5kq.js";import{c as r}from"./web-CGAIfCFO.js";function i(i){let a=t(()=>i.mount);r(a,n(()=>i.children)),e(()=>a.replaceChildren())}export{i as t};

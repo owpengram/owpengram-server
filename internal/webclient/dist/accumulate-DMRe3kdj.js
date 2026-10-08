@@ -1,0 +1,1 @@
+function e(e,t=` `){if(e===void 0)return``;let n=e.toString().split(`.`);return n[0]=n[0].replace(/\B(?=(\d{3})+(?!\d))/g,t),n.join(`.`)}function t(t){return t===void 0?``:e(t,`,`)}function n(t){return t===void 0?``:e(t,` `)}function r(e,t){return e.reduce((e,t)=>e+t,t)}export{t as i,e as n,n as r,r as t};

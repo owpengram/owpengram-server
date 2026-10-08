@@ -1,0 +1,1 @@
+import{c as e}from"./userAgent-DjGL10MB.js";function t(t){return!e||!t}export{t};
