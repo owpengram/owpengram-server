@@ -95,22 +95,22 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
   return (
     <main className="login-page">
       <AppBackground />
-      <section className="login-panel">
-        <div className="login-head">
-          <div className="brand brand-elevated">
-            <span className="brand-mark">
-              <img src={iconSrc} alt={serverName} onError={() => setIconFailed(true)} />
-            </span>
-            <span>
-              <strong>{serverName}</strong>
-              <small>{"Admin Console"}</small>
-            </span>
-          </div>
-          <div className="login-head-actions">
+      <section className="login-panel login-signin">
+        <div className="login-hero">
+          <div className="login-hero-actions">
             <ThemeSwitch />
           </div>
+          <LoginMonkey covered={step === 1} textLength={step === 0 ? username.length : 0} />
         </div>
-        <LoginMonkey covered={step === 1} textLength={step === 0 ? username.length : 0} />
+        <div className="login-identity">
+          <span className="brand-mark">
+            <img src={iconSrc} alt={serverName} onError={() => setIconFailed(true)} />
+          </span>
+          <span className="login-identity-text">
+            <strong>{serverName}</strong>
+            <small>{"Admin Console"}</small>
+          </span>
+        </div>
         {error && <Alert>{error}</Alert>}
         <form className="form-stack" onSubmit={submit}>
           <div className="login-wizard">

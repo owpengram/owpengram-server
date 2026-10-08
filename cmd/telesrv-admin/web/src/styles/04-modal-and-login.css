@@ -691,12 +691,76 @@
   z-index: 1;
 }
 
-/* The monkey above the login form: follows the username, covers its eyes for the password. */
+/* ---------------------------------------------------------------------------
+   Sign-in card
+
+   A stage band across the top of the card with the monkey standing on it, the
+   server's identity centred underneath, then the form. The monkey used to sit
+   between the header row and the fields, which cut the card in half and left a
+   hole in the middle of it. Scoped to .login-signin because .login-panel is
+   also the first-run wizard's shell.
+   --------------------------------------------------------------------------- */
+
+.login-panel.login-signin {
+  gap: 18px;
+  /* No padding at the top: the hero band is flush with the card's edges and
+     brings its own. overflow:hidden is what makes the band's corners follow
+     the card's rounding. */
+  padding: 0 30px 30px;
+  overflow: hidden;
+}
+
+.login-hero {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  margin: 0 -30px;
+  padding: 20px 0 0;
+  background:
+    radial-gradient(135% 110% at 50% 8%, var(--brand-tint) 0%, transparent 68%),
+    linear-gradient(180deg, var(--panel-strong) 0%, var(--panel) 100%);
+  border-bottom: 1px solid var(--line);
+}
+
+.login-hero-actions {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+}
+
+.login-hero-actions .icon-btn {
+  width: 34px;
+  height: 34px;
+}
+
+/* The light the monkey stands in, and its shadow on the ledge -- both drawn
+   here rather than baked into the animation, so they follow the theme. */
+.login-hero::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 150px;
+  height: 16px;
+  transform: translate(-50%, 45%);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(15, 23, 32, 0.16) 0%, transparent 72%);
+  pointer-events: none;
+}
+
+:root[data-theme="dark"] .login-hero::after,
+:root:not([data-theme="light"]) .login-hero::after {
+  background: radial-gradient(50% 50% at 50% 50%, rgba(0, 0, 0, 0.45) 0%, transparent 72%);
+}
+
 .login-monkey {
   position: relative;
-  width: 112px;
-  height: 112px;
-  margin: -6px auto -8px;
+  z-index: 1;
+  width: 150px;
+  height: 150px;
+  /* Overlaps the ledge line by a couple of pixels so it reads as standing on
+     it rather than floating above it. */
+  margin-bottom: -4px;
 }
 
 .login-monkey canvas {
@@ -709,4 +773,60 @@
 .login-monkey > div {
   position: absolute;
   inset: 0;
+}
+
+/* The server's own name and icon, centred under the stage. */
+.login-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding-top: 4px;
+}
+
+.login-identity .brand-mark {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.login-identity .brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.login-identity strong {
+  display: block;
+  font-size: 19px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.login-identity small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  .login-panel.login-signin {
+    padding: 0 20px 24px;
+  }
+
+  .login-hero {
+    margin: 0 -20px;
+    padding-top: 16px;
+  }
+
+  .login-monkey {
+    width: 118px;
+    height: 118px;
+  }
 }
