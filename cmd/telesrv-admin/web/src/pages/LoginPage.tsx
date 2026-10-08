@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { AppBackground } from "../components/AppBackground";
+import { LoginHeroFoliage } from "../components/LoginHeroFoliage";
 import { LoginMonkey } from "../components/LoginMonkey";
 import { Alert } from "../components/ui";
 import { ThemeSwitch } from "../theme";
@@ -97,6 +98,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
       <AppBackground />
       <section className="login-panel login-signin">
         <div className="login-hero">
+          <LoginHeroFoliage />
           <div className="login-hero-actions">
             <ThemeSwitch />
           </div>
