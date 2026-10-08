@@ -119,6 +119,18 @@ func (m *Manager) BootstrapEnv() (string, error) {
 		changed = true
 	}
 
+	// An .env from before TELESRV_POSTGRES_MODE keeps meaning what it meant:
+	// the old edition switch becomes the explicit mode, so it survives the
+	// first save that drops TELESRV_EDITION.
+	if existing["TELESRV_POSTGRES_MODE"] == "" && existing["TELESRV_EDITION"] != "" {
+		if existing["TELESRV_EDITION"] == "portable" {
+			values["TELESRV_POSTGRES_MODE"] = "embedded"
+		} else {
+			values["TELESRV_POSTGRES_MODE"] = "external"
+		}
+		changed = true
+	}
+
 	if !fresh && !changed {
 		return "", nil // existing .env, every required secret was already set
 	}

@@ -3,24 +3,17 @@
 #
 # Unlike owpengram-server.sh in a git clone, nothing here builds anything:
 # bin/owpengram-server, bin/owpengram-admin-panel and owpengram-ctl are
-# already compiled for this platform. This script just forwards to
-# owpengram-ctl, which bootstraps .env on the very first run (generating
-# admin credentials, asking once whether to run fully portable with an
-# embedded PostgreSQL and no Docker at all -- "portable" edition,
-# recommended -- or use Docker for PostgreSQL/MinIO instead -- "classic"
-# edition) and otherwise starts/stops/restarts both processes.
+# already compiled for this platform. owpengram-ctl stays in the foreground
+# and runs the server and its admin panel until it is stopped (Ctrl+C). On the
+# very first run it creates .env and prints the admin panel address and
+# password; where the data lives (the built-in PostgreSQL or your own, local
+# disk or S3) is chosen in the admin panel. Nothing else needs installing.
 #
-#   ./start.sh           bootstrap + start, then (from a real terminal) an
-#                        interactive menu for stop/restart/status/update/
-#                        logs/edition.
-#   ./start.sh stop
+#   ./start.sh            run the server and the admin panel.
+#   ./start.sh stop       stop a running one (from another terminal).
 #   ./start.sh status
 #   ./start.sh restart
 #   ./start.sh logs
-#
-# "classic" edition still needs Docker installed separately (only the
-# binaries are prebuilt here, not a container runtime). "portable" edition
-# needs nothing else at all.
 set -uo pipefail
 cd "$(dirname "$0")"
 chmod +x ./owpengram-ctl 2>/dev/null || true

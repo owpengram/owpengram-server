@@ -65,7 +65,7 @@ export function App() {
     (permission) => permission === permissionAll || permission === permissionServerManage
   );
   if (session.setup_completed === false && canRunSetupWizard) {
-    return <SetupWizard />;
+    return <SetupWizard storageConfigured={session.storage_configured ?? true} />;
   }
 
   return (

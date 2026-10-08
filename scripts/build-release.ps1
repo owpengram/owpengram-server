@@ -6,10 +6,10 @@
   For each target platform: cross-compiles owpengram-server, owpengram-admin-panel
   and owpengram-ctl (CGO_ENABLED=0, so no C toolchain is needed even when
   cross-compiling), assembles a staging directory with .env.example,
-  data/langpack, data/sticker-seed, deploy/docker-compose.yml and the right
+  data/langpack, data/sticker-seed, deploy/docker-compose.yml (optional example) and the right
   start.sh/start.bat launcher, pre-bundles the embedded-PostgreSQL binaries
   for that platform into data/pgcache/ (see internal/embeddedpg.go's
-  CachePath doc comment -- this is what makes the portable edition's first
+  CachePath doc comment -- this is what makes the built-in PostgreSQL's first
   start need zero network access), and packages the result into a .zip
   (Windows targets) or .tar.gz (everything else) under dist/.
 
@@ -252,13 +252,13 @@ try {
                 New-Item -ItemType Directory -Force -Path $pgCacheDir | Out-Null
                 Copy-Item $txz.FullName (Join-Path $pgCacheDir "embedded-postgres-binaries-$pgOs-$pgArch-$PgVersion.txz")
             } catch {
-                Warn "Could not pre-bundle embedded PostgreSQL for $pgOs/$pgArch ($($_.Exception.Message)) -- portable edition will download it on first start instead."
+                Warn "Could not pre-bundle embedded PostgreSQL for $pgOs/$pgArch ($($_.Exception.Message)) -- the built-in PostgreSQL will download it on first start instead."
             } finally {
                 Remove-Item -Force -ErrorAction SilentlyContinue $tmpJar
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tmpExtract
             }
         } elseif (-not $SkipPgCache) {
-            Warn "No published embedded-PostgreSQL binaries for $platform -- portable edition will download them on first start instead."
+            Warn "No published embedded-PostgreSQL binaries for $platform -- the built-in PostgreSQL will download them on first start instead."
         }
 
         Info "Packaging..."

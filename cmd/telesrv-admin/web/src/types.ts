@@ -769,6 +769,11 @@ export type AdminSession = {
   // admin binary older than this field never gates on it), so only an
   // explicit false shows the wizard.
   setup_completed?: boolean;
+  // Whether the wizard's storage step is done (.env says where PostgreSQL
+  // lives), and whether owpengram-server is listening yet. Missing is read
+  // as true/true, like setup_completed.
+  storage_configured?: boolean;
+  server_ready?: boolean;
   // Random per admin-process-start value -- see the Go handler's doc
   // comment. Used by Server Settings' Restart/Update flow to detect a
   // genuinely new admin process after asking it to bounce.
@@ -1174,16 +1179,34 @@ export type EnvGroup = {
 };
 
 export type ServerStatus = {
+  CtlPID: number;
+  CtlAlive: boolean;
   ServerPID: number;
   ServerAlive: boolean;
   AdminPID: number;
   AdminAlive: boolean;
 };
 
-export type DockerService = {
-  name: string;
-  state: string;
-  health: string;
+// Where PostgreSQL and uploaded media live -- the first-run wizard's storage
+// step. Mirrors storageSettings in cmd/telesrv-admin/serverstorage.go.
+export type StorageSettings = {
+  postgres_mode: "embedded" | "external";
+  // The stored connection string with its password shown as ****.
+  postgres_dsn: string;
+  embedded_dir: string;
+  blob_backend: "localfs" | "s3";
+  blob_dir: string;
+  s3_endpoint: string;
+  s3_bucket: string;
+  s3_region: string;
+  s3_access_key_id: string;
+  // Only ever sent to the server, never returned.
+  s3_secret_access_key?: string;
+  s3_secret_set: boolean;
+  s3_use_ssl: boolean;
+  s3_path_style: boolean;
+  s3_create_bucket: boolean;
+  configured: boolean;
 };
 
 export type ServerStartupLog = {

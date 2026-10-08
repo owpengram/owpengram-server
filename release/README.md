@@ -17,29 +17,26 @@ server needs to run.
 start.bat
 ```
 
-The first run bootstraps `.env` (generates admin credentials) and asks you
-to pick an edition:
+The program stays in the foreground and runs the server and its admin panel
+until you stop it (Ctrl+C, or closing the window). The first run creates
+`.env` (generating admin credentials) and prints the admin panel URL and
+password -- open that URL: the admin panel walks you through the rest. The
+first thing it asks is where to keep data:
 
-- **portable (recommended)** -- embedded PostgreSQL, local disk for media
-  storage. No Docker, no external database, nothing else to install. This
-  is what "download and run" actually means; pick this unless you already
-  run Docker infrastructure.
-- **classic** -- PostgreSQL + MinIO via `deploy/docker-compose.yml`
-  (included in this archive). Requires Docker installed separately.
+- **Database** -- the built-in PostgreSQL (the default; nothing to install,
+  it runs and stops with the server) or your own PostgreSQL, given as a
+  connection string.
+- **Media** -- local disk (a folder) or S3-compatible storage (AWS S3,
+  MinIO, ...).
 
-Once it's up, the admin panel URL and generated password are printed to the
-terminal -- open that URL to finish setup (branding, SMTP, etc.).
+Everything is checked before it is saved, then the server starts. After that
+come the server's name, network address, bot API and your own admin account.
 
-Run from a real terminal (not piped/redirected), `start.sh`/`start.bat`
-then drops into an interactive menu -- Start, Stop, Restart, Status, Update,
-Logs, Change edition -- so you don't need to remember any of the commands
-below. Closing that window later stops responding to it, but does not stop
-the server: it keeps running detached in the background regardless.
+Everything else -- changing those choices later, restarting the server,
+updating -- is done in the admin panel too. The server stops when this
+program does.
 
-## Commands
-
-Each of these also works as a one-shot, non-interactive call (e.g. from
-another script), without the menu:
+From another terminal these also work:
 
 ```
 ./start.sh status     (or: start.bat status)
@@ -57,17 +54,25 @@ start.sh / start.bat       the launcher you actually run
 .env.example               config template (owpengram-ctl copies from this)
 data/langpack/              language pack strings shipped with every install
 data/sticker-seed/          default sticker packs seeded on first start
-data/pgcache/                pre-bundled embedded-PostgreSQL binaries (portable
-                            edition's first start needs no network access)
-deploy/docker-compose.yml  PostgreSQL + MinIO, only used by "classic" edition
+data/pgcache/                pre-bundled built-in PostgreSQL binaries (its first
+                            start needs no network access)
+deploy/docker-compose.yml  optional: PostgreSQL + MinIO in Docker, for anyone
+                            who would rather run those themselves (see below)
 ```
 
 ## Updating
 
 This archive has no git history, so `owpengram-ctl update` doesn't apply
 here -- download the next release archive instead, and copy your `.env` and
-`data/` (except `data/pgcache`, `data/postgres`, `data/blobs` if you're on
-"classic" edition with its own storage) into it.
+`data/` (except `data/pgcache`) into it. Stop the old one first.
+
+## Using your own PostgreSQL / S3 (Docker, for example)
+
+The server never starts Docker. If you want PostgreSQL or MinIO in
+containers, start them yourself (`deploy/docker-compose.yml` is an example:
+`docker compose -f deploy/docker-compose.yml up -d`) and, in the admin
+panel's setup, choose "My own PostgreSQL" / S3 and enter their addresses.
+They must be running before the server is.
 
 ## Full documentation
 

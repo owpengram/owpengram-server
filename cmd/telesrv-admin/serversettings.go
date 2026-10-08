@@ -345,7 +345,7 @@ func (s *server) handleUpdateServerEnvAPI(w http.ResponseWriter, r *http.Request
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server-env")
 	details := map[string]any{"keys_changed": len(body.Values)}
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", nil, "would update .env -- takes effect on next Restart/Update", details))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update_env", nil, "would update .env -- takes effect on the next restart", details))
 		return
 	}
 	err := s.serverCtl.WriteEnvValues(body.Values)
@@ -358,11 +358,6 @@ func (s *server) handleServerStatusAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.serverCtl.Status())
 }
 
-// handleDockerStatusAPI backs the Services tab's live container list
-// (postgres/minio) -- see procctl.Manager.DockerStatus. A "docker
-// compose ps" failure (daemon not running, compose file missing) is
-// reported as an API error rather than an empty list, so the frontend can
-// tell "no services" apart from "couldn't ask Docker".
 // handleCheckServerUpdatesAPI backs the Update button's "Check updates"
 // state -- a plain git fetch + rev-list count, no pull/build/restart. See
 // procctl.Manager.CheckUpdates.
@@ -388,15 +383,6 @@ func (s *server) handleServerStartupLogAPI(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
 }
 
-func (s *server) handleDockerStatusAPI(w http.ResponseWriter, r *http.Request) {
-	services, err := s.serverCtl.DockerStatus(r.Context())
-	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, services)
-}
-
 type restartServerAPIRequest struct {
 	CommandID string `json:"command_id"`
 	Reason    string `json:"reason"`
@@ -410,11 +396,15 @@ func (s *server) handleRestartServerAPI(w http.ResponseWriter, r *http.Request) 
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "restart-server")
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- rebuilds both bin/owpengram-server and bin/owpengram-admin-panel, relaunches owpengram-server", nil))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", nil, "restart validated -- stops owpengram-server and this panel; telesrv-ctl starts both again", nil))
 		return
 	}
-	log, err := s.serverCtl.Restart(r.Context())
-	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", err, "server restarted", map[string]any{"log": log}))
+	err := s.serverCtl.RestartServer()
+	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.restart", err, "server restarting", nil))
+	if err == nil {
+		// The panel restarts with it, so a restart also reloads the .env.
+		exitSoon()
+	}
 }
 
 type updateServerAPIRequest struct {
@@ -430,9 +420,15 @@ func (s *server) handleUpdateServerAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := s.commandMetaFromAPI(r, body.CommandID, body.Reason, body.Confirm, "update-server")
 	if meta.DryRun {
-		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update", nil, "update validated -- git pull, rebuild both binaries, relaunch bin/owpengram-server (admin panel binary is rebuilt but not self-restarted)", nil))
+		writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update", nil, "update validated -- git pull, rebuild both binaries; telesrv-ctl then starts the server and this panel again", nil))
 		return
 	}
 	log, err := s.serverCtl.Update(r.Context())
+	if err == nil {
+		err = s.serverCtl.RestartServer()
+	}
 	writeJSON(w, http.StatusOK, serverCommandResult(meta, "server.update", err, "server updated", map[string]any{"log": log}))
+	if err == nil {
+		exitSoon()
+	}
 }

@@ -1,20 +1,16 @@
-// Package procctl mirrors the process-management half of tui-panel/
-// server-panel.py (git pull, go build, launch/stop, and the shared
-// .server_panel.json PID state file) so the admin web panel can offer the
-// same Restart/Update actions the TUI already has, without requiring an
-// operator to SSH in and use the TUI for that specifically.
+// Package procctl runs owpengram as one foreground program. telesrv-ctl
+// (cmd/telesrv-ctl) calls Manager.Run, which starts the admin panel at once
+// and owpengram-server as soon as the first-run wizard has chosen where its
+// data lives, starts the embedded PostgreSQL when that was chosen, and starts
+// whichever of them stops again. Everything stops with it.
 //
-// Restart/Update never restart the admin binary themselves (the process
-// this code typically runs inside, when called from cmd/telesrv-admin) --
-// self-restarting mid-HTTP-request is a materially different, riskier
-// problem (dropped response, no clean signal to the caller that it actually
-// completed) than the TUI's case, where a human is watching an interactive
-// session and re-exec is transparent. Instead they set
-// State.PendingAdminRestart and let the *next* owpengram-server process
-// pick it up via HandlePendingAdminRestart once it's confirmed serving
-// (cmd/telesrv/main.go's OnServing hook) -- that process is unrelated to
-// whatever admin panel is currently running, so it can safely kill the old
-// admin PID and launch a new one with none of the self-restart risk.
+// The admin panel cannot restart anything itself, and does not have to: the
+// supervisor is the parent, so "restart the server" is just killing its
+// process (RestartServer), and "restart the admin panel" is that process
+// exiting on its own after it has answered the request.
+//
+// The shared .server_panel.json records the PIDs so the admin panel and
+// `telesrv-ctl status/stop` can find the processes without being their parent.
 package procctl
 
 import (
@@ -66,21 +62,10 @@ func (m *Manager) adminLog() string {
 // --- state file (shared with tui-panel/server-panel.py) --------------------
 
 type State struct {
-	ServerPID     int    `json:"server_pid"`
-	AdminPID      int    `json:"admin_pid"`
-	DockerProject string `json:"docker_project"`
-	DockerPrefix  string `json:"docker_prefix"`
-	// PendingAdminRestart is how Restart/Update ask the *next*
-	// owpengram-server process to bounce the admin panel for them, instead
-	// of the admin panel trying to restart itself mid-HTTP-request (see the
-	// package doc). Set here, consumed by HandlePendingAdminRestart at the
-	// new owpengram-server's startup. server-panel.py doesn't know this key
-	// exists -- its own save_state() overwrites the file with only its 4
-	// original fields, so a Stop/Start/Restart/Update run from the TUI in
-	// the narrow window before the flag is consumed will silently drop it.
-	// Rare, and the only consequence is the admin panel not restarting that
-	// one time -- not worth coordinating two processes' writes over.
-	PendingAdminRestart bool `json:"pending_admin_restart,omitempty"`
+	// CtlPID is the telesrv-ctl supervisor that owns the other two.
+	CtlPID    int `json:"ctl_pid,omitempty"`
+	ServerPID int `json:"server_pid"`
+	AdminPID  int `json:"admin_pid"`
 }
 
 func (m *Manager) loadState() State {
@@ -88,18 +73,6 @@ func (m *Manager) loadState() State {
 	data, err := os.ReadFile(filepath.Join(m.Root, stateFileName))
 	if err == nil {
 		_ = json.Unmarshal(data, &st)
-	}
-	// Applied whether or not the state file exists yet -- a brand-new
-	// install (no .server_panel.json at all) used to fall through with
-	// DockerPrefix == "", which turns "-postgres" into a bare
-	// leading-dash argument that docker's CLI parses as a flag
-	// ("unknown shorthand flag: 'p' in -postgres") instead of a
-	// container name.
-	if st.DockerProject == "" {
-		st.DockerProject = "owpengram"
-	}
-	if st.DockerPrefix == "" {
-		st.DockerPrefix = "owpengram"
 	}
 	return st
 }
@@ -115,6 +88,8 @@ func (m *Manager) saveState(st State) error {
 // Status reports whether the server/admin PIDs recorded in the shared state
 // file are still alive.
 type Status struct {
+	CtlPID      int
+	CtlAlive    bool
 	ServerPID   int
 	ServerAlive bool
 	AdminPID    int
@@ -124,6 +99,8 @@ type Status struct {
 func (m *Manager) Status() Status {
 	st := m.loadState()
 	return Status{
+		CtlPID:      st.CtlPID,
+		CtlAlive:    pidAlive(st.CtlPID),
 		ServerPID:   st.ServerPID,
 		ServerAlive: pidAlive(st.ServerPID),
 		AdminPID:    st.AdminPID,
@@ -151,32 +128,9 @@ func pidAlive(pid int) bool {
 	return cmd.Run() == nil
 }
 
-// killPID mirrors kill_pid() in server-panel.py, MINUS its "/T" tree-kill
-// on Windows -- deliberately different here, not an oversight, and NOT
-// something to "fix" by adding /T for one of the two PIDs either. Neither
-// process is reliably the other's ancestor, so a tree-kill of either one
-// can take out the other:
-//
-//   - server launched by admin: Restart/Update called from the admin
-//     panel's own HTTP handler spawns the new owpengram-server as a child
-//     of owpengram-admin-panel.
-//   - admin launched by server: HandlePendingAdminRestart then runs inside
-//     that new server and spawns the replacement admin panel as a child of
-//     itself.
-//   - both launched by telesrv-ctl: a plain `start` parents both to a
-//     process that exits immediately.
-//
-// So "/T" on the admin PID can kill the server that is running the kill,
-// and "/T" on the server PID can kill the admin panel that is running it --
-// the latter observed for real: clicking Restart in the admin UI
-// tree-killed the admin process mid-request, so Restart never got past
-// killing the old server (no rebuild, no relaunch, no saved state).
-// Windows' taskkill walks that chain by recorded parent-PID regardless of
-// any process-group flags on launch, so exact-PID kill only, both ways.
-//
-// The portable edition's embedded PostgreSQL (the one genuinely-owned
-// child process tree in play) is handled separately and gracefully by
-// Manager.StopEmbeddedPostgres, which every caller here pairs with this.
+// killPID stops exactly one process -- never its children, so a process
+// that is not the supervisor's own child cannot take the supervisor down
+// with it. On Unix a TERM first, then a KILL after a second.
 func killPID(pid int) {
 	if pid <= 0 {
 		return
@@ -194,51 +148,6 @@ func killPID(pid int) {
 	kill := exec.Command("kill", "-KILL", strconv.Itoa(pid))
 	hideWindow(kill)
 	_ = kill.Run()
-}
-
-// launch starts exePath detached, cwd=Root, stdout/stderr appended to
-// logPath, and returns its PID. Started via Start() (not Run()), the child
-// outlives this function's return either way -- but without detachFromConsole
-// below it would NOT outlive the console/terminal that launched telesrv-ctl
-// itself: a plain child process stays attached to whatever console it
-// inherited (Windows: CTRL_CLOSE_EVENT kills every attached process when
-// that console's window is closed; Unix: SIGHUP on the controlling terminal
-// hanging up, e.g. an SSH session dropping). owpengram-server.bat/start.sh
-// both exit almost immediately after launching this (telesrv-ctl's default
-// command is fire-and-forget), so whether that turns into "the server dies
-// the moment you close the window" depends entirely on whether the console
-// happened to still be open with nothing else attached to it -- exactly the
-// launcher-vs-launcher inconsistency this exists to remove.
-func (m *Manager) launch(exePath, logPath string) (int, error) {
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return 0, fmt.Errorf("mkdir logs: %w", err)
-	}
-	// A release archive (see scripts/build-release.sh and
-	// scripts/build-release.ps1) may have been packaged on a different OS
-	// than it runs on -- NTFS has no executable bit at all, so a Linux
-	// binary zipped/tarred up from a Windows build machine can land on
-	// disk world-readable but not executable, and exec below would fail
-	// with "permission denied". Best-effort and cheap: os.Chmod is a
-	// near-no-op on Windows, and a normal git-clone install where the
-	// binary is already 0755 from `go build` just gets this set again.
-	_ = os.Chmod(exePath, 0o755)
-	logf, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return 0, fmt.Errorf("open log: %w", err)
-	}
-	defer logf.Close()
-	cmd := exec.Command(exePath)
-	cmd.Dir = m.Root
-	cmd.Stdout = logf
-	cmd.Stderr = logf
-	cmd.Stdin = nil
-	hideWindow(cmd)
-	detachFromConsole(cmd)
-	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("start %s: %w", exePath, err)
-	}
-	go func() { _ = cmd.Wait() }() // reap so it doesn't linger as a zombie
-	return cmd.Process.Pid, nil
 }
 
 // startupMarker is the first line owpengram-server logs on every launch
@@ -269,154 +178,6 @@ func (m *Manager) StartupLogTail() ([]string, error) {
 		}
 	}
 	return nil, nil
-}
-
-// --- Docker infrastructure (Postgres/MinIO) --------------------------------
-
-const (
-	postgresWaitTimeout  = 60 * time.Second
-	postgresWaitInterval = 2 * time.Second
-)
-
-// ensureDocker mirrors server-panel.py's START_STEPS "docker" + "postgres"
-// steps -- `docker compose up -d` then wait for Postgres to answer
-// pg_isready. Restart/Update run this every time, same as the TUI: it's a
-// no-op when the containers are already up (compose up -d on a running
-// stack just confirms state), but skipping it entirely was the actual bug
-// report this addresses -- a Restart/Update landing while Postgres/MinIO
-// are down (host reboot, containers manually stopped, etc.) would
-// otherwise relaunch owpengram-server straight into a DB-connect failure
-// with no clear signal why, instead of surfacing "Postgres not ready" here.
-func (m *Manager) ensureDocker(ctx context.Context, st State) (string, error) {
-	// portable edition has no Docker infra at all -- owpengram-server owns
-	// an embedded PostgreSQL itself (see internal/embeddedpg) and blob
-	// storage is forced to localfs, so there is nothing here to bring up.
-	if edition, ok := m.Edition(); ok && edition == "portable" {
-		return "", nil
-	}
-	return m.composeUpWaitPostgres(ctx, st)
-}
-
-// composeUpWaitPostgres is ensureDocker without the edition gate: bring the
-// compose stack up and block until PostgreSQL answers.
-//
-// Split out because an edition migration has to reach the Docker-backed
-// PostgreSQL while .env still names the *other* edition (see
-// maintenancePGFor) -- the gate above would skip the bring-up in exactly
-// the case that needs it.
-func (m *Manager) composeUpWaitPostgres(ctx context.Context, st State) (string, error) {
-	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
-	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
-		return "", nil
-	}
-	// Docker is optional (see cmd/telesrv-ctl and the Go-only launcher
-	// scripts): a checkout with no Docker on PATH is expected to point
-	// TELESRV_POSTGRES_DSN at an already-reachable PostgreSQL instead, so
-	// skip straight past infra bootstrap here rather than failing on an
-	// exec error a self-hoster without Docker has no way to act on.
-	if _, err := exec.LookPath("docker"); err != nil {
-		return "Docker not found on PATH -- skipping infrastructure bootstrap. Make sure TELESRV_POSTGRES_DSN already points at a reachable PostgreSQL.\n", nil
-	}
-
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "up", "-d")
-	cmd.Dir = m.Root
-	cmd.Env = append(os.Environ(),
-		"TELESRV_DOCKER_PROJECT="+st.DockerProject,
-		"TELESRV_DOCKER_PREFIX="+st.DockerPrefix,
-	)
-	hideWindow(cmd)
-	out, err := cmd.CombinedOutput()
-	log := "$ docker compose up -d\n" + string(out)
-	if err != nil {
-		return log, fmt.Errorf("docker compose up failed: %w", err)
-	}
-
-	deadline := time.Now().Add(postgresWaitTimeout)
-	for {
-		pgCmd := exec.CommandContext(ctx, "docker", "exec", st.DockerPrefix+"-postgres", "pg_isready", "-U", "owpengram", "-d", "owpengram")
-		hideWindow(pgCmd)
-		if pgCmd.Run() == nil {
-			return log + "\nPostgreSQL ready\n", nil
-		}
-		if time.Now().After(deadline) {
-			return log, fmt.Errorf("PostgreSQL not ready after %s", postgresWaitTimeout)
-		}
-		select {
-		case <-ctx.Done():
-			return log, ctx.Err()
-		case <-time.After(postgresWaitInterval):
-		}
-	}
-}
-
-// DockerService is one container's live status, as reported by
-// `docker compose ps`. State is Docker's raw container state ("running",
-// "exited", ...); Health is the healthcheck status ("healthy", "starting",
-// "unhealthy") or "" for a container/image with no healthcheck defined --
-// both services in deploy/docker-compose.yml (postgres/minio)
-// declare one, so "" in practice means Docker hasn't reported yet.
-type DockerService struct {
-	Name   string `json:"name"`   // compose service name, e.g. "postgres"
-	State  string `json:"state"`
-	Health string `json:"health"`
-}
-
-// dockerComposePsRow mirrors the fields `docker compose ps --format json`
-// emits (one JSON object per line, Compose v2's ndjson convention -- NOT a
-// single JSON array).
-type dockerComposePsRow struct {
-	Service string `json:"Service"`
-	State   string `json:"State"`
-	Health  string `json:"Health"`
-}
-
-// DockerStatus reports the live state of every service in
-// deploy/docker-compose.yml, for the admin panel's "Services" tab. Returns
-// an empty slice (not an error) when the compose file doesn't exist, same
-// convention as ensureDocker -- and, for the same reason, when the edition
-// is "portable": that install owns its own embedded PostgreSQL and never
-// runs `docker compose up` at all (see ensureDocker), so `docker compose
-// ps` has nothing real to report. Docker being present on PATH but its
-// daemon not running (the common case for a portable install that happens
-// to have Docker Desktop installed for something else) would otherwise
-// surface as a scary "docker compose ps failed: exit status 1" error in
-// the Services tab for a condition that isn't actually a problem.
-func (m *Manager) DockerStatus(ctx context.Context) ([]DockerService, error) {
-	if edition, ok := m.Edition(); ok && edition == "portable" {
-		return nil, nil
-	}
-	composeFile := filepath.Join(m.Root, "deploy", "docker-compose.yml")
-	if _, err := os.Stat(composeFile); os.IsNotExist(err) {
-		return nil, nil
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return nil, nil
-	}
-	st := m.loadState()
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composeFile, "ps", "--all", "--format", "json")
-	cmd.Dir = m.Root
-	cmd.Env = append(os.Environ(),
-		"TELESRV_DOCKER_PROJECT="+st.DockerProject,
-		"TELESRV_DOCKER_PREFIX="+st.DockerPrefix,
-	)
-	hideWindow(cmd)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker compose ps failed: %w", err)
-	}
-	var services []DockerService
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var row dockerComposePsRow
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			continue
-		}
-		services = append(services, DockerService{Name: row.Service, State: row.State, Health: row.Health})
-	}
-	return services, nil
 }
 
 // CheckUpdates fetches from the remote and reports how many commits the
@@ -517,103 +278,34 @@ func (m *Manager) hasSourceTree() bool {
 
 // --- high-level actions ----------------------------------------------------
 
-// Restart rebuilds BOTH bin/owpengram-server and bin/owpengram-admin-panel
-// from the current working tree (no git pull -- see Update for that) and
-// relaunches owpengram-server, which then bounces the admin panel onto its
-// freshly built binary. Never self-restarts the admin process handling this
-// request directly -- see HandlePendingAdminRestart's doc comment for why
-// that handoff happens from the newly launched server instead. Returns a
-// combined build/relaunch log for the admin UI.
-func (m *Manager) Restart(ctx context.Context) (string, error) {
-	st := m.loadState()
-	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID)
-	}
-	m.StopEmbeddedPostgres()
-	dockerLog, err := m.ensureDocker(ctx, st)
-	if err != nil {
-		return dockerLog, err
-	}
-	buildLog, err := m.buildBoth(ctx)
-	fullLog := dockerLog + "\n" + buildLog
-	if err != nil {
-		return fullLog, fmt.Errorf("build failed: %w", err)
-	}
-	pid, err := m.launch(m.serverExe(), m.serverLog())
-	if err != nil {
-		return fullLog, fmt.Errorf("launch failed: %w", err)
-	}
-	st.ServerPID = pid
-	// Ask the process we just launched to bounce the admin panel for us
-	// once it's up -- see HandlePendingAdminRestart's doc comment for why
-	// that's the safe side of this handoff to do it from.
-	st.PendingAdminRestart = true
-	if err := m.saveState(st); err != nil {
-		return fullLog, fmt.Errorf("save state: %w", err)
-	}
-	return fullLog + fmt.Sprintf("\nowpengram-server relaunched, pid=%d. Admin panel will restart shortly onto its freshly built binary.\n", pid), nil
-}
-
-// Update is Restart plus a `git pull --ff-only` first, so a fresh checkout
-// gets built instead of whatever's already on disk.
+// Update pulls the checkout and rebuilds both binaries. It does not start
+// anything: the supervisor runs the new binaries when RestartServer (and the
+// admin panel's own exit) make it launch them again.
 func (m *Manager) Update(ctx context.Context) (string, error) {
 	pullLog, err := m.GitPull(ctx)
 	if err != nil {
 		return pullLog, fmt.Errorf("git pull failed: %w", err)
 	}
-	st := m.loadState()
-	if pidAlive(st.ServerPID) {
-		killPID(st.ServerPID)
-	}
-	m.StopEmbeddedPostgres()
-	dockerLog, err := m.ensureDocker(ctx, st)
-	fullLog := pullLog + "\n" + dockerLog
-	if err != nil {
-		return fullLog, err
-	}
 	buildLog, err := m.buildBoth(ctx)
-	fullLog = fullLog + "\n" + buildLog
 	if err != nil {
-		return fullLog, fmt.Errorf("build failed: %w", err)
+		return pullLog + "\n" + buildLog, fmt.Errorf("build failed: %w", err)
 	}
-	pid, err := m.launch(m.serverExe(), m.serverLog())
-	if err != nil {
-		return fullLog, fmt.Errorf("launch failed: %w", err)
-	}
-	st.ServerPID = pid
-	st.PendingAdminRestart = true
-	if err := m.saveState(st); err != nil {
-		return fullLog, fmt.Errorf("save state: %w", err)
-	}
-	return fullLog + fmt.Sprintf("\nowpengram-server relaunched, pid=%d. Admin panel will restart shortly onto its freshly built binary.\n", pid), nil
+	return pullLog + "\n" + buildLog, nil
 }
 
-// HandlePendingAdminRestart is called once by owpengram-server itself, right
-// after it confirms it's up and serving (see cmd/telesrv/main.go's
-// OnServing hook) -- never by the admin panel on itself. That ordering is
-// the whole point: by the time this runs, the *new* owpengram-server
-// process already exists and is unrelated to whatever admin panel process
-// is currently running, so killing the old admin PID and launching a new
-// one here carries none of the risk self-restarting mid-HTTP-request would
-// (see the package doc). A no-op when no restart was requested.
-func (m *Manager) HandlePendingAdminRestart(ctx context.Context) (bool, error) {
+// RestartServer stops owpengram-server; the supervisor starts it again with
+// the current .env and binary. It is a no-op error when no supervisor is
+// running, because then nothing would start it again.
+func (m *Manager) RestartServer() error {
 	st := m.loadState()
-	if !st.PendingAdminRestart {
-		return false, nil
+	if !pidAlive(st.CtlPID) {
+		return fmt.Errorf("telesrv-ctl is not running, so nothing would start the server again -- start it with telesrv-ctl")
 	}
-	if pidAlive(st.AdminPID) {
-		killPID(st.AdminPID)
+	if !pidAlive(st.ServerPID) {
+		return nil
 	}
-	pid, err := m.launch(m.adminExe(), m.adminLog())
-	if err != nil {
-		return false, fmt.Errorf("launch admin panel: %w", err)
-	}
-	st.AdminPID = pid
-	st.PendingAdminRestart = false
-	if err := m.saveState(st); err != nil {
-		return true, fmt.Errorf("save state: %w", err)
-	}
-	return true, nil
+	killPID(st.ServerPID)
+	return nil
 }
 
 // --- .env.example / .env editing -------------------------------------------
@@ -627,8 +319,8 @@ var (
 	// credential (e.g. TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD) --
 	// there's nothing to mask there, it's a plain boolean toggle.
 	sensitiveKeyExceptRe = regexp.MustCompile(`SECRET_CHAT`)
-	groupHeaderRe    = regexp.MustCompile(`^##\s*(.+?)\s*--\s*(.+)$`)
-	sectionBreakRe   = regexp.MustCompile(`^#\s*={10,}\s*$`)
+	groupHeaderRe        = regexp.MustCompile(`^##\s*(.+?)\s*--\s*(.+)$`)
+	sectionBreakRe       = regexp.MustCompile(`^#\s*={10,}\s*$`)
 )
 
 type EnvField struct {
@@ -838,4 +530,15 @@ func (m *Manager) WriteEnvValues(values map[string]string) error {
 		out = append(out, raw)
 	}
 	return os.WriteFile(filepath.Join(m.Root, ".env"), []byte(strings.Join(out, "\n")+"\n"), 0o644)
+}
+
+// StopChildren stops owpengram-server and owpengram-admin-panel; the
+// supervisor starts both again, from whatever binaries are on disk by then.
+func (m *Manager) StopChildren() {
+	st := m.loadState()
+	for _, pid := range []int{st.ServerPID, st.AdminPID} {
+		if pidAlive(pid) {
+			killPID(pid)
+		}
+	}
 }

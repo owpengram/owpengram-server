@@ -24,11 +24,11 @@
 # For each target platform: cross-compiles owpengram-server, owpengram-
 # admin-panel and owpengram-ctl (CGO_ENABLED=0, so no C toolchain is needed
 # even when cross-compiling), assembles a staging directory with
-# .env.example, data/langpack, data/sticker-seed, deploy/docker-compose.yml
+# .env.example, data/langpack, data/sticker-seed, deploy/docker-compose.yml (optional example)
 # and the right start.sh/start.bat launcher, pre-bundles the embedded-
 # PostgreSQL binaries for that platform into data/pgcache/ (see
 # internal/embeddedpg.go's CachePath doc comment -- this is what makes the
-# portable edition's first start need zero network access), and packages
+# the built-in PostgreSQL's first start need zero network access), and packages
 # the result into a .tar.gz (or .zip for Windows targets) under dist/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -158,11 +158,11 @@ for platform in "${PLATFORMS[@]}"; do
         unzip -p "$tmp_jar" '*.txz' > "$stage_dir/data/pgcache/embedded-postgres-binaries-$pg_os-$pg_arch-$PG_VERSION.txz"
         ok "Bundled embedded-postgres-binaries-$pg_os-$pg_arch-$PG_VERSION.txz"
       else
-        warn "Could not pre-bundle embedded PostgreSQL for $pg_os/$pg_arch -- portable edition will download it on first start instead."
+        warn "Could not pre-bundle embedded PostgreSQL for $pg_os/$pg_arch -- the built-in PostgreSQL will download it on first start instead."
       fi
       rm -f "$tmp_jar"
     else
-      warn "No published embedded-PostgreSQL binaries for $goos/$goarch -- portable edition will download them on first start instead."
+      warn "No published embedded-PostgreSQL binaries for $goos/$goarch -- the built-in PostgreSQL will download them on first start instead."
     fi
   fi
 

@@ -1,15 +1,24 @@
-# telesrv 第一阶段三方依赖（开发用）。
+# Optional PostgreSQL and MinIO in Docker, for anyone who would rather
+# run those themselves than use the built-in PostgreSQL and local-disk media.
+# The server does NOT start or stop any of this -- bring it up yourself before
+# the server, and keep it running:
 #
-#   启动：  docker compose up -d
-#   状态：  docker compose ps
-#   关停：  docker compose down          （保留数据卷）
-#   清空：  docker compose down -v        （连数据卷一起删，重置 schema/数据）
+#   docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml ps
+#   docker compose -f deploy/docker-compose.yml down        (keeps the volumes)
+#   docker compose -f deploy/docker-compose.yml down -v     (deletes the data too)
 #
-# server 端连接串见 internal/config/config.go 的默认值（localhost:5432）。
+# Then, in the admin panel's first-run setup (or in .env), choose "My own
+# PostgreSQL" with
+#   postgres://owpengram:owpengram@127.0.0.1:5432/owpengram?sslmode=disable
+# and, for media, S3 with endpoint 127.0.0.1:9000, bucket owpengram-media,
+# access key owpengram, secret key owpengram123, path-style on.
 #
-# 容器/卷命名可通过 TELESRV_DOCKER_PROJECT / TELESRV_DOCKER_PREFIX 覆盖（默认 owpengram）：
-# start-server.sh 对已存在 telesrv_* 卷、且用户拒绝一次性改名迁移的安装，会把这两个变量
-# 固定设为 telesrv，从而永久保留旧命名，不动用户现有的 telesrv_pgdata。
+# Container and volume names default to "owpengram"; override them with
+# TELESRV_DOCKER_PROJECT / TELESRV_DOCKER_PREFIX. An install that used to be
+# started by telesrv-ctl with the older "telesrv" names (volumes
+# telesrv_pgdata / telesrv_miniodata) must set both to "telesrv" here, or this
+# file would create new, empty volumes next to the old ones.
 name: ${TELESRV_DOCKER_PROJECT:-owpengram}
 
 services:

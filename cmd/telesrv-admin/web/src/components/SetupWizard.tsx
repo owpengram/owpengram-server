@@ -6,6 +6,7 @@ import { RestartOverlay, ServerIconModal, useAdminRestartWatcher } from "../page
 import { ThemeSwitch } from "../theme";
 import { AppBackground } from "./AppBackground";
 import { Alert } from "./ui";
+import { StorageStep } from "./StorageStep";
 
 // The first-run wizard: shown instead of the normal shell exactly once, when
 // GET /api/session answers setup_completed=false (see
@@ -27,11 +28,12 @@ import { Alert } from "./ui";
 // you naming your own server" is friction with no audit value.
 const WIZARD_REASON = "Set from the first-run setup wizard";
 
-type StepId = "welcome" | "identity" | "network" | "botapi" | "account" | "done";
+type StepId = "welcome" | "storage" | "identity" | "network" | "botapi" | "account" | "done";
 
-const STEP_ORDER: StepId[] = ["welcome", "identity", "network", "botapi", "account", "done"];
+const STEP_ORDER: StepId[] = ["welcome", "storage", "identity", "network", "botapi", "account", "done"];
 const STEP_LABEL: Record<StepId, string> = {
   welcome: "Welcome",
+  storage: "Storage",
   identity: "Identity",
   network: "Network",
   botapi: "Bot API",
@@ -45,8 +47,10 @@ const STEP_LABEL: Record<StepId, string> = {
 // "Finish setup & restart", which reloads the page once the new process
 // answers; that reload is what dismisses this component (a fresh
 // /api/session comes back with setup_completed=true).
-export function SetupWizard() {
-  const [step, setStep] = useState<StepId>("welcome");
+export function SetupWizard({ storageConfigured }: { storageConfigured: boolean }) {
+  // Saving the storage step restarts the panel and reloads the page, so the
+  // wizard picks up at the step after it.
+  const [step, setStep] = useState<StepId>(storageConfigured ? "identity" : "welcome");
 
   function goTo(next: StepId) {
     setStep(next);
@@ -81,7 +85,8 @@ export function SetupWizard() {
           })}
         </div>
 
-        {step === "welcome" && <WelcomeStep onNext={() => goTo("identity")} />}
+        {step === "welcome" && <WelcomeStep onNext={() => goTo("storage")} />}
+        {step === "storage" && <StorageStep />}
         {step === "identity" && <IdentityStep onNext={() => goTo("network")} />}
         {step === "network" && <NetworkStep onNext={() => goTo("botapi")} />}
         {step === "botapi" && <BotApiStep onNext={() => goTo("account")} />}
@@ -101,7 +106,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
     <div className="wizard-step-body">
       <p className="wizard-welcome-greeting">{"Hi!"}</p>
       <p>
-        {"Let's get your server set up -- a name, an address for clients, and an account of "}
+        {"Let's get your server set up -- where it keeps its data, a name, an address for clients, and an account of "}
         {"your own. Takes about a minute, and everything here stays editable later."}
       </p>
       <WizardActions>

@@ -1,19 +1,19 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Database, Download, HardDrive, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Download, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Alert, LoadingSurface, PageFrame, SectionHead } from "../components/ui";
-import type { DockerService, EnvGroup, ServerIdentity, ServerStatus } from "../types";
+import type { EnvGroup, ServerIdentity, ServerStatus } from "../types";
 
 // Server Settings: the web-panel equivalent of tui-panel/server-panel.py's
 // menu -- admin-editable server name/description/icon (served to clients
 // over /owpengram/server-info + /owpengram/server-icon), .env editing, and
-// live process/Docker status + Restart/Update. See
+// live process status + Restart/Update. See
 // cmd/telesrv-admin/serversettings.go for the backend.
 //
 // Split into two tabs: "Settings" (identity + .env, rarely touched, no live
-// state) and "Services" (live process/container status + restart/update,
+// state) and "Services" (live process status + restart/update,
 // the operational side someone actually watches while things are moving).
 export function ServerSettingsPage() {
   const [tab, setTab] = useState<"settings" | "services">("settings");
@@ -487,19 +487,19 @@ function EnvSection() {
   );
 }
 
-// --- Services tab (live Docker + process status, restart/update) --------
+// --- Services tab (live process status, restart/update) --------
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // useAdminRestartWatcher backs the "the admin panel is bouncing itself"
-// flow after Restart/Update: those actions ask owpengram-server to relaunch
-// the admin process once *it* is back up (see internal/procctl's
-// PendingAdminRestart), so from the browser's side this just means polling
-// /api/session until a *different* boot_id answers -- proof a genuinely new
-// process is up, not just that the old one is still slow -- then reloading
-// the page. A timeout surfaces as a message with a manual reload button
+// flow after Restart/Update/saving the storage step: those actions stop the
+// server and make the admin process exit, and telesrv-ctl starts both again,
+// so from the browser's side this just means polling /api/session until a
+// *different* boot_id answers -- proof a genuinely new process is up, not just
+// that the old one is still slow -- and the server it started is listening
+// (server_ready), then reloading the page. A timeout surfaces as a message with a manual reload button
 // instead of spinning forever if something went wrong server-side.
 // Known owpengram-server startup log lines, mapped to an operator-facing
 // label -- the raw zap lines (phase=reactions elapsed=...) are meant for
@@ -531,16 +531,11 @@ export function useAdminRestartWatcher() {
   const [logLines, setLogLines] = useState<string[]>([]);
   const cancelled = useRef(false);
 
-  // 5 minutes, not 2.5: Restart/Update run a synchronous `go build` of both
-  // binaries before the new owpengram-server process is even launched (see
-  // internal/procctl.Manager.Restart/Update), and on a cold build cache --
-  // most commonly the very first restart the setup wizard triggers -- that
-  // alone can take well past two minutes on a slower machine. The new main
-  // server then still has to apply any pending migrations and reach
-  // "serving" before it bounces the admin panel, which is what this is
-  // actually polling for. A restart that genuinely hangs still surfaces via
-  // RestartOverlay's dismiss/reload controls, so a longer timeout only costs
-  // patience, never a stuck UI.
+  // 5 minutes: a new server may first have to start the embedded PostgreSQL
+  // (downloaded on its very first run), apply pending migrations and, on a
+  // fresh install, run the one-time media seed before it listens. A restart
+  // that genuinely hangs still surfaces via RestartOverlay's dismiss/reload
+  // controls, so a longer timeout only costs patience, never a stuck UI.
   const watch = useCallback(async (timeoutMs = 300000, options?: { beforeReload?: () => Promise<void> | void }) => {
     cancelled.current = false;
     setTimedOut(false);
@@ -559,7 +554,7 @@ export function useAdminRestartWatcher() {
       await sleep(1500);
       try {
         const session = await api.session();
-        if (session.boot_id && session.boot_id !== baseline) {
+        if (session.boot_id && session.boot_id !== baseline && session.server_ready !== false) {
           // beforeReload runs against the new process (this session read
           // already proved it's up) and can't fail the reload -- a reload
           // an operator is staring at a spinner for shouldn't hang on it.
@@ -623,12 +618,11 @@ export function useAdminRestartWatcher() {
 export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: boolean; onDismiss: () => void; logLines?: string[] }) {
   const [logExpanded, setLogExpanded] = useState(false);
   const hasLog = !!logLines && logLines.length > 0;
-  // Before the new process has written its first log line at all -- most
-  // of that gap is `go build` compiling both binaries from scratch, which
-  // has nothing to report from yet -- a blank spinner with no text reads
-  // as stuck rather than "still working", especially on a cold build
-  // cache. Say so explicitly instead of showing nothing.
-  const currentStatus = hasLog ? logLines[logLines.length - 1] : (timedOut ? undefined : "Building...");
+  // Before the new process has written its first log line at all -- the
+  // built-in PostgreSQL may still be starting (downloaded on its very first
+  // run) -- a blank spinner with no text reads as stuck rather than "still
+  // working". Say so explicitly instead of showing nothing.
+  const currentStatus = hasLog ? logLines[logLines.length - 1] : (timedOut ? undefined : "Starting...");
   const log = hasLog && logExpanded && (
     <ul className="restart-overlay-log">
       {logLines.map((line, index) => <li key={index}>{line}</li>)}
@@ -692,10 +686,8 @@ function liveDotIcon(tone: LiveTone) {
   }
 }
 
-// ServiceCard renders one live status tile -- a Docker container or a local
-// process -- with a status pill (dot + label) and up to one detail line.
-// Shared between the Docker services grid and the process-control grid so
-// both read the same way at a glance instead of two different layouts.
+// ServiceCard renders one live status tile -- a local process -- with a
+// status pill (dot + label) and up to one detail line.
 function ServiceCard({
   icon,
   name,
@@ -724,31 +716,8 @@ function ServiceCard({
   );
 }
 
-const dockerServiceIcon: Record<string, React.ReactNode> = {
-  postgres: <Database size={18} />,
-  minio: <HardDrive size={18} />
-};
-
-function dockerTone(service: DockerService): LiveTone {
-  const state = service.state.toLowerCase();
-  const health = service.health.toLowerCase();
-  if (state !== "running") return "danger";
-  if (health === "unhealthy") return "danger";
-  if (health === "starting") return "warn";
-  return "good";
-}
-
-function dockerStatusLabel(service: DockerService): string {
-  const state = service.state.toLowerCase();
-  if (state !== "running") return service.state || "stopped";
-  if (service.health) return service.health;
-  return "running";
-}
-
 // Live polling cadence for the Services tab. Fast enough that a
-// Restart/Update's effect on the process/container cards feels immediate,
-// slow enough not to hammer `docker compose ps` (which shells out) every
-// couple seconds for no reason.
+// Restart/Update's effect on the process cards feels immediate.
 const LIVE_POLL_MS = 4000;
 
 // UpdateButton is a two-state control: "Check updates" (a plain git fetch +
@@ -819,8 +788,6 @@ function UpdateButton({ onUpdateStarted }: { onUpdateStarted: () => void }) {
 function ServicesTab() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [statusError, setStatusError] = useState("");
-  const [docker, setDocker] = useState<DockerService[] | null>(null);
-  const [dockerError, setDockerError] = useState("");
   const restartWatcher = useAdminRestartWatcher();
   const pausedRef = useRef(false);
   pausedRef.current = restartWatcher.waiting;
@@ -833,12 +800,6 @@ function ServicesTab() {
     } catch (err) {
       setStatusError(errorMessage(err));
     }
-    try {
-      setDocker(await api.dockerStatus());
-      setDockerError("");
-    } catch (err) {
-      setDockerError(errorMessage(err));
-    }
   }, []);
 
   useEffect(() => {
@@ -847,7 +808,7 @@ function ServicesTab() {
     return () => window.clearInterval(id);
   }, [load]);
 
-  const loading = status === null && docker === null && !statusError && !dockerError;
+  const loading = status === null && !statusError;
 
   return (
     <>
@@ -869,7 +830,6 @@ function ServicesTab() {
           }
         />
         {statusError && <Alert>{statusError}</Alert>}
-        {dockerError && <Alert>{dockerError}</Alert>}
         {loading ? (
           <LoadingSurface label={"Loading service status..."} />
         ) : (
@@ -892,16 +852,6 @@ function ServicesTab() {
                 />
               </>
             )}
-            {docker?.map((service) => (
-              <ServiceCard
-                key={service.name}
-                icon={dockerServiceIcon[service.name] ?? <Database size={18} />}
-                name={service.name}
-                tone={dockerTone(service)}
-                statusLabel={dockerStatusLabel(service)}
-                detail={service.state}
-              />
-            ))}
           </div>
         )}
       </section>

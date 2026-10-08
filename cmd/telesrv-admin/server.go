@@ -244,7 +244,8 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/update-server-env", s.serverManage(s.handleUpdateServerEnvAPI))
 	mux.Handle("GET /api/server/status", s.serverManage(s.handleServerStatusAPI))
 	mux.Handle("GET /api/server/startup-log", s.serverManage(s.handleServerStartupLogAPI))
-	mux.Handle("GET /api/server/docker-status", s.serverManage(s.handleDockerStatusAPI))
+	mux.Handle("GET /api/server/storage", s.serverManage(s.handleServerStorageAPI))
+	mux.Handle("POST /api/actions/configure-storage", s.serverManage(s.handleConfigureStorageAPI))
 	mux.Handle("GET /api/server/check-updates", s.serverManage(s.handleCheckServerUpdatesAPI))
 	mux.Handle("POST /api/actions/restart-server", s.serverManage(s.handleRestartServerAPI))
 	mux.Handle("POST /api/actions/update-server", s.serverManage(s.handleUpdateServerAPI))
@@ -407,6 +408,11 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// identity.Store.SetupPending's doc comment for why this reads a
 		// sentinel file rather than anything in identity.json itself.
 		"setup_completed": !s.identity.SetupPending(),
+		// storage_configured/server_ready let the wizard continue where it
+		// left off after the storage step restarted the panel, and wait for
+		// the server it started before steps that need the database.
+		"storage_configured": s.serverCtl.StorageConfigured(),
+		"server_ready":       s.serverListening(),
 		// boot_id is random per process start (see main.go) -- Server
 		// Settings' Restart/Update flow polls this after triggering an
 		// action and reloads the page once it changes, which is how it

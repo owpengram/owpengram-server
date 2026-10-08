@@ -41,18 +41,28 @@ Review at least these values in `.env`:
 - `TELESRV_DEV_AUTH_CODE=12345` is convenient for local development but must not
   be exposed as a production login code.
 
-## 3. Start Postgres
+## 3. Choose the database
 
-The development compose file exposes Postgres on `127.0.0.1:5432`, matching the
-default in `.env.example`.
+Set `TELESRV_POSTGRES_MODE` in `.env`:
 
-```bash
-docker compose -f deploy/docker-compose.yml up -d
-```
+- `embedded` (the default for a new install) uses the built-in PostgreSQL.
+  `telesrv-ctl` starts it before the server, so run the server through
+  `./owpengram-server.sh` / `owpengram-server.bat` rather than directly.
+- `external` uses a PostgreSQL you run, at `TELESRV_POSTGRES_DSN`. For a
+  throwaway one in Docker, the example compose file exposes it on
+  `127.0.0.1:5432` with the DSN from `.env.example`:
 
-If you use an external Postgres, update `TELESRV_POSTGRES_DSN` in `.env`.
+  ```bash
+  docker compose -f deploy/docker-compose.yml up -d
+  ```
+
+  The server never starts it; keep it running.
 
 ## 4. Build and run the server
+
+With the built-in PostgreSQL, use the launcher (it builds and runs everything):
+`./owpengram-server.sh` or `.\owpengram-server.bat`. To run the server binary by
+hand, use an external PostgreSQL:
 
 Linux / macOS:
 

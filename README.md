@@ -65,7 +65,7 @@ or sponsored by Telegram or the official Telegram team.
 - 👋 Welcome messages and login-code templates you can edit from the panel
 - 🧙 **First-run web setup wizard** — server identity, public address, Bot API
   and your operator account, then a restart, all from the browser
-- 🖥️ Admin API and web UI for operations, plus a TUI server panel to run it all
+- 🖥️ Admin API and web UI for operations, run by one foreground `telesrv-ctl`
 
 <details>
 <summary><b>📋 Full feature checklist (click to expand)</b></summary>
@@ -87,7 +87,7 @@ or sponsored by Telegram or the official Telegram team.
 | ✅ | Collectible usernames and verification | Fragment-style NFT/collectible usernames (mint, transfer, activate/deactivate), the official platform-checkmark flow (`@verifybot`), and a third-party bot-verification mark mechanism (`@marksbot`, icon + description before a name) — the latter is experimental and hidden by default. |
 | ✅ | Bots and mini apps | Bot service foundations, callbacks, inline helpers, webview/mini-app paths, a minimal Bot API gateway for libraries such as `python-telegram-bot`, persistent `getUpdates` delivery, and demo tools. |
 | ✅ | Calls and live streams | Private call signaling foundations, group call state, RTMP live streaming, scheduled video chats, channel `join_as`, SFU/TURN building blocks, liveness, and expiry workers. |
-| ✅ | Admin and operations | Admin API/UI backend, a first-run web setup wizard (server identity, public network fields, optional Bot API gateway, first operator account), named operator accounts with per-section permissions and a wildcard "full access" grant, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), editable welcome and login-code message templates, storage management (usage breakdown, retention rules, guarded purge), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, in-process volatile state, retention workers, pprof/debug hooks, load-test helpers, one-click update with a dry run before it applies, and a bundled TUI server panel as an alternative to the web UI. |
+| ✅ | Admin and operations | Admin API/UI backend, a first-run web setup wizard (server identity, public network fields, optional Bot API gateway, first operator account), named operator accounts with per-section permissions and a wildcard "full access" grant, per-account freeze (admin-set read-only restriction, advertised to the client via appConfig), broadcast messaging (announce from the official account to every user or a picked list), editable welcome and login-code message templates, storage management (usage breakdown, retention rules, guarded purge), shared-device detection across accounts, RBAC-scoped admin API tokens, PostgreSQL migrations, in-process volatile state, retention workers, pprof/debug hooks, load-test helpers, one-click update with a dry run before it applies. |
 | ✅ | Desktop, Android, iOS, and Web focus | Telegram Desktop is the primary target, with Android, iOS, and Web compatibility paths actively covered by the same server. |
 
 Some items are compatibility-first or experimental, but they are real open
@@ -123,58 +123,57 @@ cd owpengram-server
 
 The launcher checks for the one thing it truly needs — **Go 1.25+** — and
 points you at https://go.dev/dl/ if it's missing; install it yourself and
-re-run the launcher. Docker is checked too, but only reported — it's
-optional (see below).
+re-run the launcher. Nothing else has to be installed: no Docker, no database.
 
-**3. Let it bootstrap**
+**3. Open the admin panel**
 
-With Go in place the launcher builds and runs `telesrv-ctl` (`cmd/telesrv-ctl`,
-plain Go, no Python involved). On a fresh clone it writes `.env` from
-`.env.example`, generating the admin API token, session key, and — if you
-haven't set one yourself — an admin password, then asks **once** how this
-install should get PostgreSQL and blob storage:
-
-- **Portable (recommended)** — no Docker at all: `telesrv-ctl` starts and
-  owns a real, natively-compiled embedded PostgreSQL server (see
-  `internal/embeddedpg`), and blob storage is local disk instead of MinIO.
-  The simplest path for most self-hosters — nothing else to install.
-- **Classic** — PostgreSQL and MinIO run in Docker, same as before. Pick
-  this if you already run Docker infrastructure you'd rather reuse.
-
-The choice is shown disabled with an explanation if Docker isn't installed,
-is remembered in `.env` (`TELESRV_EDITION`) so you're never asked again,
-and can be changed later with `telesrv-ctl set-edition portable|classic`
-(or from the launcher's "Change edition" screen). Switching carries the
-database over and, by default, the stored media too (MinIO ⇄ `TELESRV_BLOB_DIR`);
-the old copies are left in place. The edition you are leaving is the source of
-truth: whatever the other edition's database held is replaced. Moving to classic can instead keep the media
-where it is with `--blobs=keep` — the server reads each file from whichever
-storage holds it. Portable always moves it, since it has no MinIO.
-Either way `telesrv-ctl` then builds both binaries, runs them, and prints
-the admin panel address and password ready to copy. Re-running the launcher
-later is safe: it only builds and (re)launches whatever isn't already
-running.
+The launcher builds and runs `telesrv-ctl` (`cmd/telesrv-ctl`, plain Go). It
+stays in the foreground and runs the server and its admin panel for as long
+as it runs — **Ctrl+C (or closing the window) stops both**. On a fresh clone
+it writes `.env` from `.env.example`, generating the admin API token, session
+key and an admin password, and prints the admin panel address and that
+password. The server itself does not start yet: it waits for the first-run
+setup below.
 
 **4. Finish setup in the browser**
 
-Open that address. On a fresh install the panel opens a **web setup wizard**
-that walks through the server name, description and icon, the public address
-clients will connect to, the optional Bot API gateway, and your own operator
-account — then restarts the server so it all takes effect. Nothing has to be
-hand-edited to get going.
+Open that address. On a fresh install the panel opens a **web setup wizard**.
+Its first step is where the server keeps its data:
+
+- **Database** — the **built-in PostgreSQL** (the default; nothing to
+  install, `telesrv-ctl` runs it next to the server and stops it with the
+  server), or **your own PostgreSQL**, given as a connection string.
+- **Media** (photos, files, stickers) — **local disk** (a folder) or
+  **S3-compatible storage** (AWS S3, MinIO, …: endpoint, bucket, keys).
+
+What you enter is checked before it is saved — the database must answer, the
+folder must be writable, the bucket must exist. Then the server starts, and
+the wizard continues with the server name, description and icon, the public
+address clients will connect to, the optional Bot API gateway and your own
+operator account. Nothing has to be hand-edited to get going.
+
+From then on everything is done in the admin panel: restarting the server,
+checking for updates, editing settings. (`telesrv-ctl status`, `stop`,
+`restart`, `update` and `logs` exist too, from another terminal.)
+
+**Running PostgreSQL or MinIO in Docker?** The server never starts Docker.
+If you prefer containers, start them yourself —
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml) is an example
+(`docker compose -f deploy/docker-compose.yml up -d`) — and pick "your own
+PostgreSQL" / S3 in the wizard. They must be running before the server is.
+
+**Upgrading an install from before this change?** Nothing to do for most
+setups: an `.env` that already names a PostgreSQL (`TELESRV_POSTGRES_DSN`) or
+S3 endpoint keeps using exactly those, and an old `TELESRV_EDITION=portable`
+keeps using its built-in database. What changed is that `telesrv-ctl` no
+longer starts the Docker containers: if yours were started by it, run
+`docker compose -f deploy/docker-compose.yml up -d` once (they restart with
+Docker after that) — see the note about volume names at the top of that file.
 
 <details>
 <summary><b>🔧 Prefer to do it manually? (click to expand)</b></summary>
 
-Requirements: **Go 1.25+**, and **Docker** (or Docker Desktop) if you want
-PostgreSQL/MinIO in containers instead of the portable edition's embedded
-PostgreSQL.
-
-**Start the infrastructure** (PostgreSQL + MinIO, "classic" edition only)
-
-```powershell
-docker compose -f deploy/docker-compose.yml up -d
-```
+Requirements: **Go 1.25+**.
 
 **Build and run the server**
 
@@ -192,6 +191,10 @@ go build -o bin/owpengram-server ./cmd/telesrv
 ./bin/owpengram-server
 ```
 
+Run this way nothing starts the built-in PostgreSQL for you — set
+`TELESRV_POSTGRES_MODE=external` and `TELESRV_POSTGRES_DSN` in `.env` and
+start that PostgreSQL yourself.
+
 On first start, the server creates `data/server_rsa.pem`, applies database
 migrations, seeds bundled language packs, prepares optional media resources,
 starts MTProto on `0.0.0.0:2398`, and brings up the update/media/background
@@ -203,33 +206,6 @@ Without the web wizard you also have to fill in `.env` yourself; see
 "⚙️ Configuration" below and [`.env.example`](.env.example).
 
 </details>
-
-### 🖥️ Server Panel
-
-Run `telesrv-ctl` (what the launcher from step 2 runs) with no arguments
-from a real terminal and it drops into `internal/panel`'s interactive TUI
-instead of just exiting — a Bubble Tea app, not a shell script, so it stays
-responsive while it works.
-
-What it does:
-
-- 🧙 **First-run setup** — the edition prompt from step 3 (Portable/Classic).
-  It runs once, before the menu appears; a later change goes through
-  "Change edition" in the menu instead.
-- ▶️ **Start / Stop / Restart / Update** — launches `owpengram-server` and
-  `owpengram-admin-panel` as detached background processes; closing the
-  panel does **not** stop them, only "Stop" does. Reopening the panel later
-  picks the same processes back up and reports live status. "Update" runs
-  `git pull --ff-only`, rebuilds both binaries, and relaunches them.
-- 📋 **Copy address / public key / admin password** — straight to your
-  clipboard, without ever printing the value itself to the screen; works
-  over SSH too (falls back to the terminal's own OSC 52 clipboard support).
-
-Log viewing and `.env` editing are deliberately not in this menu — run
-`telesrv-ctl logs` for a quick non-interactive tail, or use the admin web
-panel's own Services/Server Settings pages, which cover both with a real
-UI (live-following logs, grouped fields with validation) instead of a
-terminal-constrained approximation of one.
 
 ### 🏷️ Version and build
 
@@ -351,26 +327,24 @@ code — so admins can make freshly signed-up accounts look locally flavored
 ### 🪣 Media storage: local disk or S3/MinIO
 
 Uploaded media (photos, documents, stickers) can live on this machine's disk,
-or in an S3-compatible object store. `deploy/docker-compose.yml` bundles a
-self-hosted **MinIO** container, pre-wired to the defaults below, so `s3` (the
-default) works out of the box with no extra setup — point the same variables
-at AWS S3 instead if you'd rather not self-host it.
+or in an S3-compatible object store (AWS S3, or a self-hosted **MinIO** — the
+optional `deploy/docker-compose.yml` has one). It is chosen in the first-run
+wizard and can be changed later in Server Settings.
 
 | Variable | Default | Meaning |
 |---|---:|---|
-| `TELESRV_BLOB_BACKEND` | `s3` | `s3` for MinIO/AWS S3, `localfs` to write to `TELESRV_BLOB_DIR` on disk instead |
-| `TELESRV_S3_ENDPOINT` | `127.0.0.1:9000` | S3 API endpoint (MinIO's default) |
+| `TELESRV_BLOB_BACKEND` | `localfs` (`s3` when `TELESRV_S3_ENDPOINT` is set) | `s3` for MinIO/AWS S3, `localfs` to write to `TELESRV_BLOB_DIR` on disk |
+| `TELESRV_S3_ENDPOINT` | — | S3 API endpoint, `host[:port]` without `http://` (MinIO's default is `127.0.0.1:9000`) |
 | `TELESRV_S3_REGION` | `us-east-1` | S3 region |
 | `TELESRV_S3_BUCKET` | `owpengram-media` | bucket name |
-| `TELESRV_S3_ACCESS_KEY_ID` / `TELESRV_S3_SECRET_ACCESS_KEY` | `owpengram` / `owpengram123` | credentials — also what seeds MinIO's root user in `docker-compose.yml`; change both before any real use |
+| `TELESRV_S3_ACCESS_KEY_ID` / `TELESRV_S3_SECRET_ACCESS_KEY` | — | credentials (the example `docker-compose.yml` seeds MinIO with `owpengram` / `owpengram123`; change both before any real use) |
 | `TELESRV_S3_USE_SSL` | `false` | `true` for AWS S3 or a MinIO behind TLS; local MinIO runs plain HTTP |
 | `TELESRV_S3_PATH_STYLE` | `true` | required for MinIO (bucket in the URL path); leave `false` for AWS S3 |
 
 Switching backends only affects new uploads — existing files stay wherever
 they were written and remain reachable as long as that backend's settings
-stay filled in. MinIO's own web console is reachable at
-`http://localhost:9001` (`docker compose -f deploy/docker-compose.yml up -d`
-also starts it) using the same access key/secret as above.
+stay filled in. The example compose file's MinIO also serves its web console at
+`http://localhost:9001`, with the same access key/secret.
 
 Related toggles (defaults in `.env.example`'s Advanced section): a low-space
 guard that rejects new uploads once storage nears full, and automatic
@@ -516,20 +490,18 @@ you changed `TELESRV_DEV_AUTH_CODE`. Recommended checks:
 ```text
 owpengram-server.sh/.bat  one-command launcher (checks for Go, then builds+runs telesrv-ctl)
 cmd/telesrv/              server entrypoint
-cmd/telesrv-ctl/          Go-only CLI for start/stop/restart/status/logs/update/edition -- run with no
-                          arguments from a terminal for the interactive TUI (what the launcher runs)
+cmd/telesrv-ctl/          the foreground supervisor: runs the server and the admin panel (and the built-in
+                          PostgreSQL) until stopped; also status/stop/restart/update/logs
 cmd/telesrv-admin/        admin backend and embedded React web UI (incl. the setup wizard)
 cmd/telesrv-update/       one-click update helper used by the panels
-internal/panel/           the TUI itself (Bubble Tea): live dashboard, start/stop/restart/update,
-                          edition switch -- no Python involved
-deploy/                   docker-compose (incl. MinIO), migrations, deploy helpers
+deploy/                   migrations, deploy helpers, and an optional docker-compose (PostgreSQL + MinIO)
 data/                     bundled language packs and optional seed data
 internal/mtprotoedge/     MTProto transport, auth key, session, ack/resend, server-info endpoints
 internal/rpc/             TL router and client compatibility handlers
 internal/app/             domain services
 internal/domain/          protocol-independent domain models
 internal/store/           memory/postgres storage backends
-internal/embeddedpg/      embedded PostgreSQL for the portable edition (TELESRV_EDITION=portable)
+internal/embeddedpg/      the built-in PostgreSQL (TELESRV_POSTGRES_MODE=embedded), run by telesrv-ctl
 internal/identity/        admin-editable server name, description, and icon
 internal/botapi/          minimal HTTP Bot API gateway
 internal/seed/            bundled seed catalog loaders

@@ -1,17 +1,13 @@
-// Package embeddedpg wraps github.com/fergusstrange/embedded-postgres so
-// the portable edition (TELESRV_EDITION=portable, see internal/config) can
-// run without Docker at all: cmd/telesrv starts a real, natively-compiled
-// PostgreSQL server as a child of its own process (not a separate service
-// anything else has to be told how to reach), and stops it on shutdown.
+// Package embeddedpg wraps github.com/fergusstrange/embedded-postgres so a
+// server can run with a natively compiled PostgreSQL and nothing to install:
+// telesrv-ctl starts it before owpengram-server and owpengram-admin-panel
+// and stops it on exit (TELESRV_POSTGRES_MODE=embedded, see internal/config).
 //
-// This is deliberately unlike the Docker edition's Postgres, which is a
-// long-lived container both telesrv and telesrv-admin connect to as
-// ordinary clients: here, telesrv itself OWNS the server's lifecycle.
-// telesrv-admin never starts its own instance -- see
-// internal/config.Load's Edition handling, which computes the same
-// deterministic DSN (this package's DSN function) for both binaries, so
-// telesrv-admin just connects to the one telesrv already started, the same
-// way it connects to a Docker-mode Postgres it didn't start either.
+// telesrv-ctl OWNS the server's lifecycle. owpengram-server and
+// owpengram-admin-panel are ordinary clients: internal/config.Load computes
+// the same deterministic DSN (this package's DSN function) for both, so
+// neither needs to be told where it is, and a restart of either leaves the
+// database running.
 package embeddedpg
 
 import (
@@ -27,19 +23,17 @@ import (
 )
 
 const (
-	// DefaultPort avoids colliding with a Docker-mode or system Postgres
-	// that might also be listening on 5432 on the same machine.
+	// DefaultPort avoids colliding with a system PostgreSQL that might also
+	// be listening on 5432 on the same machine.
 	DefaultPort = 15433
-	// Username/Password/Database match the Docker edition's own
-	// deploy/docker-compose.yml postgres service (POSTGRES_USER/PASSWORD/DB
-	// all "owpengram") -- not a security boundary (127.0.0.1-only, no
-	// Docker involved), just consistent naming across editions.
+	// Username/Password/Database match the optional deploy/docker-compose.yml
+	// postgres service (POSTGRES_USER/PASSWORD/DB all "owpengram") -- not a
+	// security boundary (127.0.0.1-only), just consistent naming.
 	username = "owpengram"
 	password = "owpengram"
 	database = "owpengram"
-	// pgVersion is pinned to match the Docker edition's postgres:17-alpine
-	// -- see internal/config.Config.Edition's doc comment and the original
-	// plan's note on dump/restore compatibility between editions.
+	// pgVersion is pinned to match the postgres:17-alpine of the optional
+	// compose file, so a dump moves between the two without surprises.
 	pgVersion = embeddedpostgres.V17
 )
 
@@ -69,7 +63,7 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 	}
 	// A previous run's embedded server can still be alive and holding this
 	// exact port -- not from a clean Stop() (that always precedes releasing
-	// it), but from telesrv itself being killed or crashing: Postgres is a
+	// it), but from telesrv-ctl itself being killed or crashing: Postgres is a
 	// real child process of telesrv on every platform, and nothing here
 	// sets up the OS-level linkage (a Windows Job Object, a process group
 	// on Unix) that would make it die automatically alongside its parent --
@@ -90,11 +84,11 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 		Username(username).
 		Password(password).
 		Database(database).
-		// "C" rather than matching the Docker edition's musl en_US.utf8:
+		// "C" rather than the en_US.utf8 of the compose file's image:
 		// avoids depending on the host OS having that locale installed
 		// (Windows Postgres builds use a different locale-name scheme
 		// entirely) and only affects text sort order, not the data itself
-		// -- pg_dump/pg_restore between editions do not depend on this
+		// -- pg_dump/pg_restore between the two do not depend on this
 		// matching.
 		Locale("C").
 		Encoding("UTF8").
@@ -161,7 +155,7 @@ func pgCtlPath(dataDir string) string {
 // finished with it (e.g. after a pgx pool's own Close()) -- embedded
 // Postgres has no other client to hand off to once this returns. A nil
 // receiver is a no-op, so a deferred Stop() is safe even when Start never
-// ran (e.g. standard edition).
+// ran (an external PostgreSQL).
 func (s *Server) Stop() error {
 	if s == nil || s.db == nil {
 		return nil

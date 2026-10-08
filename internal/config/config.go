@@ -188,19 +188,24 @@ type Config struct {
 	// granting or dropping rights.
 	AdminScopedTokens []AdminScopedToken
 
-	// Edition 是 "standard"（默认，Postgres/MinIO 跑在 Docker，二进制裸进程运行）还是
-	// "portable"（内嵌 Postgres 由 telesrv 自己启动/停止，blob 用 localfs，完全不需要
-	// Docker）。见 internal/embeddedpg。portable 下 PostgresDSN 会被 main.go 启动内嵌
-	// Postgres 后得到的连接串覆盖，这里的默认值不生效。
-	Edition string
-	// EmbeddedPostgresDataDir 是 portable edition 下内嵌 Postgres 的数据目录（相对路径
-	// 相对当前工作目录解析，和其它 data/* 路径一致）。standard edition 下不使用。
+	// PostgresMode is "embedded" (a PostgreSQL that telesrv-ctl starts and stops
+	// itself, see internal/embeddedpg) or "external" (the server in PostgresDSN,
+	// which the operator runs). Set with TELESRV_POSTGRES_MODE; when unset it is
+	// inferred so an install made before the setting existed keeps working: the
+	// retired TELESRV_EDITION=portable means embedded, and a TELESRV_POSTGRES_DSN
+	// with no mode means external. With embedded, PostgresDSN is replaced by the
+	// connection string of that embedded server.
+	PostgresMode string
+	// EmbeddedPostgresDataDir is where the embedded PostgreSQL keeps its files
+	// (relative paths resolve against the working directory like the other
+	// data/* paths). Unused with an external PostgreSQL.
 	EmbeddedPostgresDataDir string
-	// EmbeddedPostgresPort 是 portable edition 下内嵌 Postgres 监听的本机端口，与 5432
-	// 默认值分开，避免和同机可能还在跑的 Docker/系统 Postgres 撞端口。
+	// EmbeddedPostgresPort is the local port the embedded PostgreSQL listens on,
+	// kept apart from 5432 so it does not collide with a PostgreSQL already
+	// running on the machine.
 	EmbeddedPostgresPort int
 	// PostgresDSN 是业务数据（auth_key / user / authorization 等）持久化的 PostgreSQL 连接串。
-	// 依赖由 deploy/docker-compose.yml 启动；职责划分见 docs/persistence-layer.md。
+	// Used as is only with PostgresMode "external"; 职责划分见 docs/persistence-layer.md。
 	PostgresDSN string
 	// PostgresMaxConns 是 pgxpool 最大连接数。<=0 用 pgx 默认（max(4, NumCPU)，生产偏小）。
 	// 需覆盖发送事务 + outbox worker 并发 + RPC 读，过小会在高并发下排队（表现为尾延迟突刺）。
@@ -918,6 +923,30 @@ type AIProviderConfig struct {
 	Thinking        string
 }
 
+// Values of Config.PostgresMode.
+const (
+	PostgresModeEmbedded = "embedded"
+	PostgresModeExternal = "external"
+)
+
+// ResolvePostgresMode returns mode when it is set, and otherwise infers it from
+// what an older .env carries: edition "portable" means embedded, and a DSN with
+// no mode means external. With nothing configured at all it is embedded -- the
+// choice a fresh install starts from.
+func ResolvePostgresMode(mode, legacyEdition, dsn string) string {
+	if mode = strings.ToLower(strings.TrimSpace(mode)); mode != "" {
+		return mode
+	}
+	switch {
+	case strings.EqualFold(strings.TrimSpace(legacyEdition), "portable"):
+		return PostgresModeEmbedded
+	case strings.TrimSpace(dsn) != "":
+		return PostgresModeExternal
+	default:
+		return PostgresModeEmbedded
+	}
+}
+
 // Load 从环境变量与可选配置文件读取配置并填充默认值。环境变量优先于配置文件。
 func Load() (Config, error) {
 	fileEnv, err := loadConfigEnv()
@@ -1080,7 +1109,7 @@ func Load() (Config, error) {
 		// Desktop 的端口转发只在 IPv4 监听，IPv6 连接要等 ~1s 超时才回退 IPv4（实测 localhost
 		// 建连 1.0s vs 127.0.0.1 6ms）。冷连接洪峰下池扩容的新连接各等 1s → pre-handler 惊群卡顿。
 		// 生产由 TELESRV_POSTGRES_DSN 覆盖；该默认值仅作用于本地开发。
-		Edition:                 strings.ToLower(strings.TrimSpace(envOr("TELESRV_EDITION", "standard"))),
+		PostgresMode:            strings.ToLower(strings.TrimSpace(envOr("TELESRV_POSTGRES_MODE", ""))),
 		EmbeddedPostgresDataDir: envOr("TELESRV_EMBEDDED_POSTGRES_DIR", "data/postgres"),
 		EmbeddedPostgresPort:    envIntOr("TELESRV_EMBEDDED_POSTGRES_PORT", 15433),
 		PostgresDSN:      envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable"),
@@ -1116,10 +1145,10 @@ func Load() (Config, error) {
 		SMTPTLSMode:                 strings.ToLower(strings.TrimSpace(envOr("TELESRV_SMTP_TLS", "starttls"))),
 		SMTPTimeout:                 envDurationOr("TELESRV_SMTP_TIMEOUT", 10*time.Second),
 		LangPackSeedDir:             envOr("TELESRV_LANGPACK_SEED_DIR", "data/langpack"),
-		// s3 (MinIO by default, see deploy/docker-compose.yml's minio service) is
-		// the default blob backend; localfs remains fully supported as an
-		// explicit opt-in (TELESRV_BLOB_BACKEND=localfs).
-		BlobBackendKind:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_BLOB_BACKEND", "s3"))),
+		// Left empty here: resolved below from what the operator configured, so
+		// an .env that names an S3 endpoint but not a backend (written before
+		// the setting was explicit) still means s3.
+		BlobBackendKind:                   strings.ToLower(strings.TrimSpace(envOr("TELESRV_BLOB_BACKEND", ""))),
 		BlobDir:                           envOr("TELESRV_BLOB_DIR", "data/blobs"),
 		BlobStagingDir:                    envOr("TELESRV_BLOB_STAGING_DIR", "data/blob-staging"),
 		S3Endpoint:                        envOr("TELESRV_S3_ENDPOINT", "127.0.0.1:9000"), // 同理避开 localhost→IPv6 回退延迟
@@ -1349,29 +1378,31 @@ func Load() (Config, error) {
 		LiveStreamWorkDir:     envOr("TELESRV_LIVESTREAM_WORK_DIR", ""),
 		LiveStreamSegmentKeep: envIntOr("TELESRV_LIVESTREAM_SEGMENT_KEEP", 32),
 	}
-	// portable edition: PostgresDSN always points at the embedded server
-	// cmd/telesrv starts itself (see internal/embeddedpg) -- whatever
-	// TELESRV_POSTGRES_DSN happens to be set to is ignored, the same way
-	// TELESRV_BLOB_BACKEND effectively can't be anything but localfs there
-	// (see cmd/telesrv/main.go and cmd/telesrv-admin/main.go, which force
-	// it). cmd/telesrv-admin computes the identical DSN here without ever
-	// starting its own embedded server -- there must be exactly one.
-	if cfg.Edition == "portable" {
+	// TELESRV_EDITION is retired; an .env written while it existed still
+	// carries it, and "portable" there meant the embedded PostgreSQL plus no
+	// MinIO to talk to.
+	legacyPortable := strings.EqualFold(strings.TrimSpace(envOr("TELESRV_EDITION", "")), "portable")
+	cfg.PostgresMode = ResolvePostgresMode(cfg.PostgresMode, envOr("TELESRV_EDITION", ""), envOr("TELESRV_POSTGRES_DSN", ""))
+	// With the embedded PostgreSQL the DSN is not a setting: it always points at
+	// the server telesrv-ctl starts (see internal/embeddedpg), whatever
+	// TELESRV_POSTGRES_DSN says. telesrv-admin computes the identical DSN here
+	// without ever starting a server of its own -- there must be exactly one.
+	if cfg.PostgresMode == PostgresModeEmbedded {
 		cfg.PostgresDSN = embeddedpg.DSN(cfg.EmbeddedPostgresPort)
-		// No MinIO in portable edition (no Docker at all) -- localfs is the
-		// only backend that can work, regardless of what TELESRV_BLOB_BACKEND
-		// says.
+	}
+	if cfg.BlobBackendKind == "" {
+		if strings.TrimSpace(envOr("TELESRV_S3_ENDPOINT", "")) != "" {
+			cfg.BlobBackendKind = "s3"
+		} else {
+			cfg.BlobBackendKind = "localfs"
+		}
+	}
+	if legacyPortable {
 		cfg.BlobBackendKind = "localfs"
-		// A *loopback* S3 endpoint in the portable edition can only mean the
-		// MinIO container the standard edition's compose file would have
-		// started -- which, portable meaning "no Docker at all", is by
-		// definition not running. cmd/telesrv still builds the s3 backend
-		// whenever one is configured (to keep blobs written before a backend
-		// switch readable), so leaving this set bought nothing but a
-		// dial timeout on every single start plus a warning about a backend
-		// that was never going to answer. An external endpoint (real S3, a
-		// MinIO on another host) is deliberately left alone: portable
-		// Postgres with cloud object storage is a perfectly coherent setup.
+		// A loopback S3 endpoint left in a portable .env can only be a MinIO
+		// container that is not running; cmd/telesrv builds the s3 backend
+		// whenever one is configured, so keeping it only bought a dial
+		// timeout on every start.
 		if isLoopbackHostPort(cfg.S3Endpoint) {
 			cfg.S3Endpoint = ""
 		}
@@ -1409,10 +1440,10 @@ func Load() (Config, error) {
 	if err := validateBlobStorageConfig(cfg); err != nil {
 		return Config{}, err
 	}
-	switch cfg.Edition {
-	case "standard", "portable":
+	switch cfg.PostgresMode {
+	case PostgresModeEmbedded, PostgresModeExternal:
 	default:
-		return Config{}, fmt.Errorf("TELESRV_EDITION must be \"standard\" or \"portable\", got %q", cfg.Edition)
+		return Config{}, fmt.Errorf("TELESRV_POSTGRES_MODE must be %q or %q, got %q", PostgresModeEmbedded, PostgresModeExternal, cfg.PostgresMode)
 	}
 	if err := validateAccountRatingConfig(cfg); err != nil {
 		return Config{}, err
@@ -2389,8 +2420,8 @@ func (e envSource) envDurationOr(key string, def time.Duration) time.Duration {
 
 // isLoopbackHostPort reports whether hostPort ("host", "host:port" or
 // "[ipv6]:port") names this machine's loopback interface -- used by the
-// portable edition to tell "the MinIO the standard edition's compose file
-// starts" apart from a genuinely external object store. A bare
+// legacy portable install to tell "the MinIO the old compose file
+// started" apart from a genuinely external object store. A bare
 // "localhost"/"127.x"/"::1" counts; anything unparseable or non-loopback
 // does not.
 func isLoopbackHostPort(hostPort string) bool {
