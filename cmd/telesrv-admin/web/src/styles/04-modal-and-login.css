@@ -690,3 +690,23 @@
   position: relative;
   z-index: 1;
 }
+
+/* The monkey above the login form: follows the username, covers its eyes for the password. */
+.login-monkey {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  margin: -6px auto -8px;
+}
+
+.login-monkey canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.login-monkey > div {
+  position: absolute;
+  inset: 0;
+}

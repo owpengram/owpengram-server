@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { AppBackground } from "../components/AppBackground";
+import { LoginMonkey } from "../components/LoginMonkey";
 import { Alert } from "../components/ui";
 import { ThemeSwitch } from "../theme";
 import type { AdminSession, PublicBranding } from "../types";
@@ -109,6 +110,7 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
             <ThemeSwitch />
           </div>
         </div>
+        <LoginMonkey covered={step === 1} textLength={step === 0 ? username.length : 0} />
         {error && <Alert>{error}</Alert>}
         <form className="form-stack" onSubmit={submit}>
           <div className="login-wizard">
