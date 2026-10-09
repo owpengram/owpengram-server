@@ -1,0 +1,1 @@
+import{Ja as e}from"./buttonMenu-TI9A33Ah.js";function t(t){return e({...t.length===1?{peerId:t[0],titleLangKey:`DeleteContact`,descriptionLangKey:`AreYouSureDeleteContact`}:{titleLangKey:`DeleteContactsTitle`,titleLangArgs:[t.length],descriptionLangKey:`DeleteContactsSubtitle`},button:{langKey:`Delete`,isDanger:!0}})}export{t};
