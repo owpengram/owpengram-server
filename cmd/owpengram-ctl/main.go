@@ -101,9 +101,10 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
 
-	// Print the addresses once the server is actually listening, not while it
-	// is still building and seeding.
-	onReady := func() {
+	// The admin panel comes up first (even before the first-run setup), so its
+	// address + login are printed as soon as it listens; the web client is
+	// printed separately, only once the server is actually running.
+	onAdminReady := func() {
 		fmt.Println()
 		fmt.Println("  Ready.")
 		if groups, err := m.ReadEnvGroups(); err == nil {
@@ -111,9 +112,6 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 				fmt.Printf("    Admin panel: %s\n", url)
 			} else {
 				fmt.Println("    Admin panel: (TELESRV_ADMIN_UI_ADDR is not set)")
-			}
-			if url, ok := procctl.WebClientURL(groups); ok {
-				fmt.Printf("    Web client:  %s\n", url)
 			}
 		}
 		if generatedPassword != "" {
@@ -124,7 +122,15 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 		fmt.Println("Press Ctrl+C to stop the server and the admin panel.")
 	}
 
-	if err := m.Run(ctx, logf, onReady); err != nil {
+	onServerReady := func() {
+		if groups, err := m.ReadEnvGroups(); err == nil {
+			if url, ok := procctl.WebClientURL(groups); ok {
+				fmt.Printf("\n  Web client: %s\n", url)
+			}
+		}
+	}
+
+	if err := m.Run(ctx, logf, onAdminReady, onServerReady); err != nil {
 		return err
 	}
 	fmt.Println("Stopped.")

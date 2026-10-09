@@ -9,17 +9,10 @@
 #   ./scripts/build-release.sh --version v1.4.0
 #   ./scripts/build-release.sh --skip-pgcache         skip the Postgres pre-bundle download
 #   ./scripts/build-release.sh --skip-web-build       skip npm ci && npm run build
-#   ./scripts/build-release.sh --web-client ../owpengram-web-client
-#                                                     web client checkout to build and embed
-#                                                     (default: ../owpengram-web-client)
-#   ./scripts/build-release.sh --skip-web-client      do not build the web client; embed whatever
-#                                                     is already in internal/webclient/dist
 #   ./scripts/build-release.sh --out-dir dist
 #
-# The web client (owpengram-web-client) is built once with its `embed` script
-# into internal/webclient/dist before any binary is compiled, so every
-# owpengram-server in the archives serves it at its own address. Needs Node
-# and pnpm, like the admin panel build needs npm.
+# The web client is committed to internal/webclient/dist (see internal/webclient/
+# webclient.go), so `go build` embeds it directly -- no Node build step here.
 #
 # For each target platform: cross-compiles owpengram-server, owpengram-
 # admin-panel and owpengram-ctl (CGO_ENABLED=0, so no C toolchain is needed
@@ -47,9 +40,6 @@ VERSION=dev
 OUT_DIR=dist
 SKIP_PGCACHE=0
 SKIP_WEB_BUILD=0
-WEB_CLIENT_DIR=../owpengram-web-client
-WEB_CLIENT_EXPLICIT=0
-SKIP_WEB_CLIENT=0
 ALL=0
 PLATFORMS=()
 
@@ -61,8 +51,6 @@ while [[ $# -gt 0 ]]; do
     --out-dir) [[ $# -ge 2 ]] || die "--out-dir requires a value"; OUT_DIR=$2; shift 2 ;;
     --skip-pgcache) SKIP_PGCACHE=1; shift ;;
     --skip-web-build) SKIP_WEB_BUILD=1; shift ;;
-    --web-client) [[ $# -ge 2 ]] || die "--web-client requires a value"; WEB_CLIENT_DIR=$2; WEB_CLIENT_EXPLICIT=1; shift 2 ;;
-    --skip-web-client) SKIP_WEB_CLIENT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
@@ -88,20 +76,12 @@ else
   warn "Skipping web asset build (--skip-web-build) -- the admin binary will embed whatever is already in cmd/telesrv-admin/web/dist."
 fi
 
-if [[ "$SKIP_WEB_CLIENT" -eq 1 ]]; then
-  warn "Skipping the web client (--skip-web-client) -- the binaries will embed whatever is already in internal/webclient/dist."
-elif [[ ! -f "$WEB_CLIENT_DIR/scripts/owpengram-web.mjs" ]]; then
-  # A default path that is simply not there is a warning, an explicitly
-  # requested one is a mistake worth stopping for: shipping a release without
-  # the web client by accident is what this step exists to prevent.
-  msg="Web client not found at $WEB_CLIENT_DIR -- the release will have NO web client (pass --web-client PATH, or --skip-web-client to silence this)."
-  if [[ "$WEB_CLIENT_EXPLICIT" -eq 1 ]]; then die "$msg"; else warn "$msg"; fi
-else
-  command -v node >/dev/null 2>&1 || die "Node is not on PATH -- needed to build the web client (or pass --skip-web-client)"
-  # Windows-style path under Git Bash, which node cannot resolve from /c/...
-  server_dir=$(pwd -W 2>/dev/null || pwd)
-  ok "Building the web client from $WEB_CLIENT_DIR and embedding it..."
-  (cd "$WEB_CLIENT_DIR" && node scripts/owpengram-web.mjs embed --server-dir "$server_dir") || die "web client build failed"
+# The web client is committed to internal/webclient/dist, so go:embed picks it
+# up with no build step. Warn (not fail) when it is missing, so a checkout
+# without the committed dist still produces an archive instead of dying
+# mysteriously.
+if [[ ! -f internal/webclient/dist/index.html ]]; then
+  warn "internal/webclient/dist is missing -- the release will serve NO web client (build it in owpengram-web-client and commit dist/)."
 fi
 
 mkdir -p "$OUT_DIR"

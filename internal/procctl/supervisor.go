@@ -87,12 +87,14 @@ func (m *Manager) RequestStop(timeout time.Duration) (bool, error) {
 
 // Run is the whole program: it blocks until ctx is cancelled (or a stop is
 // requested), keeping owpengram-admin-panel and owpengram-server running, and
-// stops everything on the way out. logf receives one line per event. onReady,
-// when set, is called once owpengram-server is actually listening (the last
-// thing to come up -- migrations and the one-time media seed run first), so
-// the caller can print the addresses then rather than while things are still
-// starting.
-func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any), onReady ...func()) error {
+// stops everything on the way out. logf receives one line per event.
+//
+// onAdminReady, when set, is called once owpengram-admin-panel is listening --
+// it starts even before the first-run storage setup, so this is the moment the
+// operator can open the panel and log in. onServerReady, when set, is called
+// once owpengram-server is actually listening (migrations and the one-time
+// media seed run first, and on a first run it only happens after the setup).
+func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any), onAdminReady, onServerReady func()) error {
 	st := m.loadState()
 	if st.CtlPID != os.Getpid() && pidAlive(st.CtlPID) {
 		return fmt.Errorf("owpengram-ctl is already running (pid %d) -- stop it first with `owpengram-ctl stop`", st.CtlPID)
@@ -117,14 +119,31 @@ func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Report readiness once the server is listening (the web client is served
-	// on that same listener, so one dial covers both).
-	if len(onReady) > 0 && onReady[0] != nil {
+	// Report readiness once the admin panel is listening. It starts before the
+	// server (and, on a first run, before the storage setup is finished), so
+	// this is the moment the operator can actually open the panel and log in --
+	// even when the server itself is still waiting for the first-run setup.
+	if onAdminReady != nil {
+		go func() {
+			addr := m.adminListenAddr()
+			for runCtx.Err() == nil {
+				if addr != "" && listening(addr) {
+					onAdminReady()
+					return
+				}
+				sleepCtx(runCtx, 500*time.Millisecond)
+			}
+		}()
+	}
+	// Report the web client separately: it is served by the server on its own
+	// listener, so it only becomes reachable once the server is running -- on
+	// a first run that is only after the setup is finished.
+	if onServerReady != nil {
 		go func() {
 			addr := m.serverListenAddr()
 			for runCtx.Err() == nil {
 				if addr != "" && listening(addr) {
-					onReady[0]()
+					onServerReady()
 					return
 				}
 				sleepCtx(runCtx, 500*time.Millisecond)
@@ -190,6 +209,12 @@ func (m *Manager) serverListenAddr() string {
 		addr = "0.0.0.0:2398" // config default
 	}
 	return BrowsableHostPort(addr)
+}
+
+// adminListenAddr returns TELESRV_ADMIN_UI_ADDR as a loopback dial target, or
+// "" when it is unset.
+func (m *Manager) adminListenAddr() string {
+	return BrowsableHostPort(m.EnvValue("TELESRV_ADMIN_UI_ADDR"))
 }
 
 // listening reports whether a TCP listener answers on addr (host:port).
