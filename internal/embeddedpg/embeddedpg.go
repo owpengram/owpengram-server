@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
@@ -110,9 +111,21 @@ func Start(dataDir string, port int, logger io.Writer) (*Server, error) {
 
 	db := embeddedpostgres.NewDatabase(cfg)
 	if err := db.Start(); err != nil {
-		return nil, fmt.Errorf("start embedded postgres: %w", err)
+		return nil, fmt.Errorf("start embedded postgres: %w", annotateStartError(err))
 	}
 	return &Server{db: db, dsn: DSN(port)}, nil
+}
+
+// annotateStartError appends an actionable hint when the built-in PostgreSQL
+// fails to start on Windows with STATUS_DLL_NOT_FOUND (0xc0000135): the zonky
+// PostgreSQL binaries are MSVC builds, so they need the Microsoft Visual C++
+// Redistributable that a bare Windows install often lacks. Other errors (and
+// every error on non-Windows) pass through unchanged.
+func annotateStartError(err error) error {
+	if runtime.GOOS != "windows" || err == nil || !strings.Contains(err.Error(), "0xc0000135") {
+		return err
+	}
+	return fmt.Errorf("%w\n\n    the built-in PostgreSQL needs the Microsoft Visual C++ Redistributable\n    (2015-2022, x64) -- install vc_redist.x64.exe from\n    https://aka.ms/vs/17/release/vc_redist.x64.exe and start again", err)
 }
 
 // DSN is this running server's connection string.

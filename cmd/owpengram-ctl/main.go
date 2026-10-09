@@ -92,6 +92,12 @@ Commands:
 }
 
 func cmdRun(ctx context.Context, m *procctl.Manager) error {
+	// Capture the first-run state BEFORE BootstrapEnv writes .env, so the
+	// printed flow knows whether this is a fresh install (the server waits for
+	// the setup wizard) or an already-configured one (everything comes up at
+	// once).
+	firstRun := !m.StorageConfigured()
+
 	generatedPassword, err := m.BootstrapEnv()
 	if err != nil {
 		return fmt.Errorf("bootstrap .env: %w", err)
@@ -101,10 +107,10 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
 
-	// The admin panel comes up first (even before the first-run setup), so its
-	// address + login are printed as soon as it listens; the web client is
-	// printed separately, only once the server is actually running.
-	onAdminReady := func() {
+	// printSummary prints the "Ready." block. On a fresh install the web client
+	// is announced separately (it only becomes reachable after the setup), so
+	// showWebClient is false for the panel-first announcement.
+	printSummary := func(showWebClient bool) {
 		fmt.Println()
 		fmt.Println("  Ready.")
 		if groups, err := m.ReadEnvGroups(); err == nil {
@@ -112,6 +118,11 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 				fmt.Printf("    Admin panel: %s\n", url)
 			} else {
 				fmt.Println("    Admin panel: (TELESRV_ADMIN_UI_ADDR is not set)")
+			}
+			if showWebClient {
+				if url, ok := procctl.WebClientURL(groups); ok {
+					fmt.Printf("    Web client:  %s\n", url)
+				}
 			}
 		}
 		if generatedPassword != "" {
@@ -122,11 +133,26 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 		fmt.Println("Press Ctrl+C to stop the server and the admin panel.")
 	}
 
+	// Fresh install: announce the panel as soon as it listens so the operator
+	// can run the setup; the server (and web client) come only after that.
+	// Configured install: print everything together once the server is up.
+	onAdminReady := func() {
+		if firstRun {
+			printSummary(false)
+		}
+	}
+
 	onServerReady := func() {
-		if groups, err := m.ReadEnvGroups(); err == nil {
-			if url, ok := procctl.WebClientURL(groups); ok {
-				fmt.Printf("\n  Web client: %s\n", url)
+		if firstRun {
+			// The web client just became reachable; the panel was already
+			// announced above.
+			if groups, err := m.ReadEnvGroups(); err == nil {
+				if url, ok := procctl.WebClientURL(groups); ok {
+					fmt.Printf("\n  Web client: %s\n", url)
+				}
 			}
+		} else {
+			printSummary(true)
 		}
 	}
 
