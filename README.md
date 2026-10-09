@@ -146,6 +146,14 @@ Its first step is where the server keeps its data:
 - **Media** (photos, files, stickers) — **local disk** (a folder) or
   **S3-compatible storage** (AWS S3, MinIO, …: endpoint, bucket, keys).
 
+> **Windows only — built-in PostgreSQL.** On Windows the built-in PostgreSQL is
+> a native MSVC build, so the machine needs the **Microsoft Visual C++
+> Redistributable (2015–2022, x64)**: install `vc_redist.x64.exe` from
+> https://aka.ms/vs/17/release/vc_redist.x64.exe . Without it the server logs the
+> PostgreSQL start failing with `exit status 0xc0000135` (a missing DLL). This
+> applies only to the built-in/local PostgreSQL; using your own PostgreSQL — or
+> running on Linux/macOS — needs nothing extra.
+
 What you enter is checked before it is saved — the database must answer, the
 folder must be writable, the bucket must exist. Then the server starts, and
 the wizard continues with the server name, description and icon, the public

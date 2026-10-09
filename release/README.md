@@ -29,6 +29,14 @@ first thing it asks is where to keep data:
 - **Media** -- local disk (a folder) or S3-compatible storage (AWS S3,
   MinIO, ...).
 
+**Windows only -- built-in PostgreSQL.** The built-in PostgreSQL is a native
+MSVC build, so Windows needs the **Microsoft Visual C++ Redistributable
+(2015-2022, x64)**: install `vc_redist.x64.exe` from
+https://aka.ms/vs/17/release/vc_redist.x64.exe . Without it the PostgreSQL
+start fails with `exit status 0xc0000135` (a missing DLL). Only the
+built-in/local PostgreSQL needs this; your own PostgreSQL, or Linux/macOS,
+needs nothing extra.
+
 Everything is checked before it is saved, then the server starts. After that
 come the server's name, network address, bot API and your own admin account.
 
