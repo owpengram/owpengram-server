@@ -3,6 +3,7 @@ package procctl
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,8 +87,12 @@ func (m *Manager) RequestStop(timeout time.Duration) (bool, error) {
 
 // Run is the whole program: it blocks until ctx is cancelled (or a stop is
 // requested), keeping owpengram-admin-panel and owpengram-server running, and
-// stops everything on the way out. logf receives one line per event.
-func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any)) error {
+// stops everything on the way out. logf receives one line per event. onReady,
+// when set, is called once owpengram-server is actually listening (the last
+// thing to come up -- migrations and the one-time media seed run first), so
+// the caller can print the addresses then rather than while things are still
+// starting.
+func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any), onReady ...func()) error {
 	st := m.loadState()
 	if st.CtlPID != os.Getpid() && pidAlive(st.CtlPID) {
 		return fmt.Errorf("owpengram-ctl is already running (pid %d) -- stop it first with `owpengram-ctl stop`", st.CtlPID)
@@ -104,14 +109,28 @@ func (m *Manager) Run(ctx context.Context, logf func(format string, args ...any)
 	m.updateState(func(s *State) { s.CtlPID, s.ServerPID, s.AdminPID = os.Getpid(), 0, 0 })
 	defer m.updateState(func(s *State) { s.CtlPID, s.ServerPID, s.AdminPID = 0, 0, 0 })
 
+	logf("building owpengram-server and owpengram-admin-panel...")
 	if log, err := m.buildBoth(ctx); err != nil {
 		return fmt.Errorf("build failed: %w\n%s", err, log)
-	} else if log != "" {
-		logf("%s", trimNL(log))
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// Report readiness once the server is listening (the web client is served
+	// on that same listener, so one dial covers both).
+	if len(onReady) > 0 && onReady[0] != nil {
+		go func() {
+			addr := m.serverListenAddr()
+			for runCtx.Err() == nil {
+				if addr != "" && listening(addr) {
+					onReady[0]()
+					return
+				}
+				sleepCtx(runCtx, 500*time.Millisecond)
+			}
+		}()
+	}
 
 	pg := &postgresOwner{m: m, logf: logf}
 	defer pg.stop()
@@ -162,11 +181,25 @@ loop:
 	return nil
 }
 
-func trimNL(s string) string {
-	for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
-		s = s[:len(s)-1]
+// serverListenAddr returns TELESRV_LISTEN (the listener that carries MTProto
+// and, on its HTTP side, the embedded web client) as a loopback dial target,
+// or "" when it cannot be determined.
+func (m *Manager) serverListenAddr() string {
+	addr := m.EnvValue("TELESRV_LISTEN")
+	if addr == "" {
+		addr = "0.0.0.0:2398" // config default
 	}
-	return s
+	return BrowsableHostPort(addr)
+}
+
+// listening reports whether a TCP listener answers on addr (host:port).
+func listening(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // service is one child the supervisor keeps running.

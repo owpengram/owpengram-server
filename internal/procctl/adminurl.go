@@ -73,3 +73,20 @@ func EnvGroupValue(groups []EnvGroup, key string) string {
 	}
 	return ""
 }
+
+// WebClientURL returns the address the embedded web client is served at, when
+// it is enabled (TELESRV_WEB_CLIENT_ENABLE, default on). The server serves it
+// on the same listener as MTProto (TELESRV_LISTEN) through the same-port mux,
+// so this is that listener made browsable. ok is false when the client is
+// disabled or the listen address is unset.
+func WebClientURL(groups []EnvGroup) (url string, ok bool) {
+	if v := strings.TrimSpace(EnvGroupValue(groups, "TELESRV_WEB_CLIENT_ENABLE")); v != "" &&
+		(strings.EqualFold(v, "false") || v == "0") {
+		return "", false
+	}
+	addr := EnvGroupValue(groups, "TELESRV_LISTEN")
+	if addr == "" {
+		return "", false
+	}
+	return "http://" + BrowsableHostPort(addr), true
+}

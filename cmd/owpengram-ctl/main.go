@@ -97,23 +97,34 @@ func cmdRun(ctx context.Context, m *procctl.Manager) error {
 		return fmt.Errorf("bootstrap .env: %w", err)
 	}
 
-	if groups, err := m.ReadEnvGroups(); err == nil {
-		if url, ok := procctl.AdminUIURL(groups); ok {
-			fmt.Printf("Admin panel: %s\n", url)
-			if generatedPassword != "" {
-				fmt.Printf("Login: %s\n", procctl.AdminBreakGlassUsername)
-				fmt.Printf("Initial admin password: %s\n", generatedPassword)
-			}
-		} else {
-			fmt.Println("[WARN] TELESRV_ADMIN_UI_ADDR is not set -- can't show the admin panel address.")
-		}
-	}
-	fmt.Println("Press Ctrl+C to stop the server and the admin panel.")
-
 	logf := func(format string, args ...any) {
 		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 	}
-	if err := m.Run(ctx, logf); err != nil {
+
+	// Print the addresses once the server is actually listening, not while it
+	// is still building and seeding.
+	onReady := func() {
+		fmt.Println()
+		fmt.Println("  Ready.")
+		if groups, err := m.ReadEnvGroups(); err == nil {
+			if url, ok := procctl.AdminUIURL(groups); ok {
+				fmt.Printf("    Admin panel: %s\n", url)
+			} else {
+				fmt.Println("    Admin panel: (TELESRV_ADMIN_UI_ADDR is not set)")
+			}
+			if url, ok := procctl.WebClientURL(groups); ok {
+				fmt.Printf("    Web client:  %s\n", url)
+			}
+		}
+		if generatedPassword != "" {
+			fmt.Printf("\n    Login: %s\n", procctl.AdminBreakGlassUsername)
+			fmt.Printf("    Initial admin password: %s\n", generatedPassword)
+		}
+		fmt.Println()
+		fmt.Println("Press Ctrl+C to stop the server and the admin panel.")
+	}
+
+	if err := m.Run(ctx, logf, onReady); err != nil {
 		return err
 	}
 	fmt.Println("Stopped.")
