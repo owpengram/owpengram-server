@@ -242,6 +242,14 @@ func (s *Service) materializeCatalogWrite(ctx context.Context, write *domain.Sta
 		SHA256:      append([]byte(nil), write.Animation.SHA256...),
 		MimeType:    "application/x-tgsticker",
 	}
+	thumb, thumbBlob, ok, err := s.documentRasterThumb(ctx, documentID, animationLottieJSON(write.Animation))
+	if err != nil {
+		return err
+	}
+	if ok {
+		write.Document.Thumbs = []domain.PhotoSize{thumb}
+		write.ThumbBlob = thumbBlob
+	}
 	return nil
 }
 
@@ -404,6 +412,14 @@ func (s *Service) materializeCollectibleAttributes(ctx context.Context, attribut
 			LocationKey: fmt.Sprintf("doc:%d", documentID), Backend: domain.MediaBackend(s.blobs.Name()),
 			ObjectKey: objectKey, Size: int64(len(animation.TGS)),
 			SHA256: append([]byte(nil), animation.SHA256...), MimeType: "application/x-tgsticker",
+		}
+		thumb, thumbBlob, ok, err := s.documentRasterThumb(ctx, documentID, animationLottieJSON(*animation))
+		if err != nil {
+			return err
+		}
+		if ok {
+			attributes[i].Document.Thumbs = append(attributes[i].Document.Thumbs, thumb)
+			attributes[i].ThumbBlob = thumbBlob
 		}
 	}
 	return nil

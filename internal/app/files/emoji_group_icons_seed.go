@@ -46,7 +46,8 @@ func (s *Service) seedEmojiGroupIcons(ctx context.Context, stats *SeedStats) err
 		if err != nil {
 			return err
 		}
-		if found && existing.ID != 0 {
+		// Shadows made before they copied the source's raster thumb get it now.
+		if found && existing.ID != 0 && photoSizesHaveRaster(existing.Thumbs) {
 			continue
 		}
 		src, found, err := s.media.GetDocument(ctx, spec.SourceDocID)
@@ -82,6 +83,26 @@ func (s *Service) seedEmojiGroupIcons(ctx context.Context, stats *SeedStats) err
 			Size:       src.Size,
 			DCID:       src.DCID,
 			Attributes: attrs,
+			// The raster thumb is what clients draw a frozen custom emoji from.
+			Thumbs: append([]domain.PhotoSize(nil), src.Thumbs...),
+		}
+		for _, thumb := range doc.Thumbs {
+			if thumb.Kind != domain.PhotoSizeKindDefault || thumb.Type == "" {
+				continue // cached thumbs get their blob from ensureSeedCachedThumbBlobs
+			}
+			thumbBlob, found, err := s.media.GetFileBlob(ctx, fmt.Sprintf("doc:%d:%s", spec.SourceDocID, thumb.Type))
+			if err != nil {
+				return err
+			}
+			if found {
+				thumbBlob.LocationKey = fmt.Sprintf("doc:%d:%s", spec.NewID, thumb.Type)
+				if err := s.media.PutFileBlob(ctx, thumbBlob); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.ensureSeedCachedThumbBlobs(ctx, doc, stats); err != nil {
+			return err
 		}
 		if err := s.media.PutDocument(ctx, doc); err != nil {
 			return err

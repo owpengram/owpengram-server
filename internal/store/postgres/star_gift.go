@@ -42,6 +42,30 @@ JOIN star_gift_catalog_revisions r ON r.id = c.active_revision_id
 LEFT JOIN star_gift_collectible_revisions cr ON cr.id = c.collectible_revision_id AND cr.status = 'published'
 JOIN documents d ON d.id = r.document_id`
 
+// StarGiftDocumentIDs lists every document a gift owns: each catalog
+// revision's sticker and each collectible model's and pattern's.
+func (s *StarGiftStore) StarGiftDocumentIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.Query(ctx, `
+SELECT document_id FROM star_gift_catalog_revisions
+UNION SELECT document_id FROM star_gift_collectible_models
+UNION SELECT document_id FROM star_gift_collectible_patterns`)
+	if err != nil {
+		return nil, fmt.Errorf("list star gift documents: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan star gift document: %w", err)
+		}
+		if id != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
+}
+
 func (s *StarGiftStore) Catalog(ctx context.Context) ([]domain.StarGift, error) {
 	rows, err := s.db.Query(ctx, starGiftCatalogSelect+`
 WHERE c.enabled
@@ -248,6 +272,11 @@ WHERE gift_id = $1`, giftID).Scan(&revision); err != nil {
 		}
 		if err := media.PutFileBlob(ctx, write.Blob); err != nil {
 			return fmt.Errorf("put star gift blob: %w", err)
+		}
+		if write.ThumbBlob != nil {
+			if err := media.PutFileBlob(ctx, *write.ThumbBlob); err != nil {
+				return fmt.Errorf("put star gift thumb blob: %w", err)
+			}
 		}
 		if _, err := tx.Exec(ctx, `
 INSERT INTO star_gift_catalog_revisions (

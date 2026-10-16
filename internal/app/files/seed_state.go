@@ -16,12 +16,15 @@ import (
 
 const (
 	seedEffectsStateKey        = "files.effects"
-	seedEffectsStateVersion    = "effects-v2"
+	// v3 picks up the rendered "m" thumbs added next to .tgs files whose export
+	// listed no raster thumb (see seedRasterFallbackThumb).
+	seedEffectsStateVersion    = "effects-v3-raster-thumbs"
 	seedStickerPreviewStateKey = "files.sticker_previews"
 	// v2 explicitly rebuilds sticker documents written before duplicate seed imports
 	// became monotonic. Those databases may contain an effects-generated transparent
 	// 1x1 preview where the sticker catalog has a real static thumbnail.
-	seedStickerPreviewStateVersion = "sticker-previews-v2-monotonic"
+	// v3: see seedEffectsStateVersion.
+	seedStickerPreviewStateVersion = "sticker-previews-v3-raster-thumbs"
 	seedAppearanceStateKey         = "files.appearance"
 	seedAppearanceStateVersion     = "appearance-v1"
 )

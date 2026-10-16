@@ -1,10 +1,14 @@
 package files
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -166,36 +170,51 @@ func (s *Service) seedReactions(ctx context.Context, root string, stats *SeedSta
 			Premium:  rj.Premium,
 			Order:    i,
 		}
-		set := func(dst *int64, d *seedDocumentJSON) error {
+		set := func(dst *int64, d *seedDocumentJSON, fallbackThumb []byte) error {
 			if d == nil || d.ID == 0 {
 				return nil
 			}
-			doc, err := s.importDocument(ctx, *d, reactionsDir, index, stats)
+			doc, err := s.importDocument(ctx, *d, reactionsDir, index, stats, fallbackThumb)
 			if err != nil {
 				return err
 			}
 			*dst = doc.ID
 			return nil
 		}
-		if err := set(&ar.StaticIconID, rj.StaticIcon); err != nil {
+		if err := set(&ar.StaticIconID, rj.StaticIcon, nil); err != nil {
 			return err
 		}
-		if err := set(&ar.AppearAnimationID, rj.AppearAnimation); err != nil {
+		// telegram_reactions_export's raw JSON never carries thumbs for any of
+		// these .tgs animations -- see withSeedTGSImageSize's doc comment for
+		// the client-visible symptom that leaves (a reaction's settled badge
+		// freezing on an empty raster, since there's no real thumb to freeze
+		// to). The reaction's own static_icon, imported just above, is a real
+		// raster of the same reaction already sitting on disk -- give every
+		// animation in this entry that as its cached thumb instead of none.
+		var staticIconThumb []byte
+		if rj.StaticIcon != nil {
+			if path, ok := index.main[rj.StaticIcon.ID]; ok {
+				if data, err := os.ReadFile(path); err == nil {
+					staticIconThumb = data
+				}
+			}
+		}
+		if err := set(&ar.AppearAnimationID, rj.AppearAnimation, staticIconThumb); err != nil {
 			return err
 		}
-		if err := set(&ar.SelectAnimationID, rj.SelectAnimation); err != nil {
+		if err := set(&ar.SelectAnimationID, rj.SelectAnimation, staticIconThumb); err != nil {
 			return err
 		}
-		if err := set(&ar.ActivateAnimationID, rj.ActivateAnimation); err != nil {
+		if err := set(&ar.ActivateAnimationID, rj.ActivateAnimation, staticIconThumb); err != nil {
 			return err
 		}
-		if err := set(&ar.EffectAnimationID, rj.EffectAnimation); err != nil {
+		if err := set(&ar.EffectAnimationID, rj.EffectAnimation, staticIconThumb); err != nil {
 			return err
 		}
-		if err := set(&ar.AroundAnimationID, rj.AroundAnimation); err != nil {
+		if err := set(&ar.AroundAnimationID, rj.AroundAnimation, staticIconThumb); err != nil {
 			return err
 		}
-		if err := set(&ar.CenterIconID, rj.CenterIcon); err != nil {
+		if err := set(&ar.CenterIconID, rj.CenterIcon, staticIconThumb); err != nil {
 			return err
 		}
 		if err := s.media.PutAvailableReaction(ctx, ar); err != nil {
@@ -227,6 +246,17 @@ func (s *Service) availableReactionSeedNeedsRepair(ctx context.Context) (bool, e
 	}
 	if stale, err := s.documentsNeedInlineCachedThumbs(ctx, docIDs); err != nil || stale {
 		return stale, err
+	}
+	// Every reaction animation gets its static_icon as a raster thumb, so a
+	// .tgs without one was seeded before that existed.
+	docs, err := s.media.GetDocuments(ctx, docIDs)
+	if err != nil {
+		return false, err
+	}
+	for _, doc := range docs {
+		if doc.MimeType == stickerMaterialMimeTGS && !photoSizesHaveRaster(doc.Thumbs) {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -342,7 +372,7 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 	docIDs := make([]int64, 0, len(info.Result.Documents))
 	docs := make([]domain.Document, 0, len(info.Result.Documents))
 	for _, dj := range info.Result.Documents {
-		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats)
+		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats, nil)
 		if err != nil {
 			return err
 		}
@@ -388,7 +418,11 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 
 // ---- 单个 document 导入 ----
 
-func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, stats *SeedStats) (domain.Document, error) {
+// fallbackThumb is a raster image (e.g. a reaction's own static_icon webp) to
+// use as this document's "m" thumb when the source JSON lists no raster thumb
+// and none was rendered next to the file -- see seedRasterFallbackThumb. Pass
+// nil when there is no such substitute.
+func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, stats *SeedStats, fallbackThumb []byte) (domain.Document, error) {
 	if dj.ID == 0 {
 		return domain.Document{}, nil
 	}
@@ -405,7 +439,7 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 		MimeType:      dj.MimeType,
 		Size:          dj.Size,
 		DCID:          s.dc,
-		Attributes:    seedDocumentAttributes(dj.Attributes),
+		Attributes:    withSeedStickerAttribute(dj.MimeType, seedDocumentAttributes(dj.Attributes)),
 	}
 
 	// 主体 blob：doc:<document-id>
@@ -414,6 +448,7 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 		if err != nil {
 			return domain.Document{}, err
 		}
+		doc.Attributes = withSeedTGSImageSize(doc.MimeType, doc.Attributes, data)
 		objectKey, err := s.blobs.Put(ctx, data)
 		if err != nil {
 			return domain.Document{}, err
@@ -483,6 +518,24 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	doc.Thumbs = thumbs
 	if data, ok := seedBundledDocumentPreview(doc.ID); ok {
 		doc.Thumbs = appendSeedBundledDocumentPreview(doc.Thumbs, data)
+	} else if !photoSizesHaveRaster(thumbs) {
+		// The source JSON listed no raster thumb. Use one rendered next to the
+		// file (<id>_thumbN_PhotoSize_typem_*.jpg), else the caller's fallback.
+		data := fallbackThumb
+		if path, ok := index.thumb[dj.ID][seedBundledDocumentThumbType]; ok {
+			if data, err = os.ReadFile(path); err != nil {
+				return domain.Document{}, err
+			}
+		}
+		if len(data) > 0 {
+			ps, ok, err := s.seedRasterFallbackThumb(ctx, doc.ID, data, stats)
+			if err != nil {
+				return domain.Document{}, err
+			}
+			if ok {
+				doc.Thumbs = append(doc.Thumbs, ps)
+			}
+		}
 	}
 	if existingFound {
 		doc.Thumbs = mergeSeedDocumentThumbs(existing.Thumbs, doc.Thumbs)
@@ -706,6 +759,162 @@ func seedDocumentAttributes(attrs []seedAttrJSON) []domain.DocumentAttribute {
 	return out
 }
 
+// withSeedStickerAttribute adds a bare documentAttributeSticker to a .tgs
+// document whose seed export forgot one -- telegram_reactions_export's
+// available_reactions_raw.json carries only DocumentAttributeAnimated for
+// every appear/select/activate/effect/around animation (438 documents, all
+// of them), never the Sticker attribute a real .tgs export always has. That
+// would be harmless on its own (convert_media.go's tgDocumentAttributes
+// already treats DocumentAttributeAnimated as implied by the .tgs mime type
+// and drops it on the wire), except it is the ONLY attribute these documents
+// carry -- so what actually reaches a client is zero attributes on an
+// application/x-tgsticker document. Every real client (tdesktop, tweb,
+// Telegram Android) only renders a .tgs as an animated sticker when it finds
+// documentAttributeSticker (or a literal "AnimatedSticker.tgs" file name,
+// which this export doesn't set either) among the document's attributes --
+// see tweb's appDocsManager.ts, the StickerType.Lottie branch. Without it
+// the document is just an unrecognized file: wrapSticker never gets a
+// player to hand back, and the reaction picker's own code assumes one,
+// throwing when it tries to attach a hover listener to whatever it got
+// instead -- the reported "reactions/gifts render as broken files, and
+// something flies into the corner of the screen" bug.
+//
+// Mask/Alt/StickerSetID are left zero: these reaction animations are not
+// members of any sticker set and have no short-name alt text in the source
+// export, and a bare attribute is all the client actually checks for.
+func withSeedStickerAttribute(mimeType string, attrs []domain.DocumentAttribute) []domain.DocumentAttribute {
+	if mimeType != stickerMaterialMimeTGS {
+		return attrs
+	}
+	for _, a := range attrs {
+		if a.Kind == domain.DocAttrSticker {
+			return attrs
+		}
+	}
+	return append(attrs, domain.DocumentAttribute{Kind: domain.DocAttrSticker})
+}
+
+// withSeedTGSImageSize adds a DocumentAttributeImageSize to a .tgs document
+// that is missing one, read from the Lottie animation's own "w"/"h" fields
+// (a .tgs file is a gzipped Lottie JSON; every real export carries its
+// intrinsic size there, same as every working sticker-set document already
+// has via DocumentAttributeImageSize -- telegram_reactions_export's raw
+// JSON just never copied it into the document's attributes list). Without
+// it a client has no declared canvas size to work from before the file is
+// actually decoded, which is what made a reaction's one-shot "fly" effect
+// and its settled badge -- both playing the same center_icon document at
+// once -- size and cache their decoded frames independently and race:
+// one's cleanup closed an ImageBitmap the other was still mid-draw with
+// ("the image source is detached"). Best-effort: a read/parse failure
+// leaves attrs untouched rather than failing the whole seed import over a
+// cosmetic sizing hint.
+func withSeedTGSImageSize(mimeType string, attrs []domain.DocumentAttribute, data []byte) []domain.DocumentAttribute {
+	if mimeType != stickerMaterialMimeTGS {
+		return attrs
+	}
+	for _, a := range attrs {
+		if a.Kind == domain.DocAttrImageSize {
+			return attrs
+		}
+	}
+	w, h, ok := tgsIntrinsicSize(data)
+	if !ok {
+		return attrs
+	}
+	return append(attrs, domain.DocumentAttribute{Kind: domain.DocAttrImageSize, W: w, H: h})
+}
+
+// tgsIntrinsicSize gunzips a .tgs file and reads the Lottie animation's own
+// "w"/"h" (its composition's declared width/height in Lottie's abstract
+// units, which is what every Telegram client treats as the sticker's pixel
+// size). Returns ok=false on anything that doesn't look like a valid,
+// positively-sized .tgs rather than erroring -- this only ever feeds an
+// optional sizing hint.
+func tgsIntrinsicSize(data []byte) (w, h int, ok bool) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0, false
+	}
+	defer gz.Close()
+	raw, err := io.ReadAll(io.LimitReader(gz, 1<<20))
+	if err != nil {
+		return 0, 0, false
+	}
+	var parsed struct {
+		W int `json:"w"`
+		H int `json:"h"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.W <= 0 || parsed.H <= 0 {
+		return 0, 0, false
+	}
+	return parsed.W, parsed.H, true
+}
+
+// seedRasterFallbackThumb turns a raster image that the source JSON did not
+// list (see importDocument's fallbackThumb) into the document's "m" thumb,
+// stored the same way as an exported one: inline PhotoCachedSize (written to
+// doc:<id>:m by ensureSeedCachedThumbBlobs, advertised as a downloadable
+// photoSize on the wire), or a plain PhotoSize blob when it is too big to
+// inline.
+//
+// Every real Telegram .tgs document has such a raster thumb, and clients
+// rely on it whenever they show the sticker frozen: tweb's wrapSticker with
+// static set (a reaction's settled badge, a pinned gift, an emoji pattern)
+// picks it with choosePhotoSize, and without one downloads the .tgs itself
+// into an <img> -- the decompressed Lottie JSON, i.e. a broken image.
+//
+// ok is false when data is not an image this server can size; the document
+// then keeps no raster thumb rather than failing the whole seed.
+func (s *Service) seedRasterFallbackThumb(ctx context.Context, docID int64, data []byte, stats *SeedStats) (domain.PhotoSize, bool, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return domain.PhotoSize{}, false, nil
+	}
+	ps := domain.PhotoSize{Kind: domain.PhotoSizeKindDefault, Type: seedBundledDocumentThumbType, W: cfg.Width, H: cfg.Height, Size: len(data)}
+	if ps = seedInlineCachedDocumentThumb(ps, data); ps.Kind == domain.PhotoSizeKindCached {
+		return ps, true, nil
+	}
+	objectKey, err := s.blobs.Put(ctx, data)
+	if err != nil {
+		return domain.PhotoSize{}, false, err
+	}
+	if err := s.media.PutFileBlob(ctx, domain.FileBlob{
+		LocationKey: fmt.Sprintf("doc:%d:%s", docID, ps.Type),
+		Backend:     domain.MediaBackend(s.blobs.Name()),
+		ObjectKey:   objectKey,
+		Size:        int64(len(data)),
+		MimeType:    seedThumbMimeType(data),
+	}); err != nil {
+		return domain.PhotoSize{}, false, err
+	}
+	s.prewarmSmallBlob(objectKey, data)
+	stats.Blobs++
+	return ps, true, nil
+}
+
+func documentHasImageSize(doc domain.Document) bool {
+	for _, a := range doc.Attributes {
+		if a.Kind == domain.DocAttrImageSize {
+			return true
+		}
+	}
+	return false
+}
+
+// photoSizesHaveRaster reports whether thumbs include a sized raster preview
+// a client can download (a PhotoPathSize outline does not count).
+func photoSizesHaveRaster(thumbs []domain.PhotoSize) bool {
+	for _, t := range thumbs {
+		if t.W <= 0 || t.H <= 0 {
+			continue
+		}
+		if (t.Kind == domain.PhotoSizeKindCached && len(t.Bytes) > 0) || (t.Kind == domain.PhotoSizeKindDefault && t.Size > 0) {
+			return true
+		}
+	}
+	return false
+}
+
 func seedStickerSetPhotoSizes(thumbs []seedThumbJSON) []domain.PhotoSize {
 	out := make([]domain.PhotoSize, 0, len(thumbs))
 	for _, t := range thumbs {
@@ -923,6 +1132,16 @@ func (s *Service) documentsNeedSeedRepair(ctx context.Context, ids []int64) (boo
 		return false, err
 	}
 	for _, doc := range docs {
+		// A .tgs document with no documentAttributeSticker was seeded before
+		// withSeedStickerAttribute existed -- see that function's doc comment
+		// for why a bare DocumentAttributeAnimated alone (the only thing
+		// telegram_reactions_export's raw JSON carries) leaves every client
+		// unable to recognize these as animated stickers at all. Re-seeding
+		// recomputes doc.Attributes through withSeedStickerAttribute, which
+		// is what actually repairs it.
+		if doc.MimeType == stickerMaterialMimeTGS && (!doc.IsSticker() || !documentHasImageSize(doc)) {
+			return true, nil
+		}
 		for _, thumb := range doc.Thumbs {
 			if thumb.Kind == domain.PhotoSizeKindDefault && thumb.Size > 0 && thumb.Size <= seedInlineCachedDocumentThumbMaxBytes {
 				return true, nil

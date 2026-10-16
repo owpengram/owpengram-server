@@ -163,6 +163,9 @@ type StarGiftCollectibleAttribute struct {
 	SortOrder             int
 	Animation             *StarGiftAnimation
 	Blob                  *FileBlob
+	// ThumbBlob is the Document's raster "m" thumb (see stargifts'
+	// documentRasterThumb); nil when none could be rendered.
+	ThumbBlob *FileBlob
 }
 
 // StarGiftCollectibleRevision 是某普通礼物的一份不可变、可发布属性池。
@@ -886,6 +889,7 @@ type StarGiftCatalogWrite struct {
 	SortOrder            int
 	Document             Document
 	Blob                 FileBlob
+	ThumbBlob            *FileBlob // the Document's raster "m" thumb, when one was rendered
 	Animation            StarGiftAnimation
 	Actor                string
 	CommandID            string

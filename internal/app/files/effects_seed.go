@@ -71,7 +71,7 @@ func (s *Service) seedEffects(ctx context.Context, root string, stats *SeedStats
 
 	// 多个 effect 常共享同一文档(static icon 尤甚):每个唯一源文档只导一次。
 	for _, dj := range requiredDocs {
-		if _, err := s.importDocument(ctx, dj, docsDir, index, stats); err != nil {
+		if _, err := s.importDocument(ctx, dj, docsDir, index, stats, nil); err != nil {
 			return err
 		}
 	}

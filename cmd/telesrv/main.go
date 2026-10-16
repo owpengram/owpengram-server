@@ -1533,6 +1533,15 @@ func run(logger *zap.Logger) error {
 		stargiftsapp.WithUpgradeStore(starGiftUpgradeStore),
 		stargiftsapp.WithLifecycleStore(starGiftLifecycleStore),
 	)
+	// Gifts imported before their documents got a raster thumb render as a
+	// broken image wherever a client shows them frozen (a pinned gift).
+	if ids, err := starGiftStore.StarGiftDocumentIDs(ctx); err != nil {
+		logger.Warn("list star gift documents for thumb repair failed", zap.Error(err))
+	} else if repaired, err := starGiftsService.RepairDocumentThumbs(ctx, ids, mediaStore); err != nil {
+		logger.Warn("star gift document thumb repair failed", zap.Int("repaired", repaired), zap.Error(err))
+	} else if repaired > 0 {
+		logger.Info("star gift document thumbs repaired", zap.Int("documents", repaired))
+	}
 	// The gift-pack shelf holds uploaded archives only: nothing it stores is
 	// in the catalog until an operator imports from it.
 	giftPackLibrary := giftpack.NewLibrary(postgres.NewGiftPackStore(pool), starGiftsService)

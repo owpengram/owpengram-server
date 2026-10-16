@@ -870,6 +870,10 @@ func cloneCollectibleAttribute(in domain.StarGiftCollectibleAttribute) domain.St
 		blob := *in.Blob
 		out.Blob = &blob
 	}
+	if in.ThumbBlob != nil {
+		blob := *in.ThumbBlob
+		out.ThumbBlob = &blob
+	}
 	return out
 }
 

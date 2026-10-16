@@ -95,6 +95,11 @@ RETURNING id`, write.GiftID, revision, write.UpgradeStars, write.SupplyTotal, wr
 				if err := media.PutFileBlob(ctx, *attribute.Blob); err != nil {
 					return fmt.Errorf("put collectible %s blob: %w", attribute.Kind, err)
 				}
+				if attribute.ThumbBlob != nil {
+					if err := media.PutFileBlob(ctx, *attribute.ThumbBlob); err != nil {
+						return fmt.Errorf("put collectible %s thumb blob: %w", attribute.Kind, err)
+					}
+				}
 				animation := attribute.Animation
 				var query string
 				if models {
