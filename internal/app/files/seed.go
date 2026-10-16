@@ -67,10 +67,15 @@ func (s *Service) SeedMedia(ctx context.Context, root string, maxRegularSets int
 		}
 	} else if incomplete, err := s.availableReactionSeedNeedsRepair(ctx); err != nil {
 		return stats, err
-	} else if incomplete {
+	} else if current, err := s.seedStateMatches(ctx, seedReactionsStateKey, seedReactionsStateVersion); err != nil {
+		return stats, err
+	} else if incomplete || !current {
 		if err := s.seedReactions(ctx, root, &stats); err != nil {
 			return stats, fmt.Errorf("repair reactions: %w", err)
 		}
+	}
+	if err := s.putSeedState(ctx, seedReactionsStateKey, seedReactionsStateVersion); err != nil {
+		return stats, fmt.Errorf("record reactions seed state: %w", err)
 	}
 	s.logSeedPhase("reactions", phaseStarted, phaseBefore, stats)
 
@@ -170,52 +175,32 @@ func (s *Service) seedReactions(ctx context.Context, root string, stats *SeedSta
 			Premium:  rj.Premium,
 			Order:    i,
 		}
-		set := func(dst *int64, d *seedDocumentJSON, fallbackThumb []byte) error {
+		set := func(dst *int64, d *seedDocumentJSON) error {
 			if d == nil || d.ID == 0 {
 				return nil
 			}
-			doc, err := s.importDocument(ctx, *d, reactionsDir, index, stats, fallbackThumb)
+			doc, err := s.importDocument(ctx, *d, reactionsDir, index, stats)
 			if err != nil {
 				return err
 			}
 			*dst = doc.ID
 			return nil
 		}
-		if err := set(&ar.StaticIconID, rj.StaticIcon, nil); err != nil {
-			return err
-		}
-		// telegram_reactions_export's raw JSON never carries thumbs for any of
-		// these .tgs animations -- see withSeedTGSImageSize's doc comment for
-		// the client-visible symptom that leaves (a reaction's settled badge
-		// freezing on an empty raster, since there's no real thumb to freeze
-		// to). The reaction's own static_icon, imported just above, is a real
-		// raster of the same reaction already sitting on disk -- give every
-		// animation in this entry that as its cached thumb instead of none.
-		var staticIconThumb []byte
-		if rj.StaticIcon != nil {
-			if path, ok := index.main[rj.StaticIcon.ID]; ok {
-				if data, err := os.ReadFile(path); err == nil {
-					staticIconThumb = data
-				}
+		for _, field := range []struct {
+			dst *int64
+			doc *seedDocumentJSON
+		}{
+			{&ar.StaticIconID, rj.StaticIcon},
+			{&ar.AppearAnimationID, rj.AppearAnimation},
+			{&ar.SelectAnimationID, rj.SelectAnimation},
+			{&ar.ActivateAnimationID, rj.ActivateAnimation},
+			{&ar.EffectAnimationID, rj.EffectAnimation},
+			{&ar.AroundAnimationID, rj.AroundAnimation},
+			{&ar.CenterIconID, rj.CenterIcon},
+		} {
+			if err := set(field.dst, field.doc); err != nil {
+				return err
 			}
-		}
-		if err := set(&ar.AppearAnimationID, rj.AppearAnimation, staticIconThumb); err != nil {
-			return err
-		}
-		if err := set(&ar.SelectAnimationID, rj.SelectAnimation, staticIconThumb); err != nil {
-			return err
-		}
-		if err := set(&ar.ActivateAnimationID, rj.ActivateAnimation, staticIconThumb); err != nil {
-			return err
-		}
-		if err := set(&ar.EffectAnimationID, rj.EffectAnimation, staticIconThumb); err != nil {
-			return err
-		}
-		if err := set(&ar.AroundAnimationID, rj.AroundAnimation, staticIconThumb); err != nil {
-			return err
-		}
-		if err := set(&ar.CenterIconID, rj.CenterIcon, staticIconThumb); err != nil {
-			return err
 		}
 		if err := s.media.PutAvailableReaction(ctx, ar); err != nil {
 			return err
@@ -247,7 +232,7 @@ func (s *Service) availableReactionSeedNeedsRepair(ctx context.Context) (bool, e
 	if stale, err := s.documentsNeedInlineCachedThumbs(ctx, docIDs); err != nil || stale {
 		return stale, err
 	}
-	// Every reaction animation gets its static_icon as a raster thumb, so a
+	// Every reaction animation has a raster thumb rendered next to it, so a
 	// .tgs without one was seeded before that existed.
 	docs, err := s.media.GetDocuments(ctx, docIDs)
 	if err != nil {
@@ -372,7 +357,7 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 	docIDs := make([]int64, 0, len(info.Result.Documents))
 	docs := make([]domain.Document, 0, len(info.Result.Documents))
 	for _, dj := range info.Result.Documents {
-		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats, nil)
+		doc, err := s.importDocument(ctx, dj, stickersDir, index, stats)
 		if err != nil {
 			return err
 		}
@@ -418,11 +403,7 @@ func (s *Service) importStickerSetDir(ctx context.Context, setDir, systemKey str
 
 // ---- 单个 document 导入 ----
 
-// fallbackThumb is a raster image (e.g. a reaction's own static_icon webp) to
-// use as this document's "m" thumb when the source JSON lists no raster thumb
-// and none was rendered next to the file -- see seedRasterFallbackThumb. Pass
-// nil when there is no such substitute.
-func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, stats *SeedStats, fallbackThumb []byte) (domain.Document, error) {
+func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDir string, index seedDirIndex, stats *SeedStats) (domain.Document, error) {
 	if dj.ID == 0 {
 		return domain.Document{}, nil
 	}
@@ -519,15 +500,13 @@ func (s *Service) importDocument(ctx context.Context, dj seedDocumentJSON, binDi
 	if data, ok := seedBundledDocumentPreview(doc.ID); ok {
 		doc.Thumbs = appendSeedBundledDocumentPreview(doc.Thumbs, data)
 	} else if !photoSizesHaveRaster(thumbs) {
-		// The source JSON listed no raster thumb. Use one rendered next to the
-		// file (<id>_thumbN_PhotoSize_typem_*.jpg), else the caller's fallback.
-		data := fallbackThumb
+		// The source JSON listed no raster thumb: use the one rendered next to
+		// the file (<id>_thumbN_PhotoSize_typem_*.jpg, scripts/render-seed-thumbs.py).
 		if path, ok := index.thumb[dj.ID][seedBundledDocumentThumbType]; ok {
-			if data, err = os.ReadFile(path); err != nil {
+			data, err := os.ReadFile(path)
+			if err != nil {
 				return domain.Document{}, err
 			}
-		}
-		if len(data) > 0 {
 			ps, ok, err := s.seedRasterFallbackThumb(ctx, doc.ID, data, stats)
 			if err != nil {
 				return domain.Document{}, err
@@ -850,8 +829,8 @@ func tgsIntrinsicSize(data []byte) (w, h int, ok bool) {
 	return parsed.W, parsed.H, true
 }
 
-// seedRasterFallbackThumb turns a raster image that the source JSON did not
-// list (see importDocument's fallbackThumb) into the document's "m" thumb,
+// seedRasterFallbackThumb turns a raster thumb file the source JSON did not
+// list (rendered next to the .tgs) into the document's "m" thumb,
 // stored the same way as an exported one: inline PhotoCachedSize (written to
 // doc:<id>:m by ensureSeedCachedThumbBlobs, advertised as a downloadable
 // photoSize on the wire), or a plain PhotoSize blob when it is too big to

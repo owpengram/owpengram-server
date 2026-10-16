@@ -11,7 +11,9 @@ named the way the exporter names them, so the seeder picks it up
 
     <name>_thumb1_PhotoSize_typem_128x128.jpg   (webp bytes, like the export)
 
-Reactions are skipped: they use their own static_icon instead.
+The thumb must be the animation's own frame: a reaction's static_icon, say,
+draws its emoji larger than the animation does, so the badge would jump in
+size when the animation ends.
 
 Needs rlottie-python and Pillow:  pip install rlottie-python pillow
 
@@ -25,7 +27,6 @@ import sys
 from rlottie_python import LottieAnimation
 
 SIZE = 128
-SKIP_DIRS = {"telegram_reactions_export"}
 THUMB_MARKER = re.compile(r"_thumb\d+_PhotoSize_typem")
 
 
@@ -48,7 +49,6 @@ def main():
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.join("data", "sticker-seed")
     made = skipped = failed = 0
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         have = {THUMB_MARKER.split(f)[0] for f in filenames if THUMB_MARKER.search(f)}
         for name in sorted(filenames):
             if not name.endswith(".tgs"):

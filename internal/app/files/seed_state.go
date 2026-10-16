@@ -25,6 +25,12 @@ const (
 	// 1x1 preview where the sticker catalog has a real static thumbnail.
 	// v3: see seedEffectsStateVersion.
 	seedStickerPreviewStateVersion = "sticker-previews-v3-raster-thumbs"
+	// Bumping the version re-imports the reaction documents once.
+	// v1: their "m" thumbs are the animations' own first frames (rendered next
+	// to the files) instead of the static_icon, whose emoji fills the whole
+	// canvas and so came out larger than the animation it replaces.
+	seedReactionsStateKey          = "files.reactions"
+	seedReactionsStateVersion      = "reactions-v1-frame-thumbs"
 	seedAppearanceStateKey         = "files.appearance"
 	seedAppearanceStateVersion     = "appearance-v1"
 )
