@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{p as e}from"./userAgent-D2HOjQ3s.js";import{t}from"./eventListenerBase-DhVMAujD.js";var n=new class extends t{constructor(...e){super(...e),this.overlaysActive=0,this.hasDarkOverlays=0}get isOverlayActive(){return this.overlaysActive>0}set isOverlayActive(e){this.overlaysActive+=e?1:-1,this.dispatchEvent(`change`,this.isOverlayActive)}get isDarkOverlayActive(){return this.hasDarkOverlays>0}set isDarkOverlayActive(e){this.hasDarkOverlays+=e?1:-1,this.isOverlayActive=e}};e&&(e.overlayCounter=n);export{n as t};

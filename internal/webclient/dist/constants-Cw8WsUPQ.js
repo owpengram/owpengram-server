@@ -1,1 +1,0 @@
-var e=`account`;export{e as t};

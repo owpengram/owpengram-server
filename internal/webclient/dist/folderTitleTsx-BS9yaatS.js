@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{l as e}from"./web-BIda0ujS.js";import{a as t}from"./sticker-CfrA7XKb.js";import{U as n}from"./confirmationPopup-CMCiGkiX.js";import{t as r}from"./folderTitle-BOgItNdZ.js";function i(i){return e(()=>n(r(i.title,t().get(),!0,{textColor:i.textColor})))}export{i as t};

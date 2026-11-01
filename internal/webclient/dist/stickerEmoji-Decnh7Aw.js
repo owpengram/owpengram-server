@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{n as e}from"./rootScope-TTIYNYIf.js";import{i as t}from"./sticker-CfrA7XKb.js";async function n(n){let{emoji:r,div:i,managers:a=e.managers}=n,o=await a.appStickersManager.getAnimatedEmojiSticker(r);if(!o)throw i.classList.add(`media-sticker-wrapper`),Error(`no sticker`);return t({doc:o,play:!0,loop:!1,...n})}export{n as t};
