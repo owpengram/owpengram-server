@@ -525,11 +525,13 @@ uploads in **StarGift Catalog → Import Pack**. Uploading only puts it on the
 shelf: you then preview every gift and every upgraded variant, and import
 either the whole pack or a single gift out of it.
 
-Two packs are authored in this repo and built into archives with
-`go run ./cmd/giftpack-export`: **Grind Pack** (desk gear and coffee; also
-the reference pack, since between them its gifts exercise every Star Gift
-mechanic) and **Energy Pack** (one limited, craftable can with a large
-collectible flavour pool).
+The server only imports and manages packs. The project's own two --
+**Grind Pack** (desk gear and coffee; also the reference pack, since between
+them its gifts exercise every Star Gift mechanic) and **Energy Pack** (one
+limited, craftable can with a large collectible flavour pool) -- are authored
+and exported by
+[owpengram-giftpacks](https://github.com/owpengram/owpengram-giftpacks),
+which is where new art is made.
 **[docs/gift-packs.md](docs/gift-packs.md)** is the guide: a step-by-step
 build loop, the hard limits every animation must meet, the full `pack.json`
 reference, and the rlottie pitfalls that make an animation look perfect in a

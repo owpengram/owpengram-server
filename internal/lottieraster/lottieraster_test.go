@@ -1,7 +1,9 @@
 package lottieraster_test
 
 import (
+	"archive/zip"
 	"bytes"
+	"io"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -10,22 +12,19 @@ import (
 	"testing"
 
 	"telesrv/internal/lottieraster"
-	"telesrv/internal/seed/giftpacks"
+	"telesrv/internal/app/giftpack/giftpacktest"
 )
 
-// Every animation the bundled gift packs ship must come out as a visible
+// Every animation of the test gift pack must come out as a visible
 // thumb. LOTTIERASTER_DUMP=<dir> also writes them out for eyeballing against
 // rlottie.
 func TestRenderGiftPackAnimations(t *testing.T) {
 	dump := os.Getenv("LOTTIERASTER_DUMP")
-	for _, packID := range giftpacks.IDs() {
-		_, assets, ok := giftpacks.Manifest(packID)
-		if !ok {
-			t.Fatalf("pack %q has no manifest", packID)
-		}
+	for _, packID := range []string{"phone-pack"} {
+		assets := phonePackAnimations(t)
 		paths := make([]string, 0, len(assets))
 		for path := range assets {
-			if strings.HasSuffix(path, ".json") {
+			if strings.HasSuffix(path, ".json") && path != "pack.json" {
 				paths = append(paths, path)
 			}
 		}
@@ -62,6 +61,31 @@ func TestRenderGiftPackAnimations(t *testing.T) {
 			}
 		}
 	}
+}
+
+// phonePackAnimations reads every file of the test pack's archive, the way an
+// operator's upload would be opened.
+func phonePackAnimations(t *testing.T) map[string][]byte {
+	t.Helper()
+	data := giftpacktest.PhonePackZip()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("open phone pack: %v", err)
+	}
+	out := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", f.Name, err)
+		}
+		body, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", f.Name, err)
+		}
+		out[f.Name] = body
+	}
+	return out
 }
 
 func TestRenderRejectsGarbage(t *testing.T) {

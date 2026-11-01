@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/app/giftpack"
 	stargiftsapp "telesrv/internal/app/stargifts"
 	"telesrv/internal/domain"
-	"telesrv/internal/seed/giftpacks"
+	"telesrv/internal/app/giftpack/giftpacktest"
 )
 
 // TestResaleListingAndPurchaseDoNotDeadlock is a regression/stress test for a
@@ -54,9 +54,9 @@ func TestResaleListingAndPurchaseDoNotDeadlock(t *testing.T) {
 
 	gifts := NewStarGiftStore(pool)
 	svc := stargiftsapp.NewService(gifts, &upgradeTestBlobs{store: map[string][]byte{}}, 2)
-	manifest, assets, ok := giftpacks.Manifest("grind-pack")
-	if !ok {
-		t.Fatal("grind-pack pack missing")
+	manifest, assets, err := giftpacktest.PhonePack()
+	if err != nil {
+		t.Fatalf("phone pack: %v", err)
 	}
 	var phone giftpack.GiftSpec
 	for _, g := range manifest.Gifts {

@@ -2,8 +2,8 @@
 // (pack.json) plus a folder or zip of Lottie/TGS assets it references by
 // relative path, imported through the exact same domain/stargifts write path
 // the admin panel's single-gift forms already use (see Import in import.go).
-// The built-in packs (internal/seed/giftpacks) are authored this way too,
-// generated in-memory instead of shipped as files.
+// The project's own packs are authored in the owpengram-giftpacks repository
+// and reach a server only as uploaded .zip files.
 package giftpack
 
 import (

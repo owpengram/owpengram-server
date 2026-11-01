@@ -82,7 +82,7 @@ function DeletePackButton({ pack, onDone }: { pack: GiftPack; onDone: () => void
 }
 
 // flagIcon picks the glyph for one server-side mechanic label (see
-// giftDef.flags in internal/seed/giftpacks/registry.go).
+// giftDef.flags in owpengram-giftpacks, internal/giftpacks/registry.go).
 function flagIcon(flag: string): LucideIcon {
   if (flag.startsWith("auction")) return Gavel;
   if (flag.startsWith("limited")) return Hash;

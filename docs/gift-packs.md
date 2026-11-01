@@ -22,17 +22,11 @@ with the same name replaces the stored archive rather than adding a second
 copy of it, and removing a pack from the shelf leaves gifts already imported
 from it untouched -- by then they are catalog entries of their own.
 
-The packs authored in this repo (`internal/seed/giftpacks`) are archives
-like any other. Build them with:
-
-```bash
-go run ./cmd/giftpack-export
-```
-
-which writes `dist/packs/grind-pack.zip` (desk gear and coffee; between them
-its gifts exercise every Star Gift mechanic, so it doubles as the reference
-pack) and `dist/packs/energy-pack.zip` (one strictly limited, craftable can
-with a fifty-strong flavour pool).
+The packs the project ships (Grind Pack, Energy Pack) are archives like any
+other. This server only imports and manages packs; the code that draws and
+exports them lives in its own repository,
+[owpengram-giftpacks](https://github.com/owpengram/owpengram-giftpacks) -- `go run ./cmd/giftpack-export` there writes
+`grind-pack.zip` and `energy-pack.zip`, which you upload as described above.
 
 ## Build your own pack: the short version
 
@@ -130,7 +124,7 @@ There is no way for this server to catch that for you -- it would need to
 embed rlottie itself, which it doesn't. So the practical rule is:
 
 - **Known safe** (every one of these is used by the packs in
-  `internal/seed/giftpacks` and verified frame by frame in rlottie): shape
+  the project's own packs in owpengram-giftpacks and verified frame by frame in rlottie): shape
   layers with ellipses, rectangles, polystars and bezier paths; solid,
   linear-gradient and radial-gradient fills, including gradients with
   opacity stops (soft shadows, glows, highlights); solid and gradient
@@ -185,22 +179,17 @@ embed rlottie itself, which it doesn't. So the practical rule is:
   animated-property keyframes, since that one produces the most
   misleading symptom (partial breakage, not total).
 
-## Adding a pack to this repo
+## Adding a pack to the project's set
 
-The packs authored here live in `internal/seed/giftpacks`, drawn in Go with
-the Lottie DSL in `lottie.go`, which emits only structures copied from a real
-Telegram export (so all three rules above hold by construction). To add one,
-create a file next to `grindpack.go` whose `init()` calls `register(...)`
-with an id, name, author, description, an icon (the slug of one of its
-gifts) and its gifts. `go run ./cmd/giftpack-export` then builds it into an
-uploadable `.zip` along with the rest; the export is deterministic, so
-re-running it on unchanged art produces byte-identical archives.
+Packs are authored in [owpengram-giftpacks](https://github.com/owpengram/owpengram-giftpacks), drawn in Go with a Lottie
+DSL that emits only structures copied from a real Telegram export (so all
+three rules above hold by construction). Its tests lint every animation
+against the rlottie rules above and check each exported archive is
+self-contained. They can't render, though: still check new art frame by
+frame in a real rlottie build before shipping it.
 
-`go test ./internal/seed/giftpacks/` imports every registered pack through
-the real Star Gift service, lints every animation against the rlottie rules
-above, and exports each pack to check the archive alone is self-contained.
-It can't render, though: still check new art frame by frame in a real
-rlottie build before shipping it.
+This server keeps one small trimmed pack of its own for its tests
+(`internal/app/giftpack/giftpacktest`); it is not a place to author art.
 
 ## `pack.json` reference
 
