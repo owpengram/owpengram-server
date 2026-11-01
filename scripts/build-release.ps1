@@ -41,8 +41,8 @@ function Show-Usage {
     Write-Host @'
 Usage: build-release.ps1 [options]
 
-  -All, --all                  build linux/amd64, linux/arm64, windows/amd64
-                                and windows/arm64
+  -All, --all                  build linux/amd64, linux/arm64, windows/amd64,
+                                windows/arm64, darwin/amd64 and darwin/arm64
   -Platform, --platform GOOS/GOARCH
                                 build this one platform; repeat for more.
                                 Defaults to just the host platform.
@@ -103,6 +103,8 @@ $PgMap = @{
     'linux/arm64'   = @{ os = 'linux';   arch = 'arm64v8' }
     'windows/amd64' = @{ os = 'windows'; arch = 'amd64' }
     'windows/arm64' = @{ os = '';        arch = '' }
+    'darwin/amd64'  = @{ os = 'darwin';  arch = 'amd64' }
+    'darwin/arm64'  = @{ os = 'darwin';  arch = 'arm64v8' }
 }
 
 function Info($msg) { Write-Host "[build-release] $msg" -ForegroundColor Cyan }
@@ -117,7 +119,7 @@ try {
 
     if (-not $Platforms -or $Platforms.Count -eq 0) {
         if ($All) {
-            $Platforms = @('linux/amd64', 'linux/arm64', 'windows/amd64', 'windows/arm64')
+            $Platforms = @('linux/amd64', 'linux/arm64', 'windows/amd64', 'windows/arm64', 'darwin/amd64', 'darwin/arm64')
         } else {
             $hostGoos = (go env GOOS).Trim()
             $hostGoarch = (go env GOARCH).Trim()

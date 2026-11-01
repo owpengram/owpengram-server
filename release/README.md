@@ -5,7 +5,7 @@ server needs to run.
 
 ## Quick start
 
-**Linux:**
+**Linux and macOS:**
 
 ```bash
 ./start.sh
@@ -15,6 +15,15 @@ server needs to run.
 
 ```bat
 start.bat
+```
+
+**macOS only -- first launch.** The binaries are not signed or notarized, so
+Gatekeeper blocks them when the archive came from a browser. Remove the
+quarantine flag once, then start as usual:
+
+```bash
+xattr -dr com.apple.quarantine .
+./start.sh
 ```
 
 The program stays in the foreground and runs the server and its admin panel

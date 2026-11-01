@@ -4,7 +4,7 @@
 # doc comment for the full picture of what goes into an archive and why).
 #
 #   ./scripts/build-release.sh                       just this machine's platform
-#   ./scripts/build-release.sh --all                  all 4 platforms (linux and windows, amd64 and arm64)
+#   ./scripts/build-release.sh --all                  all 6 platforms (linux, windows and macOS, amd64 and arm64)
 #   ./scripts/build-release.sh --platform linux/amd64 --platform windows/amd64
 #   ./scripts/build-release.sh --version v1.4.0
 #   ./scripts/build-release.sh --skip-pgcache         skip the Postgres pre-bundle download
@@ -60,7 +60,7 @@ command -v go >/dev/null 2>&1 || die "Go is not on PATH -- install it from https
 
 if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
   if [[ "$ALL" -eq 1 ]]; then
-    PLATFORMS=(linux/amd64 linux/arm64 windows/amd64 windows/arm64)
+    PLATFORMS=(linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64)
   else
     host_goos=$(go env GOOS)
     host_goarch=$(go env GOARCH)
@@ -93,6 +93,8 @@ pg_os_arch() {
     linux/amd64)   echo "linux amd64" ;;
     linux/arm64)   echo "linux arm64v8" ;;
     windows/amd64) echo "windows amd64" ;;
+    darwin/amd64)  echo "darwin amd64" ;;
+    darwin/arm64)  echo "darwin arm64v8" ;;
     *)             echo "" ;;
   esac
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OwpenGram server -- prebuilt release archive launcher (Linux).
+# OwpenGram server -- prebuilt release archive launcher (Linux and macOS).
 #
 # Unlike owpengram-server.sh in a git clone, nothing here builds anything:
 # bin/owpengram-server, bin/owpengram-admin-panel and owpengram-ctl are
@@ -16,5 +16,6 @@
 #   ./start.sh logs
 set -uo pipefail
 cd "$(dirname "$0")"
-chmod +x ./owpengram-ctl 2>/dev/null || true
+# an archive packed on Windows loses the executable bits, so restore them for everything it starts
+chmod +x ./owpengram-ctl ./bin/* 2>/dev/null || true
 exec ./owpengram-ctl "$@"
