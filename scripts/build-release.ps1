@@ -156,6 +156,14 @@ try {
         New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
     }
 
+    # A release named ON (O9, ...) is also stamped into the binaries, so the admin
+    # panel reports the release it really is and can tell when a newer one is out.
+    # Any other label (dev, a branch name) only names the archive.
+    $ldflags = '-s -w'
+    if ($Version -match '^[Oo]\d+$') {
+        $ldflags += " -X telesrv/internal/version.Release=O$($Version.Substring(1))"
+    }
+
     foreach ($platform in $Platforms) {
         $parts = $platform -split '/'
         if ($parts.Count -ne 2) { throw "Bad platform '$platform', expected 'goos/goarch'" }
@@ -175,11 +183,11 @@ try {
         $env:GOARCH = $goarch
         try {
             Info "Building binaries..."
-            & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "bin/owpengram-server$suffix") ./cmd/telesrv
+            & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir "bin/owpengram-server$suffix") ./cmd/telesrv
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-server failed" }
-            & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "bin/owpengram-admin-panel$suffix") ./cmd/telesrv-admin
+            & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir "bin/owpengram-admin-panel$suffix") ./cmd/telesrv-admin
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-admin-panel failed" }
-            & go build -trimpath -ldflags="-s -w" -o (Join-Path $stageDir "owpengram-ctl$suffix") ./cmd/owpengram-ctl
+            & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir "owpengram-ctl$suffix") ./cmd/owpengram-ctl
             if ($LASTEXITCODE -ne 0) { throw "go build owpengram-ctl failed" }
         } finally {
             Remove-Item Env:\CGO_ENABLED, Env:\GOOS, Env:\GOARCH -ErrorAction SilentlyContinue

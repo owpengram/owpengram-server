@@ -783,6 +783,18 @@ export type AdminSession = {
   // supported set, not just the newest one. Shown in the sidebar footer
   // above the build/commit line.
   api_layers?: number[];
+  // The release line this binary belongs to ("O8"), and what the daily
+  // GitHub check found. `update.available` is true when a newer release is
+  // published; `update.url` is its release page (the update itself is manual).
+  version?: string;
+  update?: {
+    enabled: boolean;
+    current: string;
+    latest?: string;
+    available: boolean;
+    url?: string;
+    notes?: string;
+  };
   // This admin binary's own build -- shown under "Version" in the sidebar
   // footer so an operator can tell which build is actually running.
   build?: {

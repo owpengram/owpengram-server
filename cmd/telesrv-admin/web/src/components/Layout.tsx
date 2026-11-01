@@ -101,6 +101,8 @@ export function Shell({
   actor,
   apiLayers,
   build,
+  version,
+  update,
   route,
   navigate,
   onLogout,
@@ -109,6 +111,8 @@ export function Shell({
   actor: string;
   apiLayers?: number[];
   build?: { commit: string; short_commit: string; dirty: boolean; build_time: string };
+  version?: string;
+  update?: { available: boolean; latest?: string; url?: string; notes?: string };
   route: RouteState;
   navigate: Navigate;
   onLogout: () => void;
@@ -389,7 +393,18 @@ export function Shell({
           )}
         </nav>
         <div className="sidebar-status">
-          <span className="sidebar-label">{"Version: O8"}</span>
+          <span className="sidebar-label">{`Version: ${version ?? ""}`}</span>
+          {update?.available && update.url && (
+            <a
+              className="sidebar-label sidebar-update"
+              href={update.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={update.notes || "Open the release page"}
+            >
+              {`Update available: ${update.latest ?? ""}`}
+            </a>
+          )}
           {apiLayers && apiLayers.length > 0 && (
             <span className="sidebar-label sidebar-api-layer" title={`Layers: ${apiLayers.join(", ")}`}>
               {`API layers: ${formatLayerRanges(apiLayers)}`}

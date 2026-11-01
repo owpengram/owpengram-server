@@ -74,6 +74,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	go srv.updates.Run(ctx)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.routes(),
@@ -123,6 +124,10 @@ type uiConfig struct {
 	// cmd/telesrv/main.go's donationsService wiring) -- this only keeps the
 	// panel from offering a section whose every action would just fail.
 	DonationsEnabled bool
+	// UpdateCheckEnabled mirrors config.UpdateCheckEnabled
+	// (TELESRV_UPDATE_CHECK, default true): whether the panel asks GitHub
+	// for a newer server release and shows the "update available" banner.
+	UpdateCheckEnabled bool
 	// IdentityDir mirrors config.IdentityDir -- must point at the same
 	// directory owpengram-server reads, so an identity edit here is visible
 	// over /owpengram/server-info immediately (see internal/identity).
@@ -210,6 +215,7 @@ func loadConfig() (uiConfig, error) {
 		Permissions:                appCfg.AdminUIPermissions,
 		HideThirdPartyVerification: appCfg.HideThirdPartyVerification,
 		DonationsEnabled:           appCfg.DonationsEnabled,
+		UpdateCheckEnabled:         appCfg.UpdateCheckEnabled,
 		IdentityDir:                appCfg.IdentityDir,
 		WelcomeMessagePhoneDefault: appCfg.WelcomeMessagePhoneTemplate,
 		WelcomeMessageEmailDefault: appCfg.WelcomeMessageEmailTemplate,

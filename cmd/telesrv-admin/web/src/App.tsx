@@ -74,7 +74,7 @@ export function App() {
       hideThirdPartyVerification={session.hide_third_party_verification ?? true}
       donationsEnabled={session.donations_enabled ?? true}
     >
-      <Shell actor={session.actor} apiLayers={session.api_layers} build={session.build} route={route} navigate={navigate} onLogout={() => setSession(null)}>
+      <Shell actor={session.actor} apiLayers={session.api_layers} build={session.build} version={session.version} update={session.update} route={route} navigate={navigate} onLogout={() => setSession(null)}>
         <Routes route={route} navigate={navigate} />
       </Shell>
     </PermissionsProvider>

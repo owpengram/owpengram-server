@@ -329,6 +329,16 @@ a {
   opacity: 0.7;
 }
 
+.sidebar-update {
+  color: var(--accent, #4aa3ff);
+  text-decoration: none;
+  text-transform: none;
+}
+
+.sidebar-update:hover {
+  text-decoration: underline;
+}
+
 .nav-list {
   display: grid;
   gap: 4px;

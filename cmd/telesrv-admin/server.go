@@ -26,6 +26,8 @@ import (
 	"telesrv/internal/hoststats"
 	"telesrv/internal/identity"
 	"telesrv/internal/procctl"
+	"telesrv/internal/updatecheck"
+	"telesrv/internal/version"
 )
 
 //go:embed web/dist
@@ -39,6 +41,9 @@ type server struct {
 	webServer http.Handler
 	identity  *identity.Store
 	serverCtl *procctl.Manager
+	// updates remembers whether GitHub has a newer server release; see
+	// internal/updatecheck. Run by main, read by the session payload.
+	updates *updatecheck.Checker
 }
 
 func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*server, error) {
@@ -54,6 +59,7 @@ func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*ser
 		webServer: http.FileServer(http.FS(web)),
 		identity:  identity.NewStore(cfg.IdentityDir),
 		serverCtl: procctl.NewManager(cfg.RepoRoot),
+		updates:   updatecheck.New(cfg.UpdateCheckEnabled, version.Release, ""),
 	}, nil
 }
 
@@ -425,6 +431,11 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		// older supported layer still works, not just the newest one), so
 		// the sidebar shows the whole supported set, not just tg.Layer.
 		"api_layers": supportedTLLayers(),
+		// version is the release line this binary belongs to ("O8"); update
+		// is what the daily GitHub check found, so the sidebar can say a
+		// newer release is out. Both come from the binary, never the UI.
+		"version": version.Release,
+		"update":  s.updates.Snapshot(),
 		// build is this admin binary's own commit -- shown under "Version"
 		// in the sidebar footer so an operator can tell at a glance which
 		// build is actually running, independent of the app version string.

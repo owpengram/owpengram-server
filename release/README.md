@@ -83,6 +83,24 @@ This archive has no git history, so `owpengram-ctl update` doesn't apply
 here -- download the next release archive instead, and copy your `.env` and
 `data/` (except `data/pgcache`) into it. Stop the old one first.
 
+## Updating
+
+The admin panel shows **Update available: O9** in the sidebar when a newer
+release is published (it asks GitHub once a day; set `TELESRV_UPDATE_CHECK=false`
+in `.env` to switch that off). It only tells you -- an archive install has no
+git checkout, so the panel's Update button and `owpengram-ctl update` have
+nothing to pull. To update:
+
+1. Stop the server (`Ctrl+C`, or `./start.sh stop` from another terminal).
+2. Download the archive for your platform from the release page and unpack it
+   over a *copy* of the install, or next to it.
+3. Copy your `.env` and the `data/` folder (the built-in PostgreSQL, uploaded
+   media and keys live there) into the new folder -- or, simpler, replace only
+   `owpengram-ctl` and the `bin/` folder in your existing install.
+4. Start it again. Database migrations run on their own at start.
+
+Keep a copy of `data/` before updating.
+
 ## Using your own PostgreSQL / S3 (Docker, for example)
 
 The server never starts Docker. If you want PostgreSQL or MinIO in

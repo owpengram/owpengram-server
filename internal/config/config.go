@@ -738,6 +738,13 @@ type Config struct {
 	// wallet and its funds are untouched, just dormant, so re-enabling
 	// later picks up exactly where it left off. True by default.
 	DonationsEnabled bool
+	// UpdateCheckEnabled lets the admin panel ask GitHub once a day whether a
+	// newer OwpenGram server release exists and show a banner if so
+	// (TELESRV_UPDATE_CHECK, default true). It is a single anonymous request
+	// for the public releases/latest document and sends nothing about this
+	// server; false makes the panel never contact GitHub. Nothing is ever
+	// downloaded or installed by it.
+	UpdateCheckEnabled bool
 	// DonationWalletKeyPath is where the crypto donations AES-256-GCM
 	// encryption key lives on disk -- generated automatically on first run,
 	// same "works out of the box" pattern as RSAKeyPath. The wallet mnemonic
@@ -1318,6 +1325,7 @@ func Load() (Config, error) {
 		PremiumSweepInterval:              envDurationOr("TELESRV_PREMIUM_SWEEP_INTERVAL", time.Minute),
 		PremiumSweepBatch:                 envIntOr("TELESRV_PREMIUM_SWEEP_BATCH", 500),
 		DonationsEnabled:                  envBoolOr("TELESRV_DONATIONS_ENABLED", true),
+		UpdateCheckEnabled:                envBoolOr("TELESRV_UPDATE_CHECK", true),
 		DonationWalletKeyPath:             envOr("TELESRV_DONATION_WALLET_KEY_PATH", "data/donation_wallet.key"),
 		DonationWalletKey:                 strings.TrimSpace(envAllowEmptyOr("TELESRV_DONATION_WALLET_KEY", "")),
 		DonationPollInterval:              envDurationOr("TELESRV_DONATION_POLL_INTERVAL", 5*time.Second),

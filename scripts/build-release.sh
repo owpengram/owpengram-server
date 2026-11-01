@@ -56,6 +56,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# A release named ON (O9, ...) is also stamped into the binaries, so the admin
+# panel reports the release it really is and can tell when a newer one is out.
+# Any other label (dev, a branch name) only names the archive.
+LDFLAGS="-s -w"
+if [[ "$VERSION" =~ ^[Oo][0-9]+$ ]]; then
+  LDFLAGS="$LDFLAGS -X telesrv/internal/version.Release=O${VERSION:1}"
+fi
+
 command -v go >/dev/null 2>&1 || die "Go is not on PATH -- install it from https://go.dev/dl/"
 
 if [[ ${#PLATFORMS[@]} -eq 0 ]]; then
@@ -112,9 +120,9 @@ for platform in "${PLATFORMS[@]}"; do
   mkdir -p "$stage_dir/bin" "$stage_dir/data" "$stage_dir/deploy"
 
   ok "Building binaries..."
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/bin/owpengram-server$suffix" ./cmd/telesrv
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/bin/owpengram-admin-panel$suffix" ./cmd/telesrv-admin
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$stage_dir/owpengram-ctl$suffix" ./cmd/owpengram-ctl
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$stage_dir/bin/owpengram-server$suffix" ./cmd/telesrv
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$stage_dir/bin/owpengram-admin-panel$suffix" ./cmd/telesrv-admin
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="$LDFLAGS" -o "$stage_dir/owpengram-ctl$suffix" ./cmd/owpengram-ctl
 
   ok "Assembling archive contents..."
   cp .env.example "$stage_dir/.env.example"
