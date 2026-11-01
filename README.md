@@ -49,7 +49,7 @@ or sponsored by Telegram or the official Telegram team.
 - 💬 Private chats, groups, supergroups & channels
 - 📞 Voice & group calls, live streams, SFU/TURN building blocks
 - 🖼️ Media & files — photos, videos, documents, stickers, reactions
-- 🪣 Media storage on local disk **or** an S3/MinIO-compatible object store
+- 💾 Media storage on local disk **or** an S3/MinIO-compatible object store
 - 🤖 Bots and mini apps, with a minimal Bot API gateway
 - 🏷️ Fragment-style NFT/collectible usernames and bot verification marks
 - 📢 Admin-panel broadcasts — announce to every user, or a picked list
@@ -332,7 +332,7 @@ code — so admins can make freshly signed-up accounts look locally flavored
 | `TELESRV_EMAIL_SIGNUP_ENABLE` | `false` | turn the feature on (requires the email delivery channel above to be configured) |
 | `TELESRV_EMAIL_SIGNUP_PHONE_PREFIXES` | `888` | comma-separated prefixes for the account's cosmetic display number |
 
-### 🪣 Media storage: local disk or S3/MinIO
+### 💾 Media storage: local disk or S3/MinIO
 
 Uploaded media (photos, documents, stickers) can live on this machine's disk,
 or in an S3-compatible object store (AWS S3, or a self-hosted **MinIO** — the
