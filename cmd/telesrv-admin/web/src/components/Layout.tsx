@@ -389,7 +389,7 @@ export function Shell({
           )}
         </nav>
         <div className="sidebar-status">
-          <span className="sidebar-label">{"Version: O7"}</span>
+          <span className="sidebar-label">{"Version: O8"}</span>
           {apiLayers && apiLayers.length > 0 && (
             <span className="sidebar-label sidebar-api-layer" title={`Layers: ${apiLayers.join(", ")}`}>
               {`API layers: ${formatLayerRanges(apiLayers)}`}

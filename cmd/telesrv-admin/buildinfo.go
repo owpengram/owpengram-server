@@ -19,7 +19,7 @@ type buildMetadata struct {
 	BuildTime string
 }
 
-// shortCommit is what the sidebar footer shows next to "Version: O7" -- the
+// shortCommit is what the sidebar footer shows next to "Version: O8" -- the
 // full hash is one click away in git log, the footer just needs enough to
 // tell two builds apart at a glance.
 func (m buildMetadata) shortCommit() string {
