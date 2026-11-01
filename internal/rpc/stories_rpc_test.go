@@ -69,6 +69,7 @@ func TestStoriesGetAllStoriesStateNotModifiedAndBounds(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert first story: %v", err)
 	}
+	storyStore.SetStoryViewerContacts(1000000002, domain.Contact{User: domain.User{ID: owner.ID}})
 	r := New(Config{}, Deps{Stories: appstories.NewService(storyStore)}, zaptest.NewLogger(t), fixedClock{now: time.Unix(1700000100, 0)})
 	reqCtx := WithUserID(ctx, 1000000002)
 
@@ -209,6 +210,7 @@ func TestStoriesGetAllStoriesPaginatesByPeerState(t *testing.T) {
 		}}); err != nil {
 			t.Fatalf("upsert story %d: %v", i, err)
 		}
+		storyStore.SetStoryViewerContacts(2000000001, domain.Contact{User: domain.User{ID: owner.ID}})
 	}
 	firstOwner := domain.Peer{Type: domain.PeerTypeUser, ID: 1000001000}
 	if _, err := storyStore.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
@@ -280,6 +282,7 @@ func TestStoriesGetAllStoriesPaginatesByPeerState(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert changed story: %v", err)
 	}
+	storyStore.SetStoryViewerContacts(2000000001, domain.Contact{User: domain.User{ID: newOwner.ID}})
 	changedClass, err := r.onStoriesGetAllStories(reqCtx, finalCheck)
 	if err != nil {
 		t.Fatalf("get all stories changed final state: %v", err)
@@ -334,6 +337,7 @@ func TestStoriesTogglePeerStoriesHiddenProjectsAllStoriesPeerFlags(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("upsert story: %v", err)
 	}
+	storyStore.SetStoryViewerContacts(ownerUser.ID+100, domain.Contact{User: ownerUser})
 	r := New(Config{}, Deps{
 		Stories: appstories.NewService(storyStore),
 		Users:   appusers.NewService(userStore),
@@ -5481,6 +5485,7 @@ func TestStoriesDeleteStoriesFanoutsDeletedUserStoryToAllStoriesCachedViewer(t *
 		t.Fatalf("create viewer: %v", err)
 	}
 	storyStore := memory.NewStoryStore()
+	storyStore.SetStoryViewerContacts(viewer.ID, domain.Contact{User: owner})
 	stateStore := memory.NewUpdateStateStore()
 	updateStore := memory.NewUpdateEventStore()
 	r := New(Config{}, Deps{

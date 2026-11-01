@@ -258,7 +258,7 @@ func (s *StoryStore) activeStoryPeerPagesForViewer(viewerUserID int64, hidden bo
 	s.mu.RLock()
 	byPeer := make(map[domain.Peer][]domain.Story)
 	for _, story := range s.stories {
-		if !story.Active(now) || !s.storyVisibleLocked(story, viewerUserID) {
+		if !story.Active(now) || !s.storyInViewerFeedLocked(story.Owner, viewerUserID) || !s.storyVisibleLocked(story, viewerUserID) {
 			continue
 		}
 		isHidden := s.hidden[storyHiddenKey{viewerID: viewerUserID, peerType: story.Owner.Type, peerID: story.Owner.ID}]
@@ -1212,6 +1212,20 @@ func (s *StoryStore) storyBaseVisibleLocked(story domain.Story, viewerUserID int
 		contact.CloseFriend || contact.User.CloseFriend,
 		s.storyViewerBlockedLocked(story.Owner, viewerUserID),
 	)
+}
+
+// storyInViewerFeedLocked reports whether owner's stories belong in the
+// viewer's story feed (stories.getAllStories): the viewer's own, those of
+// users the viewer has saved as contacts, and channels the viewer follows
+// (membership is already required by storyVisibleLocked), as on Telegram.
+// Anyone else's public story is reachable from their profile but is not
+// pushed into every feed on the server.
+func (s *StoryStore) storyInViewerFeedLocked(owner domain.Peer, viewerUserID int64) bool {
+	if owner.Type != domain.PeerTypeUser || owner.ID == viewerUserID {
+		return true
+	}
+	_, ok := s.contacts[viewerUserID][owner.ID]
+	return ok
 }
 
 func (s *StoryStore) storyViewerChannelMemberLocked(channelID, viewerUserID int64) bool {

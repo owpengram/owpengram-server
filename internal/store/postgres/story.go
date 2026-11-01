@@ -81,6 +81,25 @@ func storyVisiblePredicate(viewerParam string) string {
 	return storyVisiblePredicateFor("s", viewerParam)
 }
 
+// storyFeedPredicate limits the story feed (stories.getAllStories) to the
+// viewer's own stories, those of users the viewer has saved as contacts, and
+// channels (whose membership storyVisiblePredicate already requires), as on
+// Telegram. Anyone else's public story is reachable from their profile but
+// is not pushed into every feed on the server. Mirrors the memory store's
+// storyInViewerFeedLocked.
+func storyFeedPredicate(viewerParam string) string {
+	return `(
+    s.owner_peer_type <> 'user'
+    OR s.owner_peer_id = ` + viewerParam + `
+    OR EXISTS (
+      SELECT 1
+      FROM contacts fc
+      WHERE fc.user_id = ` + viewerParam + `
+        AND fc.contact_user_id = s.owner_peer_id
+    )
+)`
+}
+
 func storyPublicRepostVisiblePredicateFor(alias, viewerParam string) string {
 	return storyBaseVisiblePredicateFor(alias, viewerParam)
 }
@@ -393,6 +412,7 @@ LEFT JOIN story_hidden_peers h
 WHERE s.deleted = false
   AND s.expire_date > $2
   AND `+storyVisiblePredicate("$1")+`
+  AND `+storyFeedPredicate("$1")+`
   AND (($3::boolean AND h.viewer_user_id IS NOT NULL) OR (NOT $3::boolean AND h.viewer_user_id IS NULL))
 ORDER BY s.date DESC, s.owner_peer_type ASC, s.owner_peer_id ASC, s.story_id DESC`, viewerUserID, int32(now), hidden)
 	if err != nil {
@@ -434,6 +454,7 @@ FROM (
   WHERE s.deleted = false
     AND s.expire_date > $2
     AND `+storyVisiblePredicate("$1")+`
+    AND `+storyFeedPredicate("$1")+`
     AND (($3::boolean AND h.viewer_user_id IS NOT NULL) OR (NOT $3::boolean AND h.viewer_user_id IS NULL))
   GROUP BY s.owner_peer_type, s.owner_peer_id
 ) peers`, viewerUserID, int32(now), hidden).Scan(&count); err != nil {
@@ -464,6 +485,7 @@ LEFT JOIN story_hidden_peers h
 WHERE s.deleted = false
   AND s.expire_date > $2
   AND `+storyVisiblePredicate("$1")+`
+  AND `+storyFeedPredicate("$1")+`
   AND (($3::boolean AND h.viewer_user_id IS NOT NULL) OR (NOT $3::boolean AND h.viewer_user_id IS NULL))
 GROUP BY s.owner_peer_type, s.owner_peer_id`+having+`
 ORDER BY max_date DESC, s.owner_peer_type ASC, s.owner_peer_id ASC

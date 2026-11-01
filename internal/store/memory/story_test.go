@@ -133,6 +133,11 @@ func TestStoryStoreListActiveStoriesPaginatesByPeer(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert second story for first owner: %v", err)
 	}
+	// The feed only carries stories of users the viewer saved as contacts.
+	store.SetStoryViewerContacts(2001,
+		domain.Contact{User: domain.User{ID: 1001}},
+		domain.Contact{User: domain.User{ID: 1002}},
+		domain.Contact{User: domain.User{ID: 1003}})
 
 	first, err := store.ListActiveStoriesPage(ctx, 2001, false, 400, domain.StoryListCursor{}, 2)
 	if err != nil {
@@ -1519,6 +1524,7 @@ func TestStoryStoreViewerIDsIncludeCachedStoryExposure(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("upsert story: %v", err)
 	}
+	store.SetStoryViewerContacts(2005, domain.Contact{User: domain.User{ID: owner.ID}})
 	if list, err := store.ListActiveStories(ctx, 2005, false, 200, 10); err != nil || len(list.Stories) != 1 {
 		t.Fatalf("list active exposure = %+v err=%v, want one story", list, err)
 	}
@@ -2044,4 +2050,37 @@ func sameStoryIDs(got, want []int) bool {
 		}
 	}
 	return true
+}
+
+// A public story belongs in the feed of the owner's contacts only; anyone
+// else reaches it from the owner's profile, as on Telegram.
+func TestStoryStoreFeedOnlyCarriesViewerContacts(t *testing.T) {
+	ctx := context.Background()
+	store := NewStoryStore()
+	owner := domain.Peer{Type: domain.PeerTypeUser, ID: 1001}
+	if _, err := store.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
+		Owner: owner, ID: 1, Date: 100, ExpireDate: 1000, Public: true,
+	}}); err != nil {
+		t.Fatalf("upsert story: %v", err)
+	}
+	// 2001 saved the owner as a contact; 2002 did not. The owner having 2002
+	// as a contact does not put the story into 2002's feed either.
+	store.SetStoryViewerContacts(2001, domain.Contact{User: domain.User{ID: owner.ID}})
+	store.SetStoryViewerContacts(owner.ID, domain.Contact{User: domain.User{ID: 2002}})
+
+	if list, err := store.ListActiveStories(ctx, 2001, false, 200, 10); err != nil || len(list.Stories) != 1 {
+		t.Fatalf("contact feed = %+v err=%v, want the story", list, err)
+	}
+	if list, err := store.ListActiveStories(ctx, 2002, false, 200, 10); err != nil || len(list.Stories) != 0 || list.Count != 0 {
+		t.Fatalf("non-contact feed = %+v err=%v, want empty", list, err)
+	}
+	if digest, err := store.ActiveStoriesDigest(ctx, 2002, false, 200); err != nil || digest.Count != 0 {
+		t.Fatalf("non-contact digest = %+v err=%v, want empty", digest, err)
+	}
+	if peer, err := store.GetPeerStories(ctx, 2002, owner, 200); err != nil || len(peer.Stories) != 1 {
+		t.Fatalf("non-contact profile stories = %+v err=%v, want the public story", peer, err)
+	}
+	if list, err := store.ListActiveStories(ctx, owner.ID, false, 200, 10); err != nil || len(list.Stories) != 1 {
+		t.Fatalf("owner's own feed = %+v err=%v, want the story", list, err)
+	}
 }

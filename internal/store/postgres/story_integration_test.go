@@ -15,6 +15,7 @@ func TestStoryStoreReadMaxHiddenAndPeerMaxIDsPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	owner, viewer := createStoryTestUsers(t, ctx, pool)
+	addStoryFeedContacts(t, ctx, pool, viewer.ID, owner.ID)
 	store := NewStoryStore(pool)
 	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
 
@@ -161,6 +162,7 @@ func TestStoryStoreListActiveStoriesPaginatesByPeerPostgres(t *testing.T) {
 	t.Cleanup(func() {
 		cleanupStoryPagingTestRows(t, context.Background(), pool, viewer.ID, ownerIDs)
 	})
+	addStoryFeedContacts(t, ctx, pool, viewer.ID, ownerIDs...)
 	store := NewStoryStore(pool)
 	for i, owner := range owners {
 		if _, err := store.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
@@ -224,6 +226,59 @@ func TestStoryStoreListActiveStoriesPaginatesByPeerPostgres(t *testing.T) {
 	}
 }
 
+func TestStoryStoreFeedOnlyCarriesViewerContactsPostgres(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	owner, contactViewer := createStoryTestUsers(t, ctx, pool)
+	_, stranger := createStoryTestUsers(t, ctx, pool)
+	addStoryFeedContacts(t, ctx, pool, contactViewer.ID, owner.ID)
+	// The owner saving the stranger must not put the owner into the stranger's feed.
+	addStoryFeedContacts(t, ctx, pool, owner.ID, stranger.ID)
+	store := NewStoryStore(pool)
+	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
+	if _, err := store.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
+		Owner:      ownerPeer,
+		ID:         1,
+		Date:       1700000500,
+		ExpireDate: 1700001500,
+		Public:     true,
+	}}); err != nil {
+		t.Fatalf("upsert story: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		viewer int64
+		want   int
+	}{
+		{"contact", contactViewer.ID, 1},
+		{"stranger", stranger.ID, 0},
+		{"owner", owner.ID, 1},
+	} {
+		list, err := store.ListActiveStories(ctx, tc.viewer, false, 1700000510, 10)
+		if err != nil {
+			t.Fatalf("%s list active stories: %v", tc.name, err)
+		}
+		if len(list.Stories) != tc.want {
+			t.Fatalf("%s feed stories = %d, want %d", tc.name, len(list.Stories), tc.want)
+		}
+		digest, err := store.ActiveStoriesDigest(ctx, tc.viewer, false, 1700000510)
+		if err != nil {
+			t.Fatalf("%s digest: %v", tc.name, err)
+		}
+		if digest.Count != tc.want {
+			t.Fatalf("%s digest count = %d, want %d", tc.name, digest.Count, tc.want)
+		}
+	}
+	peerStories, err := store.GetPeerStories(ctx, stranger.ID, ownerPeer, 1700000511)
+	if err != nil {
+		t.Fatalf("stranger get peer stories: %v", err)
+	}
+	if len(peerStories.Stories) != 1 {
+		t.Fatalf("stranger profile stories = %d, want public story still reachable", len(peerStories.Stories))
+	}
+}
+
 func TestStoryStoreSelfUserViewAndReactionDoNotPolluteOwnerInteractionsPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -272,6 +327,7 @@ func TestStoryStoreBlocklistHidesOwnerStoriesFromViewerPostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
 	owner, blockedViewer := createStoryTestUsers(t, ctx, pool)
+	addStoryFeedContacts(t, ctx, pool, blockedViewer.ID, owner.ID)
 	users := NewUserStore(pool)
 	otherViewer, err := users.Create(ctx, domain.User{AccessHash: 8103, Phone: "+1771999903" + randomSuffix(t), FirstName: "StoryOtherViewer"})
 	if err != nil {
@@ -1671,7 +1727,8 @@ ON CONFLICT (user_id, contact_user_id) DO UPDATE SET
 func TestStoryStoreViewerIDsIncludeCachedStoryExposurePostgres(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
-	owner, _ := createStoryTestUsers(t, ctx, pool)
+	owner, feedViewer := createStoryTestUsers(t, ctx, pool)
+	addStoryFeedContacts(t, ctx, pool, feedViewer.ID, owner.ID)
 	store := NewStoryStore(pool)
 	ownerPeer := domain.Peer{Type: domain.PeerTypeUser, ID: owner.ID}
 	if _, err := store.UpsertStory(ctx, domain.UpsertStoryRequest{Story: domain.Story{
@@ -1684,7 +1741,7 @@ func TestStoryStoreViewerIDsIncludeCachedStoryExposurePostgres(t *testing.T) {
 		t.Fatalf("upsert story: %v", err)
 	}
 
-	viewerOne := owner.ID + 100001
+	viewerOne := feedViewer.ID
 	viewerTwo := owner.ID + 100002
 	viewerThree := owner.ID + 100003
 	list, err := store.ListActiveStories(ctx, viewerOne, false, 1700000910, 10)
@@ -2217,6 +2274,21 @@ func TestStoryUpdateEventPayloadPostgres(t *testing.T) {
 	}
 	if len(batched) != 1 || batched[0].Reaction == nil || *batched[0].Reaction != *reaction || batched[0].Story.ID != story.ID {
 		t.Fatalf("batched event = %+v, want durable reaction payload", batched)
+	}
+}
+
+// addStoryFeedContacts saves each owner in viewer's contacts, which is what
+// puts the owner's stories into the viewer's story feed. Rows go away with the
+// users through ON DELETE CASCADE.
+func addStoryFeedContacts(t *testing.T, ctx context.Context, pool *pgxpool.Pool, viewerID int64, ownerIDs ...int64) {
+	t.Helper()
+	for _, ownerID := range ownerIDs {
+		if _, err := pool.Exec(ctx, `
+INSERT INTO contacts (user_id, contact_user_id, mutual)
+VALUES ($1, $2, false)
+ON CONFLICT (user_id, contact_user_id) DO NOTHING`, viewerID, ownerID); err != nil {
+			t.Fatalf("insert story feed contact %d -> %d: %v", viewerID, ownerID, err)
+		}
 	}
 }
 
