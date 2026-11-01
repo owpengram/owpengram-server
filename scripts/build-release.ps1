@@ -132,10 +132,19 @@ try {
         Info "Building admin panel web assets (npm ci && npm run build)..."
         Push-Location "cmd/telesrv-admin/web"
         try {
-            npm ci
-            if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-            npm run build
-            if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+            # Windows PowerShell 5.1 turns anything a native command writes to stderr into a
+            # terminating error under 'Stop' -- and vite prints its chunk-size warning there --
+            # so judge npm by its exit code alone.
+            $prevPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                npm ci
+                if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+                npm run build
+                if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
+            } finally {
+                $ErrorActionPreference = $prevPreference
+            }
         } finally {
             Pop-Location
         }
