@@ -329,7 +329,9 @@ func (r *Router) buildUserFullProjection(ctx context.Context, currentUserID int6
 	}
 	// 通话入口：客户端不见 phone_calls_available=true 不显示通话按钮（P1 前置项）。
 	// phone_calls_private 标记对端禁 P2P（p2p_allowed 真值在通话确认时另行计算）。
-	if !u.Bot && u.ID != currentUserID {
+	// Built-in service accounts (777000 and the like) have nobody on the other end,
+	// so they never offer a call, whatever the privacy rules would allow.
+	if !u.Bot && u.ID != currentUserID && !domain.IsSystemUserID(u.ID) {
 		callsAllowed := visibility[domain.PrivacyKeyPhoneCall]
 		p2pAllowed := visibility[domain.PrivacyKeyPhoneP2P]
 		voiceAllowed := visibility[domain.PrivacyKeyVoiceMessages]

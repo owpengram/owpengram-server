@@ -591,6 +591,29 @@ func TestPhoneUserFullCallFlags(t *testing.T) {
 	})
 }
 
+func TestPhoneSystemAccountOffersNoCalls(t *testing.T) {
+	f := newPhoneFixture(t, stubPrivacy{})
+	system := domain.OfficialSystemUser()
+	peer := &tg.InputUser{UserID: system.ID, AccessHash: system.AccessHash}
+
+	full, err := f.router.onUsersGetFullUser(f.callerCtx(), peer)
+	if err != nil {
+		t.Fatalf("getFullUser: %v", err)
+	}
+	if full.FullUser.PhoneCallsAvailable || full.FullUser.VideoCallsAvailable {
+		t.Fatalf("system account call flags = %+v, want no calls offered", full.FullUser)
+	}
+
+	_, gaHash, _ := phoneTestKeys()
+	_, err = f.router.onPhoneRequestCall(f.callerCtx(), &tg.PhoneRequestCallRequest{
+		UserID: peer, GAHash: gaHash, Protocol: phoneTestProtocol(),
+	})
+	assertPhoneRPCErr(t, err, "USER_ID_INVALID")
+	if len(f.sessions.records()) != 0 {
+		t.Fatalf("a call to a system account must not push")
+	}
+}
+
 func TestMessagesGetDhConfig(t *testing.T) {
 	f := newPhoneFixture(t, stubPrivacy{})
 
