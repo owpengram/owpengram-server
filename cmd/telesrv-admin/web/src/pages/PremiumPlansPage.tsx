@@ -1,4 +1,4 @@
-import { Loader2, Plus, RefreshCw, Search } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Search } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
@@ -119,7 +119,7 @@ export function PremiumPlansPage() {
                       onChange={(event) => updateDraft(plan.Months, { sortOrder: event.target.value })}
                     />
                   </td>
-                  <td>{plan.Enabled ? <Badge tone="good">{"Enabled"}</Badge> : <Badge tone="danger">{"Disabled"}</Badge>}</td>
+                  <td>{!plan.Enabled && <Badge tone="danger">{"Disabled"}</Badge>}</td>
                   <td>{plan.ManagedBy}</td>
                   <td className="mono">{plan.Version}</td>
                   <td>

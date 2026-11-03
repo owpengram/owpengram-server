@@ -1,4 +1,4 @@
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "./icons";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { toInt } from "../lib/format";

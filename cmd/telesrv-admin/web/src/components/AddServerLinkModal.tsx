@@ -228,9 +228,6 @@ export function AddServerLinkModal({ onClose }: { onClose: () => void }) {
             <div className="share-link">
               {/* A link to open, not a field to edit or select: copying has its own button. */}
               <a className="mono share-link-url" href={link} target="_blank" rel="noopener noreferrer" title={link}>{link}</a>
-              <button className="icon-btn" type="button" onClick={() => void copy()} aria-label={"Copy link"} title={"Copy link"}>
-                {copied ? <Check /> : <Copy />}
-              </button>
             </div>
 
             <div className="share-actions">

@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MonitorSmartphone, ScrollText, Settings2, Sparkles, Star, UserRound } from "lucide-react";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MonitorSmartphone, ScrollText, Settings2, Sparkles, Star, UserRound } from "../components/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { AvatarModal } from "../components/AvatarModal";

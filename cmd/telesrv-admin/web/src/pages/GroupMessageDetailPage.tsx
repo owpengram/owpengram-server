@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { MessageView } from "../components/MessageView";

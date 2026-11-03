@@ -1,4 +1,4 @@
-import { ArrowLeft, Calculator, RefreshCw, SlidersHorizontal, User } from "lucide-react";
+import { ArrowLeft, Calculator, RefreshCw, SlidersHorizontal, User } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";

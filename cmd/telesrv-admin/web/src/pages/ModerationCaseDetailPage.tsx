@@ -1,4 +1,4 @@
-import { ArrowLeft, CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, RefreshCw, ShieldCheck } from "../components/icons";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";

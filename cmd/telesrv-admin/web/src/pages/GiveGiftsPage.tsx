@@ -1,4 +1,4 @@
-import { Gift, RefreshCw, Search } from "lucide-react";
+import { Gift, RefreshCw, Search } from "../components/icons";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { StaticLottie } from "../components/StaticLottie";

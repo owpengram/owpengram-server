@@ -1,12 +1,14 @@
-import { ChevronRight, History, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight } from "@gravity-ui/icons";
+import { History, Trash2 } from "../components/icons";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { UserPicker } from "../components/EntityPicker";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { DataTable, type Column } from "../components/DataTable";
+import { Alert, Badge, Metric, PageFrame, QueryPanel } from "../components/ui";
 import { displayName, formatUnix, parseIDs, toInt } from "../lib/format";
 import type { Navigate } from "../routing";
-import type { AccountRow, MessageListResponse } from "../types";
+import type { AccountRow, MessageListResponse, MessageRow } from "../types";
 import { GroupMessagesTab } from "./GroupMessagesPage";
 
 export function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
@@ -51,6 +53,42 @@ export function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
     }
   }
 
+  // Both people picked: the conversation loads by itself, newest first.
+  useEffect(() => {
+    if (owner && peer) void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, peer]);
+
+  const columns: Column<MessageRow>[] = [
+    { key: "id", label: "ID", className: "mono muted-cell", firstDir: "desc", sortValue: (row) => row.BoxID, render: (row) => row.BoxID },
+    {
+      key: "time",
+      label: "Time",
+      firstDir: "desc",
+      sortValue: (row) => row.Date,
+      render: (row) => formatUnix(row.Date)
+    },
+    {
+      key: "direction",
+      label: "",
+      render: (row) =>
+        row.Outgoing ? (
+          <span className="msg-dir out" title={"Outgoing"}><ArrowUpRight /></span>
+        ) : (
+          <span className="msg-dir in" title={"Incoming"}><ArrowDownLeft /></span>
+        )
+    },
+    {
+      key: "sender",
+      label: "Sender",
+      sortValue: (row) => row.FromUserID,
+      render: (row) =>
+        owner && row.FromUserID === owner.ID ? displayName(owner) : peer && row.FromUserID === peer.ID ? displayName(peer) : <span className="mono">{row.FromUserID}</span>
+    },
+    { key: "body", label: "Message", className: "truncate", sortValue: (row) => row.Body, render: (row) => row.Body || <span className="muted-cell">{"(no text)"}</span> },
+    { key: "status", label: "", render: (row) => (row.Deleted ? <Badge tone="danger">{"Deleted"}</Badge> : null) }
+  ];
+
   function changeOwner(row: AccountRow | null) {
     setOwner(row);
     setBeforeDate("");
@@ -73,20 +111,14 @@ export function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
           <UserPicker label={"Owner user"} value={owner} onChange={changeOwner} />
           <UserPicker label={"Peer user"} value={peer} onChange={changePeer} />
         </div>
-        <form className="toolbar message-query" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
-          <input value={beforeDate} onChange={(event) => setBeforeDate(event.target.value)} placeholder={"before_date cursor"} />
-          <input value={beforeID} onChange={(event) => setBeforeID(event.target.value)} placeholder={"before_msg_id cursor"} />
-          <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} placeholder={"limit <= 100"} />
-          <button className="btn primary icon-text" type="submit"><Search size={15} /> {"Search messages"}</button>
-          {data?.rows.length ? <button className="btn icon-text" type="button" onClick={() => load(true)}><ChevronRight size={15} /> {"Next page"}</button> : null}
-        </form>
       </QueryPanel>
-      <div className="metric-row">
-        <Metric label={"Messages on page"} value={String(data?.rows.length ?? 0)} />
-        <Metric label={"Deleted"} value={String((data?.rows ?? []).filter((row) => row.Deleted).length)} tone="danger" />
-        <Metric label={"Outgoing"} value={String((data?.rows ?? []).filter((row) => row.Outgoing).length)} />
-        <Metric label={"Owner / Peer"} value={owner && peer ? `${displayName(owner)} / ${displayName(peer)}` : "-"} />
-      </div>
+      {data && (
+        <div className="metric-row">
+          <Metric label={"Messages on page"} value={String(data.rows.length)} />
+          <Metric label={"Outgoing"} value={String(data.rows.filter((row) => row.Outgoing).length)} />
+          <Metric label={"Deleted"} value={String(data.rows.filter((row) => row.Deleted).length)} tone={data.rows.some((row) => row.Deleted) ? "danger" : "neutral"} />
+        </div>
+      )}
       <div className="operation-row">
         <div className="operation-box">
           <div className="operation-title"><Trash2 size={15} /> {"Delete selected messages"}</div>
@@ -115,44 +147,21 @@ export function PrivateMessagesTab({ navigate }: { navigate: Navigate }) {
           })} />
         </div>
       </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Message ID"}</th>
-              <th>{"Time"}</th>
-              <th>{"Sender"}</th>
-              <th>{"Direction"}</th>
-              <th>PTS</th>
-              <th>{"Status"}</th>
-              <th>{"Body"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.rows.map((row) => (
-              <tr key={`${row.OwnerUserID}-${row.BoxID}`}>
-                <td className="mono">{row.BoxID}</td>
-                <td>{formatUnix(row.Date)}</td>
-                <td className="mono">{row.FromUserID}</td>
-                <td>{row.Outgoing ? "Outgoing" : "Incoming"}</td>
-                <td>{row.PTS}</td>
-                <td>{row.Deleted ? <Badge tone="danger">{"Deleted"}</Badge> : <Badge>{"Live"}</Badge>}</td>
-                <td className="truncate">{row.Body}</td>
-                <td>
-                  <button
-                    className="row-link"
-                    onClick={() => navigate(`/messages/private/detail?owner_user_id=${row.OwnerUserID}&msg_id=${row.BoxID}`)}
-                  >
-                    {"Details"} <ChevronRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {(!data || data.rows.length === 0) && <EmptyRow colSpan={8} />}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={columns}
+        rows={data?.rows ?? []}
+        rowKey={(row) => `${row.OwnerUserID}-${row.BoxID}`}
+        onRowClick={(row) => navigate(`/messages/private/detail?owner_user_id=${row.OwnerUserID}&msg_id=${row.BoxID}`)}
+        empty={owner && peer ? "No messages between these two." : "Pick both people above to see their conversation."}
+      />
+      {data?.rows.length ? (
+        <div className="table-footer">
+          <span>{`${data.rows.length} messages`}</span>
+          <button className="btn icon-text" type="button" onClick={() => void load(true)}>
+            {"Older"} <ChevronRight />
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
@@ -167,7 +176,7 @@ export function MessagesPage({ navigate, tab, onTab }: {
   onTab: (tab: "private" | "groups") => void;
 }) {
   return (
-    <PageFrame title={"Messages"} eyebrow={"Message boxes and channel history"}>
+    <PageFrame title={"Messages"}>
       <div className="tab-bar" role="tablist" aria-label={"Message sections"}>
         <button
           className={`tab-btn ${tab === "private" ? "active" : ""}`}

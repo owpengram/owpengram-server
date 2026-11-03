@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Gift, Loader2, Sparkles, User, Users } from "lucide-react";
+import { CheckCircle2, CircleAlert, Gift, Loader2, Sparkles, User, Users } from "../components/icons";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";

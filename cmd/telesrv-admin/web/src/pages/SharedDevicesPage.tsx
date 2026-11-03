@@ -1,11 +1,14 @@
-import { ArrowLeft, ChevronDown, ChevronRight, Loader2, RefreshCw, Smartphone } from "lucide-react";
+import { ArrowsRotateRight, Smartphone } from "@gravity-ui/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, SectionHead } from "../components/ui";
-import { displayName, displayPhone, displayUsername, formatDate } from "../lib/format";
+import { DataTable, type Column } from "../components/DataTable";
+import { Alert, Badge, Metric, PageFrame, SectionHead } from "../components/ui";
+import { displayName, displayPhone, displayUsername, formatDate, formatRelative } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { SharedDeviceGroup } from "../types";
+
+type SharedAccount = SharedDeviceGroup["Accounts"][number];
 
 // SharedDevicesPage surfaces authorizations that look like they came from the
 // same physical device but belong to different accounts -- a lead worth
@@ -45,19 +48,39 @@ export function SharedDevicesPage({ navigate }: { navigate: Navigate }) {
 
   const totalFlaggedAccounts = groups.reduce((sum, group) => sum + group.AccountCount, 0);
 
+  const columns: Column<SharedAccount>[] = [
+    {
+      key: "name",
+      label: "Account",
+      sortValue: (a) => displayName(a),
+      render: (a) => (
+        <span className="cell-identity">
+          <Avatar id={a.UserID} firstName={a.FirstName} lastName={a.LastName} username={a.Username} size={28} />
+          <span>
+            <span>{displayName(a)}</span>
+            {a.Username && <span className="cell-sub"> {displayUsername(a.Username)}</span>}
+          </span>
+        </span>
+      )
+    },
+    { key: "id", label: "ID", className: "mono muted-cell", sortValue: (a) => a.UserID, render: (a) => a.UserID },
+    { key: "phone", label: "Phone", sortValue: (a) => a.Phone, render: (a) => displayPhone(a.Phone) || <span className="muted-cell">—</span> },
+    {
+      key: "active",
+      label: "Active from this device",
+      firstDir: "desc",
+      sortValue: (a) => new Date(a.ActiveAt).getTime() || 0,
+      render: (a) => <span title={formatDate(a.ActiveAt)}>{formatRelative(a.ActiveAt)}</span>
+    }
+  ];
+
   return (
     <PageFrame
-      title={"Shared Devices"}
-      eyebrow={"Multi-account signal — device/IP overlap across different accounts"}
+      title={"Shared devices"}
       actions={
-        <>
-          <button className="btn icon-text" type="button" onClick={() => navigate("/accounts")}>
-            <ArrowLeft size={15} /> {"Back to accounts"}
-          </button>
-          <button className="btn" type="button" onClick={() => load(false)} disabled={busy}>
-            <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
-          </button>
-        </>
+        <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load(false)} disabled={busy}>
+          <ArrowsRotateRight className={busy ? "spin" : undefined} />
+        </button>
       }
     >
       {error && <Alert>{error}</Alert>}
@@ -75,58 +98,26 @@ export function SharedDevicesPage({ navigate }: { navigate: Navigate }) {
           <section className="section-block" key={`${group.DeviceModel}|${group.SystemVersion}|${group.Platform}|${group.IP}`}>
             <SectionHead
               title={group.DeviceModel || "Unknown device"}
-              text={`${group.Platform || "unknown platform"} ${group.SystemVersion} · ${group.IP} · last active ${formatDate(group.LastActiveAt)}`}
-              action={<Badge tone="warn"><Smartphone size={12} /> {`${group.AccountCount} accounts`}</Badge>}
+              text={`${group.Platform || "unknown platform"} ${group.SystemVersion} · ${group.IP} · last active ${formatRelative(group.LastActiveAt)}`}
+              action={<Badge tone="warn"><Smartphone width={12} height={12} /> {`${group.AccountCount} accounts`}</Badge>}
             />
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th className="avatar-col"></th>
-                    <th>{"User ID"}</th>
-                    <th>{"Phone"}</th>
-                    <th>{"Username"}</th>
-                    <th>{"Name"}</th>
-                    <th>{"Active from this device"}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {group.Accounts.map((account) => (
-                    <tr key={account.UserID}>
-                      <td className="avatar-col">
-                        <button className="avatar-link" type="button" onClick={() => navigate(`/accounts/${account.UserID}`)} aria-label={`Open account ${account.UserID}`}>
-                          <Avatar id={account.UserID} firstName={account.FirstName} lastName={account.LastName} username={account.Username} />
-                        </button>
-                      </td>
-                      <td className="mono">{account.UserID}</td>
-                      <td>{displayPhone(account.Phone)}</td>
-                      <td>{displayUsername(account.Username) || "-"}</td>
-                      <td>{displayName(account) || "-"}</td>
-                      <td>{formatDate(account.ActiveAt)}</td>
-                      <td><button className="row-link" onClick={() => navigate(`/accounts/${account.UserID}`)}>{"Details"} <ChevronRight size={14} /></button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              columns={columns}
+              rows={group.Accounts}
+              rowKey={(a) => a.UserID}
+              onRowClick={(a) => navigate(`/accounts/${a.UserID}`)}
+              defaultSort={{ key: "active", dir: "desc" }}
+            />
           </section>
         ))}
-        {groups.length === 0 && (
-          <div className="table-wrap">
-            <table className="data-table">
-              <tbody>
-                <EmptyRow colSpan={7} />
-              </tbody>
-            </table>
-          </div>
-        )}
+        {groups.length === 0 && !busy && <p className="about-text">{"No device is shared by more than one account."}</p>}
       </div>
 
       {hasMore && (
-        <div className="toolbar">
-          <button className="btn icon-text" type="button" onClick={() => load(true)} disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <ChevronDown size={15} />} {"Load more"}
+        <div className="table-footer">
+          <span />
+          <button className="btn" type="button" onClick={() => void load(true)} disabled={busy}>
+            {"Load more"}
           </button>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Loader2, Plus, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Plus, Trash2, X } from "../components/icons";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, Copy, ImagePlus, ScrollText, Settings2, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Copy, ImagePlus, ScrollText, Settings2, Trash2, UserRound } from "../components/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";

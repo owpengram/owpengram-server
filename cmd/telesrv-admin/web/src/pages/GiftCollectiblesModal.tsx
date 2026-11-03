@@ -1,4 +1,4 @@
-import { CheckCircle2, FileJson2, Gem, Loader2, Plus, ShieldCheck, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, FileJson2, Gem, Loader2, Plus, ShieldCheck, Sparkles, Trash2, Upload, X } from "../components/icons";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";

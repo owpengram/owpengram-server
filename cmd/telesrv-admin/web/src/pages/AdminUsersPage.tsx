@@ -1,4 +1,4 @@
-import { KeyRound, Lock, RefreshCw, ShieldCheck, UserPlus, X } from "lucide-react";
+import { KeyRound, Lock, RefreshCw, ShieldCheck, UserPlus, X } from "../components/icons";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
@@ -46,21 +46,20 @@ export function AdminUsersPage() {
   }, []);
 
   return (
-    <PageFrame eyebrow={"ACCESS / OPERATORS"} title={"Admin operators"}>
-      {error && <Alert>{error}</Alert>}
-
-      <QueryPanel>
-        <div className="toolbar">
+    <PageFrame
+      title={"Operators"}
+      actions={
+        <>
           <button className="btn primary icon-text" type="button" onClick={() => setCreating(true)}>
             <UserPlus size={15} /> {"New operator"}
           </button>
-          <button className="btn icon-text" type="button" onClick={() => void load()} disabled={busy}>
-            <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
+          <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load()} disabled={busy}>
+            <RefreshCw size={16} className={busy ? "spin" : ""} />
           </button>
-        </div>
-      </QueryPanel>
-
-      <SectionHead title={"Operators"} />
+        </>
+      }
+    >
+      {error && <Alert>{error}</Alert>}
       <div className="table-wrap">
         <table className="data-table">
           <thead>

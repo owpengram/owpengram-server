@@ -1,10 +1,11 @@
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Send } from "lucide-react";
+import { ArrowsRotateRight, ChevronLeft, ChevronRight, PaperPlane } from "@gravity-ui/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { CreateBroadcastModal } from "../components/CreateBroadcastModal";
-import { Alert, Badge, EmptyRow, Metric, PageFrame } from "../components/ui";
-import { formatDate } from "../lib/format";
-import type { BroadcastListResponse } from "../types";
+import { DataTable, type Column } from "../components/DataTable";
+import { Alert, Badge, Metric, PageFrame } from "../components/ui";
+import { formatDate, formatRelative } from "../lib/format";
+import type { BroadcastListResponse, BroadcastRow } from "../types";
 
 type Cursor = { beforeID: number };
 const zeroCursor: Cursor = { beforeID: 0 };
@@ -72,73 +73,87 @@ export function BroadcastsPage() {
   const canGoPrev = history.length > 0 && !busy;
   const canGoNext = Boolean(data?.has_more) && !busy;
 
+  const columns: Column<BroadcastRow>[] = [
+    { key: "message", label: "Message", className: "truncate", sortValue: (row) => row.Message, render: (row) => row.Message },
+    {
+      key: "target",
+      label: "Audience",
+      sortValue: (row) => row.TargetMode,
+      render: (row) => (row.TargetMode === "all" ? "All users" : "Selected")
+    },
+    {
+      key: "progress",
+      label: "Delivered",
+      firstDir: "desc",
+      sortValue: (row) => (row.TargetCount ? row.SentCount / row.TargetCount : 0),
+      render: (row) => {
+        const delivered = row.SentCount + row.FailedCount;
+        const done = row.EnumerationDone && row.TargetCount > 0 && delivered >= row.TargetCount;
+        const pct = row.TargetCount > 0 ? Math.round((row.SentCount / row.TargetCount) * 100) : 0;
+        return (
+          <span className="cell-identity">
+            <span className="mono">{`${row.SentCount.toLocaleString()} / ${row.TargetCount.toLocaleString()}`}</span>
+            <span className="cell-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+            {!done && <Badge tone="warn">{"Sending"}</Badge>}
+          </span>
+        );
+      }
+    },
+    {
+      key: "failed",
+      label: "Failed",
+      align: "right",
+      firstDir: "desc",
+      sortValue: (row) => row.FailedCount,
+      render: (row) => (row.FailedCount > 0 ? <Badge tone="danger">{row.FailedCount}</Badge> : "")
+    },
+    { key: "by", label: "Sent by", sortValue: (row) => row.CreatedBy, render: (row) => row.CreatedBy || <span className="muted-cell">—</span> },
+    {
+      key: "created",
+      label: "Created",
+      firstDir: "desc",
+      sortValue: (row) => new Date(row.CreatedAt).getTime() || 0,
+      render: (row) => <span title={formatDate(row.CreatedAt)}>{formatRelative(row.CreatedAt)}</span>
+    }
+  ];
+
   return (
     <PageFrame
       title={"Broadcasts"}
-      eyebrow={"Announcements sent from the official system account"}
       actions={
         <>
           <button className="btn primary icon-text" type="button" onClick={() => setCreateModalOpen(true)}>
-            <Send size={15} /> {"Send broadcast"}
+            <PaperPlane /> {"Send broadcast"}
           </button>
-          <button className="btn" type="button" onClick={() => void loadFresh()} disabled={busy}>
-            <RefreshCw size={15} /> {"Refresh"}
+          <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void loadFresh()} disabled={busy}>
+            <ArrowsRotateRight className={busy ? "spin" : undefined} />
           </button>
         </>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label={"Campaigns on page"} value={String(rows.length)} />
+        <Metric label={"Campaigns on page"} value={String(rows.length)} loading={!data} />
         <Metric label={"Still delivering"} value={String(inFlight)} tone={inFlight > 0 ? "warn" : "neutral"} />
       </div>
 
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"ID"}</th>
-              <th>{"Message"}</th>
-              <th>{"Target"}</th>
-              <th>{"Sent"}</th>
-              <th>{"Failed"}</th>
-              <th>{"Total"}</th>
-              <th>{"Created by"}</th>
-              <th>{"Created"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const delivered = row.SentCount + row.FailedCount;
-              const done = row.EnumerationDone && row.TargetCount > 0 && delivered >= row.TargetCount;
-              return (
-                <tr key={row.ID}>
-                  <td className="mono">{row.ID}</td>
-                  <td className="truncate">{row.Message}</td>
-                  <td>{row.TargetMode === "all" ? <Badge tone="warn">{"All users"}</Badge> : <Badge>{"Selected"}</Badge>}</td>
-                  <td>{row.SentCount}</td>
-                  <td>{row.FailedCount > 0 ? <Badge tone="danger">{row.FailedCount}</Badge> : row.FailedCount}</td>
-                  <td>{row.TargetCount}</td>
-                  <td>{row.CreatedBy || "-"}</td>
-                  <td>
-                    {formatDate(row.CreatedAt)}
-                    {!done && <Badge tone="warn">{"Sending"}</Badge>}
-                  </td>
-                </tr>
-              );
-            })}
-            {rows.length === 0 && <EmptyRow colSpan={8} />}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="toolbar">
-        <button className="btn icon-text" type="button" onClick={() => void loadPrev()} disabled={!canGoPrev}>
-          <ChevronLeft size={15} /> {"Previous page"}
-        </button>
-        <button className="btn icon-text" type="button" onClick={() => void loadNext()} disabled={!canGoNext}>
-          {busy ? <Loader2 size={15} className="spin" /> : <ChevronRight size={15} />} {"Next page"}
-        </button>
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.ID}
+        loading={busy && !data}
+        empty={"No broadcasts sent yet."}
+      />
+      <div className="table-footer">
+        <span>{"Sent from the official system account, newest first"}</span>
+        <div className="pager">
+          <button className="icon-btn" type="button" aria-label={"Previous page"} onClick={() => void loadPrev()} disabled={!canGoPrev}>
+            <ChevronLeft />
+          </button>
+          <button className="icon-btn" type="button" aria-label={"Next page"} onClick={() => void loadNext()} disabled={!canGoNext}>
+            <ChevronRight />
+          </button>
+        </div>
       </div>
 
       {createModalOpen && (

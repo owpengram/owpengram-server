@@ -1,4 +1,4 @@
-import { CircleAlert } from "lucide-react";
+import { CircleAlert } from "./icons";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePageHeaderSlots } from "./pageHeader";

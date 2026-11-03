@@ -1,21 +1,32 @@
-import { AtSign, ChevronDown, ChevronRight, Flame, Loader2, Plus, RefreshCw, Search, Vault } from "lucide-react";
+import { ArrowsRotateRight, Magnifier, Plus } from "@gravity-ui/icons";
+import { Flame, Vault } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { DataTable, FilterChip, type Column } from "../components/DataTable";
 import { MintCollectibleUsernameModal } from "../components/MintCollectibleUsernameModal";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
-import { displayUsername, formatCurrency, formatDate } from "../lib/format";
+import { Alert, Badge, PageFrame } from "../components/ui";
+import { displayUsername, formatCurrency, formatDate, formatRelative } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 import type { Navigate } from "../routing";
 import type { CollectibleUsernameRow, CollectibleUsernameStatus } from "../types";
 
 type StatusFilter = "all" | CollectibleUsernameStatus;
 
+const STATUS_VIEWS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "owned", label: "Owned" },
+  { value: "vault", label: "In vault" },
+  { value: "burned", label: "Burned" }
+];
+
 export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [q, setQ] = useState("");
-  const [limit, setLimit] = useState("50");
+  const query = useDebounced(q.trim().replace(/^@/, ""));
   const [rows, setRows] = useState<CollectibleUsernameRow[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mintModalOpen, setMintModalOpen] = useState(false);
@@ -23,9 +34,9 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
   async function load(next = false) {
     setBusy(true);
     setError("");
-    const params = new URLSearchParams({ limit });
+    const params = new URLSearchParams({ limit: "50" });
     if (status !== "all") params.set("status", status);
-    if (q.trim()) params.set("q", q.trim().replace(/^@/, ""));
+    if (query) params.set("q", query);
     if (next && cursor) params.set("before_id", cursor);
     try {
       const result = await api.collectibleUsernames(params);
@@ -33,6 +44,7 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
       setRows((current) => (next ? [...current, ...page] : page));
       setCursor(result.next_before_id ?? "");
       setHasMore(Boolean(result.has_more));
+      setLoaded(true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -42,102 +54,64 @@ export function CollectibleUsernamesPage({ navigate }: { navigate: Navigate }) {
 
   useEffect(() => {
     void load(false);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, query]);
 
-  const vaultCount = rows.filter((row) => row.Status === "vault").length;
-  const ownedCount = rows.filter((row) => row.Status === "owned").length;
-  const burnedCount = rows.filter((row) => row.Status === "burned").length;
+  const columns: Column<CollectibleUsernameRow>[] = [
+    { key: "username", label: "Username", sortValue: (row) => row.Username, render: (row) => <strong>{displayUsername(row.Username)}</strong> },
+    { key: "status", label: "Status", sortValue: (row) => row.Status, render: (row) => <UsernameStatus status={row.Status} /> },
+    { key: "owner", label: "Owner", sortValue: (row) => ownerLabel(row, ""), render: (row) => ownerLabel(row, "—") },
+    { key: "price", label: "Price", className: "mono", align: "right", firstDir: "desc", sortValue: (row) => Number(row.Amount) || 0, render: (row) => priceLabel(row) },
+    { key: "transfers", label: "Transfers", align: "right", firstDir: "desc", sortValue: (row) => Number(row.TransferCount) || 0, render: (row) => row.TransferCount },
+    {
+      key: "updated",
+      label: "Updated",
+      firstDir: "desc",
+      sortValue: (row) => new Date(row.UpdatedAt).getTime() || 0,
+      render: (row) => <span title={formatDate(row.UpdatedAt)}>{formatRelative(row.UpdatedAt) || "—"}</span>
+    }
+  ];
 
   return (
     <PageFrame
-      title={"Collectible usernames"}
-      eyebrow={"NFT usernames / Registry"}
+      title={"Usernames"}
       actions={
         <>
           <button className="btn primary icon-text" type="button" onClick={() => setMintModalOpen(true)}>
-            <Plus size={15} /> {"Mint username"}
+            <Plus /> {"Mint username"}
           </button>
-          <button className="btn icon-text" type="button" onClick={() => load(false)} disabled={busy}>
-            <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
+          <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load(false)} disabled={busy}>
+            <ArrowsRotateRight className={busy ? "spin" : undefined} />
           </button>
         </>
       }
     >
       {error && <Alert>{error}</Alert>}
-      <div className="metric-row">
-        <Metric label={"Loaded rows"} value={String(rows.length)} />
-        <Metric label={"In vault"} value={String(vaultCount)} />
-        <Metric label={"Held by owners"} value={String(ownedCount)} tone="good" />
-        <Metric label={"Burned"} value={String(burnedCount)} tone={burnedCount ? "danger" : "neutral"} />
+      <div className="list-controls">
+        <label className="searchbox">
+          <Magnifier />
+          <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search by username"} aria-label={"Search usernames"} />
+        </label>
+        {STATUS_VIEWS.map((view) => (
+          <FilterChip key={view.value} label={view.label} active={status === view.value} onToggle={() => setStatus(view.value)} />
+        ))}
       </div>
-
-      <QueryPanel>
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search by username"} />
-          </label>
-          <label className="field-inline">
-            <span>{"Status"}</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}>
-              <option value="all">{"All statuses"}</option>
-              <option value="vault">{"Vault"}</option>
-              <option value="owned">{"Owned"}</option>
-              <option value="burned">{"Burned"}</option>
-            </select>
-          </label>
-          <label className="field-inline">
-            <span>{"Limit"}</span>
-            <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} type="number" min="1" max="200" />
-          </label>
-          <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Search"}
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.ID}
+        onRowClick={(row) => navigate(`/collectible-usernames/${row.ID}`)}
+        loading={busy && !loaded}
+        empty={query || status !== "all" ? "No usernames match." : "No collectible usernames minted yet."}
+      />
+      <div className="table-footer">
+        <span>{rows.length > 0 ? `${rows.length} shown` : ""}</span>
+        {hasMore && (
+          <button className="btn" type="button" onClick={() => void load(true)} disabled={busy}>
+            {"Load more"}
           </button>
-        </form>
-      </QueryPanel>
-
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Username"}</th>
-              <th>{"Status"}</th>
-              <th>{"Owner"}</th>
-              <th>{"Price"}</th>
-              <th>{"Purchase date (UTC)"}</th>
-              <th>{"Transfers"}</th>
-              <th>{"Updated"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.ID}>
-                <td><strong>{displayUsername(row.Username)}</strong></td>
-                <td><UsernameStatus status={row.Status} /></td>
-                <td>{ownerLabel(row, "Vault")}</td>
-                <td className="mono">{priceLabel(row)}</td>
-                <td>{formatDate(row.PurchaseDate) || "-"}</td>
-                <td className="mono">{row.TransferCount}</td>
-                <td>{formatDate(row.UpdatedAt) || "-"}</td>
-                <td>
-                  <button className="row-link" type="button" onClick={() => navigate(`/collectible-usernames/${row.ID}`)}>
-                    <AtSign size={14} /> {"Details"} <ChevronRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && <EmptyRow colSpan={8} />}
-          </tbody>
-        </table>
+        )}
       </div>
-      {hasMore && (
-        <div className="toolbar">
-          <button className="btn icon-text" type="button" onClick={() => load(true)} disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <ChevronDown size={15} />} {"Load more"}
-          </button>
-        </div>
-      )}
 
       {mintModalOpen && (
         <MintCollectibleUsernameModal

@@ -1,4 +1,4 @@
-import { AlertTriangle, Coins, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Send, Trash2, X } from "lucide-react";
+import { AlertTriangle, Coins, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Send, Trash2, X } from "../components/icons";
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

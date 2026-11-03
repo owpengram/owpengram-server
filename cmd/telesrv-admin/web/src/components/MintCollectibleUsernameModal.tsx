@@ -1,4 +1,4 @@
-import { Plus, Vault, X } from "lucide-react";
+import { Plus, Vault, X } from "./icons";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { ChannelPicker, UserPicker } from "./EntityPicker";

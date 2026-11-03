@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "../components/icons";
 import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";

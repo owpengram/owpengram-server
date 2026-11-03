@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, Loader2, RefreshCw, Search } from "lucide-react";
+import { Check, ChevronRight, Copy, Loader2, RefreshCw, Search } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { copyToClipboard } from "../clipboard";

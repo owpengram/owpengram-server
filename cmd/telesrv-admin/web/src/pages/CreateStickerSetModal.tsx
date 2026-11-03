@@ -1,4 +1,4 @@
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2, Upload, X } from "../components/icons";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

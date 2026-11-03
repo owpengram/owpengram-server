@@ -1,4 +1,4 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Download, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Download, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "../components/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

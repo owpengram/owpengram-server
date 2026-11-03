@@ -1,39 +1,27 @@
-import { ChevronRight, Search } from "lucide-react";
-import { useState } from "react";
+import { ChevronRight, Eye, Pin } from "@gravity-ui/icons";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
+import { DataTable, type Column } from "../components/DataTable";
 import { ChannelPicker } from "../components/EntityPicker";
-import { Alert, Badge, EmptyRow, Metric, QueryPanel } from "../components/ui";
-import { channelKind, formatUnix } from "../lib/format";
+import { Alert, Badge, Metric, QueryPanel } from "../components/ui";
+import { formatUnix } from "../lib/format";
 import type { Navigate } from "../routing";
-import type { ChannelRow, GroupMessageListResponse } from "../types";
+import type { ChannelRow, GroupMessageListResponse, GroupMessageRow } from "../types";
 
 export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
   const [channel, setChannel] = useState<ChannelRow | null>(null);
-  const [beforeDate, setBeforeDate] = useState("");
-  const [beforeID, setBeforeID] = useState("");
-  const [limit, setLimit] = useState("100");
   const [data, setData] = useState<GroupMessageListResponse | null>(null);
   const [error, setError] = useState("");
 
+  // Newest first; "Older" continues from the last row on the page.
   async function load(next = false) {
     setError("");
-    if (!channel) {
-      setError("Search and select a supergroup or channel first");
-      return;
-    }
-    const params = new URLSearchParams({
-      channel_id: String(channel.ID),
-      limit
-    });
+    if (!channel) return;
+    const params = new URLSearchParams({ channel_id: String(channel.ID), limit: "100" });
     if (next && data?.rows.length) {
       const last = data.rows[data.rows.length - 1];
       params.set("before_date", String(last.Date));
       params.set("before_id", String(last.ID));
-      setBeforeDate(String(last.Date));
-      setBeforeID(String(last.ID));
-    } else {
-      if (beforeDate) params.set("before_date", beforeDate);
-      if (beforeID) params.set("before_id", beforeID);
     }
     try {
       setData(await api.groupMessages(params));
@@ -42,78 +30,76 @@ export function GroupMessagesTab({ navigate }: { navigate: Navigate }) {
     }
   }
 
-  function changeChannel(row: ChannelRow | null) {
-    setChannel(row);
-    setBeforeDate("");
-    setBeforeID("");
+  // Picking a channel opens its history straight away.
+  useEffect(() => {
     setData(null);
-  }
+    if (channel) void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel]);
 
   const rows = data?.rows ?? [];
+
+  const columns: Column<GroupMessageRow>[] = [
+    { key: "id", label: "ID", className: "mono muted-cell", firstDir: "desc", sortValue: (row) => row.ID, render: (row) => row.ID },
+    { key: "time", label: "Time", firstDir: "desc", sortValue: (row) => row.Date, render: (row) => formatUnix(row.Date) },
+    {
+      key: "from",
+      label: "From",
+      className: "mono",
+      sortValue: (row) => row.SenderUserID,
+      render: (row) => (row.Post ? <span className="muted-cell">{"channel post"}</span> : row.SenderUserID)
+    },
+    { key: "body", label: "Message", className: "truncate", sortValue: (row) => row.Body, render: (row) => row.Body || <span className="muted-cell">{"(no text)"}</span> },
+    {
+      key: "views",
+      label: "Views",
+      align: "right",
+      firstDir: "desc",
+      sortValue: (row) => row.ViewsCount,
+      render: (row) => (row.ViewsCount ? <span className="cell-identity"><Eye width={12} height={12} />{row.ViewsCount.toLocaleString()}</span> : "")
+    },
+    {
+      key: "status",
+      label: "",
+      render: (row) => (
+        <span className="cell-badges">
+          {row.Pinned && <Badge tone="warn"><Pin width={11} height={11} /> {"Pinned"}</Badge>}
+          {row.Deleted && <Badge tone="danger">{"Deleted"}</Badge>}
+        </span>
+      )
+    }
+  ];
 
   return (
     <>
       {error && <Alert>{error}</Alert>}
       <QueryPanel>
         <div className="message-selector-grid single">
-          <ChannelPicker label={"Channel / Group"} value={channel} onChange={changeChannel} />
+          <ChannelPicker label={"Channel or group"} value={channel} onChange={setChannel} />
         </div>
-        <form className="toolbar message-query" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
-          <input value={beforeDate} onChange={(event) => setBeforeDate(event.target.value)} placeholder={"before_date cursor"} />
-          <input value={beforeID} onChange={(event) => setBeforeID(event.target.value)} placeholder={"before_msg_id cursor"} />
-          <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} placeholder={"limit <= 100"} />
-          <button className="btn primary icon-text" type="submit"><Search size={15} /> {"Search messages"}</button>
-          {rows.length ? <button className="btn icon-text" type="button" onClick={() => load(true)}><ChevronRight size={15} /> {"Next page"}</button> : null}
-        </form>
       </QueryPanel>
-      <div className="metric-row">
-        <Metric label={"Messages on page"} value={String(rows.length)} />
-        <Metric label={"With media"} value={String(rows.filter((row) => row.Media && row.Media !== "{}").length)} />
-        <Metric label={"Channel posts"} value={String(rows.filter((row) => row.Post).length)} />
-        <Metric label={"Channel / Group"} value={channel ? `${channel.Title || channelKind(channel)} (${channel.ID})` : "-"} />
-      </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Message ID"}</th>
-              <th>{"Time"}</th>
-              <th>{"Sender"}</th>
-              <th>From Peer</th>
-              <th>PTS</th>
-              <th>{"Views"}</th>
-              <th>{"Status"}</th>
-              <th>{"Body"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.ChannelID}-${row.ID}`}>
-                <td className="mono">{row.ID}</td>
-                <td>{formatUnix(row.Date)}</td>
-                <td className="mono">{row.SenderUserID}</td>
-                <td className="mono">{row.FromPeerType}:{row.FromPeerID}</td>
-                <td>{row.PTS}</td>
-                <td>{row.ViewsCount}</td>
-                <td>
-                  {row.Deleted ? <Badge tone="danger">{"Deleted"}</Badge> : row.Pinned ? <Badge tone="warn">{"Pinned"}</Badge> : <Badge>{"Live"}</Badge>}
-                </td>
-                <td className="truncate">{row.Body}</td>
-                <td>
-                  <button
-                    className="row-link"
-                    onClick={() => navigate(`/messages/groups/detail?channel_id=${row.ChannelID}&msg_id=${row.ID}`)}
-                  >
-                    {"Details"} <ChevronRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && <EmptyRow colSpan={9} />}
-          </tbody>
-        </table>
-      </div>
+      {data && (
+        <div className="metric-row">
+          <Metric label={"Messages on page"} value={String(rows.length)} />
+          <Metric label={"With media"} value={String(rows.filter((row) => row.Media && row.Media !== "{}").length)} />
+          <Metric label={"Channel posts"} value={String(rows.filter((row) => row.Post).length)} />
+        </div>
+      )}
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => `${row.ChannelID}-${row.ID}`}
+        onRowClick={(row) => navigate(`/messages/groups/detail?channel_id=${row.ChannelID}&msg_id=${row.ID}`)}
+        empty={channel ? "No messages here." : "Pick a channel or group above to see its history."}
+      />
+      {rows.length ? (
+        <div className="table-footer">
+          <span>{`${rows.length} messages`}</span>
+          <button className="btn icon-text" type="button" onClick={() => void load(true)}>
+            {"Older"} <ChevronRight />
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

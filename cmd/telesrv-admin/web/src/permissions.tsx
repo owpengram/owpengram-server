@@ -1,4 +1,4 @@
-import { EyeOff, ShieldOff } from "lucide-react";
+import { EyeOff, ShieldOff } from "./components/icons";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { StatusScreen } from "./components/StatusScreen";
 import type { Navigate } from "./routing";

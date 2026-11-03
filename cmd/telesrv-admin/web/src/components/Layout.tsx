@@ -173,6 +173,21 @@ export function Shell({
   const section = routeSection(route.path);
   const serverUpdate = useMemo(() => ({ version, update }), [version, update]);
 
+  // Every older table whose rows carry a "Details" link opens that record from
+  // anywhere in the row, like DataTable does; controls inside the row keep
+  // their own clicks.
+  useEffect(() => {
+    function onClick(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (!target || target.closest("button, a, input, select, textarea, label")) return;
+      const row = target.closest(".data-table tbody tr");
+      const link = row?.querySelector<HTMLElement>(".row-link");
+      if (link) link.click();
+    }
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
+
   const [addServerLinkOpen, setAddServerLinkOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");

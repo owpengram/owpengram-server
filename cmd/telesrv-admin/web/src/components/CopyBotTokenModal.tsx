@@ -1,4 +1,4 @@
-import { Check, Copy, X } from "lucide-react";
+import { Check, Copy, X } from "./icons";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

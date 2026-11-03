@@ -1,5 +1,5 @@
 import { ArrowsRotateRight, Magnifier } from "@gravity-ui/icons";
-import { Settings2, X } from "lucide-react";
+import { Settings2, X } from "../components/icons";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";

@@ -11,7 +11,7 @@ import {
   Settings2,
   Sparkles,
   type LucideIcon
-} from "lucide-react";
+} from "./icons";
 import type { ReactNode } from "react";
 import { formatBytes } from "../lib/format";
 

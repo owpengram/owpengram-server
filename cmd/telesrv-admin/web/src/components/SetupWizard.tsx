@@ -1,4 +1,4 @@
-import { ArrowRight, Check, ImagePlus, Loader2, Rocket, UserPlus } from "lucide-react";
+import { ArrowRight, Check, ImagePlus, Loader2, Rocket, UserPlus } from "./icons";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";

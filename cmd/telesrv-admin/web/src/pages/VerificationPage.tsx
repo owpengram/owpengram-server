@@ -1,8 +1,10 @@
-import { BadgeCheck, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { ArrowsRotateRight, Magnifier } from "@gravity-ui/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
-import { displayUsername, formatDate } from "../lib/format";
+import { DataTable, FilterChip, type Column } from "../components/DataTable";
+import { Alert, Badge, PageFrame } from "../components/ui";
+import { displayUsername, formatDate, formatRelative } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 import type { Navigate } from "../routing";
 import type {
   VerificationApplicationRow,
@@ -35,27 +37,23 @@ export const verificationTargetTypeLabels: Record<VerificationTargetType, string
 export function VerificationPage({ navigate }: { navigate: Navigate }) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [targetType, setTargetType] = useState<TargetFilter>("all");
-  const [reviewer, setReviewer] = useState("");
   const [q, setQ] = useState("");
-  const [limit, setLimit] = useState("50");
+  const query = useDebounced(q.trim().replace(/^@/, ""));
   const [rows, setRows] = useState<VerificationApplicationRow[]>([]);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // One free-text field: the backend matches the application id, the target peer
-  // id and a username (applicant or target), so "@durov", "42" and a peer id all
-  // work without a mode switch.
   async function load(next = false) {
     setBusy(true);
     setError("");
-    const params = new URLSearchParams({ limit });
+    const params = new URLSearchParams({ limit: "50" });
     if (status !== "all") params.set("status", status);
     if (targetType !== "all") params.set("target_type", targetType);
-    if (reviewer.trim()) params.set("reviewer", reviewer.trim());
-    if (q.trim()) params.set("q", q.trim().replace(/^@/, ""));
+    if (query) params.set("q", query);
     if (next && cursor) params.set("before_id", cursor);
     try {
       const result = await api.verificationApplications(params);
@@ -63,6 +61,7 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
       setRows((current) => (next ? [...current, ...page] : page));
       setCursor(result.next_before_id ?? "");
       setHasMore(Boolean(result.has_more));
+      setLoaded(true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -70,8 +69,6 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
     }
   }
 
-  // The counts are the whole queue, not the current page, so they are fetched
-  // separately from the keyset listing.
   async function loadCounts() {
     try {
       const result = await api.verificationCounts();
@@ -83,6 +80,10 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
 
   useEffect(() => {
     void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, targetType, query]);
+
+  useEffect(() => {
     void loadCounts();
   }, []);
 
@@ -91,124 +92,86 @@ export function VerificationPage({ navigate }: { navigate: Navigate }) {
     void loadCounts();
   }
 
+  const columns: Column<VerificationApplicationRow>[] = [
+    { key: "id", label: "ID", className: "mono", firstDir: "desc", sortValue: (row) => Number(row.ID), render: (row) => `#${row.ID}` },
+    {
+      key: "target",
+      label: "Target",
+      sortValue: (row) => targetLabel(row),
+      render: (row) => (
+        <span>
+          <span>{targetLabel(row)}</span>
+          <span className="cell-sub"> {verificationTargetTypeLabels[row.TargetType]}</span>
+          {row.TargetVerified && <> <Badge tone="good">{"Already verified"}</Badge></>}
+        </span>
+      )
+    },
+    {
+      key: "applicant",
+      label: "Applicant",
+      sortValue: (row) => displayUsername(row.ApplicantUsername) || row.ApplicantName,
+      render: (row) => displayUsername(row.ApplicantUsername) || row.ApplicantName || <span className="muted-cell">—</span>
+    },
+    { key: "category", label: "Category", sortValue: (row) => row.Category, render: (row) => row.Category || <span className="muted-cell">—</span> },
+    { key: "status", label: "Status", sortValue: (row) => row.Status, render: (row) => <VerificationStatusBadge status={row.Status} /> },
+    {
+      key: "submitted",
+      label: "Submitted",
+      firstDir: "desc",
+      sortValue: (row) => new Date(row.SubmittedAt).getTime() || 0,
+      render: (row) => <span title={formatDate(row.SubmittedAt)}>{formatRelative(row.SubmittedAt) || "—"}</span>
+    },
+    { key: "reviewer", label: "Reviewer", sortValue: (row) => row.ReviewerAdminID, render: (row) => row.ReviewerAdminID || <span className="muted-cell">—</span> }
+  ];
+
   return (
     <PageFrame
-      title={"Verification queue"}
-      eyebrow={"Verification / Queue"}
+      title={"Verification"}
       actions={
-        <button className="btn icon-text" type="button" onClick={refresh} disabled={busy}>
-          <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
+        <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={refresh} disabled={busy}>
+          <ArrowsRotateRight className={busy ? "spin" : undefined} />
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
-      <div className="metric-row">
+      <div className="list-controls">
+        <label className="searchbox">
+          <Magnifier />
+          <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search by ID, username or title"} aria-label={"Search applications"} />
+        </label>
+        <FilterChip label={"All"} active={status === "all"} onToggle={() => setStatus("all")} />
         {statuses.map((item) => (
-          <Metric
+          <FilterChip
             key={item}
             label={verificationStatusLabels[item]}
-            value={counts[item] ?? "0"}
-            mono
-            tone={statusMetricTone(item, counts[item] ?? "0")}
+            count={Number(counts[item] ?? 0)}
+            active={status === item}
+            onToggle={() => setStatus(status === item ? "all" : item)}
           />
         ))}
+        <select value={targetType} onChange={(event) => setTargetType(event.target.value as TargetFilter)} aria-label={"Target type"} style={{ width: "auto", height: 30 }}>
+          <option value="all">{"Any target"}</option>
+          {targetTypes.map((item) => (
+            <option key={item} value={item}>{verificationTargetTypeLabels[item]}</option>
+          ))}
+        </select>
       </div>
-
-      <QueryPanel>
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(false); }}>
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Application id, peer id, username or title"} />
-          </label>
-          <label className="field-inline">
-            <span>{"Status"}</span>
-            <select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}>
-              <option value="all">{"All statuses"}</option>
-              {statuses.map((item) => (
-                <option key={item} value={item}>{verificationStatusLabels[item]}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field-inline">
-            <span>{"Target type"}</span>
-            <select value={targetType} onChange={(event) => setTargetType(event.target.value as TargetFilter)}>
-              <option value="all">{"All types"}</option>
-              {targetTypes.map((item) => (
-                <option key={item} value={item}>{verificationTargetTypeLabels[item]}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field-inline">
-            <span>{"Reviewer"}</span>
-            <input value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder={"Any reviewer"} />
-          </label>
-          <label className="field-inline">
-            <span>{"Limit"}</span>
-            <input className="small-input" value={limit} onChange={(event) => setLimit(event.target.value)} type="number" min="1" max="200" />
-          </label>
-          <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Search"}
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.ID}
+        onRowClick={(row) => navigate(`/verification/${row.ID}`)}
+        loading={busy && !loaded}
+        empty={"No applications in this view."}
+      />
+      <div className="table-footer">
+        <span>{rows.length > 0 ? `${rows.length} shown` : ""}</span>
+        {hasMore && (
+          <button className="btn" type="button" onClick={() => void load(true)} disabled={busy}>
+            {"Load more"}
           </button>
-        </form>
-      </QueryPanel>
-
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"ID"}</th>
-              <th>{"Target"}</th>
-              <th>{"Applicant"}</th>
-              <th>{"Category"}</th>
-              <th>{"Status"}</th>
-              <th>{"Submitted"}</th>
-              <th>{"Reviewer"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.ID}>
-                <td className="mono">
-                  <button className="row-link" type="button" onClick={() => navigate(`/verification/${row.ID}`)}>
-                    #{row.ID}
-                  </button>
-                </td>
-                <td>
-                  <strong>{targetLabel(row)}</strong>
-                  <div className="entity-subtitle mono">
-                    {verificationTargetTypeLabels[row.TargetType]} · {row.TargetID}
-                  </div>
-                  {row.TargetVerified && (
-                    <Badge tone="good"><BadgeCheck size={12} /> {"Badge already on"}</Badge>
-                  )}
-                </td>
-                <td>
-                  {displayUsername(row.ApplicantUsername) || row.ApplicantName || "-"}
-                  <div className="entity-subtitle mono">{row.ApplicantUserID}</div>
-                </td>
-                <td>{row.Category || "-"}</td>
-                <td><VerificationStatusBadge status={row.Status} /></td>
-                <td>{formatDate(row.SubmittedAt) || "-"}</td>
-                <td>{row.ReviewerAdminID || "-"}</td>
-                <td>
-                  <button className="row-link" type="button" onClick={() => navigate(`/verification/${row.ID}`)}>
-                    <ShieldCheck size={14} /> {"Details"} <ChevronRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && <EmptyRow colSpan={8} />}
-          </tbody>
-        </table>
+        )}
       </div>
-      {hasMore && (
-        <div className="toolbar">
-          <button className="btn icon-text" type="button" onClick={() => load(true)} disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <ChevronDown size={15} />} {"Load more"}
-          </button>
-        </div>
-      )}
     </PageFrame>
   );
 }
@@ -226,12 +189,6 @@ export function statusTone(status: VerificationStatus): "neutral" | "good" | "wa
 
 // submitted and in_review are the two statuses that need a reviewer; they are
 // highlighted only while something actually sits in them.
-function statusMetricTone(status: VerificationStatus, count: string): "neutral" | "good" | "warn" {
-  const waiting = status === "submitted" || status === "in_review";
-  if (!waiting) return status === "approved" ? "good" : "neutral";
-  return count !== "0" && count !== "" ? "warn" : "neutral";
-}
-
 export function targetLabel(row: VerificationApplicationRow): string {
   return displayUsername(row.TargetUsername) || row.TargetTitle || `#${row.TargetID}`;
 }

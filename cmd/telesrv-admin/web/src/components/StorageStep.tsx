@@ -1,4 +1,4 @@
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "./icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { RestartOverlay, useAdminRestartWatcher } from "../pages/ServerSettingsPage";

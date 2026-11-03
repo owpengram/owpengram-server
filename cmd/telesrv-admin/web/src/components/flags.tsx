@@ -1,4 +1,4 @@
-import { ShieldAlert, ShieldX } from "lucide-react";
+import { ShieldAlert, ShieldX } from "./icons";
 import { ActionButton } from "./ActionButton";
 import { Badge } from "./ui";
 

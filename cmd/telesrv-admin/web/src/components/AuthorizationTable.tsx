@@ -1,4 +1,4 @@
-import { Cable, LogOut, ShieldCheck } from "lucide-react";
+import { Cable, LogOut, ShieldCheck } from "./icons";
 import { useEffect, useMemo, useState } from "react";
 import { formatDate } from "../lib/format";
 import type { AuthorizationRow } from "../types";

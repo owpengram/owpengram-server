@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, CircleAlert, Copy, FileJson, Loader2, Play, X } from "lucide-react";
+import { Check, CheckCircle2, CircleAlert, Copy, FileJson, Loader2, Play, X } from "./icons";
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";

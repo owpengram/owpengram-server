@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowLeftRight, ExternalLink, Flame, RefreshCw, ScrollText, Settings2, Trash2, Undo2, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ExternalLink, Flame, RefreshCw, ScrollText, Settings2, Trash2, Undo2, UserRound } from "../components/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";

@@ -1,29 +1,30 @@
-import { ChevronRight, RefreshCw, ShieldAlert } from "lucide-react";
+import { ArrowsRotateRight, Person } from "@gravity-ui/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
-import { formatDate } from "../lib/format";
+import { DataTable, FilterChip, type Column } from "../components/DataTable";
+import { Alert, Badge, Metric, PageFrame } from "../components/ui";
+import { formatDate, formatRelative } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 import type { Navigate } from "../routing";
 import type { ModerationCaseRow } from "../types";
 
 const defaultStatuses = "open,in_review,action_pending,action_failed,appeal_review";
 const allStatuses = "open,in_review,action_pending,action_failed,resolved,dismissed,appeal_review";
-const statusFilterOptions = [
+// One status view at a time; the server filters by it.
+const statusViews = [
   { value: defaultStatuses, label: "Active queue" },
-  { value: allStatuses, label: "All statuses" },
-  { value: "open", label: "Open" },
-  { value: "in_review", label: "In review" },
-  { value: "action_pending", label: "Action pending" },
-  { value: "action_failed", label: "Action failed" },
-  { value: "appeal_review", label: "Appeal review" },
-  { value: "resolved", label: "Resolved" },
-  { value: "dismissed", label: "Dismissed" }
+  { value: "action_pending,action_failed", label: "Needs action" },
+  { value: "appeal_review", label: "Appeals" },
+  { value: "resolved,dismissed", label: "Closed" },
+  { value: allStatuses, label: "All" }
 ];
 
 export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
   const [statuses, setStatuses] = useState(defaultStatuses);
   const [assignedTo, setAssignedTo] = useState("");
+  const reviewer = useDebounced(assignedTo.trim());
   const [rows, setRows] = useState<ModerationCaseRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,8 +33,9 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
     setError("");
     try {
       const params = new URLSearchParams({ statuses, limit: "100" });
-      if (assignedTo.trim()) params.set("assigned_to", assignedTo.trim());
+      if (reviewer) params.set("assigned_to", reviewer);
       setRows((await api.moderationCases(params)).cases);
+      setLoaded(true);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -43,89 +45,79 @@ export function ModerationCasesPage({ navigate }: { navigate: Navigate }) {
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statuses, reviewer]);
 
   const pendingActions = rows.filter((row) => row.Status === "action_pending" || row.Status === "action_failed").length;
   const critical = rows.filter((row) => row.Severity === 4).length;
 
+  const columns: Column<ModerationCaseRow>[] = [
+    { key: "id", label: "Case", className: "mono", sortValue: (row) => row.ID, firstDir: "desc", render: (row) => `#${row.ID}` },
+    {
+      key: "target",
+      label: "Target",
+      sortValue: (row) => moderationTargetLabel(row.Target.Type, row.Target.ID),
+      render: (row) => moderationTargetLabel(row.Target.Type, row.Target.ID)
+    },
+    { key: "status", label: "Status", sortValue: (row) => row.Status, render: (row) => <CaseStatus status={row.Status} /> },
+    { key: "severity", label: "Severity", firstDir: "desc", sortValue: (row) => row.Severity, render: (row) => <CaseSeverity value={row.Severity} /> },
+    {
+      key: "reports",
+      label: "Reports",
+      align: "right",
+      firstDir: "desc",
+      sortValue: (row) => row.ReportCount,
+      render: (row) => (
+        <span title={`${row.DistinctReporterCount} distinct reporters`}>
+          {row.ReportCount}
+          <span className="muted-cell"> / {row.DistinctReporterCount}</span>
+        </span>
+      )
+    },
+    { key: "reviewer", label: "Reviewer", sortValue: (row) => row.AssignedTo, render: (row) => row.AssignedTo || <span className="muted-cell">—</span> },
+    {
+      key: "latest",
+      label: "Latest report",
+      firstDir: "desc",
+      sortValue: (row) => new Date(row.LastReportAt).getTime() || 0,
+      render: (row) => <span title={formatDate(row.LastReportAt)}>{formatRelative(row.LastReportAt)}</span>
+    }
+  ];
+
   return (
     <PageFrame
-      title={"Reports and Moderation"}
-      eyebrow={"Moderation / Cases"}
+      title={"Reports"}
       actions={
-        <button className="btn icon-text" type="button" onClick={load} disabled={busy}>
-          <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
+        <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load()} disabled={busy}>
+          <ArrowsRotateRight className={busy ? "spin" : undefined} />
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label={"Current queue"} value={String(rows.length)} />
-        <Metric label={"Critical cases"} value={String(critical)} tone={critical ? "danger" : "neutral"} />
-        <Metric label={"Pending / failed actions"} value={String(pendingActions)} tone={pendingActions ? "warn" : "good"} />
+        <Metric label={"In this view"} value={String(rows.length)} loading={!loaded} />
+        <Metric label={"Critical"} value={String(critical)} tone={critical ? "danger" : "neutral"} loading={!loaded} />
+        <Metric label={"Needs action"} value={String(pendingActions)} tone={pendingActions ? "warn" : "good"} loading={!loaded} />
       </div>
-      <QueryPanel>
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void load(); }}>
-          <label className="field-inline">
-            <span>{"Status"}</span>
-            <select
-              aria-label={"Case status filter"}
-              value={statuses}
-              onChange={(event) => setStatuses(event.target.value)}
-            >
-              {statusFilterOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field-inline">
-            <span>{"Reviewer"}</span>
-            <input
-              value={assignedTo}
-              onChange={(event) => setAssignedTo(event.target.value)}
-              placeholder={"Leave blank for all"}
-            />
-          </label>
-          <button className="btn primary icon-text" type="submit" disabled={busy}>
-            <ShieldAlert size={15} /> {"Search"}
-          </button>
-        </form>
-      </QueryPanel>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Case"}</th>
-              <th>{"Target"}</th>
-              <th>{"Status"}</th>
-              <th>{"Severity"}</th>
-              <th>{"Reports / Reporters"}</th>
-              <th>{"Reviewer"}</th>
-              <th>{"Latest report"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.ID}>
-                <td className="mono">#{row.ID}</td>
-                <td className="mono">{moderationTargetLabel(row.Target.Type, row.Target.ID)}</td>
-                <td><CaseStatus status={row.Status} /></td>
-                <td><CaseSeverity value={row.Severity} /></td>
-                <td>{row.ReportCount} / {row.DistinctReporterCount}</td>
-                <td>{row.AssignedTo || "-"}</td>
-                <td>{formatDate(row.LastReportAt)}</td>
-                <td>
-                  <button className="row-link" onClick={() => navigate(`/moderation/${row.ID}`)}>
-                    {"Review"} <ChevronRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && <EmptyRow colSpan={8} />}
-          </tbody>
-        </table>
+      <div className="list-controls">
+        {statusViews.map((view) => (
+          <FilterChip key={view.value} label={view.label} active={statuses === view.value} onToggle={() => setStatuses(view.value)} />
+        ))}
+        <span className="list-controls-spacer" />
+        <label className="searchbox" style={{ maxWidth: 240 }}>
+          <Person />
+          <input value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)} placeholder={"Reviewer"} aria-label={"Filter by reviewer"} />
+        </label>
       </div>
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.ID}
+        onRowClick={(row) => navigate(`/moderation/${row.ID}`)}
+        defaultSort={{ key: "severity", dir: "desc" }}
+        loading={busy && !loaded}
+        empty={"No cases in this view."}
+      />
     </PageFrame>
   );
 }

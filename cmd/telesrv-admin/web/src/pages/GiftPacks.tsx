@@ -1,4 +1,4 @@
-import { ArrowLeft, Boxes, Cake, ChevronLeft, ChevronRight, Crown, Download, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, PackageOpen, Repeat, Search, Sparkles, Trash2, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Boxes, Cake, ChevronLeft, ChevronRight, Crown, Download, Eye, Gavel, Hammer, Hash, LifeBuoy, Loader2, PackageOpen, Repeat, Search, Sparkles, Trash2, UserRound, X, type LucideIcon } from "../components/icons";
 import lottie from "lottie-web/build/player/lottie_light_canvas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";

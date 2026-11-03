@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ImageOff, Loader2, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ImageOff, Loader2, Plus, RefreshCw, Search, Upload, X } from "../components/icons";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
@@ -168,7 +168,7 @@ export function GifCatalogPage() {
                 <td>{row.Title || <span className="muted-cell">{"Untitled"}</span>}</td>
                 <td className="mono">{row.DocumentID}</td>
                 <td>{row.CreatedBy || <span className="muted-cell">{"—"}</span>}</td>
-                <td>{row.Enabled ? <Badge tone="good">{"Enabled"}</Badge> : <Badge tone="danger">{"Disabled"}</Badge>}</td>
+                <td>{!row.Enabled && <Badge tone="danger">{"Disabled"}</Badge>}</td>
                 <td>
                   <div className="sort-order-editor">
                     <select

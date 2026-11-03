@@ -573,7 +573,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px 0 12px;
+  padding: 0 12px;
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -1096,4 +1096,44 @@
   .shell--nav-collapsed > .sidebar {
     display: none;
   }
+}
+
+/* Older tables: the whole row opens the record (Layout.tsx), so the "Details"
+   link shrinks to a quiet chevron at the end of the row. */
+.data-table tbody tr:has(.row-link) {
+  cursor: pointer;
+}
+
+.data-table .row-link {
+  gap: 0;
+  color: var(--muted-2);
+  font-size: 0;
+}
+
+.data-table .row-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+.data-table tbody tr:hover .row-link {
+  color: var(--brand);
+}
+
+/* Message direction marker in message lists. */
+.msg-dir {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.msg-dir.out {
+  color: var(--brand);
+  background: var(--brand-tint);
+}
+
+.msg-dir.in {
+  color: var(--good);
+  background: var(--good-tint);
 }

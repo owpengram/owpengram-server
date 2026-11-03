@@ -9,7 +9,7 @@ import {
   ShieldOff,
   User,
   XCircle
-} from "lucide-react";
+} from "../components/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, APIError, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";

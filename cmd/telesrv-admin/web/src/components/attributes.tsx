@@ -1,4 +1,4 @@
-import { AtSign, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRound } from "lucide-react";
+import { AtSign, LifeBuoy, Mail, Palette, Phone, Settings2, Smile, UserRound } from "./icons";
 import { useEffect, useState } from "react";
 import { ActionButton } from "./ActionButton";
 import { toInt } from "../lib/format";

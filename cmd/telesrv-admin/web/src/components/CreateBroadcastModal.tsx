@@ -1,4 +1,4 @@
-import { Send, X } from "lucide-react";
+import { Send, X } from "./icons";
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AccountRow } from "../types";

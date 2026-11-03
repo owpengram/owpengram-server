@@ -1,4 +1,4 @@
-import { ArrowLeft, type LucideIcon } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "./icons";
 import type { ReactNode } from "react";
 import type { Navigate } from "../routing";
 

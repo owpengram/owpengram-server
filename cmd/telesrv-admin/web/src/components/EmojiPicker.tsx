@@ -1,4 +1,4 @@
-import { Check, Loader2, Search, X } from "lucide-react";
+import { Check, Loader2, Search, X } from "./icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import type { EmojiRow } from "../types";

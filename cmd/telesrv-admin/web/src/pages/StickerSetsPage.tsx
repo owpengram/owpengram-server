@@ -1,14 +1,16 @@
-import { Eye, ChevronLeft, ChevronRight, ImageOff, Plus, RefreshCw, Search } from "lucide-react";
+import { ArrowsRotateRight, ChevronLeft, ChevronRight, Eye, Magnifier, Picture, Plus } from "@gravity-ui/icons";
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { StickerDocumentPreview } from "../components/StickerDocumentPreview";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel } from "../components/ui";
+import { DataTable, FilterChip, type Column } from "../components/DataTable";
+import { Alert, Badge, PageFrame } from "../components/ui";
 import type { StickerSetRow } from "../types";
 import { CreateStickerSetModal } from "./CreateStickerSetModal";
 import { StickerSetPreviewModal } from "./StickerSetPreviewModal";
 
-type StickerPageSize = 10 | 20 | 50 | 100 | "all";
+type StickerPageSize = 20 | 50 | 100 | "all";
+type SetFilter = "official" | "archived";
 
 // Shared list/manage view for one non-system sticker-set kind ("stickers" or
 // "emoji") — system packs (dice, animated emoji, gifts) aren't shown here,
@@ -18,7 +20,8 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [pageSize, setPageSize] = useState<StickerPageSize>(10);
+  const [pageSize, setPageSize] = useState<StickerPageSize>(50);
+  const [filter, setFilter] = useState<SetFilter | null>(null);
   const [page, setPage] = useState(1);
   const [orderDrafts, setOrderDrafts] = useState<Record<string, string>>({});
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
@@ -26,9 +29,6 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
   const [createOpen, setCreateOpen] = useState(false);
 
   const pageTitle = kind === "emoji" ? "Emoji" : "Stickers";
-  const eyebrow = kind === "emoji"
-    ? "Custom-emoji packs — system packs aren't shown here, they're not hand-edited"
-    : "Sticker packs — system packs (dice, animated emoji, gifts) aren't shown here, they're not hand-edited";
   const noun = kind === "emoji" ? "emoji" : "sticker";
 
   async function load() {
@@ -47,15 +47,16 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
 
   const visible = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return sets;
-    return sets.filter((set) =>
+    const byFilter = sets.filter((set) => (filter === "official" ? set.Official : filter === "archived" ? set.Archived : true));
+    if (!normalized) return byFilter;
+    return byFilter.filter((set) =>
       String(set.ID).includes(normalized) ||
       set.ShortName.toLowerCase().includes(normalized) ||
       set.Title.toLowerCase().includes(normalized)
     );
-  }, [sets, query]);
+  }, [sets, query, filter]);
 
-  useEffect(() => { setPage(1); }, [query, pageSize, kind]);
+  useEffect(() => { setPage(1); }, [query, pageSize, kind, filter]);
 
   const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(visible.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -73,153 +74,157 @@ export function StickerSetsPage({ kind }: { kind: "stickers" | "emoji" }) {
     archived: sets.filter((set) => set.Archived).length
   }), [sets]);
 
+  const columns: Column<StickerSetRow>[] = [
+    {
+      key: "title",
+      label: "Pack",
+      sortValue: (set) => set.Title,
+      render: (set) => (
+        <span className="cell-identity">
+          {set.CoverDocumentID ? (
+            <StickerDocumentPreview documentID={set.CoverDocumentID} className="list-thumb" showError={false} />
+          ) : (
+            <span className="sticker-list-thumb-empty"><Picture width={14} height={14} /></span>
+          )}
+          <span className="sort-order-editor">
+            <input
+              className="small-input title-input"
+              value={titleDrafts[set.ID] ?? set.Title}
+              onChange={(event) => setTitleDrafts((prev) => ({ ...prev, [set.ID]: event.target.value }))}
+              aria-label={"Title"}
+            />
+            {(titleDrafts[set.ID] ?? set.Title) !== set.Title && (
+              <ActionButton
+                compact
+                tone="neutral"
+                label={"Save"}
+                path="/api/actions/rename-sticker-set"
+                payload={() => ({ set_id: set.ID, title: (titleDrafts[set.ID] ?? set.Title).trim() })}
+                onDone={() => void load()}
+              />
+            )}
+          </span>
+        </span>
+      )
+    },
+    { key: "short", label: "Short name", className: "mono", sortValue: (set) => set.ShortName, render: (set) => set.ShortName || <span className="muted-cell">—</span> },
+    { key: "count", label: noun === "emoji" ? "Emoji" : "Stickers", align: "right", firstDir: "desc", sortValue: (set) => set.Count, render: (set) => set.Count },
+    {
+      key: "order",
+      label: "Order",
+      sortValue: (set) => set.SortOrder,
+      render: (set) => (
+        <span className="sort-order-editor">
+          <input
+            type="number"
+            className="small-input"
+            value={orderDrafts[set.ID] ?? String(set.SortOrder)}
+            onChange={(event) => setOrderDrafts((prev) => ({ ...prev, [set.ID]: event.target.value }))}
+            aria-label={"Sort order"}
+          />
+          {(orderDrafts[set.ID] ?? String(set.SortOrder)) !== String(set.SortOrder) && (
+            <ActionButton
+              compact
+              tone="neutral"
+              label={"Save"}
+              path="/api/actions/set-sticker-set-sort-order"
+              payload={() => ({ set_id: set.ID, sort_order: Number(orderDrafts[set.ID] ?? set.SortOrder) })}
+              onDone={() => void load()}
+            />
+          )}
+        </span>
+      )
+    },
+    {
+      key: "status",
+      label: "",
+      render: (set) => (
+        <span className="cell-badges">
+          {set.Official && <Badge tone="good">{"Official"}</Badge>}
+          {set.Archived && <Badge tone="danger">{"Archived"}</Badge>}
+        </span>
+      )
+    },
+    {
+      key: "actions",
+      label: "",
+      render: (set) => (
+        <span className="gift-table-actions">
+          <button className="icon-btn" type="button" onClick={() => setPreviewSet(set)} aria-label={"View pack"} title={"View pack"}>
+            <Eye />
+          </button>
+          <ActionButton
+            compact
+            tone="neutral"
+            label={set.Archived ? "Unarchive" : "Archive"}
+            path="/api/actions/set-sticker-set-archived"
+            payload={() => ({ set_id: set.ID, archived: !set.Archived })}
+            onDone={() => void load()}
+          />
+          <ActionButton
+            compact
+            tone="danger"
+            label={"Delete"}
+            path="/api/actions/delete-sticker-set"
+            payload={() => ({ set_id: set.ID })}
+            onDone={() => void load()}
+          />
+        </span>
+      )
+    }
+  ];
+
   return (
     <PageFrame
       title={pageTitle}
-      eyebrow={eyebrow}
       actions={
         <>
-          <button className="btn" type="button" onClick={() => load()} disabled={busy}>
-            <RefreshCw size={15} /> {"Refresh"}
+          <button className="btn primary icon-text" type="button" onClick={() => setCreateOpen(true)}>
+            <Plus /> {`Create ${noun} pack`}
           </button>
-          <button className="btn primary" type="button" onClick={() => setCreateOpen(true)}>
-            <Plus size={15} /> {`Create ${noun} pack`}
+          <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load()} disabled={busy}>
+            <ArrowsRotateRight className={busy ? "spin" : undefined} />
           </button>
         </>
       }
     >
       {error && <Alert>{error}</Alert>}
-      <div className="metric-row">
-        <Metric label={"Total sets"} value={String(counts.total)} />
-        <Metric label={"Official"} value={String(counts.official)} tone="good" />
-        <Metric label={"Archived"} value={String(counts.archived)} tone={counts.archived > 0 ? "warn" : "neutral"} />
+      <div className="list-controls">
+        <label className="searchbox">
+          <Magnifier />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={"Search by title, short name or ID"} aria-label={"Search packs"} />
+        </label>
+        <FilterChip label={"Official"} count={counts.official} active={filter === "official"} onToggle={() => setFilter(filter === "official" ? null : "official")} />
+        <FilterChip label={"Archived"} count={counts.archived} active={filter === "archived"} onToggle={() => setFilter(filter === "archived" ? null : "archived")} />
       </div>
-      <QueryPanel>
-        <div className="toolbar">
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={"Search set ID, short name or title"} />
-          </label>
-          <label className="gift-page-size">
-            <span>{"Per page"}</span>
+      <DataTable
+        columns={columns}
+        rows={paged}
+        rowKey={(set) => set.ID}
+        onRowClick={(set) => setPreviewSet(set)}
+        loading={busy && sets.length === 0}
+        empty={query || filter ? "No packs match." : `No ${noun} packs yet. System packs are not listed here.`}
+      />
+      {visible.length > 0 && (
+        <div className="table-footer">
+          <span>{`${rangeStart}–${rangeEnd} of ${visible.length}${visible.length !== sets.length ? ` (${sets.length} total)` : ""}`}</span>
+          <div className="pager">
+            <span>{"Rows"}</span>
             <select
               value={String(pageSize)}
               onChange={(event) => setPageSize(event.target.value === "all" ? "all" : (Number(event.target.value) as StickerPageSize))}
+              aria-label={"Rows per page"}
             >
-              <option value="10">10</option>
               <option value="20">20</option>
               <option value="50">50</option>
               <option value="100">100</option>
               <option value="all">{"All"}</option>
             </select>
-          </label>
-          <span className="gift-list-summary">{`Showing ${visible.length} of ${sets.length}`}</span>
-        </div>
-      </QueryPanel>
-      <div className="table-wrap gift-table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Logo"}</th>
-              <th>{"ID"}</th>
-              <th>{"Short name"}</th>
-              <th>{"Title"}</th>
-              <th>{"Documents"}</th>
-              <th>{"Official"}</th>
-              <th>{"Status"}</th>
-              <th>{"Sort order"}</th>
-              <th>{"Actions"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.map((set) => (
-              <tr className={set.Archived ? "gift-row-disabled" : ""} key={set.ID}>
-                <td>
-                  {set.CoverDocumentID ? (
-                    <StickerDocumentPreview documentID={set.CoverDocumentID} className="list-thumb" showError={false} />
-                  ) : (
-                    <div className="sticker-list-thumb-empty"><ImageOff size={14} /></div>
-                  )}
-                </td>
-                <td className="mono">{set.ID}</td>
-                <td className="mono">{set.ShortName || <span className="muted-cell">{"None"}</span>}</td>
-                <td>
-                  <div className="sort-order-editor">
-                    <input
-                      className="small-input title-input"
-                      value={titleDrafts[set.ID] ?? set.Title}
-                      onChange={(event) => setTitleDrafts((prev) => ({ ...prev, [set.ID]: event.target.value }))}
-                    />
-                    <ActionButton
-                      compact
-                      tone="neutral"
-                      label={"Save"}
-                      path="/api/actions/rename-sticker-set"
-                      payload={() => ({ set_id: set.ID, title: (titleDrafts[set.ID] ?? set.Title).trim() })}
-                      onDone={() => void load()}
-                    />
-                  </div>
-                </td>
-                <td>{set.Count}</td>
-                <td>{set.Official ? <Badge tone="good">{"Yes"}</Badge> : <Badge>{"No"}</Badge>}</td>
-                <td>{set.Archived ? <Badge tone="danger">{"Archived"}</Badge> : <Badge tone="good">{"Enabled"}</Badge>}</td>
-                <td>
-                  <div className="sort-order-editor">
-                    <input
-                      type="number"
-                      className="small-input"
-                      value={orderDrafts[set.ID] ?? String(set.SortOrder)}
-                      onChange={(event) => setOrderDrafts((prev) => ({ ...prev, [set.ID]: event.target.value }))}
-                    />
-                    <ActionButton
-                      compact
-                      tone="neutral"
-                      label={"Save"}
-                      path="/api/actions/set-sticker-set-sort-order"
-                      payload={() => ({ set_id: set.ID, sort_order: Number(orderDrafts[set.ID] ?? set.SortOrder) })}
-                      onDone={() => void load()}
-                    />
-                  </div>
-                </td>
-                <td>
-                  <div className="gift-table-actions">
-                    <button className="btn compact-btn" type="button" onClick={() => setPreviewSet(set)}>
-                      <Eye size={13} /> {"View"}
-                    </button>
-                    <ActionButton
-                      compact
-                      tone="neutral"
-                      label={set.Archived ? "Unarchive" : "Archive"}
-                      path="/api/actions/set-sticker-set-archived"
-                      payload={() => ({ set_id: set.ID, archived: !set.Archived })}
-                      onDone={() => void load()}
-                    />
-                    <ActionButton
-                      compact
-                      tone="danger"
-                      label={"Delete"}
-                      path="/api/actions/delete-sticker-set"
-                      payload={() => ({ set_id: set.ID })}
-                      onDone={() => void load()}
-                    />
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {paged.length === 0 && <EmptyRow colSpan={9} />}
-          </tbody>
-        </table>
-      </div>
-      {pageSize !== "all" && visible.length > 0 && (
-        <div className="gift-pager">
-          <span className="gift-pager-range">{`Showing ${rangeStart}-${rangeEnd} of ${visible.length}`}</span>
-          <div className="gift-pager-controls">
-            <button className="btn compact-btn" type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
-              <ChevronLeft size={14} /> {"Previous"}
+            <button className="icon-btn" type="button" aria-label={"Previous page"} onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+              <ChevronLeft />
             </button>
-            <span className="gift-pager-page">{`Page ${currentPage} of ${totalPages}`}</span>
-            <button className="btn compact-btn" type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>
-              {"Next"} <ChevronRight size={14} />
+            <button className="icon-btn" type="button" aria-label={"Next page"} onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>
+              <ChevronRight />
             </button>
           </div>
         </div>

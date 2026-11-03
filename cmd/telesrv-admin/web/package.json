@@ -11,7 +11,6 @@
   "dependencies": {
     "@gravity-ui/icons": "2.23.0",
     "lottie-web": "^5.13.0",
-    "lucide-react": "^0.468.0",
     "qrcode": "1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
