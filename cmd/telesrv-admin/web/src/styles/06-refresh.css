@@ -1070,3 +1070,15 @@
   color: var(--brand-tint-text);
   font-size: 12.5px;
 }
+
+/* A collapsed sidebar is gone entirely, not an icon rail: the toggle in the
+   top bar brings it back. Same width scope as the old rail rules (01). */
+@media (min-width: 1121px) {
+  .shell--nav-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell--nav-collapsed > .sidebar {
+    display: none;
+  }
+}
