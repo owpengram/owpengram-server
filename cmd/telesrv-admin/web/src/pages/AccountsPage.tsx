@@ -1,21 +1,33 @@
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Search, Smartphone } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowsRotateRight, ChevronLeft, ChevronRight, Magnifier, Smartphone } from "@gravity-ui/icons";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
-import { Alert, Badge, EmptyRow, Metric, PageFrame, QueryPanel, UsernameCell } from "../components/ui";
+import { DataTable, FilterChip, type Column } from "../components/DataTable";
+import { Alert, Badge, Metric, PageFrame } from "../components/ui";
 import { ScamFakeBadges } from "../components/flags";
-import { displayName, displayPhone, formatDate, formatUnix } from "../lib/format";
-import { accountMetrics } from "../lib/metrics";
+import { displayName, displayPhone, displayUsername, formatDate, formatRelative, formatUnix } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 import type { Navigate } from "../routing";
-import type { AccountListResponse, AccountStatsResponse } from "../types";
+import type { AccountListResponse, AccountRow, AccountStatsResponse } from "../types";
 
 type Cursor = { beforeID: number; beforeActiveUS: number };
-type AccountPageSize = 10 | 20 | 50 | 100;
+type AccountPageSize = 20 | 50 | 100;
+type AccountFilter = "premium" | "verified" | "frozen" | "email";
 
 const zeroCursor: Cursor = { beforeID: 0, beforeActiveUS: 0 };
 
+// Filters narrow the page that is loaded; the search box is what asks the
+// server. Together they cover "find this person" and "who on this page is X".
+const FILTERS: { key: AccountFilter; label: string; test: (row: AccountRow) => boolean }[] = [
+  { key: "premium", label: "Premium", test: (row) => row.PremiumUntil > 0 },
+  { key: "verified", label: "Verified", test: (row) => row.Verified },
+  { key: "frozen", label: "Frozen", test: (row) => row.Frozen },
+  { key: "email", label: "Has email", test: (row) => Boolean(row.LoginEmail) }
+];
+
 export function AccountsPage({ navigate }: { navigate: Navigate }) {
   const [q, setQ] = useState("");
+  const query = useDebounced(q.trim());
   const [limit, setLimit] = useState<AccountPageSize>(50);
   const [data, setData] = useState<AccountListResponse | null>(null);
   const [stats, setStats] = useState<AccountStatsResponse | null>(null);
@@ -26,41 +38,43 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   const [cursor, setCursor] = useState<Cursor>(zeroCursor);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [filters, setFilters] = useState<Set<AccountFilter>>(new Set());
+  // Responses can land out of order while typing; only the latest counts.
+  const requestSeq = useRef(0);
 
-  async function fetchPage(query: string, at: Cursor) {
+  async function fetchPage(at: Cursor) {
+    const seq = ++requestSeq.current;
     setBusy(true);
     setError("");
     const params = new URLSearchParams({ limit: String(limit) });
-    if (query.trim()) {
-      params.set("q", query.trim());
-    }
+    if (query) params.set("q", query);
     if (at.beforeID || at.beforeActiveUS) {
       params.set("before_id", String(at.beforeID));
       params.set("before_active_us", String(at.beforeActiveUS));
     }
     try {
       const result = await api.accounts(params);
+      if (seq !== requestSeq.current) return null;
       setData(result);
       return result;
     } catch (err) {
-      setError(errorMessage(err));
+      if (seq === requestSeq.current) setError(errorMessage(err));
       return null;
     } finally {
-      setBusy(false);
+      if (seq === requestSeq.current) setBusy(false);
     }
   }
 
   async function loadFresh() {
     setHistory([]);
     setCursor(zeroCursor);
-    await fetchPage(q, zeroCursor);
+    await fetchPage(zeroCursor);
   }
 
   async function loadNext() {
     if (!data?.has_more) return;
     const at = { beforeID: data.next_before_id, beforeActiveUS: data.next_before_active_us };
-    const result = await fetchPage(q, at);
-    if (result) {
+    if (await fetchPage(at)) {
       setHistory((prev) => [...prev, cursor]);
       setCursor(at);
     }
@@ -69,8 +83,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   async function loadPrev() {
     if (history.length === 0) return;
     const at = history[history.length - 1];
-    const result = await fetchPage(q, at);
-    if (result) {
+    if (await fetchPage(at)) {
       setHistory((prev) => prev.slice(0, -1));
       setCursor(at);
     }
@@ -86,113 +99,148 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
 
   useEffect(() => {
     void loadFresh();
-    void loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, limit]);
+
+  useEffect(() => {
+    void loadStats();
   }, []);
 
-  const metrics = accountMetrics(data?.rows ?? []);
-  const canGoPrev = history.length > 0 && !busy;
-  const canGoNext = Boolean(data?.has_more) && !busy;
+  function toggleFilter(key: AccountFilter) {
+    setFilters((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const loaded = data?.rows ?? [];
+  const rows = useMemo(
+    () => loaded.filter((row) => FILTERS.every((f) => !filters.has(f.key) || f.test(row))),
+    [loaded, filters]
+  );
+  const pageStart = history.length * limit;
+
+  const columns: Column<AccountRow>[] = [
+    {
+      key: "name",
+      label: "Account",
+      sortValue: (row) => displayName(row),
+      render: (row) => (
+        <span className="cell-identity">
+          <Avatar id={row.ID} firstName={row.FirstName} lastName={row.LastName} username={row.Username} size={28} />
+          <span>
+            <span>{displayName(row)}</span>
+            {row.Username && <span className="cell-sub"> {displayUsername(row.Username)}</span>}
+          </span>
+        </span>
+      )
+    },
+    { key: "id", label: "ID", className: "mono muted-cell", sortValue: (row) => row.ID, render: (row) => row.ID },
+    { key: "phone", label: "Phone", sortValue: (row) => row.Phone, render: (row) => displayPhone(row.Phone) || <span className="muted-cell">—</span> },
+    { key: "email", label: "Email", sortValue: (row) => row.LoginEmail, render: (row) => row.LoginEmail || <span className="muted-cell">—</span> },
+    {
+      key: "active",
+      label: "Last active",
+      firstDir: "desc",
+      sortValue: (row) => new Date(row.LastActiveAt).getTime() || 0,
+      render: (row) => <span title={formatDate(row.LastActiveAt)}>{formatRelative(row.LastActiveAt)}</span>
+    },
+    { key: "devices", label: "Devices", align: "right", firstDir: "desc", sortValue: (row) => row.DeviceCount, render: (row) => row.DeviceCount },
+    {
+      key: "status",
+      label: "Status",
+      // Only what sets an account apart is shown; an ordinary account is blank.
+      render: (row) => (
+        <span className="cell-badges">
+          {row.Frozen && <Badge tone="danger">{"Frozen"}</Badge>}
+          {row.PremiumUntil > 0 && <span title={`Until ${formatUnix(row.PremiumUntil)}`}><Badge tone="good">{"Premium"}</Badge></span>}
+          {row.Verified && <Badge tone="good">{"Verified"}</Badge>}
+          <ScamFakeBadges scam={row.Scam} fake={row.Fake} />
+        </span>
+      )
+    }
+  ];
 
   return (
     <PageFrame
       title={"Accounts"}
-      eyebrow={data?.listing === false ? "Search results" : "Recently active accounts"}
       actions={
         <>
           <button className="btn icon-text" type="button" onClick={() => navigate("/accounts/shared-devices")}>
-            <Smartphone size={15} /> {"Shared devices"}
+            <Smartphone /> {"Shared devices"}
           </button>
           <button
-            className="btn"
+            className="icon-btn"
             type="button"
+            aria-label={"Refresh"}
+            title={"Refresh"}
             onClick={() => {
               void loadFresh();
               void loadStats();
             }}
             disabled={busy}
           >
-            <RefreshCw size={15} /> {"Refresh"}
+            <ArrowsRotateRight className={busy ? "spin" : undefined} />
           </button>
         </>
       }
     >
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric label={"Total users"} value={stats ? String(stats.total) : "…"} />
-        <Metric label={"Online now"} value={stats ? String(stats.online) : "…"} tone="good" />
-        <Metric label={"Online device records"} value={String(metrics.devices)} />
+        <Metric label={"Accounts"} value={stats ? stats.total.toLocaleString() : "…"} loading={!stats} />
+        <Metric label={"Online now"} value={stats ? stats.online.toLocaleString() : "…"} tone="good" loading={!stats} />
       </div>
-      <QueryPanel>
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void loadFresh(); }}>
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"User ID / phone / username / email / name"} />
-          </label>
-          <label className="gift-page-size">
-            <span>{"Limit"}</span>
-            <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value) as AccountPageSize)}>
-              <option value="10">10</option>
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
-          </label>
-          <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Search"}
+      <div className="list-controls">
+        <label className="searchbox">
+          <Magnifier />
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder={"Search by name, username, phone, email or ID"}
+            aria-label={"Search accounts"}
+          />
+        </label>
+        {FILTERS.map((f) => (
+          <FilterChip
+            key={f.key}
+            label={f.label}
+            active={filters.has(f.key)}
+            count={loaded.filter(f.test).length}
+            onToggle={() => toggleFilter(f.key)}
+          />
+        ))}
+      </div>
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.ID}
+        onRowClick={(row) => navigate(`/accounts/${row.ID}`)}
+        loading={busy && !data}
+        empty={query || filters.size > 0 ? "No accounts match." : "No accounts yet."}
+      />
+      <div className="table-footer">
+        <span>
+          {loaded.length > 0
+            ? `${pageStart + 1}–${pageStart + loaded.length}${filters.size > 0 ? ` · ${rows.length} shown` : ""}`
+            : ""}
+          {!query && " · most recently active first"}
+        </span>
+        <div className="pager">
+          <span>{"Rows"}</span>
+          <select value={String(limit)} onChange={(event) => setLimit(Number(event.target.value) as AccountPageSize)} aria-label={"Rows per page"}>
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          <button className="icon-btn" type="button" aria-label={"Previous page"} onClick={() => void loadPrev()} disabled={history.length === 0 || busy}>
+            <ChevronLeft />
           </button>
-          <button className="btn icon-text" type="button" onClick={() => void loadPrev()} disabled={!canGoPrev}>
-            <ChevronLeft size={15} /> {"Previous page"}
+          <button className="icon-btn" type="button" aria-label={"Next page"} onClick={() => void loadNext()} disabled={!data?.has_more || busy}>
+            <ChevronRight />
           </button>
-          <button className="btn icon-text" type="button" onClick={() => void loadNext()} disabled={!canGoNext}>
-            <ChevronRight size={15} /> {"Next page"}
-          </button>
-        </form>
-      </QueryPanel>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th className="avatar-col"></th>
-              <th>{"User ID"}</th>
-              <th>{"Phone"}</th>
-              <th>{"Username"}</th>
-              <th>{"Name"}</th>
-              <th>{"Login email"}</th>
-              <th>{"Device"}</th>
-              <th>{"Last active"}</th>
-              <th>{"Premium"}</th>
-              <th>{"Verified"}</th>
-              <th>{"Frozen"}</th>
-              <th>{"Updated"}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.rows.map((row) => (
-              <tr key={row.ID}>
-                <td className="avatar-col">
-                  <button className="avatar-link" type="button" onClick={() => navigate(`/accounts/${row.ID}`)} aria-label={`Open account ${row.ID}`}>
-                    <Avatar id={row.ID} firstName={row.FirstName} lastName={row.LastName} username={row.Username} />
-                  </button>
-                </td>
-                <td className="mono">{row.ID}</td>
-                <td>{displayPhone(row.Phone)}</td>
-                <td><UsernameCell username={row.Username} collectibles={row.Collectibles} /></td>
-                <td>{displayName(row)}</td>
-                <td>{row.LoginEmail || <span className="muted-cell">{"None"}</span>}</td>
-                <td>{row.DeviceCount}</td>
-                <td>{formatDate(row.LastActiveAt)}</td>
-                <td>{row.PremiumUntil > 0 ? <Badge tone="good">{"Premium"} {formatUnix(row.PremiumUntil)}</Badge> : <Badge>{"None"}</Badge>}</td>
-                <td>{row.Verified ? <Badge tone="good">{"Verified"}</Badge> : <Badge>{"Not verified"}</Badge>} <ScamFakeBadges scam={row.Scam} fake={row.Fake} /></td>
-                <td>{row.Frozen ? <Badge tone="danger">{"Frozen"}</Badge> : <Badge>{"Normal"}</Badge>}</td>
-                <td>{formatDate(row.UpdatedAt)}</td>
-                <td><button className="row-link" onClick={() => navigate(`/accounts/${row.ID}`)}>{"Details"} <ChevronRight size={14} /></button></td>
-              </tr>
-            ))}
-            {(!data || data.rows.length === 0) && <EmptyRow colSpan={12} />}
-          </tbody>
-        </table>
+        </div>
       </div>
     </PageFrame>
   );

@@ -1,13 +1,18 @@
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { usePageHeaderSlots } from "./pageHeader";
 import { displayUsername, formatDate } from "../lib/format";
 import type { AccountUsername, AuditLogRow } from "../types";
 
 type Tone = "neutral" | "good" | "danger" | "warn";
 
+// PageFrame no longer draws a heading of its own: the title and actions go to
+// the top bar (see pageHeader.tsx), which is the one place a page is named.
+// eyebrow is still accepted so existing callers compile, and is ignored --
+// it only ever restated the title.
 export function PageFrame({
   title,
-  eyebrow,
   children,
   actions
 }: {
@@ -16,15 +21,11 @@ export function PageFrame({
   children: ReactNode;
   actions?: ReactNode;
 }) {
+  const slots = usePageHeaderSlots();
   return (
     <div className="page-frame">
-      <div className="page-title-row">
-        <div>
-          {eyebrow && <div className="eyebrow">{eyebrow}</div>}
-          <h2>{title}</h2>
-        </div>
-        {actions && <div className="page-actions">{actions}</div>}
-      </div>
+      {slots.title && createPortal(<span className="page-title-portal">{title}</span>, slots.title)}
+      {actions && slots.actions && createPortal(<>{actions}</>, slots.actions)}
       {children}
     </div>
   );

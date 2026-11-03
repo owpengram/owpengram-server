@@ -21,6 +21,7 @@ import type {
   GiftPack,
   SharedDeviceGroupListResponse,
   StorageStatsResponse,
+  DashboardActivity,
   DashboardResponse,
   AdminLoginResult,
   AdminSession,
@@ -202,6 +203,7 @@ export const api = {
   collectibleUsername: (id: string) =>
     request<CollectibleUsernameDetail>(`/api/collectible-usernames/${encodeURIComponent(id)}`),
   dashboard: () => request<DashboardResponse>("/api/dashboard"),
+  dashboardActivity: () => request<DashboardActivity>("/api/dashboard/activity"),
   auditLogs: (params: URLSearchParams) => request<AuditLogListResponse>(`/api/audit-logs?${params.toString()}`),
   premiumPlans: () => request<PremiumPlanListResponse>("/api/premium/plans"),
   premiumPayment: (id: string) => request<PremiumPaymentIntent>(`/api/premium/payments/${encodeURIComponent(id)}`),
@@ -296,7 +298,8 @@ export const api = {
 		request<Record<string, unknown>>(`/api/gift-packs/${encodeURIComponent(packID)}/animations/${encodeURIComponent(slug)}`),
 	uploadGiftPack: (form: FormData) => request<CommandResult>("/api/actions/upload-gift-pack", { method: "POST", body: form }),
   serverIdentity: () => request<ServerIdentity>("/api/server/identity"),
-  addServerLink: () => request<{ link: string }>("/api/server/add-server-link"),
+  // share_url is the https page carrying the same link; absent when no public URL is set.
+  addServerLink: () => request<{ link: string; share_url?: string }>("/api/server/add-server-link"),
   uploadServerIcon: (form: FormData) => request<CommandResult>("/api/actions/upload-server-icon", { method: "POST", body: form }),
   serverIconURL: () => `/api/server/icon?t=${Date.now()}`,
   serverEnv: () => request<EnvGroup[]>("/api/server/env"),

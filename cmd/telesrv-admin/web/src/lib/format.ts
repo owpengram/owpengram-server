@@ -30,6 +30,27 @@ export function formatDate(value: string): string {
   return date.toLocaleString();
 }
 
+// formatRelative says how long ago something was ("5 min ago", "yesterday"),
+// falling back to the date once it is more than a week old. The exact time
+// belongs in a tooltip (formatDate) next to it.
+export function formatRelative(value: string): string {
+  if (!value || value.startsWith("0001-")) return "";
+  const date = new Date(value);
+  const ms = date.getTime();
+  if (Number.isNaN(ms)) return "";
+  const seconds = Math.round((Date.now() - ms) / 1000);
+  if (seconds < 0) return date.toLocaleDateString();
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
 export function formatUnix(value: number): string {
   if (!value || value <= 0) return "";
   const date = new Date(value * 1000);

@@ -30,6 +30,7 @@ export function clearAdminCache(): void {
 // cannot quietly create a second cache that never hits.
 export const cacheKeys = {
   dashboard: "dashboard",
+  dashboardActivity: "dashboard.activity",
   storageStats: "storage.stats",
   storageAccounts: "storage.accounts"
 } as const;

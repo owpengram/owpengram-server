@@ -1056,10 +1056,31 @@ export type HostStatsSnapshot = {
   Ready: boolean;
 };
 
+export type HostSample = {
+  t: number;
+  cpu: number;
+  mem: number;
+};
+
 export type DashboardResponse = {
   counts: DashboardCounts;
   storage: StorageStatsResponse;
   host?: HostStatsSnapshot;
+  // The last ~15 minutes of host samples, oldest first; empty after a restart.
+  host_history?: HostSample[];
+};
+
+export type DayActivity = {
+  date: string;
+  new_users: number;
+  messages: number;
+};
+
+export type DashboardActivity = {
+  days: DayActivity[];
+  active_day: number;
+  active_week: number;
+  active_month: number;
 };
 
 export type AccountStorageRow = {

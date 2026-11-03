@@ -761,11 +761,22 @@
   margin-bottom: -4px;
 }
 
+/* lottie's canvas renderer can put a scale transform on its canvas (it sets
+   transform-origin for that) while it re-measures, and for a moment the monkey
+   was drawn over the whole screen. The canvas is pinned to its box with no
+   transform, and every layer is clipped, so it cannot paint outside 150px. */
 .login-monkey canvas {
   position: absolute;
   inset: 0;
   width: 100% !important;
   height: 100% !important;
+  transform: none !important;
+}
+
+.login-monkey,
+.login-monkey > div {
+  overflow: hidden;
+  contain: paint;
 }
 
 .login-monkey > div {

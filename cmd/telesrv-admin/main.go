@@ -75,6 +75,7 @@ func run() error {
 		return err
 	}
 	go srv.updates.Run(ctx)
+	go srv.stats.warm(ctx)
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.routes(),
@@ -163,6 +164,10 @@ type uiConfig struct {
 	// convention as the WelcomeMessage/LoginCode defaults above).
 	AdvertiseHost string
 	ServerPort    int
+	// PublicBaseURL mirrors config.PublicBaseURL: its root is the server's
+	// public page (internal/web serverlanding.go), the https form of the
+	// add-server link that Share hands out.
+	PublicBaseURL string
 }
 
 // loadConfig 通过 internal/config.Load() 加载 .env 配置文件与环境变量，
@@ -223,6 +228,7 @@ func loadConfig() (uiConfig, error) {
 		RepoRoot:                   repoRoot,
 		AdvertiseHost:              appCfg.AdvertiseIP,
 		ServerPort:                 serverPort,
+		PublicBaseURL:              appCfg.PublicBaseURL,
 	}, nil
 }
 

@@ -9,12 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@gravity-ui/icons": "2.23.0",
     "lottie-web": "^5.13.0",
     "lucide-react": "^0.468.0",
+    "qrcode": "1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/qrcode": "1.5.5",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.0.3",

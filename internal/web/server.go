@@ -18,6 +18,7 @@ import (
 
 	"telesrv/internal/branding"
 	"telesrv/internal/domain"
+	"telesrv/internal/identity"
 	"telesrv/internal/links"
 )
 
@@ -35,6 +36,14 @@ type Config struct {
 	Privacy           AnonymousPrivacyResolver
 	Photos            ProfilePhotoResolver
 	ModerationAppeals ModerationAppealResolver
+	// Identity is the admin-edited server name/description/icon, shown on the
+	// public root page. Optional: without it the page uses AppName.
+	Identity *identity.Store
+	// AdvertiseHost/ServerPort are the address clients connect to, the same
+	// pair the admin panel's add-server link carries. Optional: without them
+	// the root page offers the download instead of "Add to <app>".
+	AdvertiseHost string
+	ServerPort    int
 	// TelegramLogin is the optional OIDC/Login HTTP adapter. Public Web owns
 	// the listener so discovery/auth/token and public links share the exact
 	// externally registered origin behind one reverse proxy.
@@ -189,11 +198,17 @@ func newHandler(cfg Config, logger *zap.Logger) (http.Handler, error) {
 		webBaseURL:    cfg.WebBaseURL,
 		appName:       cfg.AppName,
 		downloadURL:   cfg.DownloadURL,
+		identity:      cfg.Identity,
+		advertiseHost: strings.TrimSpace(cfg.AdvertiseHost),
+		serverPort:    cfg.ServerPort,
 		logger:        logger,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /_public/assets/logo.png", h.brandLogo)
+	mux.HandleFunc("GET /_public/server-icon", h.serverIcon)
+	// The root is this server's own page; see serverlanding.go.
+	mux.HandleFunc("GET /{$}", h.serverLanding)
 	mux.HandleFunc("GET /_public/assets/fonts/{file}", h.brandFont)
 	mux.HandleFunc("GET /_public/avatar/{username}/{photoID}", h.publicAvatar)
 	mux.HandleFunc("GET /_public/invite-avatar/{hash}/{photoID}", h.publicInviteAvatar)
@@ -237,6 +252,9 @@ type handler struct {
 	webBaseURL    string
 	appName       string
 	downloadURL   string
+	identity      *identity.Store
+	advertiseHost string
+	serverPort    int
 	logger        *zap.Logger
 }
 

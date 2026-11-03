@@ -1,43 +1,19 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Loader2, RefreshCw, Search, Settings2, X } from "lucide-react";
+import { ArrowsRotateRight, Magnifier } from "@gravity-ui/icons";
+import { Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
 import { ActionButton } from "../components/ActionButton";
-import { Alert, EmptyRow, LoadingRow, Metric, PageFrame, QueryPanel, SectionHead } from "../components/ui";
+import { Avatar } from "../components/Avatar";
+import { DataTable, type Column, type SortState } from "../components/DataTable";
+import { Alert, Metric, PageFrame, SectionHead } from "../components/ui";
 import { displayUsername, formatBytes, formatQuantity } from "../lib/format";
+import { useDebounced } from "../lib/useDebounced";
 import type { Navigate } from "../routing";
 import type { AccountStorageRow, StorageStatsResponse } from "../types";
 
 type StorageSortKey = "user_id" | "username" | "bytes" | "files";
-
-// SortableHeader is a <th> that toggles ascending/descending on click and
-// shows which column (and direction) is currently active -- there's no
-// existing sortable-table convention elsewhere in this admin panel to
-// mirror, so this is a small, self-contained one for this page.
-function SortableHeader({
-  label,
-  sortKey,
-  activeKey,
-  desc,
-  onSort
-}: {
-  label: string;
-  sortKey: StorageSortKey;
-  activeKey: StorageSortKey;
-  desc: boolean;
-  onSort: (key: StorageSortKey) => void;
-}) {
-  const active = sortKey === activeKey;
-  return (
-    <th>
-      <button type="button" className="sort-header" onClick={() => onSort(sortKey)}>
-        {label}
-        {active ? (desc ? <ArrowDown size={13} /> : <ArrowUp size={13} />) : <ArrowUpDown size={13} className="sort-header-idle" />}
-      </button>
-    </th>
-  );
-}
 
 function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   // Seeded from this session's last figures, so returning to Storage opens on
@@ -57,8 +33,9 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
-  const [sortKey, setSortKey] = useState<StorageSortKey>("bytes");
-  const [sortDesc, setSortDesc] = useState(true);
+  const query = useDebounced(q.trim());
+  // The server sorts this list (it is paged), so the table only reports clicks.
+  const [sort, setSort] = useState<SortState>({ key: "bytes", dir: "desc" });
 
   async function loadStats() {
     try {
@@ -79,10 +56,10 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
     const params = new URLSearchParams({
       limit: "50",
       offset: String(at),
-      sort: sortKey,
-      order: sortDesc ? "desc" : "asc"
+      sort: sort.key,
+      order: sort.dir
     });
-    if (q.trim()) params.set("q", q.trim());
+    if (query) params.set("q", query);
     try {
       const result = await api.storageAccounts(params);
       const page = result.rows ?? [];
@@ -91,7 +68,7 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
         // Only the first page is worth keeping: it is what the screen opens on,
         // and caching an appended list would restore a scroll position nobody
         // asked for.
-        if (!next) {
+        if (!next && !query) {
           cacheSet(cacheKeys.storageAccounts, merged);
         }
         return merged;
@@ -111,111 +88,112 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
   }
 
   useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortKey, sortDesc]);
+    void loadStats();
+  }, []);
 
-  function toggleSort(key: StorageSortKey) {
-    if (key === sortKey) {
-      setSortDesc((current) => !current);
-    } else {
-      setSortKey(key);
-      setSortDesc(true);
-    }
-  }
+  useEffect(() => {
+    void loadAccounts(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sort, query]);
 
   // Physical is what actually consumes disk/S3 (deduplicated); logical is the
   // sum of what the per-account table below adds up to. They legitimately
   // differ when the same content is shared by more than one document/photo.
   const dedupBytes = stats ? Math.max(0, Number(stats.LogicalBytes) - Number(stats.PhysicalBytes)) : 0;
+  const statsLoading = !stats && !statsFailed;
+  // Bars are relative to the largest account loaded, so the heaviest users
+  // stand out at a glance without reading every number.
+  const maxBytes = rows.reduce((max, row) => Math.max(max, Number(row.Bytes) || 0), 0);
+
+  const columns: Column<AccountStorageRow>[] = [
+    {
+      key: "username",
+      label: "Account",
+      sortValue: () => 0,
+      render: (row) => (
+        <span className="cell-identity">
+          <Avatar id={Number(row.UserID)} firstName={row.FirstName} username={row.Username} size={28} />
+          <span>
+            <span>{row.FirstName || displayUsername(row.Username) || "—"}</span>
+            {row.Username && row.FirstName && <span className="cell-sub"> {displayUsername(row.Username)}</span>}
+          </span>
+        </span>
+      )
+    },
+    { key: "user_id", label: "ID", className: "mono muted-cell", sortValue: () => 0, render: (row) => row.UserID },
+    {
+      key: "bytes",
+      label: "Storage used",
+      firstDir: "desc",
+      sortValue: () => 0,
+      render: (row) => (
+        <>
+          <span className="mono">{formatBytes(row.Bytes)}</span>
+          <span className="cell-bar" aria-hidden="true">
+            <i style={{ width: `${maxBytes > 0 ? Math.max(2, Math.round((Number(row.Bytes) / maxBytes) * 100)) : 0}%` }} />
+          </span>
+        </>
+      )
+    },
+    { key: "files", label: "Files", align: "right", firstDir: "desc", sortValue: () => 0, render: (row) => formatQuantity(row.FileCount) }
+  ];
 
   return (
     <>
       {error && <Alert>{error}</Alert>}
       <div className="metric-row">
-        <Metric
-          label={"Physical usage (on disk / S3)"}
-          value={stats ? formatBytes(stats.PhysicalBytes) : "-"}
-          loading={!stats && !statsFailed}
-        />
-        <Metric
-          label={"Logical usage (sum per account)"}
-          value={stats ? formatBytes(stats.LogicalBytes) : "-"}
-          loading={!stats && !statsFailed}
-        />
+        <Metric label={"On disk"} value={stats ? formatBytes(stats.PhysicalBytes) : "-"} loading={statsLoading} />
         <Metric
           label={"Saved by dedup"}
           // Derived from stats, so before they land this is a placeholder 0 --
           // it has to shimmer like the rest rather than assert "0 B", which
           // reads as a real measurement of nothing saved.
           value={formatBytes(String(dedupBytes))}
-          loading={!stats && !statsFailed}
+          loading={statsLoading}
           tone={dedupBytes > 0 ? "good" : "neutral"}
         />
-        <Metric label={"Backend"} value={stats?.BackendKind ?? "-"} loading={!stats && !statsFailed} />
-      </div>
-      <div className="metric-row">
-        <Metric label={"Documents"} value={stats ? formatQuantity(stats.DocumentCount) : "-"} loading={!stats && !statsFailed} />
-        <Metric label={"Photos"} value={stats ? formatQuantity(stats.PhotoCount) : "-"} loading={!stats && !statsFailed} />
-        <Metric
-          label={"Accounts with media"}
-          value={stats ? formatQuantity(stats.AccountCount) : "-"}
-          loading={!stats && !statsFailed}
-        />
-        <Metric
-          label={"System/bundled content"}
-          value={stats ? formatBytes(stats.SystemBytes) : "-"}
-          loading={!stats && !statsFailed}
-        />
+        <Metric label={"Photos"} value={stats ? formatQuantity(stats.PhotoCount) : "-"} loading={statsLoading} />
+        <Metric label={"Documents"} value={stats ? formatQuantity(stats.DocumentCount) : "-"} loading={statsLoading} />
+        <Metric label={"System content"} value={stats ? formatBytes(stats.SystemBytes) : "-"} loading={statsLoading} />
+        <Metric label={"Backend"} value={stats?.BackendKind ?? "-"} loading={statsLoading} />
       </div>
 
-      <QueryPanel>
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void loadAccounts(false); }}>
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"User ID / username / name"} />
-          </label>
-          <button className="btn primary icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Search"}
-          </button>
-          <button className="btn icon-text" type="button" onClick={refresh} disabled={busy}>
-            <RefreshCw size={15} className={busy ? "spin" : ""} /> {"Refresh"}
-          </button>
-        </form>
-      </QueryPanel>
-
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <SortableHeader label={"User ID"} sortKey="user_id" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
-              <SortableHeader label={"Account"} sortKey="username" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
-              <SortableHeader label={"Storage used"} sortKey="bytes" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
-              <SortableHeader label={"Files"} sortKey="files" activeKey={sortKey} desc={sortDesc} onSort={toggleSort} />
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.UserID}>
-                <td className="mono">{row.UserID}</td>
-                <td>{displayUsername(row.Username) || row.FirstName || "-"}</td>
-                <td className="mono">{formatBytes(row.Bytes)}</td>
-                <td className="mono">{formatQuantity(row.FileCount)}</td>
-                <td><button className="row-link" type="button" onClick={() => navigate(`/accounts/${row.UserID}`)}>{"Details"} <ChevronRight size={14} /></button></td>
-              </tr>
-            ))}
-            {rows.length === 0 && (busy ? <LoadingRow colSpan={5} /> : <EmptyRow colSpan={5} />)}
-          </tbody>
-        </table>
+      <div className="list-controls">
+        <label className="searchbox">
+          <Magnifier />
+          <input
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            placeholder={"Search by name, username or ID"}
+            aria-label={"Search accounts"}
+          />
+        </label>
+        <span className="list-controls-spacer" />
+        <button className="icon-btn" type="button" onClick={refresh} disabled={busy} aria-label={"Refresh"} title={"Refresh"}>
+          <ArrowsRotateRight className={busy ? "spin" : undefined} />
+        </button>
       </div>
-      {hasMore && (
-        <div className="toolbar">
-          <button className="btn icon-text" type="button" onClick={() => loadAccounts(true)} disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <ChevronDown size={15} />} {"Load more"}
+
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.UserID}
+        onRowClick={(row) => navigate(`/accounts/${row.UserID}`)}
+        sort={sort}
+        onSort={setSort}
+        loading={busy && rows.length === 0}
+        empty={query ? "No accounts match." : "No account has stored any media yet."}
+      />
+      <div className="table-footer">
+        <span>
+          {rows.length > 0 && (stats ? `${rows.length} of ${formatQuantity(stats.AccountCount)} accounts with media` : `${rows.length} accounts`)}
+        </span>
+        {hasMore && (
+          <button className="btn" type="button" onClick={() => void loadAccounts(true)} disabled={busy}>
+            {"Load more"}
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </>
   );
 }
@@ -223,13 +201,13 @@ function StorageOverviewTab({ navigate }: { navigate: Navigate }) {
 export function StoragePage({ navigate }: { navigate: Navigate }) {
   const [tab, setTab] = useState<"overview" | "limits">("overview");
   return (
-    <PageFrame title={"Storage"} eyebrow={"Media / Storage usage"}>
+    <PageFrame title={"Storage"}>
       <div className="tab-bar" role="tablist" aria-label={"Storage sections"}>
         <button className={`tab-btn ${tab === "overview" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
-          {"Overview"}
+          {"Usage"}
         </button>
         <button className={`tab-btn ${tab === "limits" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "limits"} onClick={() => setTab("limits")}>
-          {"Limits & Retention"}
+          {"Limits and retention"}
         </button>
       </div>
       {tab === "overview" ? <StorageOverviewTab navigate={navigate} /> : <LimitsRetentionSection />}

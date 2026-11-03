@@ -44,6 +44,10 @@ type Poller struct {
 
 	mu   sync.RWMutex
 	snap Snapshot
+	// history is a ring of the most recent samples, oldest first once read
+	// through History -- enough for the overview's live CPU/RAM chart.
+	history []Sample
+	next    int
 
 	cpu cpuSampler
 }
@@ -75,6 +79,30 @@ func NewPoller(diskPath string) *Poller {
 		diskPath = parent
 	}
 	return &Poller{diskPath: diskPath, diskFreeBytesFn: diskFreeBytes}
+}
+
+// Sample is one point of the recent-history series.
+type Sample struct {
+	Unix         int64   `json:"t"`
+	CPUPercent   float64 `json:"cpu"`
+	MemUsedBytes int64   `json:"mem"`
+}
+
+// HistorySize is how many samples History keeps: at the admin panel's 5s
+// poll interval, the last 15 minutes.
+const HistorySize = 180
+
+// History returns the recent samples, oldest first. It lives in memory only,
+// so it starts empty after a restart.
+func (p *Poller) History() []Sample {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make([]Sample, 0, len(p.history))
+	if len(p.history) < HistorySize {
+		return append(out, p.history...)
+	}
+	out = append(out, p.history[p.next:]...)
+	return append(out, p.history[:p.next]...)
 }
 
 // Snapshot returns the last sample. Safe to call concurrently with Run.
@@ -127,7 +155,14 @@ func (p *Poller) sampleOnce() {
 	}
 	snap.Ready = true
 
+	sample := Sample{Unix: time.Now().Unix(), CPUPercent: snap.CPUPercent, MemUsedBytes: snap.MemUsedBytes}
 	p.mu.Lock()
 	p.snap = snap
+	if len(p.history) < HistorySize {
+		p.history = append(p.history, sample)
+	} else {
+		p.history[p.next] = sample
+		p.next = (p.next + 1) % HistorySize
+	}
 	p.mu.Unlock()
 }

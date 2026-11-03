@@ -44,6 +44,9 @@ type server struct {
 	// updates remembers whether GitHub has a newer server release; see
 	// internal/updatecheck. Run by main, read by the session payload.
 	updates *updatecheck.Checker
+	// stats answers the overview/Storage aggregates from memory; see
+	// statscache.go. nil without a read store.
+	stats *statsCaches
 }
 
 func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*server, error) {
@@ -60,6 +63,7 @@ func newServer(cfg uiConfig, read *readStore, hostStats *hoststats.Poller) (*ser
 		identity:  identity.NewStore(cfg.IdentityDir),
 		serverCtl: procctl.NewManager(cfg.RepoRoot),
 		updates:   updatecheck.New(cfg.UpdateCheckEnabled, version.Release, ""),
+		stats:     newStatsCaches(read),
 	}, nil
 }
 
@@ -88,6 +92,7 @@ func (s *server) routes() http.Handler {
 	mux.Handle("POST /api/actions/set-admin-operator-access", s.requireAdminsManage(http.HandlerFunc(s.handleUpdateAdminUserAPI)))
 	mux.Handle("POST /api/actions/set-admin-operator-password", s.requireAdminsManage(http.HandlerFunc(s.handleSetAdminUserPasswordAPI)))
 	mux.Handle("GET /api/dashboard", s.scopedRoute(permissionDashboardRead, http.HandlerFunc(s.handleDashboardAPI)))
+	mux.Handle("GET /api/dashboard/activity", s.scopedRoute(permissionDashboardRead, http.HandlerFunc(s.handleDashboardActivityAPI)))
 	mux.Handle("GET /api/audit-logs", s.scopedRoute(permissionAuditRead, http.HandlerFunc(s.handleAuditLogsAPI)))
 	mux.Handle("GET /api/account-ratings", s.scopedRoute(permissionRatingsRead, http.HandlerFunc(s.handleAccountRatingsAPI)))
 	mux.Handle("GET /api/account-ratings/{user_id}", s.scopedRoute(permissionRatingsRead, http.HandlerFunc(s.handleAccountRatingDetailAPI)))
@@ -467,12 +472,12 @@ func (s *server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 	g, gctx := errgroup.WithContext(r.Context())
 	g.Go(func() error {
 		var err error
-		counts, err = s.read.DashboardCounts(gctx)
+		counts, err = s.stats.dashboard.Get(gctx)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		storage, err = s.read.StorageStats(gctx)
+		storage, err = s.stats.storage.Get(gctx)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -485,6 +490,7 @@ func (s *server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.hostStats != nil {
 		resp["host"] = s.hostStats.Snapshot()
+		resp["host_history"] = s.hostStats.History()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2254,6 +2260,9 @@ func (s *server) handleStorageManualPurgeAPI(w http.ResponseWriter, r *http.Requ
 		CreatedBefore:  body.CreatedBefore,
 	}
 	result, err := s.callAdminAPI(r.Context(), "/v1/storage/manual-purge", req)
+	if err == nil && body.Confirm {
+		s.stats.invalidateStorage()
+	}
 	writeCommandResultAPI(w, result, err)
 }
 
@@ -2689,7 +2698,7 @@ func (s *server) handleStorageStatsAPI(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "read store is not configured")
 		return
 	}
-	stats, err := s.read.StorageStats(r.Context())
+	stats, err := s.stats.storage.Get(r.Context())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2716,13 +2725,24 @@ func (s *server) handleStorageAccountsAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sortDesc := query.Get("order") != "asc"
-	rows, hasMore, err := s.read.ListAccountStorageUsage(
-		r.Context(),
-		query.Get("q"),
-		query.Get("sort"),
-		sortDesc,
-		offset,
-		limit)
+	var (
+		rows    []AccountStorageRow
+		hasMore bool
+	)
+	if offset == 0 && limit == storageListPageSize && strings.TrimSpace(query.Get("q")) == "" {
+		// The page Storage opens on comes from memory; see statscache.go.
+		var page storageUsagePage
+		page, err = s.stats.storageList(query.Get("sort"), sortDesc).Get(r.Context())
+		rows, hasMore = page.rows, page.hasMore
+	} else {
+		rows, hasMore, err = s.read.ListAccountStorageUsage(
+			r.Context(),
+			query.Get("q"),
+			query.Get("sort"),
+			sortDesc,
+			offset,
+			limit)
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return

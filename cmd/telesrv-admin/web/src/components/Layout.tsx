@@ -1,40 +1,39 @@
 import {
-  AtSign,
-  BadgeCheck,
-  Bot,
+  ArrowRightFromSquare,
+  At,
   ChevronDown,
-  Contact,
+  ChevronsLeft,
+  ChevronsRight,
+  Comments,
   Database,
-  Film,
-  Gavel,
-  HandHeart,
-  History,
-  Landmark,
-  LayoutDashboard,
-  LogOut,
-  Megaphone,
-  MessageSquareText,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  Sparkles,
-  Wallet,
-  UserCog,
-  UserRound,
-  Share2,
-  ShieldAlert,
-  ShieldCheck,
-  Smile,
+  Envelope,
+  FaceRobot,
+  FaceSmile,
+  Gem,
+  Filmstrip,
+  Gear,
   Gift,
-  LayoutGrid,
+  Heart,
+  House,
+  Link,
+  ListTimeline,
+  Medal,
+  Megaphone,
+  Passport,
+  Person,
+  PersonGear,
+  Picture,
+  Persons,
+  PlugConnection,
+  SealCheck,
+  Server,
   Shield,
-  Stamp,
-  Trophy,
-  Users,
-  Zap,
-	Sticker
-} from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+  ShieldExclamation,
+  Sparkles,
+  Sticker,
+  Wallet
+} from "@gravity-ui/icons";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { clearAdminCache } from "../lib/cache";
 import { permissionBotVerificationReview, permissionServerManage, permissionAdminsManage,
@@ -54,10 +53,11 @@ import { permissionBotVerificationReview, permissionServerManage, permissionAdmi
   permissionContentRead,
   permissionUsernamesRead,
   permissionVerificationReview, useCan, useDonationsEnabled, useThirdPartyVerificationHidden } from "../permissions";
-import { type Navigate, type RouteState, routeTitle } from "../routing";
+import { type Navigate, type RouteState, routeSection, routeTitle } from "../routing";
 import { AddServerLinkModal } from "./AddServerLinkModal";
 import { AppBackground } from "./AppBackground";
 import { AppLink } from "./AppLink";
+import { PageHeaderContext } from "./pageHeader";
 
 // Compresses a sorted (or unsorted) list of layer numbers into run-length
 // ranges for the compact sidebar label, e.g. [225,226,227,228,229] -> "225-229",
@@ -164,6 +164,13 @@ export function Shell({
       return next;
     });
   }
+
+  // The page heading lives in the top bar; pages portal their title and
+  // actions into these two elements (see pageHeader.tsx).
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
+  const slots = useMemo(() => ({ title: titleSlot, actions: actionsSlot }), [titleSlot, actionsSlot]);
+  const section = routeSection(route.path);
 
   const [addServerLinkOpen, setAddServerLinkOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -291,22 +298,21 @@ export function Shell({
             <small>{"Admin Console"}</small>
           </span>
         </AppLink>
-        <div className="sidebar-label">{"Navigation"}</div>
         <nav className="nav-list" aria-label={"Primary navigation"}>
-          <NavLink icon={<LayoutDashboard size={16} />} href="/" route={route} navigate={navigate}>{"Overview"}</NavLink>
+          <NavLink icon={<House />} href="/" route={route} navigate={navigate}>{"Overview"}</NavLink>
 
-          {(canReadAccounts || canReadChannels || canReadMessages) && (
-            <NavSection title={"People & Chats"} icon={<Contact size={14} />} route={route} collapsed={navCollapsed}
-              paths={["/accounts", "/channels", "/messages"]}>
+          {(canReadAccounts || canReadChannels || canReadMessages || canReadBots || canReadBroadcasts) && (
+            <NavSection title={"Users and chats"} icon={<Persons />} route={route} collapsed={navCollapsed}
+              paths={["/accounts", "/channels", "/messages", "/bots", "/broadcasts"]}>
               {canReadAccounts && (
-                <NavLink icon={<Users size={16} />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
+                <NavLink icon={<Person />} href="/accounts" route={route} navigate={navigate}>{"Accounts"}</NavLink>
               )}
               {canReadChannels && (
-                <NavLink icon={<ShieldCheck size={16} />} href="/channels" route={route} navigate={navigate}>{"Supergroups / Channels"}</NavLink>
+                <NavLink icon={<Comments />} href="/channels" route={route} navigate={navigate}>{"Groups and channels"}</NavLink>
               )}
               {canReadMessages && (
                 <NavLink
-                  icon={<MessageSquareText size={16} />}
+                  icon={<Envelope />}
                   href="/messages/private"
                   route={route}
                   navigate={navigate}
@@ -315,78 +321,77 @@ export function Shell({
                   {"Messages"}
                 </NavLink>
               )}
+              {canReadBots && (
+                <NavLink icon={<FaceRobot />} href="/bots" route={route} navigate={navigate}>{"Bots"}</NavLink>
+              )}
+              {canReadBroadcasts && (
+                <NavLink icon={<Megaphone />} href="/broadcasts" route={route} navigate={navigate}>{"Broadcasts"}</NavLink>
+              )}
             </NavSection>
           )}
 
-          {canReadBots && (
-            <NavLink icon={<Bot size={16} />} href="/bots" route={route} navigate={navigate}>{"Bots"}</NavLink>
-          )}
-          {canReadBroadcasts && (
-            <NavLink icon={<Megaphone size={16} />} href="/broadcasts" route={route} navigate={navigate}>{"Broadcasts"}</NavLink>
-          )}
-          {canReadStorage && (
-            <NavLink icon={<Database size={16} />} href="/storage" route={route} navigate={navigate}>{"Storage"}</NavLink>
-          )}
-
           {(canReviewModeration || canReviewVerification || (canReviewBotVerification && !thirdPartyVerificationHidden)) && (
-            <NavSection title={"Moderation & Verification"} icon={<Gavel size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Moderation"} icon={<Shield />} route={route} collapsed={navCollapsed}
               paths={["/moderation", "/verification", "/bot-verification"]}>
               {canReviewModeration && (
-                <NavLink icon={<ShieldAlert size={16} />} href="/moderation" route={route} navigate={navigate}>{"Reports / Moderation"}</NavLink>
+                <NavLink icon={<ShieldExclamation />} href="/moderation" route={route} navigate={navigate}>{"Reports"}</NavLink>
               )}
               {canReviewVerification && (
-                <NavLink icon={<BadgeCheck size={16} />} href="/verification" route={route} navigate={navigate}>{"Verification"}</NavLink>
+                <NavLink icon={<SealCheck />} href="/verification" route={route} navigate={navigate}>{"Verification"}</NavLink>
               )}
               {canReviewBotVerification && !thirdPartyVerificationHidden && (
-                <NavLink icon={<Stamp size={16} />} href="/bot-verification" route={route} navigate={navigate}>{"Third-party marks"}</NavLink>
+                <NavLink icon={<Passport />} href="/bot-verification" route={route} navigate={navigate}>{"Third-party marks"}</NavLink>
               )}
             </NavSection>
           )}
 
           {canReadContent && (
-            <NavSection title={"Content"} icon={<LayoutGrid size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Content"} icon={<Picture />} route={route} collapsed={navCollapsed}
               paths={["/stickers", "/emoji", "/gif-catalog"]}>
-              <NavLink icon={<Sticker size={16} />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
-              <NavLink icon={<Smile size={16} />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
-              <NavLink icon={<Film size={16} />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
+              <NavLink icon={<Sticker />} href="/stickers" route={route} navigate={navigate}>{"Stickers"}</NavLink>
+              <NavLink icon={<FaceSmile />} href="/emoji" route={route} navigate={navigate}>{"Emoji"}</NavLink>
+              <NavLink icon={<Filmstrip />} href="/gif-catalog" route={route} navigate={navigate}>{"GIFs"}</NavLink>
             </NavSection>
           )}
 
           {(canManagePremium || (canManageDonations && donationsEnabled) || canReadRatings || canReadStarGifts || canManageStarGifts || canReadUsernames) && (
-            <NavSection title={"Economy"} icon={<Landmark size={14} />} route={route} collapsed={navCollapsed}
+            <NavSection title={"Economy"} icon={<Gem />} route={route} collapsed={navCollapsed}
               paths={["/premium", "/donations", "/account-ratings", "/star-gift-catalog", "/give-gifts", "/collectible-usernames"]}>
               {canManagePremium && (
-                <NavLink icon={<Sparkles size={16} />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
+                <NavLink icon={<Sparkles />} href="/premium" route={route} navigate={navigate}>{"Premium"}</NavLink>
               )}
               {canManageDonations && donationsEnabled && (
-                <NavLink icon={<Wallet size={16} />} href="/donations" route={route} navigate={navigate}>{"Donations"}</NavLink>
+                <NavLink icon={<Wallet />} href="/donations" route={route} navigate={navigate}>{"Donations"}</NavLink>
               )}
               {canReadRatings && (
-                <NavLink icon={<Trophy size={16} />} href="/account-ratings" route={route} navigate={navigate}>{"Account Ratings"}</NavLink>
+                <NavLink icon={<Medal />} href="/account-ratings" route={route} navigate={navigate}>{"Ratings"}</NavLink>
               )}
               {canReadStarGifts && (
-                <NavLink icon={<Gift size={16} />} href="/star-gift-catalog" route={route} navigate={navigate}>{"StarGift Catalog"}</NavLink>
+                <NavLink icon={<Gift />} href="/star-gift-catalog" route={route} navigate={navigate}>{"Gift catalog"}</NavLink>
               )}
               {canManageStarGifts && (
-                <NavLink icon={<HandHeart size={16} />} href="/give-gifts" route={route} navigate={navigate}>{"Give Gifts"}</NavLink>
+                <NavLink icon={<Heart />} href="/give-gifts" route={route} navigate={navigate}>{"Give gifts"}</NavLink>
               )}
               {canReadUsernames && (
-                <NavLink icon={<AtSign size={16} />} href="/collectible-usernames" route={route} navigate={navigate}>{"NFT Usernames"}</NavLink>
+                <NavLink icon={<At />} href="/collectible-usernames" route={route} navigate={navigate}>{"Usernames"}</NavLink>
               )}
             </NavSection>
           )}
 
-          {(canManageAdmins || canReadAuditLog || canManageServer) && (
-            <NavSection title={"The Console"} icon={<Shield size={14} />} route={route} collapsed={navCollapsed}
-              paths={["/admin-users", "/audit-log", "/server-settings"]}>
+          {(canReadStorage || canManageAdmins || canReadAuditLog || canManageServer) && (
+            <NavSection title={"Server"} icon={<Server />} route={route} collapsed={navCollapsed}
+              paths={["/storage", "/admin-users", "/audit-log", "/server-settings"]}>
+              {canReadStorage && (
+                <NavLink icon={<Database />} href="/storage" route={route} navigate={navigate}>{"Storage"}</NavLink>
+              )}
               {canManageAdmins && (
-                <NavLink icon={<UserCog size={16} />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
+                <NavLink icon={<PersonGear />} href="/admin-users" route={route} navigate={navigate}>{"Operators"}</NavLink>
               )}
               {canReadAuditLog && (
-                <NavLink icon={<History size={16} />} href="/audit-log" route={route} navigate={navigate}>{"Audit Log"}</NavLink>
+                <NavLink icon={<ListTimeline />} href="/audit-log" route={route} navigate={navigate}>{"Audit log"}</NavLink>
               )}
               {canManageServer && (
-                <NavLink icon={<Settings size={16} />} href="/server-settings" route={route} navigate={navigate}>{"Server Settings"}</NavLink>
+                <NavLink icon={<Gear />} href="/server-settings" route={route} navigate={navigate}>{"Settings"}</NavLink>
               )}
             </NavSection>
           )}
@@ -424,7 +429,7 @@ export function Shell({
               disabled={connecting}
               onClick={() => void connectThisServer()}
             >
-              <Zap size={15} /> {"Connect"}
+              <PlugConnection /> {"Connect"}
             </button>
             <button
               className="btn ghost sidebar-server-action"
@@ -432,7 +437,7 @@ export function Shell({
               title={"Share server (get an add-server link)"}
               onClick={() => setAddServerLinkOpen(true)}
             >
-              <Share2 size={15} /> {"Share"}
+              <Link /> {"Share"}
             </button>
           </div>
         )}
@@ -450,18 +455,24 @@ export function Shell({
               aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}
               title={navCollapsed ? "Expand navigation" : "Collapse navigation"}
             >
-              {navCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+              {navCollapsed ? <ChevronsRight /> : <ChevronsLeft />}
             </button>
-            <h1>{routeTitle(route.path)}</h1>
+            {section && <span className="topbar-section">{section}</span>}
+            <h1 className="topbar-title" ref={setTitleSlot}>
+              <span className="topbar-default-title">{routeTitle(route.path)}</span>
+            </h1>
           </div>
           <div className="topbar-actions">
-            <span className="actor-pill"><UserRound size={14} /> {actor}</span>
-            <button className="btn ghost icon-text" type="button" onClick={logout} title={"Log out"}>
-              <LogOut size={16} /> {"Log out"}
+            <div className="topbar-page-actions" ref={setActionsSlot} />
+            <span className="actor-pill" title={actor}><Person /> {actor}</span>
+            <button className="icon-btn" type="button" onClick={logout} aria-label={"Log out"} title={"Log out"}>
+              <ArrowRightFromSquare />
             </button>
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content">
+          <PageHeaderContext.Provider value={slots}>{children}</PageHeaderContext.Provider>
+        </main>
       </div>
       {/* Behind everything, fixed to the viewport. The sidebar and topbar paint
           over it, so it shows through the working area only. */}
@@ -566,7 +577,7 @@ function NavSection({
       <button type="button" className="nav-section-toggle" onClick={toggle} aria-expanded={open}>
         {icon}
         <span>{title}</span>
-        <ChevronDown size={14} className="nav-section-chevron" aria-hidden="true" />
+        <ChevronDown width={12} height={12} className="nav-section-chevron" aria-hidden="true" />
       </button>
       {open && <div className="nav-children">{children}</div>}
     </div>

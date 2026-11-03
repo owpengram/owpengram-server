@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // handleAddServerLinkAPI builds an owpg://addserver link (see the desktop
@@ -26,7 +27,14 @@ func (s *server) handleAddServerLinkAPI(w http.ResponseWriter, r *http.Request) 
 	q.Set("host", s.cfg.AdvertiseHost)
 	q.Set("port", strconv.Itoa(s.cfg.ServerPort))
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"link": "owpg://addserver?" + q.Encode(),
-	})
+	}
+	// share_url is the public page that carries the same link: an https URL
+	// any app or camera opens, unlike owpg:// which most of them ignore.
+	// "Connect" keeps using the owpg:// link directly.
+	if base := strings.TrimRight(strings.TrimSpace(s.cfg.PublicBaseURL), "/"); base != "" {
+		resp["share_url"] = base + "/"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -1,306 +1,350 @@
 import {
-  Activity,
-  AlertTriangle,
-  BadgeCheck,
-  Bot,
+  ArrowRight,
+  ChevronRight,
   Cpu,
   Database,
-  Film,
-  Flag,
+  FaceRobot,
+  Gear,
   HardDrive,
-  MemoryStick,
-  Radio,
-  Smile,
-  Sticker,
-  Users,
-  UsersRound
-} from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+  Link,
+  Megaphone,
+  SealCheck,
+  ShieldExclamation
+} from "@gravity-ui/icons";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
-import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
+import { AddServerLinkModal } from "../components/AddServerLinkModal";
+import { BarLineChart, Meter, Sparkline } from "../components/charts";
 import { Alert } from "../components/ui";
-import type { Navigate } from "../routing";
+import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
 import { formatBytes, formatQuantity } from "../lib/format";
-import type { DashboardResponse } from "../types";
+import {
+  permissionBotsRead,
+  permissionBroadcastsRead,
+  permissionModerationReview,
+  permissionServerManage,
+  permissionVerificationReview,
+  useCan
+} from "../permissions";
+import type { Navigate } from "../routing";
+import type { DashboardActivity, DashboardResponse } from "../types";
+
+const num = (v: number | undefined) => (v === undefined ? "" : formatQuantity(String(v)));
+
+function shortDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  // English like the rest of the panel, whatever the browser's locale.
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
 
 export function Dashboard({ navigate }: { navigate: Navigate }) {
-  // Seeded from the last values this session saw, so coming back to the
-  // dashboard opens on the numbers instead of on a grid of skeletons. The
-  // 15s refresh below still runs and replaces them.
-  const [data, setData] = useState<DashboardResponse | null>(
-    () => cacheGet<DashboardResponse>(cacheKeys.dashboard) ?? null
+  // Both seeded from this session's last values, so the overview opens on
+  // numbers; the server answers both from memory too (statscache.go).
+  const [data, setData] = useState<DashboardResponse | null>(() => cacheGet<DashboardResponse>(cacheKeys.dashboard) ?? null);
+  const [activity, setActivity] = useState<DashboardActivity | null>(
+    () => cacheGet<DashboardActivity>(cacheKeys.dashboardActivity) ?? null
   );
   const [error, setError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const canBroadcast = useCan(permissionBroadcastsRead);
+  const canBots = useCan(permissionBotsRead);
+  const canServer = useCan(permissionServerManage);
+  const canModeration = useCan(permissionModerationReview);
+  const canVerification = useCan(permissionVerificationReview);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    // The two load independently: counts and host load are cheap and come
+    // back first; the history may take longer and must not hold them up.
+    async function loadCounts() {
       try {
         const res = await api.dashboard();
         cacheSet(cacheKeys.dashboard, res);
         if (!cancelled) setData(res);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load dashboard");
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load the overview");
       }
     }
-    void load();
-    // Refreshed periodically rather than once: counts and host load are the
-    // kind of numbers an operator leaves this page open to watch.
-    const timer = window.setInterval(() => void load(), 15000);
+    async function loadActivity() {
+      try {
+        const res = await api.dashboardActivity();
+        cacheSet(cacheKeys.dashboardActivity, res);
+        if (!cancelled) setActivity(res);
+      } catch {
+        // The chart just stays empty; the counts above are what matter most.
+      }
+    }
+    void loadCounts();
+    void loadActivity();
+    // Host load and online count are worth watching live; history is per day.
+    const fast = window.setInterval(() => void loadCounts(), 5000);
+    const slow = window.setInterval(() => void loadActivity(), 120000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      window.clearInterval(fast);
+      window.clearInterval(slow);
     };
   }, []);
 
   const counts = data?.counts;
   const storage = data?.storage;
   const host = data?.host;
+  const history = data?.host_history ?? [];
+  const days = activity?.days ?? [];
+
+  const newUsers30 = days.reduce((sum, d) => sum + d.new_users, 0);
+  const messages30 = days.reduce((sum, d) => sum + d.messages, 0);
+  const messagesToday = days.length ? days[days.length - 1].messages : undefined;
+  const chartData = useMemo(
+    () => days.map((d) => ({ key: d.date, label: shortDay(d.date), bar: d.messages, line: d.new_users })),
+    [days]
+  );
+
+  const memPct = host?.Ready && host.MemTotalBytes > 0 ? (host.MemUsedBytes / host.MemTotalBytes) * 100 : 0;
+  const diskUsedPct =
+    host?.Ready && host.DiskReady && host.DiskTotalBytes > 0 ? ((host.DiskTotalBytes - host.DiskFreeBytes) / host.DiskTotalBytes) * 100 : 0;
+  const pending = (counts?.PendingReports ?? 0) + (counts?.PendingVerifications ?? 0);
 
   return (
-    <div className="dashboard-layout">
+    <div className="overview">
       {error && <Alert>{error}</Alert>}
 
-      <Section title="Needs attention">
-        <StatTile
-          icon={<Flag />}
-          label="Pending reports"
-          value={counts ? formatQuantity(String(counts.PendingReports)) : ""}
-          loading={!counts && !error}
-          tone={counts && counts.PendingReports > 0 ? "warn" : "good"}
-          href="/moderation"
-          navigate={navigate}
+      <div className="overview-kpis">
+        <Kpi
+          label="Accounts"
+          value={num(counts?.Users)}
+          loading={!counts}
+          delta={activity ? `+${formatQuantity(String(newUsers30))} in 30 days` : undefined}
+          onClick={() => navigate("/accounts")}
+          chart={<Sparkline values={days.map((d) => d.new_users)} label="New accounts per day" />}
         />
-        <StatTile
-          icon={<BadgeCheck />}
-          label="Verification requests"
-          value={counts ? formatQuantity(String(counts.PendingVerifications)) : ""}
-          loading={!counts && !error}
-          tone={counts && counts.PendingVerifications > 0 ? "warn" : "good"}
-          href="/verification"
-          navigate={navigate}
+        <Kpi
+          label="Active today"
+          value={num(activity?.active_day)}
+          loading={!activity}
+          delta={activity ? `${formatQuantity(String(activity.active_week))} this week · ${formatQuantity(String(activity.active_month))} this month` : undefined}
         />
-      </Section>
-
-      <Section title="People &amp; chats">
-        <StatTile
-          icon={<Users />}
-          label="Users"
-          value={counts ? formatQuantity(String(counts.Users)) : ""}
-          loading={!counts && !error}
-          href="/accounts"
-          navigate={navigate}
+        <Kpi
+          label="Messages today"
+          value={num(messagesToday)}
+          loading={!activity}
+          delta={activity ? `${formatQuantity(String(messages30))} in 30 days` : undefined}
+          chart={<Sparkline values={days.map((d) => d.messages)} label="Messages per day" />}
         />
-        <StatTile
-          icon={<Activity />}
+        <Kpi
           label="Online now"
-          value={counts ? formatQuantity(String(counts.OnlineUsers)) : ""}
-          loading={!counts && !error}
-          sub="last 5 min"
-          href="/accounts"
-          navigate={navigate}
+          value={num(counts?.OnlineUsers)}
+          loading={!counts}
+          tone="good"
+          delta="seen in the last 5 minutes"
+          live
         />
-        <StatTile
-          icon={<Bot />}
-          label="Bots"
-          value={counts ? formatQuantity(String(counts.Bots)) : ""}
-          loading={!counts && !error}
-          href="/bots"
-          navigate={navigate}
-        />
-        <StatTile
-          icon={<Radio />}
-          label="Channels"
-          value={counts ? formatQuantity(String(counts.BroadcastChannels)) : ""}
-          loading={!counts && !error}
-          href="/channels"
-          navigate={navigate}
-        />
-        <StatTile
-          icon={<UsersRound />}
-          label="Supergroups"
-          value={counts ? formatQuantity(String(counts.Supergroups)) : ""}
-          loading={!counts && !error}
-          href="/channels"
-          navigate={navigate}
-        />
-      </Section>
-
-      <Section title="Content">
-        <StatTile
-          icon={<Sticker />}
-          label="Sticker packs"
-          value={counts ? formatQuantity(String(counts.StickerSets)) : ""}
-          loading={!counts && !error}
-          href="/stickers"
-          navigate={navigate}
-        />
-        <StatTile
-          icon={<Smile />}
-          label="Emoji packs"
-          value={counts ? formatQuantity(String(counts.EmojiSets)) : ""}
-          loading={!counts && !error}
-          href="/emoji"
-          navigate={navigate}
-        />
-        <StatTile
-          icon={<Film />}
-          label="GIFs"
-          value={counts ? formatQuantity(String(counts.Gifs)) : ""}
-          loading={!counts && !error}
-          sub="saved by users"
-          href="/gif-catalog"
-          navigate={navigate}
-        />
-        <StatTile
-          icon={<Database />}
-          label="Media storage used"
-          value={storage ? formatBytes(storage.PhysicalBytes) : ""}
-          loading={!storage && !error}
-          sub={storage ? `${storage.BackendKind} backend` : undefined}
-          href="/storage"
-          navigate={navigate}
-        />
-      </Section>
-
-      <Section title="Server health" hint={host?.Ready ? undefined : "waiting for first sample…"}>
-        <UsageTile
-          icon={<Cpu />}
-          label="CPU load"
-          percent={host?.Ready ? host.CPUPercent : undefined}
-          valueText={host?.Ready ? `${host.CPUPercent.toFixed(0)}%` : ""}
-          loading={!host?.Ready && !error}
-        />
-        <UsageTile
-          icon={<MemoryStick />}
-          label="RAM used"
-          percent={host?.Ready && host.MemTotalBytes > 0 ? (host.MemUsedBytes / host.MemTotalBytes) * 100 : undefined}
-          valueText={host?.Ready ? formatBytes(String(host.MemUsedBytes)) : ""}
-          loading={!host?.Ready && !error}
-          sub={host?.Ready ? `of ${formatBytes(String(host.MemTotalBytes))}` : undefined}
-        />
-        <UsageTile
-          icon={<HardDrive />}
-          label="Disk free"
-          percent={
-            host?.Ready && host.DiskReady && host.DiskTotalBytes > 0
-              ? ((host.DiskTotalBytes - host.DiskFreeBytes) / host.DiskTotalBytes) * 100
-              : undefined
-          }
-          // Skeleton only until the first host sample lands. After that a
-          // missing disk reading is a real state, not a pending one -- it can
-          // stay that way indefinitely, and a shimmer would promise a value
-          // that is never coming.
-          valueText={host?.Ready && host.DiskReady ? formatBytes(String(host.DiskFreeBytes)) : "—"}
-          loading={!host?.Ready && !error}
-          sub={host?.Ready && host.DiskReady ? `of ${formatBytes(String(host.DiskTotalBytes))}` : "no reading yet"}
-          warnAbove={85}
-        />
-      </Section>
-    </div>
-  );
-}
-
-function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="dashboard-section">
-      <div className="dashboard-section-title">
-        {title}
-        {hint && <span>{hint}</span>}
       </div>
-      <div className="dashboard-grid">{children}</div>
+
+      <div className="overview-main">
+        <section className="overview-card overview-activity">
+          <header className="overview-card-head">
+            <h2>{"Activity"}</h2>
+            <span className="overview-card-hint">{"Last 30 days, UTC"}</span>
+          </header>
+          {activity ? (
+            <BarLineChart
+              data={chartData}
+              barName="Messages"
+              lineName="New accounts"
+              tooltip={(d) => (
+                <>
+                  <strong>{d.label}</strong>
+                  <span><i className="dot dot--bar" />{formatQuantity(String(d.bar))} {"messages"}</span>
+                  <span><i className="dot dot--line" />{formatQuantity(String(d.line ?? 0))} {"new accounts"}</span>
+                </>
+              )}
+            />
+          ) : (
+            <div className="overview-chart-placeholder"><span className="skeleton" /></div>
+          )}
+        </section>
+
+        <div className="overview-side">
+          {(canModeration || canVerification) && (
+          <section className="overview-card">
+            <header className="overview-card-head">
+              <h2>{"Needs attention"}</h2>
+              {counts && pending === 0 && <span className="overview-card-hint">{"All clear"}</span>}
+            </header>
+            <div className="attention-list">
+              {canModeration && (
+                <AttentionRow
+                  icon={<ShieldExclamation />}
+                  label="Reports"
+                  count={counts?.PendingReports}
+                  onOpen={() => navigate("/moderation")}
+                />
+              )}
+              {canVerification && (
+                <AttentionRow
+                  icon={<SealCheck />}
+                  label="Verification requests"
+                  count={counts?.PendingVerifications}
+                  onOpen={() => navigate("/verification")}
+                />
+              )}
+            </div>
+          </section>
+          )}
+
+          {(canBroadcast || canBots || canServer) && (
+          <section className="overview-card">
+            <header className="overview-card-head">
+              <h2>{"Quick actions"}</h2>
+            </header>
+            <div className="quick-actions">
+              {canBroadcast && <QuickAction icon={<Megaphone />} label="Send a broadcast" onClick={() => navigate("/broadcasts")} />}
+              {canBots && <QuickAction icon={<FaceRobot />} label="Create a bot" onClick={() => navigate("/bots")} />}
+              {canServer && <QuickAction icon={<Link />} label="Share this server" onClick={() => setShareOpen(true)} />}
+              {canServer && <QuickAction icon={<Gear />} label="Server settings" onClick={() => navigate("/server-settings")} />}
+            </div>
+          </section>
+          )}
+        </div>
+      </div>
+
+      <div className="overview-health">
+        <section className="overview-card">
+          <header className="overview-card-head">
+            <h2><Cpu /> {"CPU"}</h2>
+            <span className="overview-value">{host?.Ready ? `${host.CPUPercent.toFixed(0)}%` : "—"}</span>
+          </header>
+          <Sparkline values={history.map((s) => s.cpu)} max={100} height={56} label="CPU load, last 15 minutes" />
+          <span className="overview-card-hint">{"Last 15 minutes"}</span>
+        </section>
+        <section className="overview-card">
+          <header className="overview-card-head">
+            <h2>{"Memory"}</h2>
+            <span className="overview-value">
+              {host?.Ready ? `${formatBytes(String(host.MemUsedBytes))} / ${formatBytes(String(host.MemTotalBytes))}` : "—"}
+            </span>
+          </header>
+          <Sparkline
+            values={history.map((s) => s.mem)}
+            max={host?.MemTotalBytes || undefined}
+            height={56}
+            tone={memPct >= 90 ? "warn" : "brand"}
+            label="Memory used, last 15 minutes"
+          />
+          <span className="overview-card-hint">{host?.Ready ? `${memPct.toFixed(0)}% used` : "Waiting for the first sample"}</span>
+        </section>
+        <section className="overview-card">
+          <header className="overview-card-head">
+            <h2><HardDrive /> {"Disk"}</h2>
+            <span className="overview-value">
+              {host?.Ready && host.DiskReady ? `${formatBytes(String(host.DiskFreeBytes))} free` : "—"}
+            </span>
+          </header>
+          <Meter percent={diskUsedPct} />
+          <span className="overview-card-hint">
+            {host?.Ready && host.DiskReady ? `${diskUsedPct.toFixed(0)}% of ${formatBytes(String(host.DiskTotalBytes))} used` : "No reading yet"}
+          </span>
+        </section>
+        <section className="overview-card clickable" onClick={() => navigate("/storage")}>
+          <header className="overview-card-head">
+            <h2><Database /> {"Media"}</h2>
+            <span className="overview-value">{storage ? formatBytes(storage.PhysicalBytes) : "—"}</span>
+          </header>
+          <div className="inventory">
+            <InventoryItem label="Photos" value={storage ? formatQuantity(storage.PhotoCount) : ""} />
+            <InventoryItem label="Documents" value={storage ? formatQuantity(storage.DocumentCount) : ""} />
+            <InventoryItem label="Backend" value={storage?.BackendKind ?? ""} />
+          </div>
+        </section>
+      </div>
+
+      <section className="overview-card">
+        <header className="overview-card-head">
+          <h2>{"On this server"}</h2>
+        </header>
+        <div className="inventory inventory--wide">
+          <InventoryItem label="Bots" value={num(counts?.Bots)} onClick={() => navigate("/bots")} />
+          <InventoryItem label="Channels" value={num(counts?.BroadcastChannels)} onClick={() => navigate("/channels")} />
+          <InventoryItem label="Groups" value={num(counts?.Supergroups)} onClick={() => navigate("/channels")} />
+          <InventoryItem label="Sticker packs" value={num(counts?.StickerSets)} onClick={() => navigate("/stickers")} />
+          <InventoryItem label="Emoji packs" value={num(counts?.EmojiSets)} onClick={() => navigate("/emoji")} />
+          <InventoryItem label="GIFs" value={num(counts?.Gifs)} onClick={() => navigate("/gif-catalog")} />
+        </div>
+      </section>
+
+      {shareOpen && <AddServerLinkModal onClose={() => setShareOpen(false)} />}
     </div>
   );
 }
 
-type Tone = "neutral" | "good" | "warn" | "danger";
-
-function StatTile({
-  icon,
+function Kpi({
   label,
   value,
-  sub,
-  tone = "neutral",
-  href,
-  navigate,
-  loading = false
+  delta,
+  chart,
+  loading,
+  tone,
+  live,
+  onClick
 }: {
-  icon: ReactNode;
   label: string;
   value: string;
-  sub?: string;
-  tone?: Tone;
-  href?: string;
-  navigate?: Navigate;
-  loading?: boolean;
+  delta?: string;
+  chart?: ReactNode;
+  loading: boolean;
+  tone?: "good";
+  live?: boolean;
+  onClick?: () => void;
 }) {
-  const toneClass = tone === "neutral" ? "" : ` ${tone}`;
-  const body = (
-    <>
-      <div className="stat-tile-head">
-        <span className="stat-tile-icon">{icon}</span>
-        {tone === "warn" && <AlertTriangle size={15} className="stat-tile-open" />}
-      </div>
-      <div className="stat-tile-value" aria-busy={loading || undefined}>
+  return (
+    <section className={`overview-card kpi${onClick ? " clickable" : ""}`} onClick={onClick}>
+      <span className="kpi-label">
+        {live && <i className="live-dot" aria-hidden="true" />}
+        {label}
+      </span>
+      <strong className={`kpi-value${tone ? ` ${tone}` : ""}`}>
         {loading ? <span className="skeleton skeleton-value" aria-label="Loading" /> : value}
-      </div>
-      <div className="stat-tile-label">{label}</div>
-      {sub && <div className="stat-tile-sub">{sub}</div>}
-    </>
+      </strong>
+      <span className="kpi-delta">{delta ?? " "}</span>
+      {chart && <div className="kpi-chart">{chart}</div>}
+    </section>
   );
-  if (href && navigate) {
-    return (
-      <a
-        className={`stat-tile clickable${toneClass}`}
-        href={href}
-        onClick={(event) => {
-          event.preventDefault();
-          navigate(href);
-        }}
-      >
-        {body}
-      </a>
-    );
-  }
-  return <div className={`stat-tile${toneClass}`}>{body}</div>;
 }
 
-// UsageTile renders a host metric with a fill bar instead of a click target --
-// there's no page a CPU/RAM/disk reading opens to, unlike every entity/queue
-// tile above.
-function UsageTile({
-  icon,
-  label,
-  percent,
-  valueText,
-  sub,
-  warnAbove = 90,
-  loading = false
-}: {
-  icon: ReactNode;
-  label: string;
-  percent?: number;
-  valueText: string;
-  sub?: string;
-  warnAbove?: number;
-  loading?: boolean;
-}) {
-  const clamped = percent === undefined ? 0 : Math.max(0, Math.min(100, percent));
-  const tone: Tone = percent === undefined ? "neutral" : percent >= warnAbove ? "danger" : percent >= warnAbove - 15 ? "warn" : "neutral";
-  const toneClass = tone === "neutral" ? "" : ` ${tone}`;
+function AttentionRow({ icon, label, count, onOpen }: { icon: ReactNode; label: string; count?: number; onOpen: () => void }) {
+  const waiting = (count ?? 0) > 0;
   return (
-    <div className={`stat-tile${toneClass}`}>
-      <div className="stat-tile-head">
-        <span className="stat-tile-icon">{icon}</span>
-      </div>
-      <div className="stat-tile-value" aria-busy={loading || undefined}>
-        {loading ? <span className="skeleton skeleton-value" aria-label="Loading" /> : valueText}
-      </div>
-      <div className="stat-tile-label">{label}</div>
-      {sub && <div className="stat-tile-sub">{sub}</div>}
-      <div className="stat-tile-bar">
-        <span style={{ width: `${clamped}%` }} />
-      </div>
-    </div>
+    <button type="button" className={`attention-row${waiting ? " waiting" : ""}`} onClick={onOpen}>
+      <span className="attention-icon">{icon}</span>
+      <span className="attention-label">{label}</span>
+      <span className="attention-count">{count === undefined ? "" : formatQuantity(String(count))}</span>
+      <ChevronRight />
+    </button>
+  );
+}
+
+function QuickAction({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="quick-action" onClick={onClick}>
+      <span className="quick-action-icon">{icon}</span>
+      <span>{label}</span>
+      <ArrowRight className="quick-action-arrow" />
+    </button>
+  );
+}
+
+function InventoryItem({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
+  const body = (
+    <>
+      <span>{label}</span>
+      <strong>{value || "—"}</strong>
+    </>
+  );
+  return onClick ? (
+    <button type="button" className="inventory-item clickable" onClick={onClick}>{body}</button>
+  ) : (
+    <div className="inventory-item">{body}</div>
   );
 }

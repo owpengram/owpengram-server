@@ -2016,6 +2016,9 @@ func run(logger *zap.Logger) error {
 		Photos:            filesService,
 		ModerationAppeals: moderationService,
 		TelegramLogin:     telegramLoginHTTPHandler,
+		Identity:          identityStore,
+		AdvertiseHost:     cfg.AdvertiseIP,
+		ServerPort:        port,
 	}, logger.Named("public-web")); err != nil {
 		return fmt.Errorf("start public Web: %w", err)
 	}
