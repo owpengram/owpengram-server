@@ -1,5 +1,5 @@
 import { ArrowsRotateRight, ChevronLeft, ChevronRight, Magnifier, Plus } from "@gravity-ui/icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
 import { CreateBotModal } from "../components/CreateBotModal";
@@ -15,10 +15,12 @@ type Cursor = { beforeID: number };
 type BotPageSize = 20 | 50 | 100;
 type BotFilter = "verified" | "system" | "user";
 
-const FILTERS: { key: BotFilter; label: string; test: (row: BotRow) => boolean }[] = [
-  { key: "verified", label: "Verified", test: (row) => row.Verified },
-  { key: "system", label: "System", test: (row) => row.System },
-  { key: "user", label: "User-made", test: (row) => !row.System }
+// Filters are applied by the server over every bot (and combine with the
+// search), so paging walks the filtered set. The key is the query flag.
+const FILTERS: { key: BotFilter; label: string }[] = [
+  { key: "verified", label: "Verified" },
+  { key: "system", label: "System" },
+  { key: "user", label: "User-made" }
 ];
 
 const zeroCursor: Cursor = { beforeID: 0 };
@@ -46,6 +48,7 @@ export function BotsPage({ navigate }: { navigate: Navigate }) {
     if (query.trim()) {
       params.set("q", query.trim());
     }
+    for (const f of FILTERS) if (filters.has(f.key)) params.set(f.key, "1");
     if (at.beforeID) {
       params.set("before_id", String(at.beforeID));
     }
@@ -90,13 +93,9 @@ export function BotsPage({ navigate }: { navigate: Navigate }) {
   useEffect(() => {
     void loadFresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, limit]);
+  }, [query, limit, filters]);
 
-  const loaded = data?.rows ?? [];
-  const rows = useMemo(
-    () => loaded.filter((row) => FILTERS.every((f) => !filters.has(f.key) || f.test(row))),
-    [loaded, filters]
-  );
+  const rows = data?.rows ?? [];
   const canGoPrev = history.length > 0 && !busy;
   const canGoNext = Boolean(data?.has_more) && !busy;
   const pageStart = history.length * limit;
@@ -174,7 +173,7 @@ export function BotsPage({ navigate }: { navigate: Navigate }) {
           <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search by name, username or ID"} aria-label={"Search bots"} />
         </label>
         {FILTERS.map((f) => (
-          <FilterChip key={f.key} label={f.label} active={filters.has(f.key)} count={loaded.filter(f.test).length} onToggle={() => toggleFilter(f.key)} />
+          <FilterChip key={f.key} label={f.label} active={filters.has(f.key)} count={data?.filter_counts?.[f.key]} onToggle={() => toggleFilter(f.key)} />
         ))}
       </div>
       <DataTable
@@ -187,7 +186,7 @@ export function BotsPage({ navigate }: { navigate: Navigate }) {
       />
       <div className="table-footer">
         <span>
-          {loaded.length > 0 ? `${pageStart + 1}–${pageStart + loaded.length}${filters.size > 0 ? ` · ${rows.length} shown` : ""}` : ""}
+          {rows.length > 0 ? `${pageStart + 1}–${pageStart + rows.length}` : ""}
           {!query && " · newest first"}
         </span>
         <div className="pager">

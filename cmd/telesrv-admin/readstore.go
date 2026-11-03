@@ -418,7 +418,16 @@ func (s *readStore) StickerSetDocumentIDs(ctx context.Context, setID int64) ([]s
 // anything but a fully-known id/phone/username). Keyset-paginated exactly
 // like ListAccounts so results beyond the page limit are reachable instead of
 // being silently dropped.
-func (s *readStore) SearchAccounts(ctx context.Context, q string, beforeActiveUS, beforeID int64, limit int) ([]AccountRow, bool, error) {
+// AccountFilter narrows an account list on the server, so a filter applies to
+// every account and paging walks the filtered set -- not page by page.
+type AccountFilter struct {
+	Premium  bool // premium that has not expired
+	Verified bool
+	Frozen   bool
+	HasEmail bool // a login email is set
+}
+
+func (s *readStore) SearchAccounts(ctx context.Context, q string, f AccountFilter, beforeActiveUS, beforeID int64, limit int) ([]AccountRow, bool, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return nil, false, nil
@@ -463,9 +472,14 @@ WHERE NOT u.is_bot
 		OR lower(TRIM(BOTH FROM ((u.first_name)::text || ' '::text || (u.last_name)::text))) LIKE $3
 		OR lower(COALESCE(ap.login_email, '')) LIKE $3
 	)
+	AND (NOT $9::bool OR u.premium_expires_at > now())
+	AND (NOT $10::bool OR u.verified)
+	AND (NOT $11::bool OR COALESCE(r.frozen, false))
+	AND (NOT $12::bool OR COALESCE(ap.login_email, '') <> '')
 	AND ($5::bigint = 0 OR (COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz), u.id) < (to_timestamp(($5::double precision) / 1000000.0), $6::bigint))
 ORDER BY COALESCE(a.last_active_at, '0001-01-01 00:00:00+00'::timestamptz) DESC, u.id DESC
-LIMIT $7`, id, phonePrefix, substring, term, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs())
+LIMIT $7`, id, phonePrefix, substring, term, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs(),
+		f.Premium, f.Verified, f.Frozen, f.HasEmail)
 	if err != nil {
 		return nil, false, fmt.Errorf("search accounts: %w", err)
 	}
@@ -501,6 +515,32 @@ var systemAccountIDs = []int64{
 }
 
 // CountAccounts returns the total number of real (non-bot, non-system) user accounts.
+// AccountFilterCounts is how many accounts each list filter matches across
+// the whole server -- the numbers on the Accounts page's filter chips.
+type AccountFilterCounts struct {
+	Premium  int64 `json:"premium"`
+	Verified int64 `json:"verified"`
+	Frozen   int64 `json:"frozen"`
+	HasEmail int64 `json:"has_email"`
+}
+
+func (s *readStore) CountAccountFilters(ctx context.Context) (AccountFilterCounts, error) {
+	var c AccountFilterCounts
+	if err := s.pool.QueryRow(ctx, `
+SELECT
+	count(*) FILTER (WHERE u.premium_expires_at > now()),
+	count(*) FILTER (WHERE u.verified),
+	count(*) FILTER (WHERE COALESCE(r.frozen, false)),
+	count(*) FILTER (WHERE COALESCE(ap.login_email, '') <> '')
+FROM users u
+LEFT JOIN account_restrictions r ON r.user_id = u.id
+LEFT JOIN account_passwords ap ON ap.user_id = u.id
+WHERE NOT u.is_bot AND NOT (u.id = ANY($1::bigint[]))`, domain.SystemUserIDs()).Scan(&c.Premium, &c.Verified, &c.Frozen, &c.HasEmail); err != nil {
+		return AccountFilterCounts{}, fmt.Errorf("count account filters: %w", err)
+	}
+	return c, nil
+}
+
 func (s *readStore) CountAccounts(ctx context.Context) (int64, error) {
 	var n int64
 	if err := s.pool.QueryRow(ctx, `
@@ -673,10 +713,41 @@ type BotDetail struct {
 	AuditLogs     []AuditLogRow
 }
 
+// BotFilter narrows the bot list in SQL, so paging walks the filtered set.
+// System and UserMade are opposites; both on matches nothing.
+type BotFilter struct {
+	Verified bool
+	System   bool // built-in service bots (domain.SystemUserIDs)
+	UserMade bool
+}
+
+// BotFilterCounts is how many bots each filter matches across the server.
+type BotFilterCounts struct {
+	Verified int64 `json:"verified"`
+	System   int64 `json:"system"`
+	UserMade int64 `json:"user"`
+}
+
+// CountBotFilters counts the bot list's filters; excludeID (0 for none) is a
+// bot the list hides, kept out of the numbers too.
+func (s *readStore) CountBotFilters(ctx context.Context, excludeID int64) (BotFilterCounts, error) {
+	var c BotFilterCounts
+	if err := s.pool.QueryRow(ctx, `
+SELECT
+	count(*) FILTER (WHERE u.verified),
+	count(*) FILTER (WHERE u.id = ANY($1::bigint[])),
+	count(*) FILTER (WHERE NOT (u.id = ANY($1::bigint[])))
+FROM users u
+WHERE u.is_bot AND u.deleted_at IS NULL AND u.id <> $2`, domain.SystemUserIDs(), excludeID).Scan(&c.Verified, &c.System, &c.UserMade); err != nil {
+		return BotFilterCounts{}, fmt.Errorf("count bot filters: %w", err)
+	}
+	return c, nil
+}
+
 // ListBots pages over live bot accounts (users.is_bot, not tombstoned) by
 // descending id. Bots are excluded from ListAccounts, so this is the dedicated
 // projection for them.
-func (s *readStore) ListBots(ctx context.Context, beforeID int64, limit int) ([]BotRow, bool, error) {
+func (s *readStore) ListBots(ctx context.Context, f BotFilter, beforeID int64, limit int) ([]BotRow, bool, error) {
 	if limit <= 0 {
 		limit = accountListDefaultLimit
 	}
@@ -690,8 +761,11 @@ FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND ($1::bigint = 0 OR u.id < $1)
+	AND (NOT $4::bool OR u.verified)
+	AND (NOT $5::bool OR u.id = ANY($3::bigint[]))
+	AND (NOT $6::bool OR NOT (u.id = ANY($3::bigint[])))
 ORDER BY u.id DESC
-LIMIT $2`, beforeID, limit+1)
+LIMIT $2`, beforeID, limit+1, domain.SystemUserIDs(), f.Verified, f.System, f.UserMade)
 	if err != nil {
 		return nil, false, fmt.Errorf("list bots: %w", err)
 	}
@@ -715,7 +789,7 @@ LIMIT $2`, beforeID, limit+1)
 	return out, hasMore, nil
 }
 
-func (s *readStore) SearchBots(ctx context.Context, q string) ([]BotRow, error) {
+func (s *readStore) SearchBots(ctx context.Context, q string, f BotFilter) ([]BotRow, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return nil, nil
@@ -732,8 +806,11 @@ FROM users u
 LEFT JOIN bots b ON b.bot_user_id = u.id
 LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.editable
 WHERE u.is_bot AND u.deleted_at IS NULL AND (u.id = $1 OR lower(u.username) = $2 OR p.username_lower = $2)
+	AND (NOT $5::bool OR u.verified)
+	AND (NOT $6::bool OR u.id = ANY($4::bigint[]))
+	AND (NOT $7::bool OR NOT (u.id = ANY($4::bigint[])))
 ORDER BY u.id DESC
-LIMIT $3`, id, username, accountSearchLimit)
+LIMIT $3`, id, username, accountSearchLimit, domain.SystemUserIDs(), f.Verified, f.System, f.UserMade)
 	if err != nil {
 		return nil, fmt.Errorf("search bots: %w", err)
 	}
@@ -786,7 +863,36 @@ WHERE u.id = $1`, out.Bot.OwnerUserID).Scan(&ownerUsername); err != nil && err !
 	return out, nil
 }
 
-func (s *readStore) SearchChannels(ctx context.Context, q string) ([]ChannelRow, error) {
+// ChannelFilter narrows the channel list in SQL, so paging walks the
+// filtered set instead of filtering one loaded page.
+type ChannelFilter struct {
+	Channels bool // broadcast channels
+	Groups   bool // supergroups
+	Verified bool
+}
+
+// ChannelFilterCounts is how many chats each filter matches across the server.
+type ChannelFilterCounts struct {
+	Channels int64 `json:"channels"`
+	Groups   int64 `json:"groups"`
+	Verified int64 `json:"verified"`
+}
+
+func (s *readStore) CountChannelFilters(ctx context.Context) (ChannelFilterCounts, error) {
+	var c ChannelFilterCounts
+	if err := s.pool.QueryRow(ctx, `
+SELECT
+	count(*) FILTER (WHERE c.broadcast AND NOT c.megagroup),
+	count(*) FILTER (WHERE c.megagroup),
+	count(*) FILTER (WHERE c.verified)
+FROM channels c
+WHERE NOT c.deleted AND NOT c.monoforum AND (c.broadcast OR c.megagroup)`).Scan(&c.Channels, &c.Groups, &c.Verified); err != nil {
+		return ChannelFilterCounts{}, fmt.Errorf("count channel filters: %w", err)
+	}
+	return c, nil
+}
+
+func (s *readStore) SearchChannels(ctx context.Context, q string, f ChannelFilter) ([]ChannelRow, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return nil, nil
@@ -814,8 +920,11 @@ WHERE NOT c.deleted
 		OR p.username_lower = $2
 		OR lower(c.title) LIKE '%' || $2 || '%'
 	)
+	AND (NOT $4::bool OR (c.broadcast AND NOT c.megagroup))
+	AND (NOT $5::bool OR c.megagroup)
+	AND (NOT $6::bool OR c.verified)
 ORDER BY c.updated_at DESC, c.id DESC
-LIMIT $3`, id, username, channelSearchLimit)
+LIMIT $3`, id, username, channelSearchLimit, f.Channels, f.Groups, f.Verified)
 	if err != nil {
 		return nil, fmt.Errorf("search channels: %w", err)
 	}
@@ -823,7 +932,7 @@ LIMIT $3`, id, username, channelSearchLimit)
 	return scanChannelRows(rows)
 }
 
-func (s *readStore) ListChannels(ctx context.Context, beforeUpdatedUS, beforeID int64, limit int) ([]ChannelRow, bool, error) {
+func (s *readStore) ListChannels(ctx context.Context, f ChannelFilter, beforeUpdatedUS, beforeID int64, limit int) ([]ChannelRow, bool, error) {
 	if limit <= 0 {
 		limit = channelListDefaultLimit
 	}
@@ -843,8 +952,11 @@ WHERE NOT c.deleted
 	AND NOT c.monoforum
 	AND (c.broadcast OR c.megagroup)
 	AND ($1::bigint = 0 OR (c.updated_at, c.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
+	AND (NOT $4::bool OR (c.broadcast AND NOT c.megagroup))
+	AND (NOT $5::bool OR c.megagroup)
+	AND (NOT $6::bool OR c.verified)
 ORDER BY c.updated_at DESC, c.id DESC
-LIMIT $3`, beforeUpdatedUS, beforeID, limit+1)
+LIMIT $3`, beforeUpdatedUS, beforeID, limit+1, f.Channels, f.Groups, f.Verified)
 	if err != nil {
 		return nil, false, fmt.Errorf("list channels: %w", err)
 	}
@@ -923,7 +1035,7 @@ func channelScanDestWithRaw(item *ChannelRow, raw *[]byte) []any {
 	return append(dest, raw)
 }
 
-func (s *readStore) ListAccounts(ctx context.Context, beforeActiveUS, beforeID int64, limit int) ([]AccountRow, bool, error) {
+func (s *readStore) ListAccounts(ctx context.Context, f AccountFilter, beforeActiveUS, beforeID int64, limit int) ([]AccountRow, bool, error) {
 	if limit <= 0 {
 		limit = accountListDefaultLimit
 	}
@@ -950,9 +1062,14 @@ LEFT JOIN peer_usernames p ON p.peer_type = 'user' AND p.peer_id = u.id AND p.ed
 LEFT JOIN account_passwords ap ON ap.user_id = u.id
 WHERE NOT u.is_bot
 	AND NOT (u.id = ANY($4::bigint[]))
+	AND (NOT $5::bool OR u.premium_expires_at > now())
+	AND (NOT $6::bool OR u.verified)
+	AND (NOT $7::bool OR COALESCE(r.frozen, false))
+	AND (NOT $8::bool OR COALESCE(ap.login_email, '') <> '')
 	AND ($1::bigint = 0 OR (COALESCE(auth.last_active_at, u.created_at), u.id) < (to_timestamp(($1::double precision) / 1000000.0), $2::bigint))
 ORDER BY COALESCE(auth.last_active_at, u.created_at) DESC, u.id DESC
-LIMIT $3`, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs())
+LIMIT $3`, beforeActiveUS, beforeID, limit+1, domain.SystemUserIDs(),
+		f.Premium, f.Verified, f.Frozen, f.HasEmail)
 	if err != nil {
 		return nil, false, fmt.Errorf("list accounts: %w", err)
 	}

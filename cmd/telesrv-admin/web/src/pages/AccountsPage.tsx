@@ -1,5 +1,5 @@
 import { ArrowsRotateRight, ChevronLeft, ChevronRight, Magnifier, Smartphone } from "@gravity-ui/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
 import { DataTable, FilterChip, type Column } from "../components/DataTable";
@@ -16,13 +16,15 @@ type AccountFilter = "premium" | "verified" | "frozen" | "email";
 
 const zeroCursor: Cursor = { beforeID: 0, beforeActiveUS: 0 };
 
-// Filters narrow the page that is loaded; the search box is what asks the
-// server. Together they cover "find this person" and "who on this page is X".
-const FILTERS: { key: AccountFilter; label: string; test: (row: AccountRow) => boolean }[] = [
-  { key: "premium", label: "Premium", test: (row) => row.PremiumUntil > 0 },
-  { key: "verified", label: "Verified", test: (row) => row.Verified },
-  { key: "frozen", label: "Frozen", test: (row) => row.Frozen },
-  { key: "email", label: "Has email", test: (row) => Boolean(row.LoginEmail) }
+// Filters are applied by the server over every account (and combine with the
+// search), so paging walks the filtered set instead of filtering each page.
+// param is the /api/accounts query flag; count is the chip's server-wide total.
+type AccountFilterCounts = NonNullable<AccountStatsResponse["filters"]>;
+const FILTERS: { key: AccountFilter; label: string; param: string; count: keyof AccountFilterCounts }[] = [
+  { key: "premium", label: "Premium", param: "premium", count: "premium" },
+  { key: "verified", label: "Verified", param: "verified", count: "verified" },
+  { key: "frozen", label: "Frozen", param: "frozen", count: "frozen" },
+  { key: "email", label: "Has email", param: "has_email", count: "has_email" }
 ];
 
 export function AccountsPage({ navigate }: { navigate: Navigate }) {
@@ -48,6 +50,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
     setError("");
     const params = new URLSearchParams({ limit: String(limit) });
     if (query) params.set("q", query);
+    for (const f of FILTERS) if (filters.has(f.key)) params.set(f.param, "1");
     if (at.beforeID || at.beforeActiveUS) {
       params.set("before_id", String(at.beforeID));
       params.set("before_active_us", String(at.beforeActiveUS));
@@ -100,7 +103,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
   useEffect(() => {
     void loadFresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, limit]);
+  }, [query, limit, filters]);
 
   useEffect(() => {
     void loadStats();
@@ -115,11 +118,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
     });
   }
 
-  const loaded = data?.rows ?? [];
-  const rows = useMemo(
-    () => loaded.filter((row) => FILTERS.every((f) => !filters.has(f.key) || f.test(row))),
-    [loaded, filters]
-  );
+  const rows = data?.rows ?? [];
   const pageStart = history.length * limit;
 
   const columns: Column<AccountRow>[] = [
@@ -207,7 +206,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
             key={f.key}
             label={f.label}
             active={filters.has(f.key)}
-            count={loaded.filter(f.test).length}
+            count={stats?.filters?.[f.count]}
             onToggle={() => toggleFilter(f.key)}
           />
         ))}
@@ -222,9 +221,7 @@ export function AccountsPage({ navigate }: { navigate: Navigate }) {
       />
       <div className="table-footer">
         <span>
-          {loaded.length > 0
-            ? `${pageStart + 1}–${pageStart + loaded.length}${filters.size > 0 ? ` · ${rows.length} shown` : ""}`
-            : ""}
+          {rows.length > 0 ? `${pageStart + 1}–${pageStart + rows.length}` : ""}
           {!query && " · most recently active first"}
         </span>
         <div className="pager">

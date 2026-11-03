@@ -720,13 +720,20 @@ func (s *server) handleAccountsAPI(w http.ResponseWriter, r *http.Request) {
 	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
 	beforeActiveUS, _ := parseInt64(r.URL.Query().Get("before_active_us"))
 	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	query := r.URL.Query()
+	filter := AccountFilter{
+		Premium:  query.Get("premium") == "1",
+		Verified: query.Get("verified") == "1",
+		Frozen:   query.Get("frozen") == "1",
+		HasEmail: query.Get("has_email") == "1",
+	}
 	rows := []AccountRow{}
 	hasMore := false
 	var err error
 	if strings.TrimSpace(q) != "" {
-		rows, hasMore, err = s.read.SearchAccounts(r.Context(), q, beforeActiveUS, beforeID, limit)
+		rows, hasMore, err = s.read.SearchAccounts(r.Context(), q, filter, beforeActiveUS, beforeID, limit)
 	} else {
-		rows, hasMore, err = s.read.ListAccounts(r.Context(), beforeActiveUS, beforeID, limit)
+		rows, hasMore, err = s.read.ListAccounts(r.Context(), filter, beforeActiveUS, beforeID, limit)
 	}
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -828,9 +835,15 @@ func (s *server) handleAccountsStatsAPI(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	filters, err := s.read.CountAccountFilters(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total":  total,
-		"online": online,
+		"total":   total,
+		"online":  online,
+		"filters": filters,
 	})
 }
 
@@ -998,14 +1011,28 @@ func (s *server) handleBotsAPI(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
 	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	filter := BotFilter{
+		Verified: r.URL.Query().Get("verified") == "1",
+		System:   r.URL.Query().Get("system") == "1",
+		UserMade: r.URL.Query().Get("user") == "1",
+	}
 	rows := []BotRow{}
 	hasMore := false
 	var err error
 	if strings.TrimSpace(q) != "" {
-		rows, err = s.read.SearchBots(r.Context(), q)
+		rows, err = s.read.SearchBots(r.Context(), q, filter)
 	} else {
-		rows, hasMore, err = s.read.ListBots(r.Context(), beforeID, limit)
+		rows, hasMore, err = s.read.ListBots(r.Context(), filter, beforeID, limit)
 	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	hiddenBotID := int64(0)
+	if s.cfg.HideThirdPartyVerification {
+		hiddenBotID = domain.VerifierBotUserID
+	}
+	filterCounts, err := s.read.CountBotFilters(r.Context(), hiddenBotID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1033,6 +1060,7 @@ func (s *server) handleBotsAPI(w http.ResponseWriter, r *http.Request) {
 		"has_more":       hasMore,
 		"next_before_id": nextBeforeID,
 		"listing":        strings.TrimSpace(q) == "",
+		"filter_counts":  filterCounts,
 	})
 }
 
@@ -1166,14 +1194,24 @@ func (s *server) handleChannelsAPI(w http.ResponseWriter, r *http.Request) {
 	beforeID, _ := parseInt64(r.URL.Query().Get("before_id"))
 	beforeUpdatedUS, _ := parseInt64(r.URL.Query().Get("before_updated_us"))
 	limit, _ := parseInt(r.URL.Query().Get("limit"))
+	filter := ChannelFilter{
+		Channels: r.URL.Query().Get("channels") == "1",
+		Groups:   r.URL.Query().Get("groups") == "1",
+		Verified: r.URL.Query().Get("verified") == "1",
+	}
 	rows := []ChannelRow{}
 	hasMore := false
 	var err error
 	if strings.TrimSpace(q) != "" {
-		rows, err = s.read.SearchChannels(r.Context(), q)
+		rows, err = s.read.SearchChannels(r.Context(), q, filter)
 	} else {
-		rows, hasMore, err = s.read.ListChannels(r.Context(), beforeUpdatedUS, beforeID, limit)
+		rows, hasMore, err = s.read.ListChannels(r.Context(), filter, beforeUpdatedUS, beforeID, limit)
 	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	filterCounts, err := s.read.CountChannelFilters(r.Context())
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1199,6 +1237,7 @@ func (s *server) handleChannelsAPI(w http.ResponseWriter, r *http.Request) {
 		"next_before_id":         nextBeforeID,
 		"next_before_updated_us": nextBeforeUpdatedUS,
 		"listing":                strings.TrimSpace(q) == "",
+		"filter_counts":          filterCounts,
 	})
 }
 

@@ -92,7 +92,7 @@ VALUES (lower($1), lower($1), 'user', $2, $3, false, $4, $5)`,
 	}
 	assertCollectibles(t, "AccountDetail", detail.Account, editable, want)
 
-	rows, _, err := store.ListAccounts(ctx, 0, 0, 200)
+	rows, _, err := store.ListAccounts(ctx, AccountFilter{}, 0, 0, 200)
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
@@ -107,6 +107,42 @@ VALUES (lower($1), lower($1), 'user', $2, $3, false, $4, $5)`,
 		t.Fatalf("seeded account %d is absent from the first page of %d accounts", userID, len(rows))
 	}
 	assertCollectibles(t, "ListAccounts", *listed, editable, want)
+
+	// Filters run in SQL over every account: the seeded account (verified,
+	// no premium) is in the Verified list and absent from the Premium one,
+	// both for the plain list and for a search.
+	if _, err := pool.Exec(ctx, `UPDATE users SET verified = true WHERE id = $1`, userID); err != nil {
+		t.Fatalf("mark verified: %v", err)
+	}
+	contains := func(rows []AccountRow) bool {
+		for _, row := range rows {
+			if row.ID == userID {
+				return true
+			}
+		}
+		return false
+	}
+	verifiedRows, _, err := store.ListAccounts(ctx, AccountFilter{Verified: true}, 0, 0, 200)
+	if err != nil || !contains(verifiedRows) {
+		t.Fatalf("Verified filter: err=%v, seeded account listed=%v", err, contains(verifiedRows))
+	}
+	for _, row := range verifiedRows {
+		if !row.Verified {
+			t.Fatalf("Verified filter returned unverified account %d", row.ID)
+		}
+	}
+	premiumRows, _, err := store.ListAccounts(ctx, AccountFilter{Premium: true}, 0, 0, 200)
+	if err != nil || contains(premiumRows) {
+		t.Fatalf("Premium filter: err=%v, seeded non-premium account listed=%v", err, contains(premiumRows))
+	}
+	searched, _, err := store.SearchAccounts(ctx, "Collector", AccountFilter{Verified: true}, 0, 0, 200)
+	if err != nil || !contains(searched) {
+		t.Fatalf("search with Verified filter: err=%v, listed=%v", err, contains(searched))
+	}
+	counts, err := store.CountAccountFilters(ctx)
+	if err != nil || counts.Verified < 1 {
+		t.Fatalf("CountAccountFilters = %+v, %v; want at least one verified", counts, err)
+	}
 
 	// An account holding nothing collectible reports an empty list, not null: the
 	// panel iterates it unconditionally.

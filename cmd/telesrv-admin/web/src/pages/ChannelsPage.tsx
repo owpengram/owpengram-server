@@ -1,5 +1,5 @@
 import { ArrowsRotateRight, ChevronLeft, ChevronRight, Magnifier } from "@gravity-ui/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Avatar } from "../components/Avatar";
 import { DataTable, FilterChip, type Column } from "../components/DataTable";
@@ -16,11 +16,12 @@ type ChannelFilter = "channels" | "groups" | "verified";
 
 const zeroCursor: Cursor = { beforeID: 0, beforeUpdatedUS: 0 };
 
-// Filters narrow the loaded page; the search box is what asks the server.
-const FILTERS: { key: ChannelFilter; label: string; test: (row: ChannelRow) => boolean }[] = [
-  { key: "channels", label: "Channels", test: (row) => row.Broadcast && !row.Megagroup },
-  { key: "groups", label: "Groups", test: (row) => row.Megagroup },
-  { key: "verified", label: "Verified", test: (row) => row.Verified }
+// Filters are applied by the server over every chat (and combine with the
+// search), so paging walks the filtered set. The key is the query flag.
+const FILTERS: { key: ChannelFilter; label: string }[] = [
+  { key: "channels", label: "Channels" },
+  { key: "groups", label: "Groups" },
+  { key: "verified", label: "Verified" }
 ];
 
 export function ChannelsPage({ navigate }: { navigate: Navigate }) {
@@ -45,6 +46,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
     setError("");
     const params = new URLSearchParams({ limit: String(limit) });
     if (query) params.set("q", query);
+    for (const f of FILTERS) if (filters.has(f.key)) params.set(f.key, "1");
     if (at.beforeID || at.beforeUpdatedUS) {
       params.set("before_id", String(at.beforeID));
       params.set("before_updated_us", String(at.beforeUpdatedUS));
@@ -89,7 +91,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
   useEffect(() => {
     void loadFresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, limit]);
+  }, [query, limit, filters]);
 
   function toggleFilter(key: ChannelFilter) {
     setFilters((current) => {
@@ -100,11 +102,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
     });
   }
 
-  const loaded = data?.rows ?? [];
-  const rows = useMemo(
-    () => loaded.filter((row) => FILTERS.every((f) => !filters.has(f.key) || f.test(row))),
-    [loaded, filters]
-  );
+  const rows = data?.rows ?? [];
   const pageStart = history.length * limit;
 
   const columns: Column<ChannelRow>[] = [
@@ -161,7 +159,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
           <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search by title, username or ID"} aria-label={"Search groups and channels"} />
         </label>
         {FILTERS.map((f) => (
-          <FilterChip key={f.key} label={f.label} active={filters.has(f.key)} count={loaded.filter(f.test).length} onToggle={() => toggleFilter(f.key)} />
+          <FilterChip key={f.key} label={f.label} active={filters.has(f.key)} count={data?.filter_counts?.[f.key]} onToggle={() => toggleFilter(f.key)} />
         ))}
       </div>
       <DataTable
@@ -174,7 +172,7 @@ export function ChannelsPage({ navigate }: { navigate: Navigate }) {
       />
       <div className="table-footer">
         <span>
-          {loaded.length > 0 ? `${pageStart + 1}–${pageStart + loaded.length}${filters.size > 0 ? ` · ${rows.length} shown` : ""}` : ""}
+          {rows.length > 0 ? `${pageStart + 1}–${pageStart + rows.length}` : ""}
           {!query && " · most recently updated first"}
         </span>
         <div className="pager">

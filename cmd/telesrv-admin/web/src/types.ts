@@ -984,6 +984,8 @@ export type AccountListResponse = {
 export type AccountStatsResponse = {
   total: number;
   online: number;
+  // How many accounts each list filter matches across the whole server.
+  filters?: { premium: number; verified: number; frozen: number; has_email: number };
 };
 
 // SharedDeviceAccount is one account whose authorizations matched a
@@ -1106,6 +1108,8 @@ export type ChannelListResponse = {
   next_before_id: number;
   next_before_updated_us: number;
   listing: boolean;
+  // How many chats each list filter matches across the whole server.
+  filter_counts?: { channels: number; groups: number; verified: number };
 };
 
 export type BotListResponse = {
@@ -1115,6 +1119,8 @@ export type BotListResponse = {
   has_more: boolean;
   next_before_id: number;
   listing: boolean;
+  // How many bots each list filter matches across the whole server.
+  filter_counts?: { verified: number; system: number; user: number };
 };
 
 export type BroadcastRow = {
