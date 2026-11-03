@@ -241,9 +241,9 @@ export function AddServerLinkModal({ onClose }: { onClose: () => void }) {
               </button>
             </div>
 
-            <p className="share-note">
+            {/* <p className="share-note">
               {"Opens this server's page, with a button that adds it to the app. Only the address travels in the link; the app gets the name and key from the server itself."}
-            </p>
+            </p> */}
           </>
         )}
       </section>
