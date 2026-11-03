@@ -6,20 +6,23 @@ import { api, errorMessage } from "../api";
 // its modal is open, and only for the one set being viewed — not on the list
 // page — so this never repeats the "100 animations on one page" lag.
 //
-// Documents come back either as Lottie JSON (TGS-animated) or as a raw raster
-// image (static webp/png/etc, e.g. the "GestosLol" pack) — branch on the
-// response's real Content-Type rather than assuming every document animates.
+// Documents come back as Lottie JSON (TGS-animated), a raw raster image
+// (static webp/png/etc, e.g. the "GestosLol" pack) or a WebM/MP4 video (video
+// stickers and video emoji) — branch on the response's real Content-Type
+// rather than assuming every document animates the same way.
 export function StickerDocumentPreview({ documentID, className = "", showError = true }: { documentID: string; className?: string; showError?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const animation = useRef<ReturnType<typeof lottie.loadAnimation> | null>(null);
   const [error, setError] = useState("");
   const [imageURL, setImageURL] = useState<string | null>(null);
+  const [isVideo, setIsVideo] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     let objectURL: string | null = null;
     setError("");
     setImageURL(null);
+    setIsVideo(false);
 
     fetch(api.stickerDocumentAnimationURL(documentID), { credentials: "same-origin" })
       .then(async (response) => {
@@ -44,6 +47,7 @@ export function StickerDocumentPreview({ documentID, className = "", showError =
         const blob = await response.blob();
         if (cancelled) return;
         objectURL = URL.createObjectURL(blob);
+        setIsVideo(contentType.startsWith("video/"));
         setImageURL(objectURL);
       })
       .catch((err) => {
@@ -60,7 +64,9 @@ export function StickerDocumentPreview({ documentID, className = "", showError =
 
   return (
     <div className={`sticker-doc-cell ${className}`.trim()}>
-      {imageURL ? (
+      {imageURL && isVideo ? (
+        <video className="sticker-doc-image" src={imageURL} autoPlay loop muted playsInline />
+      ) : imageURL ? (
         <img className="sticker-doc-image" src={imageURL} alt="" />
       ) : (
         <div className="sticker-doc-canvas" ref={host} />

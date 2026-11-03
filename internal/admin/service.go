@@ -3876,7 +3876,7 @@ func (s *Service) StickerDocumentAnimation(ctx context.Context, documentID int64
 		return decompressed, "application/json; charset=utf-8", true, nil
 	}
 	detected := http.DetectContentType(data)
-	if !isSafeStickerPreviewImageType(detected) {
+	if !isSafeStickerPreviewType(detected) {
 		return nil, "", false, nil
 	}
 	return data, detected, true, nil
@@ -3908,9 +3908,14 @@ func (s *Service) GifCatalogDocumentPreview(ctx context.Context, documentID int6
 	return chunk.Bytes, detected, true, nil
 }
 
-func isSafeStickerPreviewImageType(value string) bool {
+// isSafeStickerPreviewType lists what the admin preview may serve as-is:
+// static images, and the WebM (and MP4) that video stickers and video custom
+// emoji are made of. Video stickers used to fall through to "not found", so
+// every video pack showed blank tiles in the console. Nothing scriptable
+// (SVG, HTML) is ever on the list.
+func isSafeStickerPreviewType(value string) bool {
 	switch value {
-	case "image/webp", "image/png", "image/jpeg", "image/gif":
+	case "image/webp", "image/png", "image/jpeg", "image/gif", "video/webm", "video/mp4":
 		return true
 	default:
 		return false
