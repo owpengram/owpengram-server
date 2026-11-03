@@ -794,7 +794,16 @@ export function RestartOverlay({ timedOut, onDismiss, logLines }: { timedOut: bo
             {log}
             <div className="gift-table-actions restart-overlay-actions">
               <button className="btn" type="button" onClick={onDismiss}>{"Dismiss"}</button>
-              <button className="btn primary" type="button" onClick={() => window.location.reload()}>{"Reload now"}</button>
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => {
+                  window.history.replaceState(null, "", "/");
+                  window.location.reload();
+                }}
+              >
+                {"Reload now"}
+              </button>
             </div>
           </div>
         ) : (

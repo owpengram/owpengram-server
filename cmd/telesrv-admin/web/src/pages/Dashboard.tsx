@@ -18,6 +18,7 @@ import { api } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { AddServerLinkModal } from "../components/AddServerLinkModal";
 import { useServerUpdate } from "../components/pageHeader";
+import { RestartOverlay, useAdminRestartWatcher } from "./ServerSettingsPage";
 import { BarLineChart, Meter, Sparkline } from "../components/charts";
 import { Alert } from "../components/ui";
 import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
@@ -55,6 +56,9 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
   // as Settings > Services' Update button, surfaced here so nobody has to go
   // looking for it.
   const [commitsBehind, setCommitsBehind] = useState(0);
+  // Update runs from here, so the restart is waited out here too and the
+  // panel comes back on the overview, not on Server settings.
+  const restartWatcher = useAdminRestartWatcher();
   const version = session.version;
 
   const canBroadcast = useCan(permissionBroadcastsRead);
@@ -154,7 +158,7 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
             label={`Update (${commitsBehind})`}
             path="/api/actions/update-server"
             payload={() => ({})}
-            onDone={() => navigate("/server-settings?tab=services")}
+            onDone={() => void restartWatcher.watch()}
           />
         </section>
       )}
@@ -342,6 +346,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
       </section>
 
       {shareOpen && <AddServerLinkModal onClose={() => setShareOpen(false)} />}
+      {restartWatcher.waiting && <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
+      {restartWatcher.timedOut && <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
     </div>
   );
 }
