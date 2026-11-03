@@ -16,6 +16,9 @@ export function StickerDocumentPreview({ documentID, className = "", showError =
   const [error, setError] = useState("");
   const [imageURL, setImageURL] = useState<string | null>(null);
   const [isVideo, setIsVideo] = useState(false);
+  // A file the browser could not draw at all (neither as an image nor as a
+  // video) shows as an empty cell, never as a broken-image glyph.
+  const [unplayable, setUnplayable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,6 +26,7 @@ export function StickerDocumentPreview({ documentID, className = "", showError =
     setError("");
     setImageURL(null);
     setIsVideo(false);
+    setUnplayable(false);
 
     fetch(api.stickerDocumentAnimationURL(documentID), { credentials: "same-origin" })
       .then(async (response) => {
@@ -64,10 +68,13 @@ export function StickerDocumentPreview({ documentID, className = "", showError =
 
   return (
     <div className={`sticker-doc-cell ${className}`.trim()}>
-      {imageURL && isVideo ? (
-        <video className="sticker-doc-image" src={imageURL} autoPlay loop muted playsInline />
+      {imageURL && unplayable ? null : imageURL && isVideo ? (
+        <video className="sticker-doc-image" src={imageURL} autoPlay loop muted playsInline onError={() => setUnplayable(true)} />
       ) : imageURL ? (
-        <img className="sticker-doc-image" src={imageURL} alt="" />
+        // The server sniffs the type from the first bytes; when that guess
+        // is wrong for a sticker that is really a video, the image fails to
+        // decode -- try the same bytes as a video before giving up.
+        <img className="sticker-doc-image" src={imageURL} alt="" onError={() => setIsVideo(true)} />
       ) : (
         <div className="sticker-doc-canvas" ref={host} />
       )}
