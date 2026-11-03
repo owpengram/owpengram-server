@@ -22,7 +22,9 @@ import (
 const DefaultURL = "https://api.github.com/repos/owpengram/owpengram-server/releases/latest"
 
 const (
-	firstCheckDelay = time.Minute
+	// Short: the overview shows the result, and an operator who just started
+	// the panel should not have to wait a minute to learn an update exists.
+	firstCheckDelay = 10 * time.Second
 	checkInterval   = 24 * time.Hour
 	retryInterval   = 6 * time.Hour
 	maxBody         = 1 << 20

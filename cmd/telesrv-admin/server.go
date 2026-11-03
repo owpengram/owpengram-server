@@ -492,6 +492,9 @@ func (s *server) handleDashboardAPI(w http.ResponseWriter, r *http.Request) {
 		resp["host"] = s.hostStats.Snapshot()
 		resp["host_history"] = s.hostStats.History()
 	}
+	// Also here, not only in the session payload: the session is read once at
+	// sign-in, and the first release check usually lands after that.
+	resp["update"] = s.updates.Snapshot()
 	writeJSON(w, http.StatusOK, resp)
 }
 

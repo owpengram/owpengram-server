@@ -1,4 +1,5 @@
 import {
+  ArrowDownToLine,
   ArrowRight,
   ArrowUpFromLine,
   ChevronRight,
@@ -14,6 +15,7 @@ import {
 } from "@gravity-ui/icons";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { ActionButton } from "../components/ActionButton";
 import { AddServerLinkModal } from "../components/AddServerLinkModal";
 import { useServerUpdate } from "../components/pageHeader";
 import { BarLineChart, Meter, Sparkline } from "../components/charts";
@@ -48,13 +50,37 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
   );
   const [error, setError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
-  const { version, update } = useServerUpdate();
+  const session = useServerUpdate();
+  // New commits on the branch this server was built from -- the same check
+  // as Settings > Services' Update button, surfaced here so nobody has to go
+  // looking for it.
+  const [commitsBehind, setCommitsBehind] = useState(0);
+  const version = session.version;
 
   const canBroadcast = useCan(permissionBroadcastsRead);
   const canBots = useCan(permissionBotsRead);
   const canServer = useCan(permissionServerManage);
   const canModeration = useCan(permissionModerationReview);
   const canVerification = useCan(permissionVerificationReview);
+
+  useEffect(() => {
+    if (!canServer) return;
+    let cancelled = false;
+    async function checkCommits() {
+      try {
+        const result = await api.checkServerUpdates();
+        if (!cancelled) setCommitsBehind(result.commits_behind);
+      } catch {
+        // No git checkout (an archive install) or no network: nothing to show.
+      }
+    }
+    void checkCommits();
+    const timer = window.setInterval(() => void checkCommits(), 10 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [canServer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +116,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
     };
   }, []);
 
+  // The polled overview has the freshest answer; the session's copy is from sign-in.
+  const update = data?.update ?? session.update;
   const counts = data?.counts;
   const storage = data?.storage;
   const host = data?.host;
@@ -112,6 +140,24 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
   return (
     <div className="overview">
       {error && <Alert>{error}</Alert>}
+
+      {canServer && commitsBehind > 0 && (
+        <section className="update-banner" role="status">
+          <span className="update-banner-icon"><ArrowDownToLine /></span>
+          <div className="update-banner-text">
+            <strong>{`${commitsBehind} new commit${commitsBehind === 1 ? "" : "s"} for this server`}</strong>
+            <span>{"Update pulls them, rebuilds and restarts the server."}</span>
+          </div>
+          <ActionButton
+            tone="warn"
+            icon={<ArrowDownToLine />}
+            label={`Update (${commitsBehind})`}
+            path="/api/actions/update-server"
+            payload={() => ({})}
+            onDone={() => navigate("/server-settings?tab=services")}
+          />
+        </section>
+      )}
 
       {update?.available && (
         <section className="update-banner" role="status">

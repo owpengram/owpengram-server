@@ -1068,6 +1068,7 @@ export type DashboardResponse = {
   host?: HostStatsSnapshot;
   // The last ~15 minutes of host samples, oldest first; empty after a restart.
   host_history?: HostSample[];
+  update?: { available: boolean; latest?: string; url?: string; notes?: string };
 };
 
 export type DayActivity = {
