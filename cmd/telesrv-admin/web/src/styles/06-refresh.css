@@ -1457,3 +1457,235 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --- Storage settings ----------------------------------------------------------- */
+
+.storage-settings {
+  display: grid;
+  gap: 16px;
+}
+
+.storage-heading {
+  margin: 0 0 12px;
+  color: var(--heading);
+  font-size: 15px;
+}
+
+.storage-row-title {
+  color: var(--heading);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+/* Big pick-one cards (backend, retention mode). */
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.choice-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.choice-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 18px;
+  align-items: start;
+  gap: 12px;
+  padding: 14px;
+  color: var(--text-soft);
+  background: var(--panel-subtle);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.choice-card:not(:has(.choice-card-icon)) {
+  grid-template-columns: minmax(0, 1fr) 18px;
+}
+
+.choice-card:hover {
+  border-color: var(--line-strong);
+}
+
+.choice-card.active {
+  background: var(--brand-tint);
+  border-color: var(--brand);
+}
+
+.choice-card-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel-strong);
+  border-radius: 10px;
+}
+
+.choice-card.active .choice-card-icon {
+  color: #ffffff;
+  background: var(--brand);
+}
+
+.choice-card-text {
+  display: grid;
+  gap: 3px;
+}
+
+.choice-card-text strong {
+  color: var(--heading);
+  font-size: 13.5px;
+}
+
+.choice-card-text span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.choice-card-radio {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.choice-card.active .choice-card-radio {
+  border: 5px solid var(--brand);
+  background: #ffffff;
+}
+
+/* "Used of budget" bar. */
+.capacity {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  margin-bottom: 4px;
+  background: var(--panel-subtle);
+  border-radius: 12px;
+}
+
+.capacity-numbers {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.capacity-numbers strong {
+  color: var(--heading);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.capacity-numbers span {
+  color: var(--muted);
+}
+
+.capacity-bar {
+  height: 10px;
+  overflow: hidden;
+  background: var(--panel-strong);
+  border-radius: 999px;
+}
+
+.capacity-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand-2), var(--brand));
+  border-radius: 999px;
+}
+
+.capacity-bar.warn > span {
+  background: var(--warn);
+}
+
+.capacity-bar.danger > span {
+  background: var(--danger);
+}
+
+/* Amount + unit inputs. */
+.unit-input {
+  display: flex;
+  width: 100%;
+  gap: 6px;
+}
+
+/* width 0 + flex lets the field shrink below the global 190px input width. */
+.unit-input input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+}
+
+.unit-input select {
+  flex: 0 0 84px;
+  width: 84px;
+  min-width: 0;
+}
+
+/* Per-type retention ages. */
+.age-grid-head {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.age-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.age-cell {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  color: var(--text-soft);
+  background: var(--panel-subtle);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.storage-purge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 14px;
+  margin-top: 14px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+
+/* Save bar that stays in reach while scrolling a long panel. */
+.settings-save-bar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+@media (max-width: 900px) {
+  .choice-grid,
+  .choice-grid.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

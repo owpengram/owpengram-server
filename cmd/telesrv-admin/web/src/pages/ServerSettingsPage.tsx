@@ -29,6 +29,7 @@ import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
 import { Meter, Sparkline } from "../components/charts";
+import { StorageSettings, isStorageGroup } from "../components/StorageSettings";
 import { useServerUpdate } from "../components/pageHeader";
 import { Alert, LoadingSurface, PageFrame, SectionHead } from "../components/ui";
 import { formatBytes } from "../lib/format";
@@ -117,6 +118,8 @@ export function ServerSettingsPage() {
             <IdentitySection />
           ) : section === "messages" ? (
             <LoginNotificationsSection />
+          ) : activeGroup && isStorageGroup(activeGroup) ? (
+            <StorageSettings group={activeGroup} onSaved={loadEnv} />
           ) : activeGroup ? (
             <EnvGroupPanel key={activeGroup.title} group={activeGroup} onSaved={loadEnv} showTitle />
           ) : (
