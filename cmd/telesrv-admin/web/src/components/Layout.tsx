@@ -57,7 +57,7 @@ import { type Navigate, type RouteState, routeSection, routeTitle } from "../rou
 import { AddServerLinkModal } from "./AddServerLinkModal";
 import { AppBackground } from "./AppBackground";
 import { AppLink } from "./AppLink";
-import { PageHeaderContext } from "./pageHeader";
+import { PageHeaderContext, ServerUpdateContext } from "./pageHeader";
 
 // Compresses a sorted (or unsorted) list of layer numbers into run-length
 // ranges for the compact sidebar label, e.g. [225,226,227,228,229] -> "225-229",
@@ -171,6 +171,7 @@ export function Shell({
   const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null);
   const slots = useMemo(() => ({ title: titleSlot, actions: actionsSlot }), [titleSlot, actionsSlot]);
   const section = routeSection(route.path);
+  const serverUpdate = useMemo(() => ({ version, update }), [version, update]);
 
   const [addServerLinkOpen, setAddServerLinkOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -471,7 +472,9 @@ export function Shell({
           </div>
         </header>
         <main className="content">
-          <PageHeaderContext.Provider value={slots}>{children}</PageHeaderContext.Provider>
+          <PageHeaderContext.Provider value={slots}>
+            <ServerUpdateContext.Provider value={serverUpdate}>{children}</ServerUpdateContext.Provider>
+          </PageHeaderContext.Provider>
         </main>
       </div>
       {/* Behind everything, fixed to the viewport. The sidebar and topbar paint

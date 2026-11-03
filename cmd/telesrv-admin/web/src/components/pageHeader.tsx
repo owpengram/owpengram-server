@@ -13,3 +13,16 @@ export const PageHeaderContext = createContext<PageHeaderSlots>({ title: null, a
 export function usePageHeaderSlots(): PageHeaderSlots {
   return useContext(PageHeaderContext);
 }
+
+// ServerUpdate is what the session knows about a newer server release (see
+// internal/updatecheck); the overview turns it into a banner.
+export type ServerUpdate = {
+  version?: string;
+  update?: { available: boolean; latest?: string; url?: string; notes?: string };
+};
+
+export const ServerUpdateContext = createContext<ServerUpdate>({});
+
+export function useServerUpdate(): ServerUpdate {
+  return useContext(ServerUpdateContext);
+}

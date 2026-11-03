@@ -16,7 +16,11 @@ import type { EnvGroup, ServerIdentity, ServerStatus } from "../types";
 // state) and "Services" (live process status + restart/update,
 // the operational side someone actually watches while things are moving).
 export function ServerSettingsPage() {
-  const [tab, setTab] = useState<"settings" | "services">("settings");
+  // ?tab=services opens straight on the update/restart controls (the
+  // overview's "Update now" links here).
+  const [tab, setTab] = useState<"settings" | "services">(() =>
+    new URLSearchParams(window.location.search).get("tab") === "services" ? "services" : "settings"
+  );
   return (
     <PageFrame title={"Server Settings"} eyebrow={"Identity, .env, and live process/service control"}>
       <div className="tab-bar" role="tablist" aria-label={"Server Settings sections"}>

@@ -1033,3 +1033,40 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Server update banner on the overview. */
+.update-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-tint-border);
+  border-radius: var(--radius);
+}
+
+.update-banner-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: #ffffff;
+  background: var(--brand);
+  border-radius: 10px;
+}
+
+.update-banner-text {
+  display: grid;
+  flex: 1 1 260px;
+  gap: 2px;
+}
+
+.update-banner-text strong {
+  color: var(--heading);
+}
+
+.update-banner-text span {
+  color: var(--brand-tint-text);
+  font-size: 12.5px;
+}

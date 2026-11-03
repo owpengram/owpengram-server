@@ -1,5 +1,6 @@
 import {
   ArrowRight,
+  ArrowUpFromLine,
   ChevronRight,
   Cpu,
   Database,
@@ -14,6 +15,7 @@ import {
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { AddServerLinkModal } from "../components/AddServerLinkModal";
+import { useServerUpdate } from "../components/pageHeader";
 import { BarLineChart, Meter, Sparkline } from "../components/charts";
 import { Alert } from "../components/ui";
 import { cacheGet, cacheKeys, cacheSet } from "../lib/cache";
@@ -46,6 +48,7 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
   );
   const [error, setError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+  const { version, update } = useServerUpdate();
 
   const canBroadcast = useCan(permissionBroadcastsRead);
   const canBots = useCan(permissionBotsRead);
@@ -109,6 +112,24 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
   return (
     <div className="overview">
       {error && <Alert>{error}</Alert>}
+
+      {update?.available && (
+        <section className="update-banner" role="status">
+          <span className="update-banner-icon"><ArrowUpFromLine /></span>
+          <div className="update-banner-text">
+            <strong>{`Server update available${update.latest ? `: ${update.latest}` : ""}`}</strong>
+            <span>{version ? `This server runs ${version}.` : "A newer release is out."}</span>
+          </div>
+          {update.url && (
+            <a className="btn" href={update.url} target="_blank" rel="noopener noreferrer">{"What's new"}</a>
+          )}
+          {canServer && (
+            <button className="btn primary" type="button" onClick={() => navigate("/server-settings?tab=services")}>
+              {"Update now"}
+            </button>
+          )}
+        </section>
+      )}
 
       <div className="overview-kpis">
         <Kpi
