@@ -34,6 +34,7 @@ export const permissionAccountsRead = "accounts.read";
 export const permissionChannelsRead = "channels.read";
 export const permissionBotsRead = "bots.read";
 export const permissionMessagesRead = "messages.read";
+export const permissionMessagesManage = "messages.manage";
 export const permissionModerationReview = "moderation.review";
 export const permissionBroadcastsRead = "broadcasts.read";
 export const permissionStorageRead = "storage.read";

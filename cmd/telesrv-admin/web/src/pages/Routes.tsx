@@ -11,8 +11,6 @@ import { BotDetailPage } from "./BotDetailPage";
 import { BotsPage } from "./BotsPage";
 import { BroadcastsPage } from "./BroadcastsPage";
 import { Dashboard } from "./Dashboard";
-import { GroupMessageDetailPage } from "./GroupMessageDetailPage";
-import { MessageDetailPage } from "./MessageDetailPage";
 import { MessagesPage } from "./MessagesPage";
 import { StickerSetsPage } from "./StickerSetsPage";
 import { GifCatalogPage } from "./GifCatalogPage";
@@ -122,10 +120,10 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
     return gate(permissionStorageRead, <StoragePage navigate={navigate} />);
   }
   if (accountID) {
-    return gate(permissionAccountsRead, <AccountDetailPage id={Number(accountID)} navigate={navigate} />);
+    return gate(permissionAccountsRead, <AccountDetailPage id={Number(accountID)} navigate={navigate} initialTab={route.search.get("tab")} />);
   }
   if (channelID) {
-    return gate(permissionChannelsRead, <ChannelDetailPage id={Number(channelID)} navigate={navigate} />);
+    return gate(permissionChannelsRead, <ChannelDetailPage id={Number(channelID)} navigate={navigate} initialTab={route.search.get("tab")} />);
   }
   if (botID) {
     return gate(permissionBotsRead, <BotDetailPage id={Number(botID)} navigate={navigate} />);
@@ -199,31 +197,13 @@ export function Routes({ route, navigate }: { route: RouteState; navigate: Navig
       </PermissionGate>
     );
   }
-  if (route.path === "/messages/detail" || route.path === "/messages/private/detail") {
-    return gate(permissionMessagesRead, (
-      <MessageDetailPage
-        ownerUserID={Number(route.search.get("owner_user_id") || "0")}
-        msgID={Number(route.search.get("msg_id") || "0")}
-        navigate={navigate}
-      />
-    ));
-  }
-  if (route.path === "/messages/groups/detail") {
-    return gate(permissionMessagesRead, (
-      <GroupMessageDetailPage
-        channelID={Number(route.search.get("channel_id") || "0")}
-        msgID={Number(route.search.get("msg_id") || "0")}
-        navigate={navigate}
-      />
-    ));
-  }
   // Both tabs keep their own path so a link to one still opens on it -- the
   // tab is a view of /messages, not a hidden bit of component state.
-  if (route.path === "/messages" || route.path === "/messages/private" || route.path === "/messages/groups") {
+  if (route.path === "/messages" || route.path.startsWith("/messages/")) {
     return gate(permissionMessagesRead, (
       <MessagesPage
         navigate={navigate}
-        tab={route.path === "/messages/groups" ? "groups" : "private"}
+        tab={route.path.startsWith("/messages/groups") ? "groups" : "private"}
         onTab={(tab) => navigate(tab === "groups" ? "/messages/groups" : "/messages/private")}
       />
     ));

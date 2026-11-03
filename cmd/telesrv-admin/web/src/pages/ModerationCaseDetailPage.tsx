@@ -2,6 +2,7 @@ import { ArrowLeft, CheckCircle2, RefreshCw, ShieldCheck } from "../components/i
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { Alert, JsonBlock, LoadingSurface, PageFrame, SectionHead, SplitLayout, Summary } from "../components/ui";
+import { ReportEvidence } from "../components/chat/ReportEvidence";
 import { formatDate } from "../lib/format";
 import type { Navigate } from "../routing";
 import type { ModerationCaseDetail, ModerationReport } from "../types";
@@ -186,10 +187,10 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
               />
             </div>
             <section className="section-block">
-              <SectionHead title={"Report evidence"} text={"Shows up to the latest 100 reports; snapshots are frozen when reports are admitted."} />
+              <SectionHead title={"Reported content"} text={"What the reporter sent in, frozen at the moment of the report. Up to the latest 100 reports."} />
               <div className="toolbar">
                 {detail.ReportIDs.map((reportID) => (
-                  <button className="btn" key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
+                  <button className={`btn ${report?.ID === reportID ? "primary" : ""}`} key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
                     #{reportID}
                   </button>
                 ))}
@@ -206,7 +207,11 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
                     <Summary label={"Time"} value={formatDate(report.CreatedAt)} />
                   </div>
                   {report.Comment && <p className="about-text">{report.Comment}</p>}
-                  <JsonBlock value={JSON.stringify(report, null, 2)} />
+                  <ReportEvidence reportID={report.ID} navigate={navigate} />
+                  <details className="evidence-raw">
+                    <summary>{"Raw report data"}</summary>
+                    <JsonBlock value={JSON.stringify(report, null, 2)} />
+                  </details>
                 </>
               )}
             </section>

@@ -1,0 +1,490 @@
+package main
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+// Private content -- an account's chats, media, stories and gifts, a
+// channel's posts and comments -- is the most sensitive thing the console
+// can show. Holding messages.read is not enough to see it: every time an
+// operator opens it they type their own console password again, and that
+// opening is written to the audit log against the account or channel. Each
+// conversation opened afterwards is audited on its own too.
+//
+// A successful re-check returns a view grant: a short-lived token, signed
+// with the session key, bound to this session and to one account or channel.
+// The panel keeps it in memory only, so leaving the page (or reloading)
+// means typing the password again.
+
+const (
+	viewGrantTTL       = 15 * time.Minute
+	viewGrantHeader    = "X-View-Grant"
+	viewUnlockMaxFails = 5
+	viewUnlockLockout  = 10 * time.Minute
+)
+
+type claimsKey struct{}
+
+func claimsFromContext(ctx context.Context) (sessionClaims, bool) {
+	claims, ok := ctx.Value(claimsKey{}).(sessionClaims)
+	return claims, ok
+}
+
+type viewGrant struct {
+	Actor string `json:"a"`
+	Nonce string `json:"n"`
+	Kind  string `json:"k"` // user, channel
+	ID    int64  `json:"i"`
+	Exp   int64  `json:"e"`
+}
+
+func (s *server) signViewGrant(g viewGrant) (string, error) {
+	body, err := json.Marshal(g)
+	if err != nil {
+		return "", err
+	}
+	payload := base64.RawURLEncoding.EncodeToString(body)
+	return payload + "." + base64.RawURLEncoding.EncodeToString(s.viewGrantMAC(payload)), nil
+}
+
+func (s *server) viewGrantMAC(payload string) []byte {
+	mac := hmac.New(sha256.New, s.cfg.SessionKey)
+	mac.Write([]byte("view-grant:"))
+	mac.Write([]byte(payload))
+	return mac.Sum(nil)
+}
+
+// viewGrantFromRequest returns the request's grant if it is genuine, unexpired
+// and was issued to this very session.
+func (s *server) viewGrantFromRequest(r *http.Request) (viewGrant, bool) {
+	raw := r.Header.Get(viewGrantHeader)
+	if raw == "" {
+		raw = r.URL.Query().Get("grant")
+	}
+	payload, sig, ok := strings.Cut(raw, ".")
+	if !ok {
+		return viewGrant{}, false
+	}
+	want := s.viewGrantMAC(payload)
+	got, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil || !hmac.Equal(want, got) {
+		return viewGrant{}, false
+	}
+	body, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		return viewGrant{}, false
+	}
+	var g viewGrant
+	if json.Unmarshal(body, &g) != nil || time.Now().Unix() > g.Exp {
+		return viewGrant{}, false
+	}
+	claims, ok := claimsFromContext(r.Context())
+	if !ok || claims.Actor != g.Actor || subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(g.Nonce)) != 1 {
+		return viewGrant{}, false
+	}
+	return g, true
+}
+
+// requireViewGrant answers 403 "VIEW_LOCKED" unless the request carries a
+// grant for the target named by the path's {id} (kind "" accepts any grant
+// of this session, for the media route).
+func (s *server) requireViewGrant(kind string, next func(http.ResponseWriter, *http.Request, viewGrant)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g, ok := s.viewGrantFromRequest(r)
+		if ok && kind != "" {
+			id, err := parseInt64(r.PathValue("id"))
+			ok = err == nil && g.Kind == kind && g.ID == id
+		}
+		if !ok {
+			writeAPIError(w, http.StatusForbidden, "VIEW_LOCKED")
+			return
+		}
+		next(w, r, g)
+	})
+}
+
+// unlockLimiter slows down password guessing through the re-check: a few
+// misses lock that operator out of it for a while.
+type unlockLimiter struct {
+	mu    sync.Mutex
+	fails map[string]int
+	until map[string]time.Time
+}
+
+var viewUnlockLimiter = &unlockLimiter{fails: map[string]int{}, until: map[string]time.Time{}}
+
+func (l *unlockLimiter) locked(actor string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return time.Now().Before(l.until[actor])
+}
+
+func (l *unlockLimiter) record(actor string, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if ok {
+		delete(l.fails, actor)
+		return
+	}
+	l.fails[actor]++
+	if l.fails[actor] >= viewUnlockMaxFails {
+		l.fails[actor] = 0
+		l.until[actor] = time.Now().Add(viewUnlockLockout)
+	}
+}
+
+// checkOperatorPassword verifies the signed-in operator's own password.
+func (s *server) checkOperatorPassword(ctx context.Context, claims sessionClaims, password string) bool {
+	if password == "" {
+		return false
+	}
+	if claims.UserID == 0 {
+		return strings.EqualFold(claims.Actor, breakGlassUsername) && s.validSecret(password)
+	}
+	if s.read == nil {
+		return false
+	}
+	cred, err := s.read.AdminConsoleCredentialByUsername(ctx, claims.Actor)
+	if err != nil {
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(password))
+		return false
+	}
+	return cred.ID == claims.UserID && cred.Enabled && bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(password)) == nil
+}
+
+// recordViewAudit writes one completed (or failed) row to the audit log.
+func (s *server) recordViewAudit(ctx context.Context, actor, action, kind string, id int64, reason string, details map[string]any, failure string) error {
+	if s.read == nil {
+		return errors.New("read store is not configured")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "Viewed private content"
+	}
+	if len(reason) > 1000 {
+		reason = reason[:1000]
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	request, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	status := "completed"
+	if failure != "" {
+		status = "failed"
+	}
+	var targetUser, peerID int64
+	peerType := ""
+	if kind == "user" {
+		targetUser = id
+	} else {
+		peerType, peerID = kind, id
+	}
+	commandID := newCommandID("view")
+	tx, err := s.read.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+INSERT INTO admin_commands (command_id, actor, action, target_user_id, target_peer_type, target_peer_id,
+	dry_run, reason, request, result, status, error, created_at, completed_at)
+VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8::jsonb, '{}'::jsonb, $9, $10, now(), now())`,
+		commandID, actor, action, targetUser, peerType, peerID, reason, string(request), status, failure); err != nil {
+		return fmt.Errorf("record view command: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO admin_audit_logs (
+	command_id, actor, action, target_user_id, target_peer_type, target_peer_id,
+	dry_run, reason, request, result, status, error, created_at
+)
+SELECT command_id, actor, action, target_user_id, target_peer_type, target_peer_id,
+	dry_run, reason, request, result, status, error, now()
+FROM admin_commands WHERE command_id = $1`, commandID); err != nil {
+		return fmt.Errorf("record view audit: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+type viewUnlockRequest struct {
+	Password string `json:"password"`
+	Kind     string `json:"kind"`
+	ID       int64  `json:"id"`
+	Reason   string `json:"reason"`
+}
+
+func (s *server) handleViewUnlockAPI(w http.ResponseWriter, r *http.Request) {
+	var body viewUnlockRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if (body.Kind != "user" && body.Kind != "channel") || body.ID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "kind must be user or channel, with an id")
+		return
+	}
+	claims, ok := claimsFromContext(r.Context())
+	if !ok {
+		writeAPIError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	action := "private.unlock_" + body.Kind
+	if viewUnlockLimiter.locked(claims.Actor) {
+		writeAPIError(w, http.StatusTooManyRequests, "Too many wrong passwords. Try again in a few minutes.")
+		return
+	}
+	if !s.checkOperatorPassword(r.Context(), claims, body.Password) {
+		viewUnlockLimiter.record(claims.Actor, false)
+		_ = s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, body.Reason, nil, "wrong password")
+		writeAPIError(w, http.StatusForbidden, "Wrong password.")
+		return
+	}
+	viewUnlockLimiter.record(claims.Actor, true)
+	if err := s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, body.Reason, nil, ""); err != nil {
+		// No audit row, no access.
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	exp := time.Now().Add(viewGrantTTL)
+	grant, err := s.signViewGrant(viewGrant{Actor: claims.Actor, Nonce: claims.Nonce, Kind: body.Kind, ID: body.ID, Exp: exp.Unix()})
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant": grant, "expires_at": exp.UTC()})
+}
+
+// auditChatOpen writes the per-conversation row when a chat's first page is
+// read (later pages of the same chat are scrolling, not a new opening).
+func (s *server) auditChatOpen(r *http.Request, g viewGrant, details map[string]any) bool {
+	if r.URL.Query().Get("before_date") != "" {
+		return true
+	}
+	return s.recordViewAudit(r.Context(), g.Actor, "private.read_chat", g.Kind, g.ID, "Opened a chat", details, "") == nil
+}
+
+func chatCursor(r *http.Request) (int64, int) {
+	beforeDate, _ := parseInt64(r.URL.Query().Get("before_date"))
+	beforeID, _ := parseInt(r.URL.Query().Get("before_id"))
+	return beforeDate, beforeID
+}
+
+func (s *server) handleUserChatsAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	chats, err := s.read.UserChats(r.Context(), g.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": chats})
+}
+
+func (s *server) handleUserChatMessagesAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	kind := r.PathValue("kind")
+	peerID, err := parseInt64(r.PathValue("peer"))
+	if err != nil || peerID <= 0 || (kind != "user" && kind != "channel") {
+		writeAPIError(w, http.StatusBadRequest, "invalid chat")
+		return
+	}
+	beforeDate, beforeID := chatCursor(r)
+	var page ChatPage
+	if kind == "user" {
+		page, err = s.read.PrivateChatPage(r.Context(), g.ID, peerID, beforeDate, beforeID)
+	} else {
+		member, merr := s.read.IsChannelMember(r.Context(), g.ID, peerID)
+		if merr != nil {
+			writeAPIError(w, http.StatusInternalServerError, merr.Error())
+			return
+		}
+		if !member {
+			writeAPIError(w, http.StatusNotFound, "this account is not in that chat")
+			return
+		}
+		page, err = s.read.ChannelChatPage(r.Context(), peerID, 0, beforeDate, beforeID)
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.auditChatOpen(r, g, map[string]any{"chat_type": kind, "chat_id": peerID}) {
+		writeAPIError(w, http.StatusInternalServerError, "could not write the audit log")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func (s *server) handleUserMediaAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	beforeDate, beforeID := chatCursor(r)
+	items, hasMore, err := s.read.UserMediaPage(r.Context(), g.ID, beforeDate, beforeID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "has_more": hasMore})
+}
+
+func (s *server) handlePeerProfileAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	content, err := s.read.PeerProfileContent(r.Context(), g.Kind, g.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, content)
+}
+
+func (s *server) handleChannelMessagesAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	beforeDate, beforeID := chatCursor(r)
+	page, err := s.read.ChannelChatPage(r.Context(), g.ID, 0, beforeDate, beforeID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.auditChatOpen(r, g, map[string]any{"chat_type": "channel", "chat_id": g.ID}) {
+		writeAPIError(w, http.StatusInternalServerError, "could not write the audit log")
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+// handleChannelCommentsAPI reads the comment thread under one post: the
+// replies to it in the channel's linked discussion group.
+func (s *server) handleChannelCommentsAPI(w http.ResponseWriter, r *http.Request, g viewGrant) {
+	postID, err := parseInt(r.URL.Query().Get("post_id"))
+	if err != nil || postID <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid post_id")
+		return
+	}
+	groupID, top, err := s.read.PostDiscussion(r.Context(), g.ID, postID)
+	if err != nil || groupID <= 0 || top <= 0 {
+		writeAPIError(w, http.StatusNotFound, "this post has no comments")
+		return
+	}
+	beforeDate, beforeID := chatCursor(r)
+	page, err := s.read.ChannelChatPage(r.Context(), groupID, top, beforeDate, beforeID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.auditChatOpen(r, g, map[string]any{"chat_type": "comments", "post_id": postID, "group_id": groupID}) {
+		writeAPIError(w, http.StatusInternalServerError, "could not write the audit log")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"group_id": groupID, "page": page})
+}
+
+var privateMediaKeyPattern = regexp.MustCompile(`^(photo:[0-9]{1,20}:[A-Za-z0-9_]{1,8}|doc:[0-9]{1,20}(:[A-Za-z0-9_]{1,8})?)$`)
+
+// viewMediaInline lists what the viewer may render in the page. Anything else
+// is handed out as a download, never interpreted by the browser.
+var viewMediaInline = map[string]bool{
+	"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true,
+	"video/mp4": true, "video/webm": true,
+	"audio/mpeg": true, "audio/ogg": true, "audio/wave": true, "audio/wav": true, "audio/mp4": true,
+}
+
+// handleViewMediaAPI streams one file referenced by a message, story or
+// profile photo, for a session holding any view grant.
+func (s *server) handleViewMediaAPI(w http.ResponseWriter, r *http.Request, _ viewGrant) {
+	s.streamStoredFile(w, r, r.URL.Query().Get("key"))
+}
+
+// streamStoredFile proxies one photo/document file from the main server's
+// storage, serving only safe types inline. Callers decide whether the key
+// may be seen at all.
+func (s *server) streamStoredFile(w http.ResponseWriter, r *http.Request, key string) {
+	if !privateMediaKeyPattern.MatchString(key) {
+		writeAPIError(w, http.StatusBadRequest, "invalid key")
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, s.cfg.AdminAPIURL+"/v1/private-media?key="+key, nil)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		writeAPIError(w, resp.StatusCode, http.StatusText(resp.StatusCode))
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 49<<20))
+	if err != nil || len(data) == 0 {
+		writeAPIError(w, http.StatusBadGateway, "could not read the file")
+		return
+	}
+	contentType := http.DetectContentType(data)
+	// Animated stickers are gzip'd Lottie; the viewer plays the JSON.
+	if contentType == "application/x-gzip" && r.URL.Query().Get("lottie") == "1" {
+		if zr, err := gzip.NewReader(bytes.NewReader(data)); err == nil {
+			if plain, err := io.ReadAll(io.LimitReader(zr, 16<<20)); err == nil {
+				data, contentType = plain, "application/json"
+			}
+			zr.Close()
+		}
+	}
+	if contentType == "application/ogg" {
+		contentType = "audio/ogg"
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	if !viewMediaInline[contentType] && contentType != "application/json" {
+		contentType = "application/octet-stream"
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	w.Header().Set("Content-Type", contentType)
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+}
+
+// requireViewGrantForQuery guards the older message routes that name their
+// target in the query string instead of the path.
+func (s *server) requireViewGrantForQuery(kind, param string, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g, ok := s.viewGrantFromRequest(r)
+		if ok {
+			id, err := strconv.ParseInt(r.URL.Query().Get(param), 10, 64)
+			ok = err == nil && g.Kind == kind && g.ID == id
+		}
+		if !ok {
+			writeAPIError(w, http.StatusForbidden, "VIEW_LOCKED")
+			return
+		}
+		next(w, r)
+	})
+}
+
+func (s *server) registerPrivateViewRoutes(mux *http.ServeMux) {
+	mux.Handle("POST /api/private/unlock", s.scopedRoute(permissionMessagesRead, http.HandlerFunc(s.handleViewUnlockAPI)))
+	mux.Handle("GET /api/private/users/{id}/chats", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("user", s.handleUserChatsAPI)))
+	mux.Handle("GET /api/private/users/{id}/chats/{kind}/{peer}", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("user", s.handleUserChatMessagesAPI)))
+	mux.Handle("GET /api/private/users/{id}/media", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("user", s.handleUserMediaAPI)))
+	mux.Handle("GET /api/private/users/{id}/profile", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("user", s.handlePeerProfileAPI)))
+	mux.Handle("GET /api/private/channels/{id}/messages", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("channel", s.handleChannelMessagesAPI)))
+	mux.Handle("GET /api/private/channels/{id}/comments", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("channel", s.handleChannelCommentsAPI)))
+	mux.Handle("GET /api/private/channels/{id}/profile", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("channel", s.handlePeerProfileAPI)))
+	mux.Handle("GET /api/private/media", s.scopedRoute(permissionMessagesRead, s.requireViewGrant("", s.handleViewMediaAPI)))
+}

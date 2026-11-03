@@ -90,6 +90,7 @@ type Service interface {
 	RemoveStickerFromSet(ctx context.Context, req admin.RemoveStickerFromSetRequest) (admin.CommandResult, error)
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	GifCatalogDocumentPreview(ctx context.Context, documentID int64) ([]byte, string, bool, error)
+	PrivateMediaFile(ctx context.Context, locationKey string) ([]byte, bool, error)
 	CreateGifCatalogEntry(ctx context.Context, req admin.CreateGifCatalogEntryRequest) (admin.CommandResult, error)
 	StarGiftCatalogAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
 	CreateStarGiftCatalogEntry(ctx context.Context, req admin.CreateStarGiftCatalogEntryRequest) (admin.CommandResult, error)
@@ -270,6 +271,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/storage/manual-purge", s.authenticated(s.handleManualPurgeStorage))
 	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("GET /v1/gif-catalog/documents/{id}/preview", s.authenticated(s.handleGifCatalogDocumentPreview))
+	mux.HandleFunc("GET /v1/private-media", s.authenticated(s.handlePrivateMediaFile))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/animation", s.authenticated(s.handleStarGiftCatalogAnimation))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
@@ -1063,6 +1065,29 @@ func (s *Server) handleStickerDocumentAnimation(w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+// handlePrivateMediaFile streams one photo/document file by storage key for
+// the console's private-content viewer. The bytes go out as an opaque blob:
+// the panel decides what type it may be shown as.
+func (s *Server) handlePrivateMediaFile(w http.ResponseWriter, r *http.Request) {
+	raw, found, err := s.svc.PrivateMediaFile(r.Context(), r.URL.Query().Get("key"))
+	if errors.Is(err, admin.ErrPrivateMediaTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }

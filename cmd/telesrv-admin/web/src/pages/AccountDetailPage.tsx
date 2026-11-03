@@ -1,4 +1,5 @@
-import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, MonitorSmartphone, ScrollText, Settings2, Sparkles, Star, UserRound } from "../components/icons";
+import { ArrowLeft, BadgeCheck, CircleAlert, ImagePlus, ScrollText, Sparkles, Star } from "../components/icons";
+import { Comments, Display, Gear, Gift, Lock, Person, Picture, SquareListUl } from "@gravity-ui/icons";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../api";
 import { AvatarModal } from "../components/AvatarModal";
@@ -9,16 +10,28 @@ import { Alert, AuditTable, Badge, LoadingSurface, PageFrame, SectionHead, Summa
 import { ScamFakeActions, ScamFakeBadges } from "../components/flags";
 import { ColorAction, EmojiStatusAction, LoginEmailAction, PhoneAction, ProfileNameAction, SupportAction, UsernameAction } from "../components/attributes";
 import { displayName, displayPhone, displayUsername, formatDate, formatUnix, toInt } from "../lib/format";
+import { PrivateGate } from "../components/PrivateGate";
+import { AccountChats } from "../components/chat/AccountChats";
+import { AccountMediaGallery, GiftsGallery, PhotosGallery, StoriesGallery, useProfileContent } from "../components/chat/ProfileGalleries";
 import type { Navigate } from "../routing";
 import type { AccountDetail } from "../types";
 
-type Tab = "profile" | "devices" | "actions";
+type Tab = "info" | "chats" | "media" | "posts" | "photos" | "gifts" | "devices" | "manage";
 
-export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navigate }) {
+// Tabs behind the password re-check. They share one PrivateGate for the
+// whole visit to this page, so switching between them does not ask again.
+const PRIVATE_TABS: Tab[] = ["chats", "media", "posts", "photos", "gifts"];
+const TABS: Tab[] = ["info", "chats", "media", "posts", "photos", "gifts", "devices", "manage"];
+
+function tabFrom(value: string | null | undefined): Tab {
+  return TABS.includes(value as Tab) ? (value as Tab) : "info";
+}
+
+export function AccountDetailPage({ id, navigate, initialTab }: { id: number; navigate: Navigate; initialTab?: string | null }) {
   const [detail, setDetail] = useState<AccountDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<Tab>("profile");
+  const [tab, setTabState] = useState<Tab>(() => tabFrom(initialTab));
   const [months, setMonths] = useState("1");
   const [starsAmount, setStarsAmount] = useState("100");
   const [freezeUntil, setFreezeUntil] = useState(() => toDateTimeLocal(new Date(Date.now() + 7 * 86400_000)));
@@ -47,9 +60,20 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
 
   useEffect(() => {
     void load();
-    setTab("profile");
+    setTabState(tabFrom(initialTab));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // The tab is mirrored into the URL without a navigation, so a reload or a
+  // shared link lands on it -- but the private tabs still ask for the
+  // password, since the grant never leaves this page's memory.
+  function setTab(next: Tab) {
+    setTabState(next);
+    const url = new URL(window.location.href);
+    if (next === "info") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }
 
   if (error) {
     return <Alert>{error}</Alert>;
@@ -60,79 +84,107 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
 
   const account = detail.Account;
   const tabs: Array<{ key: Tab; label: string; icon: ReactNode }> = [
-    { key: "profile", label: "Profile & Status", icon: <UserRound size={15} /> },
-    { key: "devices", label: "Authorized Devices", icon: <MonitorSmartphone size={15} /> },
-    { key: "actions", label: "Actions & Management", icon: <Settings2 size={15} /> }
+    { key: "info", label: "Info", icon: <Person /> },
+    { key: "chats", label: "Chats", icon: <Comments /> },
+    { key: "media", label: "Media", icon: <Picture /> },
+    { key: "posts", label: "Posts", icon: <SquareListUl /> },
+    { key: "photos", label: "Photos", icon: <Picture /> },
+    { key: "gifts", label: "Gifts", icon: <Gift /> },
+    { key: "devices", label: "Devices", icon: <Display /> },
+    { key: "manage", label: "Manage", icon: <Gear /> }
   ];
+  const isPrivate = PRIVATE_TABS.includes(tab);
+  const lastSeen = formatUnix(detail.LastSeenAt);
 
   return (
     <PageFrame
-      title={`Account #${account.ID}`}
-      eyebrow={"Account Profile"}
+      title={displayName(account) || `Account #${account.ID}`}
       actions={<button className="btn icon-text" onClick={() => navigate("/accounts")}><ArrowLeft size={15} /> {"Back to list"}</button>}
     >
-      <section className="entity-head">
-        <div className="entity-head-main">
-          <div className="avatar-edit-slot">
-            <Avatar id={account.ID} firstName={account.FirstName} lastName={account.LastName} username={account.Username} size={64} refreshKey={avatarVersion || undefined} />
-            <button
-              className="icon-btn avatar-edit-btn"
-              type="button"
-              aria-label={"Change avatar"}
-              title={"Change avatar"}
-              onClick={() => setAvatarModalOpen(true)}
-            >
-              <ImagePlus size={13} />
-            </button>
+      <section className="profile-hero">
+        <div className="avatar-edit-slot profile-hero-avatar">
+          <Avatar id={account.ID} firstName={account.FirstName} lastName={account.LastName} username={account.Username} size={96} refreshKey={avatarVersion || undefined} />
+          <button className="icon-btn avatar-edit-btn" type="button" aria-label={"Change avatar"} title={"Change avatar"} onClick={() => setAvatarModalOpen(true)}>
+            <ImagePlus size={13} />
+          </button>
+        </div>
+        <div className="profile-hero-main">
+          <h2 className="profile-hero-name">
+            {displayName(account) || "Deleted account"}
+            {detail.Verified && <BadgeCheck size={18} className="profile-verified" aria-label={"Verified"} />}
+            {account.PremiumUntil > 0 && <Star size={17} className="profile-premium" aria-label={"Premium"} />}
+          </h2>
+          <div className="profile-hero-status">{lastSeen ? `last seen ${lastSeen}` : "last seen a long time ago"}</div>
+          <div className="profile-hero-badges">
+            {account.Frozen && <Badge tone="danger">{"Frozen"}</Badge>}
+            <ScamFakeBadges scam={detail.Scam} fake={detail.Fake} />
+            {detail.Support && <Badge tone="good">{"Support"}</Badge>}
+            {detail.Bot && <Badge>{"Bot"}</Badge>}
+          </div>
+        </div>
+        <dl className="profile-hero-facts">
+          <div>
+            <dt>{"Username"}</dt>
+            <dd>{displayUsername(account.Username) || "—"}</dd>
           </div>
           <div>
-            <div className="entity-title">{displayName(account)}</div>
-            <div className="entity-subtitle">{displayUsername(account.Username) || "No username"} · {displayPhone(account.Phone) || "No phone"}</div>
-            {account.Collectibles?.length > 0 && (
-              <div className="entity-subtitle">
-                <UsernameCell username="" collectibles={account.Collectibles} />
-              </div>
-            )}
+            <dt>{"Phone"}</dt>
+            <dd>{displayPhone(account.Phone) || "—"}</dd>
           </div>
-        </div>
-        <div className="entity-badges">
-          {account.PremiumUntil > 0 ? <Badge tone="good">{"Premium"}</Badge> : <Badge>{"Not premium"}</Badge>}
-          {detail.Verified ? <Badge tone="good">{"Verified"}</Badge> : <Badge>{"Not verified"}</Badge>}
-          <ScamFakeBadges scam={detail.Scam} fake={detail.Fake} />
-          {account.Frozen ? <Badge tone="danger">{"Account frozen"}</Badge> : <Badge>{"Account active"}</Badge>}
-        </div>
+          <div>
+            <dt>{"User ID"}</dt>
+            <dd className="mono">{account.ID}</dd>
+          </div>
+          {detail.About && (
+            <div className="wide">
+              <dt>{"Bio"}</dt>
+              <dd>{detail.About}</dd>
+            </div>
+          )}
+          {account.Collectibles?.length > 0 && (
+            <div className="wide">
+              <dt>{"Collectible usernames"}</dt>
+              <dd><UsernameCell username="" collectibles={account.Collectibles} /></dd>
+            </div>
+          )}
+        </dl>
       </section>
 
-      <div className="toolbar" role="group" aria-label={"Account sections"}>
+      <nav className="profile-tabs" aria-label={"Account sections"}>
         {tabs.map((item) => (
-          <button
-            key={item.key}
-            className={`btn icon-text ${tab === item.key ? "primary" : ""}`}
-            type="button"
-            aria-pressed={tab === item.key}
-            onClick={() => setTab(item.key)}
-          >
-            {item.icon} {item.label}
+          <button key={item.key} type="button" className={tab === item.key ? "active" : ""} aria-pressed={tab === item.key} onClick={() => setTab(item.key)}>
+            {item.icon}
+            {item.label}
+            {PRIVATE_TABS.includes(item.key) && <Lock className="profile-tab-lock" />}
           </button>
         ))}
+      </nav>
+
+      <div hidden={!isPrivate}>
+        <PrivateGate kind="user" id={account.ID} what={"This account's chats, media, posts, photos and gifts"}>
+          <AccountPrivate userID={account.ID} tab={tab} navigate={navigate} />
+        </PrivateGate>
       </div>
 
-      {tab === "profile" && (
+      {tab === "info" && (
         <div className="stacked-sections">
           <div className="summary-grid">
             <Summary label={"User ID"} value={String(account.ID)} mono />
-            <Summary label={"Last active"} value={formatUnix(detail.LastSeenAt) || "-"} />
+            <Summary label={"Last active"} value={lastSeen || "-"} />
             <Summary label={"Premium expires"} value={account.PremiumUntil > 0 ? formatUnix(account.PremiumUntil) : "None"} />
-            <Summary label={"Updated"} value={formatDate(account.UpdatedAt) || "-"} />
+            <Summary label={"Login email"} value={account.LoginEmail || "None"} />
             <Summary label={"Authorized devices"} value={String(detail.Authorizations.length)} />
-            <Summary label={"Account flags"} value={`support=${detail.Support} bot=${detail.Bot}`} />
             <Summary label={"Restriction"} value={detail.HasRestriction ? detail.Restriction.Reason || "Restricted" : "None"} />
             <Summary label={"Frozen since"} value={detail.Restriction.Since ? formatDate(detail.Restriction.Since) : "None"} />
             <Summary label={"Appeal deadline"} value={detail.Restriction.Until ? formatDate(detail.Restriction.Until) : "None"} />
             <Summary label={"Appeal URL"} value={detail.Restriction.AppealURL || "None"} />
             <Summary label={"Created"} value={formatDate(account.CreatedAt) || "-"} />
+            <Summary label={"Updated"} value={formatDate(account.UpdatedAt) || "-"} />
           </div>
-          {detail.About && <p className="about-text">{detail.About}</p>}
+          <section className="section-block">
+            <SectionHead title={"Recent Admin Actions"} text={"Last 30 audit rows, including every private-content view"} action={<ScrollText size={16} />} />
+            <AuditTable rows={detail.AuditLogs} />
+          </section>
         </div>
       )}
 
@@ -143,7 +195,7 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
         </section>
       )}
 
-      {tab === "actions" && (
+      {tab === "manage" && (
         <div className="stacked-sections">
           <div className="action-groups">
             <section className="section-block">
@@ -322,10 +374,6 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
             </section>
           </div>
 
-          <section className="section-block">
-            <SectionHead title={"Recent Admin Actions"} text={"Last 30 audit rows"} action={<ScrollText size={16} />} />
-            <AuditTable rows={detail.AuditLogs} />
-          </section>
         </div>
       )}
 
@@ -341,6 +389,23 @@ export function AccountDetailPage({ id, navigate }: { id: number; navigate: Navi
         />
       )}
     </PageFrame>
+  );
+}
+
+// AccountPrivate is everything behind the gate, loaded once per unlock.
+function AccountPrivate({ userID, tab, navigate }: { userID: number; tab: Tab; navigate: Navigate }) {
+  const { content, error } = useProfileContent("user", userID);
+  const needsContent = tab === "posts" || tab === "photos" || tab === "gifts";
+  return (
+    <>
+      {tab === "chats" && <AccountChats userID={userID} navigate={navigate} />}
+      {tab === "media" && <AccountMediaGallery userID={userID} />}
+      {needsContent && error && <Alert>{error}</Alert>}
+      {needsContent && !content && !error && <LoadingSurface label={"Loading"} />}
+      {content && tab === "posts" && <StoriesGallery content={content} />}
+      {content && tab === "photos" && <PhotosGallery content={content} />}
+      {content && tab === "gifts" && <GiftsGallery content={content} navigate={navigate} />}
+    </>
   );
 }
 

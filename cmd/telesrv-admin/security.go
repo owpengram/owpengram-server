@@ -235,6 +235,7 @@ func (s *server) requireAuthAPI(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), actorKey{}, claims.Actor)
+		ctx = context.WithValue(ctx, claimsKey{}, claims)
 		ctx = context.WithValue(ctx, permissionsKey{}, permissions)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
