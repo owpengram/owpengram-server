@@ -1137,3 +1137,323 @@
   color: var(--good);
   background: var(--good-tint);
 }
+
+/* --- Settings ---------------------------------------------------------------- */
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 72px;
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.settings-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.settings-nav-label {
+  margin: 12px 8px 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-nav-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.settings-nav-item:not(:has(.settings-nav-icon)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-nav-item:hover {
+  color: var(--heading);
+  background: var(--panel-subtle);
+}
+
+.settings-nav-item.active {
+  color: var(--heading);
+  background: var(--panel-strong);
+  font-weight: 600;
+}
+
+.settings-nav-icon {
+  display: grid;
+  color: var(--muted);
+}
+
+.settings-nav-item.active .settings-nav-icon {
+  color: var(--brand);
+}
+
+.settings-nav-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav-count {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-content {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+/* One setting per row: name and explanation on the left, control on the right. */
+.settings-fields {
+  display: grid;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px);
+  align-items: center;
+  gap: 24px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.settings-field:first-child {
+  border-top: 0;
+}
+
+.settings-field.dirty .settings-field-key {
+  color: var(--brand-strong);
+}
+
+.settings-field-text {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-field-key {
+  overflow-wrap: anywhere;
+  color: var(--heading);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-field-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.settings-field-control {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-field-control input:not([type="checkbox"]) {
+  width: 100%;
+}
+
+.settings-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 14px;
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-save-note {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Toggle switch for true/false settings. */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+.switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--switch-track);
+  border-radius: 999px;
+  transition: background-color 140ms ease;
+}
+
+.switch-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  content: "";
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 140ms ease;
+}
+
+.switch input:checked + .switch-track {
+  background: var(--brand);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(16px);
+}
+
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* Status section. */
+.status-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.status-hero.up {
+  border-color: var(--good-border);
+}
+
+.status-hero.down {
+  border-color: var(--danger-border);
+}
+
+.status-hero-dot,
+.process-dot {
+  width: 10px;
+  height: 10px;
+  background: var(--good);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--good-tint);
+}
+
+.status-hero.down .status-hero-dot,
+.process-row.down .process-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-tint);
+}
+
+.status-hero-text {
+  display: grid;
+  flex: 1 1 240px;
+  gap: 2px;
+}
+
+.status-hero-text strong {
+  color: var(--heading);
+  font-size: 16px;
+}
+
+.status-hero-text span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.status-hero-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.process-list {
+  display: grid;
+}
+
+.process-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.process-row:first-child {
+  border-top: 0;
+}
+
+.process-text {
+  display: grid;
+  gap: 2px;
+}
+
+.process-text strong {
+  color: var(--heading);
+}
+
+.process-text span,
+.process-pid {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-host {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    position: static;
+  }
+
+  .settings-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .status-host {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

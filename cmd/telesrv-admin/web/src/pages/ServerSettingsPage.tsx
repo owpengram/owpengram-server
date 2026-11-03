@@ -1,48 +1,265 @@
-import { ChevronDown, CircleCheck, CircleOff, CircleX, Download, ImageOff, ImagePlus, Loader2, RefreshCw, Server, ShieldCheck, Trash2, Upload, X } from "../components/icons";
+import {
+  ArrowsRotateRight,
+  BroadcastSignal,
+  Database,
+  Envelope,
+  FaceRobot,
+  Fingerprint,
+  Gear,
+  Globe,
+  Handset,
+  HardDrive,
+  Key,
+  Link as LinkIcon,
+  MagicWand,
+  Magnifier,
+  MapPin,
+  PaperPlane,
+  PersonGear,
+  Pulse,
+  Server,
+  ShieldCheck,
+  Smartphone,
+  Star,
+  Wallet
+} from "@gravity-ui/icons";
+import { ChevronDown, CircleCheck, CircleOff, CircleX, Download, ImageOff, ImagePlus, Loader2, RefreshCw, Trash2, Upload, X } from "../components/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
+import { Meter, Sparkline } from "../components/charts";
+import { useServerUpdate } from "../components/pageHeader";
 import { Alert, LoadingSurface, PageFrame, SectionHead } from "../components/ui";
-import type { EnvGroup, ServerIdentity, ServerStatus } from "../types";
+import { formatBytes } from "../lib/format";
+import type { DashboardResponse, EnvGroup, ServerIdentity, ServerStatus } from "../types";
 
-// Server Settings: the web-panel equivalent of tui-panel/server-panel.py's
-// menu -- admin-editable server name/description/icon (served to clients
-// over /owpengram/server-info + /owpengram/server-icon), .env editing, and
-// live process status + Restart/Update. See
-// cmd/telesrv-admin/serversettings.go for the backend.
+// Server Settings: identity, login messages, every .env group and the live
+// status/restart/update controls. See cmd/telesrv-admin/serversettings.go for
+// the backend.
 //
-// Split into two tabs: "Settings" (identity + .env, rarely touched, no live
-// state) and "Services" (live process status + restart/update,
-// the operational side someone actually watches while things are moving).
+// Laid out like a settings app: a list of sections on the left, one section
+// on the right. Each .env group is its own section with its own Save, which
+// sends only the fields that changed -- the old single list of every key with
+// one Save at the bottom made a one-field change a scroll-and-hunt.
+type SettingsSection = "status" | "identity" | "messages" | `env:${string}`;
+
 export function ServerSettingsPage() {
-  // ?tab=services opens straight on the update/restart controls (the
-  // overview's "Update now" links here).
-  const [tab, setTab] = useState<"settings" | "services">(() =>
-    new URLSearchParams(window.location.search).get("tab") === "services" ? "services" : "settings"
-  );
+  // Status first: it is what the overview's "Update now" links to.
+  const [section, setSection] = useState<SettingsSection>("status");
+  const [groups, setGroups] = useState<EnvGroup[]>([]);
+  const [envError, setEnvError] = useState("");
+  const [search, setSearch] = useState("");
+
+  const loadEnv = useCallback(async () => {
+    setEnvError("");
+    try {
+      setGroups(await api.serverEnv());
+    } catch (err) {
+      setEnvError(errorMessage(err));
+    }
+  }, []);
+
+  useEffect(() => { void loadEnv(); }, [loadEnv]);
+
+  const needle = search.trim().toLowerCase();
+  // A search looks through every .env field (key, description) and shows the
+  // matches together, whatever group they live in.
+  const matches = useMemo(() => {
+    if (!needle) return [];
+    return groups
+      .map((group) => ({
+        ...group,
+        fields: group.fields.filter(
+          (f) => f.key.toLowerCase().includes(needle) || f.description.toLowerCase().includes(needle) || group.title.toLowerCase().includes(needle)
+        )
+      }))
+      .filter((group) => group.fields.length > 0);
+  }, [groups, needle]);
+
+  const activeGroup = section.startsWith("env:") ? groups.find((g) => `env:${g.title}` === section) : undefined;
+
   return (
-    <PageFrame title={"Server Settings"} eyebrow={"Identity, .env, and live process/service control"}>
-      <div className="tab-bar" role="tablist" aria-label={"Server Settings sections"}>
-        <button className={`tab-btn ${tab === "settings" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
-          {"Settings"}
-        </button>
-        <button className={`tab-btn ${tab === "services" ? "active" : ""}`} type="button" role="tab" aria-selected={tab === "services"} onClick={() => setTab("services")}>
-          {"Services"}
-        </button>
+    <PageFrame title={"Settings"}>
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label={"Settings sections"}>
+          <label className="searchbox settings-search">
+            <Magnifier />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={"Search settings"} aria-label={"Search settings"} />
+          </label>
+          <SettingsNavItem icon={<Pulse />} label={"Status"} active={!needle && section === "status"} onClick={() => { setSearch(""); setSection("status"); }} />
+          <SettingsNavItem icon={<Server />} label={"Identity"} active={!needle && section === "identity"} onClick={() => { setSearch(""); setSection("identity"); }} />
+          <SettingsNavItem icon={<Envelope />} label={"Login messages"} active={!needle && section === "messages"} onClick={() => { setSearch(""); setSection("messages"); }} />
+          {groups.length > 0 && <div className="settings-nav-label">{"Configuration"}</div>}
+          {groups.map((group) => (
+            <SettingsNavItem
+              key={group.title}
+              icon={envGroupIcon(group.title)}
+              label={group.title}
+              count={group.fields.length}
+              active={!needle && section === `env:${group.title}`}
+              onClick={() => { setSearch(""); setSection(`env:${group.title}`); }}
+            />
+          ))}
+        </nav>
+
+        <div className="settings-content">
+          {envError && <Alert>{envError}</Alert>}
+          {needle ? (
+            matches.length === 0 ? (
+              <p className="about-text">{`Nothing in the configuration matches "${search.trim()}".`}</p>
+            ) : (
+              matches.map((group) => <EnvGroupPanel key={group.title} group={group} onSaved={loadEnv} showTitle />)
+            )
+          ) : section === "status" ? (
+            <ServicesTab />
+          ) : section === "identity" ? (
+            <IdentitySection />
+          ) : section === "messages" ? (
+            <LoginNotificationsSection />
+          ) : activeGroup ? (
+            <EnvGroupPanel key={activeGroup.title} group={activeGroup} onSaved={loadEnv} showTitle />
+          ) : (
+            <LoadingSurface label={"Loading settings..."} />
+          )}
+        </div>
       </div>
-      {tab === "settings" ? (
-        <div className="stacked-sections">
-          <IdentitySection />
-          <LoginNotificationsSection />
-          <EnvSection />
-        </div>
-      ) : (
-        <div className="stacked-sections">
-          <ServicesTab />
-        </div>
-      )}
     </PageFrame>
+  );
+}
+
+function SettingsNavItem({ icon, label, count, active, onClick }: { icon?: React.ReactNode; label: string; count?: number; active: boolean; onClick: () => void }) {
+  return (
+    <button type="button" className={`settings-nav-item ${active ? "active" : ""}`.trim()} onClick={onClick} aria-current={active ? "page" : undefined} title={label}>
+      {icon && <span className="settings-nav-icon">{icon}</span>}
+      <span className="settings-nav-text">{label}</span>
+      {count !== undefined && <span className="settings-nav-count">{count}</span>}
+    </button>
+  );
+}
+
+// An icon per .env group, matched on its title (the titles come from the
+// server's .env.example sections). Unknown groups get a gear.
+const ENV_GROUP_ICONS: [RegExp, React.ReactNode][] = [
+  [/server|network/i, <Server />],
+  [/phone|sms/i, <Smartphone />],
+  [/smtp|outgoing email/i, <PaperPlane />],
+  [/email/i, <Envelope />],
+  [/link|branding/i, <LinkIcon />],
+  [/admin/i, <PersonGear />],
+  [/bot/i, <FaceRobot />],
+  [/database|postgres/i, <Database />],
+  [/web listener|public web/i, <Globe />],
+  [/openid|telegram login/i, <Key />],
+  [/passkey|webauthn/i, <Fingerprint />],
+  [/call/i, <Handset />],
+  [/stream/i, <BroadcastSignal />],
+  [/map/i, <MapPin />],
+  [/\bai\b/i, <MagicWand />],
+  [/moderation|verification/i, <ShieldCheck />],
+  [/storage|media/i, <HardDrive />],
+  [/premium|stars/i, <Star />],
+  [/update/i, <ArrowsRotateRight />],
+  [/donation|crypto|wallet/i, <Wallet />]
+];
+
+function envGroupIcon(title: string): React.ReactNode {
+  return ENV_GROUP_ICONS.find(([re]) => re.test(title))?.[1] ?? <Gear />;
+}
+
+const isBoolValue = (v: string) => v === "true" || v === "false";
+
+// EnvGroupPanel edits one .env group. Its Save sends only the keys whose value
+// differs from what was loaded, so saving one group never rewrites another.
+function EnvGroupPanel({ group, onSaved, showTitle }: { group: EnvGroup; onSaved: () => void; showTitle?: boolean }) {
+  const initial = useMemo(() => Object.fromEntries(group.fields.map((f) => [f.key, f.value])), [group]);
+  const [values, setValues] = useState<Record<string, string>>(initial);
+  useEffect(() => setValues(initial), [initial]);
+
+  const changed = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const f of group.fields) {
+      if ((values[f.key] ?? "") !== (initial[f.key] ?? "")) out[f.key] = values[f.key] ?? "";
+    }
+    return out;
+  }, [values, initial, group]);
+  const changedCount = Object.keys(changed).length;
+
+  return (
+    <section className="section-block settings-panel">
+      {showTitle && <SectionHead title={group.title} text={group.description || undefined} />}
+      <div className="settings-fields">
+        {group.fields.map((field) => {
+          const value = values[field.key] ?? "";
+          const effective = value || field.default_value;
+          const toggle = isBoolValue(effective) && (isBoolValue(field.default_value) || isBoolValue(value));
+          const dirty = field.key in changed;
+          return (
+            <div key={field.key} className={`settings-field ${dirty ? "dirty" : ""}`.trim()}>
+              <div className="settings-field-text">
+                <span className="settings-field-key mono">{field.key}</span>
+                {field.description && <span className="settings-field-desc">{field.description}</span>}
+              </div>
+              <div className="settings-field-control">
+                {toggle ? (
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={effective === "true"}
+                      onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.checked ? "true" : "false" }))}
+                      aria-label={field.key}
+                    />
+                    <span className="switch-track" aria-hidden="true" />
+                  </label>
+                ) : (
+                  // These are server settings, never this operator's login:
+                  // a text field followed by a password field reads to the
+                  // browser and password managers as a sign-in form, and
+                  // they filled in the saved console username/password
+                  // (which then also showed up as unsaved changes).
+                  // "new-password" is the value browsers honour for
+                  // password fields; the data-* opt-outs cover 1Password,
+                  // LastPass and Bitwarden.
+                  <input
+                    type={field.sensitive ? "password" : "text"}
+                    name={`env-${field.key}`}
+                    value={value}
+                    placeholder={field.default_value || "not set"}
+                    onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                    aria-label={field.key}
+                    autoComplete={field.sensitive ? "new-password" : "off"}
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    data-1p-ignore=""
+                    data-lpignore="true"
+                    data-bwignore="true"
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="settings-save-row">
+        <span className="settings-save-note">
+          {changedCount > 0
+            ? `${changedCount} unsaved change${changedCount === 1 ? "" : "s"} · applies on the next restart`
+            : "Saved to .env; changes apply on the next restart."}
+        </span>
+        {changedCount > 0 && (
+          <button className="btn" type="button" onClick={() => setValues(initial)}>{"Discard"}</button>
+        )}
+        <ActionButton
+          tone="warn"
+          label={changedCount > 0 ? `Save ${changedCount} change${changedCount === 1 ? "" : "s"}` : "Save"}
+          path="/api/actions/update-server-env"
+          payload={() => ({ values: changed })}
+          disabled={changedCount === 0}
+          onDone={onSaved}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -409,90 +626,6 @@ export function ServerIconModal({ hasIcon, onClose, onDone, autoReason }: { hasI
 
 // --- .env editor -----------------------------------------------------
 
-function EnvSection() {
-  const [groups, setGroups] = useState<EnvGroup[]>([]);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [error, setError] = useState("");
-
-  async function load() {
-    setError("");
-    try {
-      const g = await api.serverEnv();
-      setGroups(g);
-      const next: Record<string, string> = {};
-      for (const group of g) {
-        for (const field of group.fields) {
-          next[field.key] = field.value;
-        }
-      }
-      setValues(next);
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
-
-  const fieldCount = useMemo(() => groups.reduce((sum, g) => sum + g.fields.length, 0), [groups]);
-
-  return (
-    <section className="section-block">
-      <SectionHead title={"Environment (.env)"} text={`${fieldCount} setting(s) across ${groups.length} group(s). Changes take effect on the next Restart/Update.`} />
-      {error && <Alert>{error}</Alert>}
-      <div className="env-groups">
-        {groups.map((group) => {
-          const isOpen = !!open[group.title];
-          return (
-            <div key={group.title} className={`env-group ${isOpen ? "open" : ""}`}>
-              <button
-                className="env-group-toggle"
-                type="button"
-                aria-expanded={isOpen}
-                onClick={() => setOpen((prev) => ({ ...prev, [group.title]: !prev[group.title] }))}
-              >
-                <span className="env-group-toggle-text">
-                  <span className="env-group-toggle-title">{group.title}</span>
-                  <span className="env-group-toggle-count">{`${group.fields.length} field${group.fields.length === 1 ? "" : "s"}`}</span>
-                </span>
-                <ChevronDown size={16} className="env-group-chevron" />
-              </button>
-              {isOpen && (
-                <div className="env-group-body">
-                  {group.description && <p className="env-group-desc">{group.description}</p>}
-                  {group.fields.map((field) => (
-                    <label key={field.key} className="form-field env-field">
-                      <span className="mono">{field.key}</span>
-                      {field.description && <span className="env-field-desc">{field.description}</span>}
-                      <input
-                        type={field.sensitive ? "password" : "text"}
-                        value={values[field.key] ?? ""}
-                        placeholder={field.default_value}
-                        onChange={(event) => setValues((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="gift-table-actions env-save-row">
-        <ActionButton
-          tone="warn"
-          label={"Save .env changes"}
-          path="/api/actions/update-server-env"
-          payload={() => ({ values })}
-          onDone={() => void load()}
-        />
-      </div>
-    </section>
-  );
-}
-
-// --- Services tab (live process status, restart/update) --------
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -792,7 +925,9 @@ function UpdateButton({ onUpdateStarted }: { onUpdateStarted: () => void }) {
 function ServicesTab() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [statusError, setStatusError] = useState("");
+  const [host, setHost] = useState<DashboardResponse | null>(null);
   const restartWatcher = useAdminRestartWatcher();
+  const { update } = useServerUpdate();
   const pausedRef = useRef(false);
   pausedRef.current = restartWatcher.waiting;
 
@@ -804,6 +939,8 @@ function ServicesTab() {
     } catch (err) {
       setStatusError(errorMessage(err));
     }
+    // Host load comes with the overview's data; a failure just hides it.
+    api.dashboard().then(setHost).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -813,14 +950,27 @@ function ServicesTab() {
   }, [load]);
 
   const loading = status === null && !statusError;
+  const allUp = Boolean(status?.ServerAlive && status?.AdminAlive);
+  const snap = host?.host;
+  const history = host?.host_history ?? [];
+  const memPct = snap?.Ready && snap.MemTotalBytes > 0 ? (snap.MemUsedBytes / snap.MemTotalBytes) * 100 : 0;
+  const diskPct = snap?.Ready && snap.DiskReady && snap.DiskTotalBytes > 0 ? ((snap.DiskTotalBytes - snap.DiskFreeBytes) / snap.DiskTotalBytes) * 100 : 0;
+  const releaseUpdate = update?.available ? update.latest : undefined;
 
   return (
     <>
-      <section className="section-block">
-        <SectionHead
-          title={"Services"}
-          action={
-            <div className="services-header-actions">
+      {statusError && <Alert>{statusError}</Alert>}
+      {loading ? (
+        <LoadingSurface label={"Loading service status..."} />
+      ) : (
+        <>
+          <section className={`status-hero ${allUp ? "up" : "down"}`}>
+            <span className="status-hero-dot" aria-hidden="true" />
+            <div className="status-hero-text">
+              <strong>{allUp ? "Everything is running" : status?.ServerAlive ? "The admin panel is not running" : "The server is stopped"}</strong>
+              {releaseUpdate && <span>{`${releaseUpdate} is available`}</span>}
+            </div>
+            <div className="status-hero-actions">
               <UpdateButton onUpdateStarted={() => void restartWatcher.watch()} />
               <ActionButton
                 compact
@@ -831,36 +981,63 @@ function ServicesTab() {
                 onDone={() => void restartWatcher.watch()}
               />
             </div>
-          }
-        />
-        {statusError && <Alert>{statusError}</Alert>}
-        {loading ? (
-          <LoadingSurface label={"Loading service status..."} />
-        ) : (
-          <div className="service-grid">
-            {status && (
-              <>
-                <ServiceCard
-                  icon={<Server size={18} />}
-                  name={"Server"}
-                  tone={status.ServerAlive ? "good" : "danger"}
-                  statusLabel={status.ServerAlive ? "running" : "stopped"}
-                  detail={status.ServerAlive ? `pid ${status.ServerPID}` : undefined}
-                />
-                <ServiceCard
-                  icon={<ShieldCheck size={18} />}
-                  name={"admin panel"}
-                  tone={status.AdminAlive ? "good" : "danger"}
-                  statusLabel={status.AdminAlive ? "running" : "stopped"}
-                  detail={status.AdminAlive ? `pid ${status.AdminPID}` : undefined}
-                />
-              </>
-            )}
-          </div>
-        )}
-      </section>
+          </section>
+
+          {status && (
+            <section className="section-block settings-panel">
+              <SectionHead title={"Processes"} />
+              <div className="process-list">
+                <ProcessRow name={"Server"} detail={"MTProto, web client, public pages"} alive={status.ServerAlive} pid={status.ServerPID} />
+                <ProcessRow name={"Admin panel"} detail={"This console"} alive={status.AdminAlive} pid={status.AdminPID} />
+                <ProcessRow name={"Supervisor"} detail={"owpengram-ctl, restarts the others"} alive={status.CtlAlive} pid={status.CtlPID} />
+              </div>
+            </section>
+          )}
+
+          {snap?.Ready && (
+            <div className="status-host">
+              <section className="overview-card">
+                <header className="overview-card-head">
+                  <h2>{"CPU"}</h2>
+                  <span className="overview-value">{`${snap.CPUPercent.toFixed(0)}%`}</span>
+                </header>
+                <Sparkline values={history.map((s) => s.cpu)} max={100} height={52} label={"CPU load, last 15 minutes"} />
+              </section>
+              <section className="overview-card">
+                <header className="overview-card-head">
+                  <h2>{"Memory"}</h2>
+                  <span className="overview-value">{`${formatBytes(String(snap.MemUsedBytes))} / ${formatBytes(String(snap.MemTotalBytes))}`}</span>
+                </header>
+                <Sparkline values={history.map((s) => s.mem)} max={snap.MemTotalBytes || undefined} height={52} tone={memPct >= 90 ? "warn" : "brand"} label={"Memory used, last 15 minutes"} />
+              </section>
+              <section className="overview-card">
+                <header className="overview-card-head">
+                  <h2>{"Disk"}</h2>
+                  <span className="overview-value">{snap.DiskReady ? `${formatBytes(String(snap.DiskFreeBytes))} free` : "—"}</span>
+                </header>
+                <Meter percent={diskPct} />
+                <span className="overview-card-hint">{snap.DiskReady ? `${diskPct.toFixed(0)}% of ${formatBytes(String(snap.DiskTotalBytes))} used` : "No reading yet"}</span>
+              </section>
+            </div>
+          )}
+        </>
+      )}
       {restartWatcher.waiting && <RestartOverlay timedOut={false} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
       {restartWatcher.timedOut && <RestartOverlay timedOut={true} onDismiss={restartWatcher.dismiss} logLines={restartWatcher.logLines} />}
     </>
+  );
+}
+
+function ProcessRow({ name, detail, alive, pid }: { name: string; detail: string; alive: boolean; pid: number }) {
+  return (
+    <div className={`process-row ${alive ? "up" : "down"}`}>
+      <span className="process-dot" aria-hidden="true" />
+      <div className="process-text">
+        <strong>{name}</strong>
+        <span>{detail}</span>
+      </div>
+      <span className="process-pid mono">{alive && pid ? `pid ${pid}` : ""}</span>
+      <span className={`badge ${alive ? "good" : "danger"}`}>{alive ? "Running" : "Stopped"}</span>
+    </div>
   );
 }
