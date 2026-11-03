@@ -5,128 +5,45 @@
 @font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 800; font-display: swap; src: url("/fonts/plus-jakarta-sans-800.woff2") format("woff2"); }
 
 :root {
-  color-scheme: light;
-
-  /* Surfaces */
-  --bg: #f7f9fc;
-  --bg-accent: #eef1f5;
-  --panel: #ffffff;
-  --panel-subtle: #f7f9fc;
-  --panel-strong: #f1f5f9;
-  /* Loading placeholders. Kept as their own pair rather than reusing the
-     panel shades because the sheen has to read as lighter than the base in
-     both themes, and the panel ramp runs the opposite way in dark. */
-  --skeleton-base: #e6ebf2;
-  --skeleton-sheen: #f4f7fa;
-  --surface-soft: #f2f7fd;
-  --overlay: rgba(24, 34, 47, 0.42);
-  --topbar-bg: rgba(255, 255, 255, 0.94);
-
-  /* Lines */
-  --line: #e2e8f0;
-  --line-strong: #cbd5e1;
-
-  /* Text */
-  --heading: #101828;
-  --text: #0f1720;
-  --text-soft: #344054;
-  --muted: #64748b;
-  --muted-2: #94a3b8;
-
-  /* Brand */
-  --brand: #2563eb;
-  --brand-strong: #1d4ed8;
-  --brand-2: #38bdf8;
-  --grad: linear-gradient(135deg, #38bdf8 0%, #2563eb 55%, #1e40af 100%);
-  --brand-tint: #eaf2fd;
-  --brand-tint-border: #c7dcf9;
-  --brand-tint-text: #1e3a8a;
-
-  /* Semantic */
-  --good: #167447;
-  --good-tint: #eaf6ef;
-  --good-border: #c1e1cf;
-  --warn: #a15c07;
-  --warn-tint: #fcf4e4;
-  --warn-border: #e7d09e;
-  --danger: #b42318;
-  --danger-tint: #fcefec;
-  --danger-border: #eecac3;
-  --danger-text: #8f2f27;
-
-  /* Accent (collectibles / craft) */
-  --purple: #6a4fa3;
-  --purple-tint: #f4effb;
-  --purple-border: #dcd0f0;
-  --purple-text: #5a4590;
-
-  /* Inputs & controls */
-  --input-bg: #ffffff;
-  --btn-bg: #ffffff;
-  --btn-text: #29323d;
-  --btn-hover: #f4f7fa;
-  --switch-track: #c8d0d6;
-
-  /* Code / JSON blocks */
-  --code-bg: #1b2733;
-  --code-text: #d6e3ef;
-  --code-border: #2b3a49;
-
-  /* Sidebar */
-  --sidebar: #08080e;
-  --sidebar-soft: #12121a;
-  --sidebar-line: #222228;
-  --sidebar-row: #17171f;
-  --sidebar-text: #c6d0dc;
-  --sidebar-muted: #8fa0b4;
-  --sidebar-faint: #8492a6;
-  --sidebar-heading: #ffffff;
-
-  /* Effects */
-  --focus: rgba(37, 99, 235, 0.16);
-  --shadow: 0 28px 70px -36px rgba(5, 5, 8, 0.35);
-  --shadow-sm: 0 2px 10px rgba(24, 39, 56, 0.05);
-  --shadow-brand: 0 8px 22px rgba(37, 99, 235, 0.22);
-  --hero-glow: rgba(37, 99, 235, 0.14);
-  --hero-grid: rgba(5, 5, 8, 0.04);
-
-  /* Radii */
-  --radius-xs: 8px;
-  --radius-sm: 9px;
-  --radius: 11px;
-  --radius-lg: 14px;
-}
-
-[data-theme="dark"] {
+  /* One dark theme; there is no light variant and no switch. */
   color-scheme: dark;
 
-  --bg: #0f141a;
-  --bg-accent: #131a22;
-  --panel: #171f28;
-  --panel-subtle: #1c2530;
-  --panel-strong: #212c38;
-  --skeleton-base: #212c38;
-  --skeleton-sheen: #2e3d4c;
-  --surface-soft: #1a232d;
-  --overlay: rgba(5, 8, 12, 0.62);
-  --topbar-bg: rgba(21, 28, 36, 0.86);
+  /* Surfaces */
+  --bg: #08080e;
+  --bg-accent: #0e0e14;
+  --panel: #12121a;
+  --panel-subtle: #181822;
+  --panel-strong: #1e1e28;
+  /* Loading placeholders. Kept as their own pair rather than reusing the
+     panel shades because the sheen has to read as lighter than the base,
+     which the panel ramp does not. */
+  --skeleton-base: #1e1e28;
+  --skeleton-sheen: #2a2a34;
+  --surface-soft: #15151e;
+  --overlay: rgba(0, 0, 0, 0.66);
+  --topbar-bg: rgba(14, 14, 20, 0.86);
 
-  --line: #29333f;
-  --line-strong: #38434f;
+  /* Lines */
+  --line: #222228;
+  --line-strong: #2e2e36;
 
+  /* Text */
   --heading: #eef3f8;
   --text: #d5dde6;
   --text-soft: #c2ccd6;
   --muted: #98a4b1;
   --muted-2: #6d7885;
 
+  /* Brand */
   --brand: #5b9dff;
   --brand-strong: #7db4ff;
   --brand-2: #7cd1fb;
+  --grad: linear-gradient(135deg, #38bdf8 0%, #2563eb 55%, #1e40af 100%);
   --brand-tint: #142a4a;
   --brand-tint-border: #24466e;
   --brand-tint-text: #9dc3f5;
 
+  /* Semantic */
   --good: #47c281;
   --good-tint: #12301f;
   --good-border: #245639;
@@ -138,36 +55,47 @@
   --danger-border: #5c332d;
   --danger-text: #f0a49b;
 
+  /* Accent (collectibles / craft) */
   --purple: #ac90e2;
   --purple-tint: #221b31;
   --purple-border: #3d3357;
   --purple-text: #c9b6ef;
 
-  --input-bg: #131a22;
-  --btn-bg: #1e2731;
+  /* Inputs & controls */
+  --input-bg: #0e0e14;
+  --btn-bg: #181822;
   --btn-text: #dbe2ea;
-  --btn-hover: #26313d;
-  --switch-track: #3a454f;
+  --btn-hover: #22222c;
+  --switch-track: #34343e;
 
-  --code-bg: #0c1218;
+  /* Code / JSON blocks */
+  --code-bg: #0b0b11;
   --code-text: #cdd9e5;
-  --code-border: #232f3b;
+  --code-border: #222228;
 
-  --sidebar: #10151b;
-  --sidebar-soft: #1c242f;
-  --sidebar-line: #262f3a;
-  --sidebar-row: #161d25;
+  /* Sidebar */
+  --sidebar: #0c0c14;
+  --sidebar-soft: #181822;
+  --sidebar-line: #222228;
+  --sidebar-row: #12121a;
   --sidebar-text: #cbd4de;
   --sidebar-muted: #7c8794;
   --sidebar-faint: #6f7b88;
   --sidebar-heading: #f0f4f8;
 
+  /* Effects */
   --focus: rgba(91, 157, 255, 0.24);
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.46);
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.38);
   --shadow-brand: 0 8px 22px rgba(91, 157, 255, 0.26);
   --hero-glow: rgba(91, 157, 255, 0.25);
   --hero-grid: rgba(255, 255, 255, 0.04);
+
+  /* Radii */
+  --radius-xs: 8px;
+  --radius-sm: 9px;
+  --radius: 11px;
+  --radius-lg: 14px;
 }
 
 * {
@@ -483,30 +411,6 @@ a {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-}
-
-.theme-toggle {
-  display: inline-grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  color: var(--muted);
-  background: var(--panel-subtle);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
-}
-
-.theme-toggle:hover {
-  color: var(--brand);
-  border-color: var(--brand-tint-border);
-  background: var(--brand-tint);
-}
-
-.theme-toggle:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
 }
 
 .actor-pill {

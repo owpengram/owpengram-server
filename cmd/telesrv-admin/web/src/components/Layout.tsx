@@ -55,7 +55,6 @@ import { permissionBotVerificationReview, permissionServerManage, permissionAdmi
   permissionUsernamesRead,
   permissionVerificationReview, useCan, useDonationsEnabled, useThirdPartyVerificationHidden } from "../permissions";
 import { type Navigate, type RouteState, routeTitle } from "../routing";
-import { ThemeSwitch } from "../theme";
 import { AddServerLinkModal } from "./AddServerLinkModal";
 import { AppBackground } from "./AppBackground";
 import { AppLink } from "./AppLink";
@@ -456,7 +455,6 @@ export function Shell({
             <h1>{routeTitle(route.path)}</h1>
           </div>
           <div className="topbar-actions">
-            <ThemeSwitch />
             <span className="actor-pill"><UserRound size={14} /> {actor}</span>
             <button className="btn ghost icon-text" type="button" onClick={logout} title={"Log out"}>
               <LogOut size={16} /> {"Log out"}

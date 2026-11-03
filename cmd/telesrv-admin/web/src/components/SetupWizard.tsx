@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { RestartOverlay, ServerIconModal, useAdminRestartWatcher } from "../pages/ServerSettingsPage";
-import { ThemeSwitch } from "../theme";
 import { AppBackground } from "./AppBackground";
 import { Alert } from "./ui";
 import { StorageStep } from "./StorageStep";
@@ -66,9 +65,6 @@ export function SetupWizard({ storageConfigured }: { storageConfigured: boolean 
               <strong>{"Let's set up your server"}</strong>
               <small>{"First-run setup"}</small>
             </span>
-          </div>
-          <div className="login-head-actions">
-            <ThemeSwitch />
           </div>
         </div>
 

@@ -6,7 +6,6 @@ import { AppBackground } from "../components/AppBackground";
 import { LoginHeroFoliage } from "../components/LoginHeroFoliage";
 import { LoginMonkey } from "../components/LoginMonkey";
 import { Alert } from "../components/ui";
-import { ThemeSwitch } from "../theme";
 import type { AdminSession, PublicBranding } from "../types";
 
 export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => void }) {
@@ -99,9 +98,6 @@ export function LoginPage({ onLogin }: { onLogin: (session: AdminSession) => voi
       <section className="login-panel login-signin">
         <div className="login-hero">
           <LoginHeroFoliage />
-          <div className="login-hero-actions">
-            <ThemeSwitch />
-          </div>
           <LoginMonkey covered={step === 1} textLength={step === 0 ? username.length : 0} />
         </div>
         <div className="login-identity">

@@ -374,18 +374,7 @@
   gap: 12px;
 }
 
-.login-head-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
 
-.login-head-actions .icon-btn {
-  width: 36px;
-  height: 36px;
-}
 
 .login-panel .brand-mark {
   width: 44px;
@@ -722,20 +711,10 @@
   border-bottom: 1px solid var(--line);
 }
 
-.login-hero-actions {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  z-index: 2;
-}
 
-.login-hero-actions .icon-btn {
-  width: 34px;
-  height: 34px;
-}
 
 /* The light the monkey stands in, and its shadow on the ledge -- both drawn
-   here rather than baked into the animation, so they follow the theme. */
+   here rather than baked into the animation, so they follow the palette. */
 .login-hero::after {
   content: "";
   position: absolute;
@@ -744,13 +723,8 @@
   width: 150px;
   height: 16px;
   transform: translate(-50%, 45%);
-  background: radial-gradient(50% 50% at 50% 50%, rgba(15, 23, 32, 0.16) 0%, transparent 72%);
-  pointer-events: none;
-}
-
-:root[data-theme="dark"] .login-hero::after,
-:root:not([data-theme="light"]) .login-hero::after {
   background: radial-gradient(50% 50% at 50% 50%, rgba(0, 0, 0, 0.45) 0%, transparent 72%);
+  pointer-events: none;
 }
 
 /* Palm fronds tucked into the hero's corners, behind the monkey -- a hint of
@@ -769,21 +743,11 @@
 
 .login-hero-foliage-back path {
   fill: var(--brand-2);
-  opacity: 0.22;
+  opacity: 0.28;
 }
 
 .login-hero-foliage-front path {
   fill: var(--brand);
-  opacity: 0.3;
-}
-
-:root[data-theme="dark"] .login-hero-foliage-back path,
-:root:not([data-theme="light"]) .login-hero-foliage-back path {
-  opacity: 0.28;
-}
-
-:root[data-theme="dark"] .login-hero-foliage-front path,
-:root:not([data-theme="light"]) .login-hero-foliage-front path {
   opacity: 0.4;
 }
 
