@@ -278,6 +278,7 @@ type BroadcastService interface {
 	Create(ctx context.Context, message string, targetMode domain.BroadcastTargetMode, recipientUserIDs []int64, createdBy string) (domain.Broadcast, error)
 	List(ctx context.Context, beforeID int64, limit int) ([]domain.Broadcast, bool, error)
 	Get(ctx context.Context, id int64) (domain.Broadcast, bool, error)
+	SendSystemNotice(ctx context.Context, userID int64, text string, randomID int64) error
 }
 
 type UserNotifier interface {

@@ -59,10 +59,12 @@ export function AccountChats({ userID, navigate }: { userID: number; navigate: N
   return (
     <div className="messenger">
       <aside className="messenger-list">
-        <label className="searchbox">
-          <Magnifier />
-          <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search chats"} aria-label={"Search chats"} />
-        </label>
+        <div className="messenger-list-head">
+          <label className="searchbox">
+            <Magnifier />
+            <input value={q} onChange={(event) => setQ(event.target.value)} placeholder={"Search chats"} aria-label={"Search chats"} />
+          </label>
+        </div>
         {error && <div className="chat-error">{error}</div>}
         {!chats && !error && <div className="chat-empty">{"Loading chats…"}</div>}
         {chats && visible.length === 0 && <div className="chat-empty">{q ? "No chats match." : "No chats."}</div>}

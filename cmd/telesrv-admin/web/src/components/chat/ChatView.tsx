@@ -2,6 +2,7 @@ import { ArrowShapeTurnUpRight, Comments, Eye, Pin, TrashBin } from "@gravity-ui
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errorMessage } from "../../api";
 import { cursorAfter, type ChatMedia, type ChatMessage, type ChatPage, type ChatReply, type Cursor } from "../../lib/privateView";
+import { Avatar } from "../Avatar";
 import { useViewGrant } from "../PrivateGate";
 import { Lightbox, MediaView, mediaLabel } from "./ChatMedia";
 
@@ -125,6 +126,11 @@ export function ChatView({
           const out = isOut(m);
           const sameSender = prev && !newDay && !prev.service && prev.from_type === m.from_type && prev.from_id === m.from_id;
           const showName = mode === "group" && !out && !m.service && !sameSender;
+          // Group chats draw the sender's avatar beside the last message of
+          // each run, like a client does.
+          const next = ordered[index + 1];
+          const groupIn = mode === "group" && !out;
+          const lastInRun = !next || next.service || dayKey(next.date) !== dayKey(m.date) || next.from_type !== m.from_type || next.from_id !== m.from_id;
           const replyMsg = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
           const reply: ChatReply | undefined = m.reply_to_id
             ? replies[String(m.reply_to_id)] ??
@@ -141,6 +147,21 @@ export function ChatView({
                   </span>
                 </div>
               ) : (
+                <div className={`chat-line ${out ? "out" : "in"} ${mode === "channel" ? "post" : ""}`}>
+                {groupIn &&
+                  (lastInRun ? (
+                    <span className="chat-avatar">
+                      <Avatar
+                        id={m.from_id}
+                        kind={m.from_type === "channel" ? "channel" : "user"}
+                        firstName={peerName(m.from_type, m.from_id)}
+                        title={peerName(m.from_type, m.from_id)}
+                        size={34}
+                      />
+                    </span>
+                  ) : (
+                    <span className="chat-avatar" />
+                  ))}
                 <div className={`chat-row ${out ? "out" : "in"} ${mode === "channel" ? "post" : ""}`}>
                   <div className={`chat-bubble ${m.deleted ? "deleted" : ""} ${m.media && !m.text ? "media-only" : ""}`}>
                     {showName && (
@@ -186,6 +207,7 @@ export function ChatView({
                       <Comments /> {m.comments ? `${m.comments} comment${m.comments === 1 ? "" : "s"}` : "Comments"}
                     </button>
                   )}
+                </div>
                 </div>
               )}
             </Fragment>

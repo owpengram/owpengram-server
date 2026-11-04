@@ -137,10 +137,17 @@ function withCursor(base: string, cursor: Cursor): string {
 }
 
 export const privateView = {
-  unlock: (kind: ViewKind, id: number, password: string, reason: string) =>
-    call<{ grant: string; expires_at: string }>("/api/private/unlock", "", {
+  unlock: (kind: ViewKind, id: number, req: {
+    password: string;
+    purpose: string;
+    reason: string;
+    acknowledge: boolean;
+    acknowledge_consequences: boolean;
+    acknowledge_notified: boolean;
+  }) =>
+    call<{ grant: string; expires_at: string; reason: string }>("/api/private/unlock", "", {
       method: "POST",
-      body: JSON.stringify({ kind, id, password, reason })
+      body: JSON.stringify({ kind, id, ...req })
     }),
   userChats: (userID: number, grant: string) => call<{ chats: ChatListItem[] }>(`/api/private/users/${userID}/chats`, grant),
   userChat: (userID: number, kind: "user" | "channel", peerID: number, cursor: Cursor, grant: string) =>

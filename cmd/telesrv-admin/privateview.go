@@ -5,9 +5,11 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -35,7 +38,9 @@ import (
 // means typing the password again.
 
 const (
-	viewGrantTTL       = 15 * time.Minute
+	viewGrantTTL       = 10 * time.Minute
+	viewReasonMinRunes = 15
+	viewReasonMaxRunes = 500
 	viewGrantHeader    = "X-View-Grant"
 	viewUnlockMaxFails = 5
 	viewUnlockLockout  = 10 * time.Minute
@@ -54,6 +59,19 @@ type viewGrant struct {
 	Kind  string `json:"k"` // user, channel
 	ID    int64  `json:"i"`
 	Exp   int64  `json:"e"`
+	// Unlock is the command id of the audited unlock this grant came from.
+	// Every later read is checked against that row and repeats its reason.
+	Unlock string `json:"u"`
+}
+
+// viewPurposes are the only reasons an operator may give for opening someone's
+// private content. "other" still needs the written explanation like the rest.
+var viewPurposes = map[string]string{
+	"report":   "Investigating a report",
+	"legal":    "Legal or law-enforcement request",
+	"owner":    "Request from the account owner",
+	"security": "Security incident or abuse",
+	"other":    "Other",
 }
 
 func (s *server) signViewGrant(g viewGrant) (string, error) {
@@ -93,7 +111,7 @@ func (s *server) viewGrantFromRequest(r *http.Request) (viewGrant, bool) {
 		return viewGrant{}, false
 	}
 	var g viewGrant
-	if json.Unmarshal(body, &g) != nil || time.Now().Unix() > g.Exp {
+	if json.Unmarshal(body, &g) != nil || time.Now().Unix() > g.Exp || g.Unlock == "" {
 		return viewGrant{}, false
 	}
 	claims, ok := claimsFromContext(r.Context())
@@ -170,10 +188,20 @@ func (s *server) checkOperatorPassword(ctx context.Context, claims sessionClaims
 	return cred.ID == claims.UserID && cred.Enabled && bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(password)) == nil
 }
 
-// recordViewAudit writes one completed (or failed) row to the audit log.
-func (s *server) recordViewAudit(ctx context.Context, actor, action, kind string, id int64, reason string, details map[string]any, failure string) error {
+// requestOrigin is who-asked metadata every private-content audit row carries.
+func requestOrigin(r *http.Request) map[string]any {
+	out := map[string]any{"remote_addr": r.RemoteAddr, "user_agent": r.UserAgent()}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		out["forwarded_for"] = fwd
+	}
+	return out
+}
+
+// recordViewAudit writes one completed (or failed) row to the audit log and
+// returns its command id.
+func (s *server) recordViewAudit(ctx context.Context, actor, action, kind string, id int64, reason string, details map[string]any, failure string) (string, error) {
 	if s.read == nil {
-		return errors.New("read store is not configured")
+		return "", errors.New("read store is not configured")
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -187,7 +215,7 @@ func (s *server) recordViewAudit(ctx context.Context, actor, action, kind string
 	}
 	request, err := json.Marshal(details)
 	if err != nil {
-		return err
+		return "", err
 	}
 	status := "completed"
 	if failure != "" {
@@ -203,7 +231,7 @@ func (s *server) recordViewAudit(ctx context.Context, actor, action, kind string
 	commandID := newCommandID("view")
 	tx, err := s.read.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
@@ -211,7 +239,7 @@ INSERT INTO admin_commands (command_id, actor, action, target_user_id, target_pe
 	dry_run, reason, request, result, status, error, created_at, completed_at)
 VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8::jsonb, '{}'::jsonb, $9, $10, now(), now())`,
 		commandID, actor, action, targetUser, peerType, peerID, reason, string(request), status, failure); err != nil {
-		return fmt.Errorf("record view command: %w", err)
+		return "", fmt.Errorf("record view command: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO admin_audit_logs (
@@ -221,16 +249,60 @@ INSERT INTO admin_audit_logs (
 SELECT command_id, actor, action, target_user_id, target_peer_type, target_peer_id,
 	dry_run, reason, request, result, status, error, now()
 FROM admin_commands WHERE command_id = $1`, commandID); err != nil {
-		return fmt.Errorf("record view audit: %w", err)
+		return "", fmt.Errorf("record view audit: %w", err)
 	}
-	return tx.Commit(ctx)
+	return commandID, tx.Commit(ctx)
+}
+
+// unlockReason returns the reason of the audited unlock a grant came from, or
+// "" when that row does not exist (a grant must trace back to one).
+func (s *server) unlockReason(ctx context.Context, g viewGrant) string {
+	if s.read == nil || g.Unlock == "" {
+		return ""
+	}
+	var reason string
+	if err := s.read.pool.QueryRow(ctx, `
+SELECT reason FROM admin_audit_logs
+WHERE command_id = $1 AND actor = $2 AND status = 'completed' AND action LIKE 'private.unlock_%'`,
+		g.Unlock, g.Actor).Scan(&reason); err != nil {
+		return ""
+	}
+	return reason
 }
 
 type viewUnlockRequest struct {
-	Password string `json:"password"`
-	Kind     string `json:"kind"`
-	ID       int64  `json:"id"`
-	Reason   string `json:"reason"`
+	Password    string `json:"password"`
+	Kind        string `json:"kind"`
+	ID          int64  `json:"id"`
+	Purpose     string `json:"purpose"`
+	Reason      string `json:"reason"`
+	Acknowledge bool   `json:"acknowledge"`
+	// The operator has to confirm, separately, that they understand the
+	// consequences and that the person will be told.
+	AckConsequences bool `json:"acknowledge_consequences"`
+	AckNotified     bool `json:"acknowledge_notified"`
+}
+
+// validateViewReason enforces a real, written justification before the
+// password is even looked at: private messages are never opened "just
+// because".
+func validateViewReason(purpose, reason string, acknowledge, consequences, notified bool) (string, error) {
+	label, ok := viewPurposes[purpose]
+	if !ok {
+		return "", errors.New("Choose why you need access.")
+	}
+	reason = strings.Join(strings.Fields(reason), " ")
+	n := utf8.RuneCountInString(reason)
+	if n < viewReasonMinRunes {
+		return "", fmt.Errorf("Explain the reason in at least %d characters.", viewReasonMinRunes)
+	}
+	if n > viewReasonMaxRunes {
+		return "", fmt.Errorf("Keep the reason under %d characters.", viewReasonMaxRunes)
+	}
+	if !acknowledge || !consequences || !notified {
+		return "", errors.New("Tick every confirmation first.")
+	}
+	return label + ": " + reason, nil
 }
 
 func (s *server) handleViewUnlockAPI(w http.ResponseWriter, r *http.Request) {
@@ -249,29 +321,100 @@ func (s *server) handleViewUnlockAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := "private.unlock_" + body.Kind
+	auditReason, err := validateViewReason(body.Purpose, body.Reason, body.Acknowledge, body.AckConsequences, body.AckNotified)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	details := requestOrigin(r)
+	details["purpose"] = body.Purpose
 	if viewUnlockLimiter.locked(claims.Actor) {
 		writeAPIError(w, http.StatusTooManyRequests, "Too many wrong passwords. Try again in a few minutes.")
 		return
 	}
 	if !s.checkOperatorPassword(r.Context(), claims, body.Password) {
 		viewUnlockLimiter.record(claims.Actor, false)
-		_ = s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, body.Reason, nil, "wrong password")
+		_, _ = s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, auditReason, details, "wrong password")
 		writeAPIError(w, http.StatusForbidden, "Wrong password.")
 		return
 	}
 	viewUnlockLimiter.record(claims.Actor, true)
-	if err := s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, body.Reason, nil, ""); err != nil {
+	exp := time.Now().Add(viewGrantTTL)
+	details["expires_at"] = exp.UTC()
+	// The person is told before anything opens. If the notice can't be
+	// delivered, nothing is opened either.
+	notified, err := s.notifyPrivateView(r.Context(), body.Kind, body.ID, auditReason)
+	if err != nil {
+		_, _ = s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, auditReason, details, "could not notify the owner: "+err.Error())
+		writeAPIError(w, http.StatusBadGateway, "Could not notify the owner, so access was not opened: "+err.Error())
+		return
+	}
+	details["notified_user_id"] = notified
+	unlockID, err := s.recordViewAudit(r.Context(), claims.Actor, action, body.Kind, body.ID, auditReason, details, "")
+	if err != nil {
 		// No audit row, no access.
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	exp := time.Now().Add(viewGrantTTL)
-	grant, err := s.signViewGrant(viewGrant{Actor: claims.Actor, Nonce: claims.Nonce, Kind: body.Kind, ID: body.ID, Exp: exp.Unix()})
+	grant, err := s.signViewGrant(viewGrant{Actor: claims.Actor, Nonce: claims.Nonce, Kind: body.Kind, ID: body.ID, Exp: exp.Unix(), Unlock: unlockID})
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"grant": grant, "expires_at": exp.UTC()})
+	writeJSON(w, http.StatusOK, map[string]any{"grant": grant, "expires_at": exp.UTC(), "reason": auditReason})
+}
+
+// notifyPrivateView tells the owner -- the account itself, or a channel's
+// creator -- from the system account that their private content is being
+// opened, and why. It returns who was told (0 when there is nobody to tell,
+// e.g. a channel whose creator account is gone).
+func (s *server) notifyPrivateView(ctx context.Context, kind string, id int64, reason string) (int64, error) {
+	stamp := time.Now().UTC().Format("2006-01-02 15:04 UTC")
+	recipient := id
+	what := "your account's private content (chats, media, posts and gifts)"
+	if kind == "channel" {
+		if s.read == nil {
+			return 0, errors.New("read store is not configured")
+		}
+		var title string
+		var broadcast, megagroup bool
+		if err := s.read.pool.QueryRow(ctx, `SELECT creator_user_id, title, broadcast, megagroup FROM channels WHERE id = $1`, id).
+			Scan(&recipient, &title, &broadcast, &megagroup); err != nil {
+			return 0, fmt.Errorf("look up channel: %w", err)
+		}
+		noun := "group"
+		if broadcast && !megagroup {
+			noun = "channel"
+		}
+		what = fmt.Sprintf("the messages and media of your %s \u00ab%s\u00bb", noun, title)
+		if recipient <= 0 {
+			return 0, nil
+		}
+	}
+	text := fmt.Sprintf("A server administrator has opened %s.\n\nReason: %s\nTime: %s\n\nThis access is recorded in the server's audit log and closes automatically within %d minutes.",
+		what, reason, stamp, int(viewGrantTTL/time.Minute))
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	payload, err := json.Marshal(map[string]any{"user_id": recipient, "message": text, "random_id": int64(binary.LittleEndian.Uint64(b[:]) >> 1)})
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.AdminAPIURL+"/v1/system-notice", bytes.NewReader(payload))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.cfg.AdminAPIToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return recipient, nil
 }
 
 // auditChatOpen writes the per-conversation row when a chat's first page is
@@ -280,7 +423,18 @@ func (s *server) auditChatOpen(r *http.Request, g viewGrant, details map[string]
 	if r.URL.Query().Get("before_date") != "" {
 		return true
 	}
-	return s.recordViewAudit(r.Context(), g.Actor, "private.read_chat", g.Kind, g.ID, "Opened a chat", details, "") == nil
+	// The row repeats the unlock's reason and links to it, so every chat read
+	// traces back to the justification that allowed it.
+	reason := s.unlockReason(r.Context(), g)
+	if reason == "" {
+		return false
+	}
+	for k, v := range requestOrigin(r) {
+		details[k] = v
+	}
+	details["unlock_command_id"] = g.Unlock
+	_, err := s.recordViewAudit(r.Context(), g.Actor, "private.read_chat", g.Kind, g.ID, reason, details, "")
+	return err == nil
 }
 
 func chatCursor(r *http.Request) (int64, int) {

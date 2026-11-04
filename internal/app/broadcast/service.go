@@ -268,3 +268,26 @@ func stableBroadcastRandomID(broadcastID, userID int64) int64 {
 	}
 	return v
 }
+
+// SendSystemNotice sends one message from the official system account to one
+// user, outside any campaign: no broadcast row, no recipient list. randomID
+// makes a retried send resolve to the same message.
+func (s *Service) SendSystemNotice(ctx context.Context, userID int64, text string, randomID int64) error {
+	if s == nil || s.messages == nil {
+		return fmt.Errorf("broadcast message sender is not configured")
+	}
+	text = strings.TrimSpace(text)
+	if userID <= 0 || text == "" || len(text) > domain.MaxBroadcastMessageBytes {
+		return domain.ErrBroadcastInvalid
+	}
+	if randomID == 0 {
+		randomID = 1
+	}
+	_, err := s.messages.SendPrivateText(ctx, domain.SendPrivateTextRequest{
+		SenderUserID:    domain.OfficialSystemUserID,
+		RecipientUserID: userID,
+		RandomID:        randomID,
+		Message:         text,
+	})
+	return err
+}

@@ -142,7 +142,7 @@ export function ChannelDetailPage({ id, navigate, initialTab }: { id: number; na
 
       <div hidden={!isPrivate}>
         <PrivateGate kind="channel" id={ch.ID} what={broadcast ? "This channel's posts, comments, photos and gifts" : "This group's messages, photos and gifts"}>
-          <ChannelPrivate channelID={ch.ID} broadcast={broadcast} tab={tab} navigate={navigate} />
+          <ChannelPrivate channelID={ch.ID} broadcast={broadcast} title={ch.Title} subtitle={`${channelKind(ch)} · ${members}`} tab={tab} navigate={navigate} />
         </PrivateGate>
       </div>
 
@@ -238,7 +238,21 @@ export function ChannelDetailPage({ id, navigate, initialTab }: { id: number; na
 
 // ChannelPrivate is everything behind the gate: the feed (with a comments
 // drawer under channel posts), profile photos and gifts.
-function ChannelPrivate({ channelID, broadcast, tab, navigate }: { channelID: number; broadcast: boolean; tab: Tab; navigate: Navigate }) {
+function ChannelPrivate({
+  channelID,
+  broadcast,
+  title,
+  subtitle,
+  tab,
+  navigate
+}: {
+  channelID: number;
+  broadcast: boolean;
+  title: string;
+  subtitle: string;
+  tab: Tab;
+  navigate: Navigate;
+}) {
   const { grant } = useViewGrant();
   const { content, error } = useProfileContent("channel", channelID);
   const [thread, setThread] = useState<ChatMessage | null>(null);
@@ -247,6 +261,13 @@ function ChannelPrivate({ channelID, broadcast, tab, navigate }: { channelID: nu
       {tab === "messages" && (
         <div className={`channel-feed ${thread ? "with-thread" : ""}`}>
           <section className="messenger-chat">
+            <header className="messenger-chat-head">
+              <Avatar id={channelID} kind="channel" title={title} size={36} />
+              <div className="messenger-chat-title">
+                <strong>{title || "Untitled"}</strong>
+                <span>{subtitle}</span>
+              </div>
+            </header>
             <ChatView
               mode={broadcast ? "channel" : "group"}
               load={(cursor) => privateView.channelMessages(channelID, cursor, grant)}

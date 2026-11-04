@@ -495,6 +495,10 @@ func (fakeService) StickerDocumentAnimation(context.Context, int64) ([]byte, str
 	return nil, "", false, nil
 }
 
+func (fakeService) SendSystemNotice(context.Context, int64, string, int64) error {
+	return nil
+}
+
 func (fakeService) PrivateMediaFile(context.Context, string) ([]byte, bool, error) {
 	return nil, false, nil
 }

@@ -91,6 +91,7 @@ type Service interface {
 	StickerDocumentAnimation(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	GifCatalogDocumentPreview(ctx context.Context, documentID int64) ([]byte, string, bool, error)
 	PrivateMediaFile(ctx context.Context, locationKey string) ([]byte, bool, error)
+	SendSystemNotice(ctx context.Context, userID int64, text string, randomID int64) error
 	CreateGifCatalogEntry(ctx context.Context, req admin.CreateGifCatalogEntryRequest) (admin.CommandResult, error)
 	StarGiftCatalogAnimation(ctx context.Context, giftID int64) ([]byte, bool, error)
 	CreateStarGiftCatalogEntry(ctx context.Context, req admin.CreateStarGiftCatalogEntryRequest) (admin.CommandResult, error)
@@ -272,6 +273,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/stickers/documents/{id}/animation", s.authenticated(s.handleStickerDocumentAnimation))
 	mux.HandleFunc("GET /v1/gif-catalog/documents/{id}/preview", s.authenticated(s.handleGifCatalogDocumentPreview))
 	mux.HandleFunc("GET /v1/private-media", s.authenticated(s.handlePrivateMediaFile))
+	mux.HandleFunc("POST /v1/system-notice", s.authenticated(s.handleSystemNotice))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/animation", s.authenticated(s.handleStarGiftCatalogAnimation))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles", s.authenticated(s.handleStarGiftCollectibles))
 	mux.HandleFunc("GET /v1/star-gift-catalog/{gift_id}/collectibles/{kind}/{attribute_id}/animation", s.authenticated(s.handleStarGiftCollectibleAnimation))
@@ -1067,6 +1069,27 @@ func (s *Server) handleStickerDocumentAnimation(w http.ResponseWriter, r *http.R
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+type systemNoticeRequest struct {
+	UserID   int64  `json:"user_id"`
+	Message  string `json:"message"`
+	RandomID int64  `json:"random_id"`
+}
+
+// handleSystemNotice sends one message from the official system account to
+// one user (not a campaign).
+func (s *Server) handleSystemNotice(w http.ResponseWriter, r *http.Request) {
+	var req systemNoticeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil || req.UserID <= 0 || strings.TrimSpace(req.Message) == "" {
+		writeError(w, http.StatusBadRequest, "user_id and message are required")
+		return
+	}
+	if err := s.svc.SendSystemNotice(r.Context(), req.UserID, req.Message, req.RandomID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true})
 }
 
 // handlePrivateMediaFile streams one photo/document file by storage key for
