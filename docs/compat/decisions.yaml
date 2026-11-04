@@ -1,0 +1,391 @@
+# Decisions for the Telegram compatibility map (docs/COMPATIBILITY.md).
+#
+# The map itself is generated from code by `go run ./cmd/tl-coverage`. This
+# file only holds what code cannot tell: why something is not done, and what
+# matters most. Edit it, then regenerate.
+#
+#   match:    exact TL method ("messages.sendMessage") or "namespace.*".
+#             An exact match wins over a pattern.
+#   status:   skip    -- not planned; the note says why (only applies while
+#                        the method is not served)
+#             planned -- will be done (combine with priority)
+#             edge    -- served below the RPC dispatcher (MTProto envelopes)
+#   priority: P1 (clients hit it in normal use) / P2 (feature gap) / P3 (nice to have)
+#   note:     one line, shown in the map
+
+# --- Served by the MTProto edge, not by registerRPC --------------------------
+- match: invokeAfterMsg
+  status: edge
+  note: Transparent envelope, unwrapped by tlprofile before dispatch.
+- match: invokeAfterMsgs
+  status: edge
+  note: Transparent envelope, unwrapped by tlprofile before dispatch.
+- match: invokeWithLayer
+  status: edge
+  note: Selects the client's exact Layer profile.
+- match: initConnection
+  status: edge
+  note: Client info (app, device, system, lang) recorded per session.
+- match: invokeWithoutUpdates
+  status: edge
+  note: Transparent envelope, unwrapped by tlprofile before dispatch.
+- match: invokeWithMessagesRange
+  status: edge
+  note: Transparent envelope; the range itself is not used (takeout only).
+- match: invokeWithTakeout
+  status: edge
+  note: Transparent envelope; takeout sessions are not implemented (see account.initTakeoutSession).
+- match: invokeWithBusinessConnection
+  status: edge
+  note: Transparent envelope; business-connection routing for bots is not implemented.
+- match: invokeWithApnsSecret
+  status: edge
+  note: Apple push verification envelope, accepted and ignored.
+- match: invokeWithGooglePlayIntegrity
+  status: edge
+  note: Google Play integrity envelope, accepted and ignored.
+- match: invokeWithReCaptcha
+  status: edge
+  note: reCAPTCHA envelope, accepted and ignored.
+
+# --- Not planned: Telegram-only infrastructure ------------------------------
+- match: smsjobs.*
+  status: skip
+  note: Telegram's "send SMS for Telegram" program; no meaning on a self-hosted server.
+- match: wallet.*
+  status: skip
+  note: Telegram's custodial TON wallet. Needs real TON integration first; see the platform roadmap.
+- match: toncenter.*
+  status: skip
+  note: Proxy to Telegram's TON Center; belongs to the wallet.
+- match: test.*
+  status: skip
+  note: Telegram's internal test methods.
+- match: payments.createOnrampSession
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.getOnrampAvailability
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.getOnrampBaseCurrencies
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.getOnrampLimits
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.getOnrampProviders
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.getOnrampQuote
+  status: skip
+  note: Fiat-to-crypto on-ramp through Telegram's partners.
+- match: payments.assignAppStoreTransaction
+  status: skip
+  note: Apple in-app purchase receipts for Telegram Premium/Stars.
+- match: auth.requestFirebaseSms
+  status: skip
+  note: Firebase SMS verification is tied to Telegram's Google project.
+- match: auth.initFirebasePnvLogin
+  status: skip
+  note: Firebase phone-number verification is tied to Telegram's Google project.
+- match: auth.finishFirebasePnvLogin
+  status: skip
+  note: Firebase phone-number verification is tied to Telegram's Google project.
+- match: auth.firebasePnvSignUp
+  status: skip
+  note: Firebase phone-number verification is tied to Telegram's Google project.
+- match: auth.checkPaidAuth
+  status: skip
+  note: Telegram's paid sign-up in some countries.
+- match: help.getUserInfo
+  status: skip
+  note: Telegram support-staff tool.
+- match: help.editUserInfo
+  status: skip
+  note: Telegram support-staff tool.
+- match: help.getRecentMeUrls
+  status: skip
+  note: Deprecated, no current client calls it.
+- match: help.setBotUpdatesStatus
+  status: skip
+  note: Deprecated.
+- match: messages.getSplitRanges
+  status: skip
+  note: Legacy history-split ranges, only meaningful with takeout.
+- match: upload.getCdnFile
+  status: skip
+  note: No CDN DCs; files are served directly.
+- match: upload.getCdnFileHashes
+  status: skip
+  note: No CDN DCs; files are served directly.
+- match: upload.reuploadCdnFile
+  status: skip
+  note: No CDN DCs; files are served directly.
+
+# Sponsored messages: there is no ad network on a self-hosted server.
+- match: messages.viewSponsoredMessage
+  status: skip
+  note: No ad network.
+- match: messages.clickSponsoredMessage
+  status: skip
+  note: No ad network.
+- match: account.toggleSponsoredMessages
+  status: skip
+  note: No ad network.
+
+# Telegram Passport (identity documents for third-party services).
+- match: account.getAllSecureValues
+  status: skip
+  note: Telegram Passport.
+- match: account.getSecureValue
+  status: skip
+  note: Telegram Passport.
+- match: account.saveSecureValue
+  status: skip
+  note: Telegram Passport.
+- match: account.deleteSecureValue
+  status: skip
+  note: Telegram Passport.
+- match: account.getAuthorizationForm
+  status: skip
+  note: Telegram Passport.
+- match: account.acceptAuthorization
+  status: skip
+  note: Telegram Passport.
+- match: account.sendVerifyPhoneCode
+  status: skip
+  note: Telegram Passport phone verification.
+- match: account.verifyPhone
+  status: skip
+  note: Telegram Passport phone verification.
+- match: users.setSecureValueErrors
+  status: skip
+  note: Telegram Passport.
+- match: help.getPassportConfig
+  status: skip
+  note: Telegram Passport.
+
+# --- P1: clients call these in normal use -----------------------------------
+- match: payments.deleteStarGift
+  status: planned
+  priority: P1
+  note: Layer 232 "delete gift"; postponed in the 232 update.
+- match: account.setMainProfileTab
+  status: planned
+  priority: P1
+  note: Profile tab chosen by the owner (posts / gifts / media).
+- match: account.getAutoSaveSettings
+  status: planned
+  priority: P1
+  note: Settings > Data and storage > Save to gallery opens with an error.
+- match: account.saveAutoSaveSettings
+  status: planned
+  priority: P1
+  note: Pair of account.getAutoSaveSettings.
+- match: account.deleteAutoSaveExceptions
+  status: planned
+  priority: P1
+  note: Pair of account.getAutoSaveSettings.
+- match: messages.toggleNoForwards
+  status: planned
+  priority: P1
+  note: '"Restrict saving content" switch in groups and channels.'
+- match: messages.readFeaturedStickers
+  status: planned
+  priority: P1
+  note: Sent whenever the sticker panel's trending section is seen.
+- match: contacts.getTopPeers
+  priority: P1
+  note: Static empty answer; frequent contacts and the share sheet stay empty.
+- match: contacts.toggleTopPeers
+  status: planned
+  priority: P2
+  note: Pair of contacts.getTopPeers.
+- match: contacts.resetTopPeerRating
+  status: planned
+  priority: P2
+  note: Pair of contacts.getTopPeers.
+- match: payments.convertStarGift
+  status: planned
+  priority: P1
+  note: Convert a received gift to Stars.
+
+# --- P2: feature gaps --------------------------------------------------------
+- match: payments.getStarsTopupOptions
+  status: planned
+  priority: P2
+  note: Buy Stars screen; the Stars economy exists, the store options do not.
+- match: payments.getStarsGiftOptions
+  status: planned
+  priority: P2
+  note: Gift Stars screen.
+- match: payments.getPaymentForm
+  status: planned
+  priority: P2
+  note: Bot invoices (Stars); fiat providers are out of scope.
+- match: payments.sendStarsForm
+  status: planned
+  priority: P2
+  note: Pay a bot invoice in Stars.
+- match: payments.getPaymentReceipt
+  status: planned
+  priority: P2
+  note: Receipt of a paid invoice.
+- match: messages.getExtendedMedia
+  status: planned
+  priority: P2
+  note: Paid media in channels.
+- match: messages.sendPaidReaction
+  status: planned
+  priority: P2
+  note: Star reactions on channel posts.
+- match: messages.togglePaidReactionPrivacy
+  status: planned
+  priority: P2
+  note: Pair of messages.sendPaidReaction.
+- match: contacts.getSaved
+  status: planned
+  priority: P2
+  note: Synced phone contacts list.
+- match: contacts.resetSaved
+  status: planned
+  priority: P2
+  note: Pair of contacts.getSaved.
+- match: contacts.deleteByPhones
+  status: planned
+  priority: P2
+  note: Delete contacts by phone number.
+- match: contacts.blockFromReplies
+  status: planned
+  priority: P2
+  note: Block from the replies/comments bot.
+- match: stickers.changeSticker
+  status: planned
+  priority: P2
+  note: Edit emoji/keywords of a sticker in your set.
+- match: stickers.replaceSticker
+  status: planned
+  priority: P2
+  note: Replace a sticker in your set.
+- match: stickers.setStickerSetThumb
+  status: planned
+  priority: P2
+  note: Custom thumbnail for your sticker set.
+- match: account.uploadRingtone
+  status: planned
+  priority: P2
+  note: Custom notification sounds.
+- match: account.saveRingtone
+  status: planned
+  priority: P2
+  note: Custom notification sounds.
+- match: account.uploadWallPaper
+  status: planned
+  priority: P2
+  note: Custom chat wallpaper from a photo.
+- match: phone.inviteToGroupCall
+  status: planned
+  priority: P2
+  note: Invite people into a running voice chat.
+- match: phone.sendGroupCallMessage
+  status: planned
+  priority: P2
+  note: Chat inside a live stream / group call.
+- match: messages.searchSentMedia
+  status: planned
+  priority: P2
+  note: '"Recent media" when attaching.'
+- match: account.invalidateSignInCodes
+  status: planned
+  priority: P2
+  note: Sent when a login code was shared by mistake.
+- match: help.getCdnConfig
+  status: planned
+  priority: P2
+  note: Clients ask on start; an empty CDN config is the correct answer.
+
+# --- P3: nice to have --------------------------------------------------------
+- match: account.initTakeoutSession
+  status: planned
+  priority: P3
+  note: Data export (desktop "Export Telegram data").
+- match: account.finishTakeoutSession
+  status: planned
+  priority: P3
+  note: Data export.
+- match: messages.initHistoryImport
+  status: planned
+  priority: P3
+  note: Import chats from WhatsApp and others.
+- match: messages.uploadImportedMedia
+  status: planned
+  priority: P3
+  note: History import.
+- match: messages.startHistoryImport
+  status: planned
+  priority: P3
+  note: History import.
+- match: messages.checkHistoryImport
+  status: planned
+  priority: P3
+  note: History import.
+- match: messages.checkHistoryImportPeer
+  status: planned
+  priority: P3
+  note: History import.
+- match: payments.checkGiftCode
+  status: planned
+  priority: P3
+  note: Premium gift codes and giveaways.
+- match: payments.applyGiftCode
+  status: planned
+  priority: P3
+  note: Premium gift codes and giveaways.
+- match: payments.getGiveawayInfo
+  status: planned
+  priority: P3
+  note: Giveaways.
+- match: payments.launchPrepaidGiveaway
+  status: planned
+  priority: P3
+  note: Giveaways.
+- match: payments.getStarsGiveawayOptions
+  status: planned
+  priority: P3
+  note: Giveaways.
+- match: messages.getFactCheck
+  status: planned
+  priority: P3
+  note: Fact checks on channel posts (gramsrv has an implementation to look at).
+- match: messages.editFactCheck
+  status: planned
+  priority: P3
+  note: Fact checks.
+- match: messages.deleteFactCheck
+  status: planned
+  priority: P3
+  note: Fact checks.
+- match: payments.getBankCardData
+  status: planned
+  priority: P3
+  note: Card number detection in messages.
+- match: messages.summarizeText
+  status: planned
+  priority: P3
+  note: AI summary; needs an AI backend.
+- match: messages.translateRichMessage
+  status: planned
+  priority: P3
+  note: Needs the translation backend.
+- match: messages.composeRichMessageWithAI
+  status: planned
+  priority: P3
+  note: Needs an AI backend.
+- match: users.suggestBirthday
+  status: planned
+  priority: P3
+  note: Suggest a birthday to a contact.
+- match: messages.sendScreenshotNotification
+  status: planned
+  priority: P3
+  note: Screenshot notice in secret chats.
