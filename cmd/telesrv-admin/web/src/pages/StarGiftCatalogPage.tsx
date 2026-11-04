@@ -283,14 +283,14 @@ export function StarGiftCatalogPage() {
       <button className="btn primary" type="button" onClick={startImport}><Plus size={15} /> {"Add gift"}</button>
     </>}>
       {error && <Alert>{error}</Alert>}
-      <div className="toolbar" role="group" aria-label={"Star gift catalog sections"}>
-        <button className={`btn icon-text ${tab === "catalog" ? "primary" : ""}`} type="button" aria-pressed={tab === "catalog"} onClick={() => setTab("catalog")}>
+      <nav className="profile-tabs catalog-tabs" aria-label={"Star gift catalog sections"}>
+        <button className={tab === "catalog" ? "active" : ""} type="button" aria-pressed={tab === "catalog"} onClick={() => setTab("catalog")}>
           <Gem size={15} /> {"Catalog"}
         </button>
-        <button className={`btn icon-text ${tab === "import" ? "primary" : ""}`} type="button" aria-pressed={tab === "import"} onClick={() => setTab("import")}>
-          <PackagePlus size={15} /> {"Import Pack"}
+        <button className={tab === "import" ? "active" : ""} type="button" aria-pressed={tab === "import"} onClick={() => setTab("import")}>
+          <PackagePlus size={15} /> {"Gift packs"}
         </button>
-      </div>
+      </nav>
       {tab === "catalog" && <>
       <div className="metric-row gift-metrics">
         <Metric label={"Catalog entries"} value={String(gifts.length)} />
@@ -364,29 +364,39 @@ export function StarGiftCatalogPage() {
       {tab === "import" && <>
       <GiftPacks onImported={() => void load()} reloadKey={packsVersion} />
 
-      <section className="section-block">
-        <h2>{"Upload a pack"}</h2>
-        <div className="card-body">
-          <p className="gift-import-note"><span>{"A pack is a .zip with pack.json at the root plus the .tgs/Lottie assets it references. Uploading only puts it on the shelf above — nothing reaches the catalog until you import it there, whole or one gift at a time. Dry-run first: it parses the manifest and validates every animation before anything is stored. Build your own with the step-by-step guide in "}<code>{"docs/gift-packs.md"}</code>{"."}</span></p>
-          <label className={`gift-file-picker ${packFile ? "has-file" : ""}`}>
+      <section className="pack-upload">
+        <header className="pack-shelf-head">
+          <h2>{"Upload a pack"}</h2>
+          <span>{"A .zip with pack.json at the root plus the .tgs / Lottie files it lists. Uploading only puts it on the shelf — nothing reaches the catalog until you import it. Guide: "}<code>{"docs/gift-packs.md"}</code></span>
+        </header>
+        <div className="pack-upload-body">
+          <label className={`pack-drop ${packFile ? "has-file" : ""}`}>
             <input type="file" accept=".zip,application/zip" onChange={(e) => { setPackFile(e.target.files?.[0] ?? null); setPackPreview(null); }} />
-            <span className="gift-file-icon"><FileArchive size={22} /></span>
-            <span className="gift-file-copy"><span className="gift-field-label">{"Pack archive"}</span><strong>{packFile ? packFile.name : "Drop or choose a pack .zip"}</strong><small>{packFile ? formatBytes(packFile.size) : "pack.json + assets, validated before it is stored"}</small></span>
-            <span className="gift-file-action">{packFile ? "Change file" : "Choose file"}</span>
+            <span className="pack-drop-icon"><FileArchive size={26} /></span>
+            <strong>{packFile ? packFile.name : "Drop a pack .zip here"}</strong>
+            <small>{packFile ? formatBytes(packFile.size) : "or click to choose a file"}</small>
+            <span className="btn compact-btn">{packFile ? "Change file" : "Choose file"}</span>
           </label>
-          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={packReason} placeholder={"Briefly describe why this pack is being uploaded"} onChange={(e) => setPackReason(e.target.value)} /></label>
+          <div className="pack-upload-side">
+          <ol className="pack-steps">
+            <li className={packFile ? "done" : "active"}>{"Choose the archive"}</li>
+            <li className={packPreview ? "done" : packFile ? "active" : ""}>{"Dry run — checks the manifest and every animation"}</li>
+            <li className={packPreview ? "active" : ""}>{"Confirm to put it on the shelf"}</li>
+          </ol>
+          <label className="gift-reason-field"><span>{"Audit reason"}</span><input value={packReason} placeholder={"Why this pack is being uploaded"} onChange={(e) => setPackReason(e.target.value)} /></label>
           {packError && <Alert>{packError}</Alert>}
           {packPreview && <div className="gift-validation">
             <div className="gift-validation-head"><CheckCircle2 size={17} /><div><strong>{"Validation passed"}</strong><span>{"Review what this pack contains, then confirm to store it."}</span></div></div>
             <pre>{JSON.stringify(packPreview.details, null, 2)}</pre>
           </div>}
-          <div className="action-stack">
-            <button className="btn" type="button" onClick={validatePackUpload} disabled={packBusy}>
-              {packBusy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />} {"Dry-run validation"}
+          <div className="pack-upload-actions">
+            <button className="btn icon-text" type="button" onClick={validatePackUpload} disabled={packBusy || !packFile}>
+              {packBusy ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />} {"Dry run"}
             </button>
-            <button className="btn primary" type="button" onClick={confirmPackUpload} disabled={packBusy || !packPreview}>
+            <button className="btn primary icon-text" type="button" onClick={confirmPackUpload} disabled={packBusy || !packPreview}>
               <Upload size={15} /> {"Confirm upload"}
             </button>
+          </div>
           </div>
         </div>
       </section>

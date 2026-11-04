@@ -2,6 +2,7 @@ import { CheckCircle2, CircleAlert, Gift, Loader2, Sparkles, User, Users } from 
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ChannelPicker, UserPicker } from "../components/EntityPicker";
+import { LottiePreview } from "./StarGiftCatalogPage";
 import { Alert, JsonBlock } from "../components/ui";
 import type { AccountRow, ChannelRow, CommandResult, StarGiftCatalogRow, StarGiftCollectibleAttributeRow, StarGiftCollectiblePreview } from "../types";
 
@@ -118,109 +119,123 @@ export function GiveGiftForm({ gift, onDone }: { gift: StarGiftCatalogRow; onDon
   const mainAction = canConfirm ? "confirm" : "dry-run";
 
   return (
-    <div className="give-gift-form">
-      <div className="give-gift-summary">
-        <Gift size={16} />
-        <div>
-          <strong>{gift.Title || `Gift #${gift.GiftID}`}</strong>
-          <span className="mono">#{gift.GiftID} · ⭐ {gift.Stars} · from 777000 (OwpenGram)</span>
+    <div className="give-form">
+      <header className="give-hero">
+        <div className="give-hero-art">
+          <LottiePreview giftID={gift.GiftID} revision={gift.Revision} />
         </div>
-      </div>
-
-      <div className="give-gift-tabs" role="group" aria-label={"Recipient type"}>
-        <button type="button" className={`btn ${kind === "user" ? "primary" : ""}`} onClick={() => { setKind("user"); invalidateStaged(); }}>
-          <User size={15} /> {"User"}
-        </button>
-        <button type="button" className={`btn ${kind === "channel" ? "primary" : ""}`} onClick={() => { setKind("channel"); setUpgrade(false); invalidateStaged(); }}>
-          <Users size={15} /> {"Channel"}
-        </button>
-      </div>
-
-      {kind === "user"
-        ? <UserPicker label={"Recipient user"} value={user} onChange={(row) => { setUser(row); invalidateStaged(); }} />
-        : <ChannelPicker label={"Recipient channel"} value={channel} onChange={(row) => { setChannel(row); invalidateStaged(); }} />}
-
-      {kind === "user" && (
-        <label className="gift-switch">
-          <input type="checkbox" checked={upgrade} onChange={(event) => { setUpgrade(event.target.checked); if (!event.target.checked) { setPickAttrs(false); setModelID("0"); setPatternID("0"); setBackdropID("0"); } invalidateStaged(); }} />
-          <span className="gift-switch-track" aria-hidden="true"><span /></span>
-          <span>{"Deliver as upgraded collectible"}</span>
-        </label>
-      )}
-      {upgrade && previewError && <Alert>{previewError}</Alert>}
-      {upgrade && preview && (
-        <div className="give-gift-attrs-toggle">
-          <p className="give-gift-upgrade-note"><Sparkles size={13} /> {"Model, pattern and backdrop are drawn at random from the published pool."}</p>
-          {!pickAttrs
-            ? <button className="btn compact-btn" type="button" onClick={() => setPickAttrs(true)}>{"Choose specific attributes instead"}</button>
-            : (
-              <div className="gift-fields-grid give-gift-attrs">
-                <label>
-                  <span>{"Model"}</span>
-                  <select value={modelID} onChange={(event) => { setModelID(event.target.value); invalidateStaged(); }}>
-                    <option value="0">{"Random"}</option>
-                    {(preview.models ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>{"Pattern"}</span>
-                  <select value={patternID} onChange={(event) => { setPatternID(event.target.value); invalidateStaged(); }}>
-                    <option value="0">{"Random"}</option>
-                    {(preview.patterns ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
-                  </select>
-                </label>
-                <label>
-                  <span>{"Backdrop"}</span>
-                  <select value={backdropID} onChange={(event) => { setBackdropID(event.target.value); invalidateStaged(); }}>
-                    <option value="0">{"Random"}</option>
-                    {(preview.backdrops ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
-                  </select>
-                </label>
-              </div>
-            )}
+        <div className="give-hero-info">
+          <span className="give-hero-eyebrow">{"Sending"}</span>
+          <h2>{gift.Title || `Gift #${gift.GiftID}`}</h2>
+          <div className="give-hero-facts">
+            <span className="give-hero-price">{`★ ${Number(gift.Stars).toLocaleString()}`}</span>
+            <span>{`converts to ★ ${Number(gift.ConvertStars).toLocaleString()}`}</span>
+            <span className="mono">{`#${gift.GiftID}`}</span>
+            {!gift.Enabled && <span className="give-hero-off">{"disabled in the store"}</span>}
+          </div>
+          <p>{"Free of charge, delivered from the system account 777000."}</p>
         </div>
-      )}
+      </header>
 
-      <details className="raw-details">
-        <summary>{"Message and delivery options"}</summary>
-        <div className="give-gift-more-options">
-          <label className="form-field">
-            <span>{"Attached message (optional)"}</span>
-            <textarea value={message} rows={2} maxLength={128} onChange={(event) => { setMessage(event.target.value); invalidateStaged(); }} placeholder={"Shown with the gift"} />
-          </label>
+      <section className="give-step">
+        <h3><span>1</span>{"Recipient"}</h3>
+        <div className="give-seg" role="group" aria-label={"Recipient type"}>
+          <button type="button" className={kind === "user" ? "active" : ""} onClick={() => { setKind("user"); invalidateStaged(); }}>
+            <User size={15} /> {"User"}
+          </button>
+          <button type="button" className={kind === "channel" ? "active" : ""} onClick={() => { setKind("channel"); setUpgrade(false); invalidateStaged(); }}>
+            <Users size={15} /> {"Channel"}
+          </button>
+        </div>
+        {kind === "user"
+          ? <UserPicker label={""} value={user} onChange={(row) => { setUser(row); invalidateStaged(); }} />
+          : <ChannelPicker label={""} value={channel} onChange={(row) => { setChannel(row); invalidateStaged(); }} />}
+      </section>
+
+      <section className="give-step">
+        <h3><span>2</span>{"Options"}</h3>
+        {kind === "user" && (
           <label className="gift-switch">
-            <input type="checkbox" checked={hideName} onChange={(event) => { setHideName(event.target.checked); invalidateStaged(); }} />
+            <input type="checkbox" checked={upgrade} onChange={(event) => { setUpgrade(event.target.checked); if (!event.target.checked) { setPickAttrs(false); setModelID("0"); setPatternID("0"); setBackdropID("0"); } invalidateStaged(); }} />
             <span className="gift-switch-track" aria-hidden="true"><span /></span>
-            <span>{"Hide sender name from recipient"}</span>
+            <span>{"Deliver as an upgraded collectible"}</span>
           </label>
-        </div>
-      </details>
+        )}
+        {upgrade && previewError && <Alert>{previewError}</Alert>}
+        {upgrade && preview && (
+          <div className="give-attrs">
+            <p className="give-note"><Sparkles size={13} /> {"Model, pattern and backdrop are drawn at random from the published pool."}</p>
+            {!pickAttrs
+              ? <button className="btn compact-btn" type="button" onClick={() => setPickAttrs(true)}>{"Choose specific attributes"}</button>
+              : (
+                <div className="give-attrs-grid">
+                  <label>
+                    <span>{"Model"}</span>
+                    <select value={modelID} onChange={(event) => { setModelID(event.target.value); invalidateStaged(); }}>
+                      <option value="0">{"Random"}</option>
+                      {(preview.models ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{"Pattern"}</span>
+                    <select value={patternID} onChange={(event) => { setPatternID(event.target.value); invalidateStaged(); }}>
+                      <option value="0">{"Random"}</option>
+                      {(preview.patterns ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{"Backdrop"}</span>
+                    <select value={backdropID} onChange={(event) => { setBackdropID(event.target.value); invalidateStaged(); }}>
+                      <option value="0">{"Random"}</option>
+                      {(preview.backdrops ?? []).map((attr) => <option key={attr.id} value={attr.id}>{attrLabel(attr)}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
+          </div>
+        )}
+        <label className="give-field">
+          <span>{"Message to the recipient (optional)"}</span>
+          <textarea value={message} rows={2} maxLength={128} onChange={(event) => { setMessage(event.target.value); invalidateStaged(); }} placeholder={"Shown with the gift"} />
+        </label>
+        <label className="gift-switch">
+          <input type="checkbox" checked={hideName} onChange={(event) => { setHideName(event.target.checked); invalidateStaged(); }} />
+          <span className="gift-switch-track" aria-hidden="true"><span /></span>
+          <span>{"Hide the sender's name"}</span>
+        </label>
+      </section>
 
-      <label className="form-field">
-        <span>{"Operation reason"}</span>
-        <textarea value={reason} rows={2} onChange={(event) => { setReason(event.target.value); invalidateStaged(); }} placeholder={"Describe why this operation is being performed"} />
-      </label>
+      <section className="give-step">
+        <h3><span>3</span>{"Reason"}</h3>
+        <label className="give-field">
+          <span>{"Goes to the audit log"}</span>
+          <textarea value={reason} rows={2} onChange={(event) => { setReason(event.target.value); invalidateStaged(); }} placeholder={"e.g. Giveaway winner, November contest"} />
+        </label>
+      </section>
 
       {error && <Alert>{error}</Alert>}
       {result && (
-        <div className="result-box">
-          <div className="result-title">
-            {result.error ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
-            <strong>{result.error ? result.error : canConfirm ? "Ready — review below, then confirm" : result.message || "Delivered"}</strong>
-          </div>
-          {result.details && <JsonBlock value={JSON.stringify(result.details, null, 2)} />}
+        <div className={`give-result ${result.error ? "bad" : canConfirm ? "staged" : "done"}`}>
+          {result.error ? <CircleAlert size={16} /> : <CheckCircle2 size={16} />}
+          <strong>{result.error ? result.error : canConfirm ? "Checked — press “Confirm and send” to deliver it" : result.message || "Delivered"}</strong>
         </div>
       )}
-
+      {result?.details && (
+        <details className="raw-details">
+          <summary>{"Details"}</summary>
+          <JsonBlock value={JSON.stringify(result.details, null, 2)} />
+        </details>
+      )}
       <details className="raw-details">
         <summary>{"Request JSON"}</summary>
         <JsonBlock value={JSON.stringify(previewPayload, null, 2)} />
       </details>
 
-      <div className="give-gift-form-actions">
-        <button className="btn primary icon-text" type="button" onClick={() => run(mainAction === "confirm")} disabled={busy}>
+      <div className="give-actions">
+        <span className="give-actions-hint">{canConfirm ? "Step 2 of 2: send it" : "Step 1 of 2: a dry run checks everything first"}</span>
+        <button className={`btn icon-text ${canConfirm ? "primary" : ""}`} type="button" onClick={() => run(mainAction === "confirm")} disabled={busy || recipientID <= 0 || !reason.trim()}>
           {busy ? <Loader2 size={15} className="spin" /> : <Gift size={15} />}
-          {mainAction === "confirm" ? "Confirm and send" : "Preview gift"}
+          {mainAction === "confirm" ? "Confirm and send" : "Check"}
         </button>
       </div>
     </div>

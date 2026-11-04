@@ -104,7 +104,7 @@ export function MessagesPage({ navigate, tab, onTab }: { navigate: Navigate; tab
           </button>
         </div>
         <div className="picker-bar">
-          <label className="searchbox picker-search">
+          <label className="searchbox messages-picker-search">
             <Magnifier />
             <input
               value={q}

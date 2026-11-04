@@ -2,7 +2,7 @@ import { Loader2, Plus, RefreshCw, Search } from "../components/icons";
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api";
 import { ActionButton } from "../components/ActionButton";
-import { Alert, Badge, EmptyRow, PageFrame } from "../components/ui";
+import { Alert, Badge, PageFrame } from "../components/ui";
 import type { PremiumPaymentIntent, PremiumPlan } from "../types";
 
 type PlanDraft = {
@@ -56,149 +56,155 @@ export function PremiumPlansPage() {
     setDrafts((prev) => ({ ...prev, [months]: { ...(prev[months] ?? emptyDraft), ...patch } }));
   }
 
+  const sorted = [...plans].sort((x, y) => x.SortOrder - y.SortOrder || x.Months - y.Months);
+  // The dearest price per month among visible plans (usually the shortest
+  // one) is the baseline each card shows its discount against, as a store
+  // page would.
+  const baseMonthly = Math.max(0, ...plans.filter((p) => p.Enabled && p.Months > 0).map((p) => p.AmountStars / p.Months));
+
   return (
     <PageFrame
       title={"Premium plans"}
-      eyebrow={"Prices and durations offered by Settings → Premium and the Premium gift storefront"}
       actions={
-        <button className="btn" type="button" onClick={() => void load()} disabled={busy}>
-          {busy ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} {"Refresh"}
+        <button className="icon-btn" type="button" aria-label={"Refresh"} title={"Refresh"} onClick={() => void load()} disabled={busy}>
+          {busy ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
         </button>
       }
     >
       {error && <Alert>{error}</Alert>}
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{"Months"}</th>
-              <th>{"Duration (days)"}</th>
-              <th>{"Price (Stars)"}</th>
-              <th>{"Label"}</th>
-              <th>{"Sort order"}</th>
-              <th>{"Status"}</th>
-              <th>{"Owner"}</th>
-              <th>{"Version"}</th>
-              <th>{"Actions"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plans.map((plan) => {
-              const draft = drafts[plan.Months] ?? draftFromPlan(plan);
-              return (
-                <tr key={plan.Months}>
-                  <td className="mono">{plan.Months}</td>
-                  <td>
-                    <input
-                      type="number"
-                      className="small-input"
-                      value={draft.durationDays}
-                      onChange={(event) => updateDraft(plan.Months, { durationDays: event.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      className="small-input"
-                      value={draft.amountStars}
-                      onChange={(event) => updateDraft(plan.Months, { amountStars: event.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="small-input"
-                      value={draft.label}
-                      onChange={(event) => updateDraft(plan.Months, { label: event.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="number"
-                      className="small-input"
-                      value={draft.sortOrder}
-                      onChange={(event) => updateDraft(plan.Months, { sortOrder: event.target.value })}
-                    />
-                  </td>
-                  <td>{!plan.Enabled && <Badge tone="danger">{"Disabled"}</Badge>}</td>
-                  <td>{plan.ManagedBy}</td>
-                  <td className="mono">{plan.Version}</td>
-                  <td>
-                    <div className="gift-table-actions">
-                      <ActionButton
-                        compact
-                        tone="neutral"
-                        label={"Save"}
-                        path="/api/actions/premium-upsert-plan"
-                        payload={() => ({
-                          months: plan.Months,
-                          duration_days: Number(draft.durationDays),
-                          amount_stars: Number(draft.amountStars),
-                          label: draft.label,
-                          sort_order: Number(draft.sortOrder),
-                          enabled: draft.enabled,
-                          expected_version: plan.Version
-                        })}
-                        onDone={() => void load()}
-                      />
-                      <ActionButton
-                        compact
-                        tone="neutral"
-                        label={plan.Enabled ? "Disable" : "Enable"}
-                        path="/api/actions/premium-upsert-plan"
-                        payload={() => ({
-                          months: plan.Months,
-                          duration_days: Number(draft.durationDays),
-                          amount_stars: Number(draft.amountStars),
-                          label: draft.label,
-                          sort_order: Number(draft.sortOrder),
-                          enabled: !plan.Enabled,
-                          expected_version: plan.Version
-                        })}
-                        onDone={() => void load()}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {plans.length === 0 && !busy && <EmptyRow colSpan={9} />}
-          </tbody>
-        </table>
-      </div>
+      <p className="plans-intro">{"What buyers see in Settings → Premium and in the Premium gift storefront. Edit a card and press Save; nothing changes until you do."}</p>
+      <div className="plan-grid">
+        {sorted.map((plan) => {
+          const draft = drafts[plan.Months] ?? draftFromPlan(plan);
+          const dirty =
+            Number(draft.durationDays) !== plan.DurationDays ||
+            Number(draft.amountStars) !== plan.AmountStars ||
+            draft.label !== plan.Label ||
+            Number(draft.sortOrder) !== plan.SortOrder;
+          const perMonth = plan.Months > 0 ? Number(draft.amountStars) / plan.Months : 0;
+          const saving = baseMonthly > 0 && perMonth > 0 ? Math.round((1 - perMonth / baseMonthly) * 100) : 0;
+          const payload = (enabled: boolean) => ({
+            months: plan.Months,
+            duration_days: Number(draft.durationDays),
+            amount_stars: Number(draft.amountStars),
+            label: draft.label,
+            sort_order: Number(draft.sortOrder),
+            enabled,
+            expected_version: plan.Version
+          });
+          return (
+            <article key={plan.Months} className={`plan-card ${plan.Enabled ? "" : "off"} ${dirty ? "dirty" : ""}`}>
+              <header className="plan-card-head">
+                <div>
+                  <span className="plan-months">{plan.Months}</span>
+                  <span className="plan-months-unit">{plan.Months === 1 ? "month" : "months"}</span>
+                </div>
+                <div className="plan-card-badges">
+                  {saving > 0 && <span className="plan-save">{`−${saving}%`}</span>}
+                  {!plan.Enabled && <Badge tone="danger">{"Hidden"}</Badge>}
+                </div>
+              </header>
+              <div className="plan-price">
+                <strong>{`★ ${Number(draft.amountStars || 0).toLocaleString()}`}</strong>
+                {perMonth > 0 && <span>{`★ ${Math.round(perMonth).toLocaleString()} / month`}</span>}
+              </div>
+              <div className="plan-fields">
+                <label>
+                  <span>{"Price, Stars"}</span>
+                  <input type="number" min="1" value={draft.amountStars} onChange={(event) => updateDraft(plan.Months, { amountStars: event.target.value })} />
+                </label>
+                <label>
+                  <span>{"Lasts, days"}</span>
+                  <input type="number" min="1" value={draft.durationDays} onChange={(event) => updateDraft(plan.Months, { durationDays: event.target.value })} />
+                </label>
+                <label className="wide">
+                  <span>{"Label"}</span>
+                  <input value={draft.label} placeholder={`${plan.Months} months`} onChange={(event) => updateDraft(plan.Months, { label: event.target.value })} />
+                </label>
+                <label>
+                  <span>{"Order"}</span>
+                  <input type="number" value={draft.sortOrder} onChange={(event) => updateDraft(plan.Months, { sortOrder: event.target.value })} />
+                </label>
+              </div>
+              <footer className="plan-card-foot">
+                <span className="plan-meta">{`${plan.ManagedBy || "console"} · v${plan.Version}`}</span>
+                <div className="plan-card-actions">
+                  <ActionButton
+                    compact
+                    tone="neutral"
+                    label={plan.Enabled ? "Hide" : "Show"}
+                    path="/api/actions/premium-upsert-plan"
+                    payload={() => payload(!plan.Enabled)}
+                    onDone={() => void load()}
+                  />
+                  {dirty && (
+                    <ActionButton compact tone="primary" label={"Save"} path="/api/actions/premium-upsert-plan" payload={() => payload(plan.Enabled)} onDone={() => void load()} />
+                  )}
+                </div>
+              </footer>
+            </article>
+          );
+        })}
 
-      <section className="section-block">
-        <h2>{"Add a plan"}</h2>
-        <div className="card-body">
-          <div className="gift-fields-grid">
-            <label><span>{"Months"}</span><input type="number" min="1" max="120" value={newMonths} onChange={(event) => setNewMonths(event.target.value)} /></label>
-            <label><span>{"Duration (days)"}</span><input type="number" value={newDraft.durationDays} onChange={(event) => setNewDraft((p) => ({ ...p, durationDays: event.target.value }))} /></label>
-            <label><span>{"Price (Stars)"}</span><input type="number" value={newDraft.amountStars} onChange={(event) => setNewDraft((p) => ({ ...p, amountStars: event.target.value }))} /></label>
-            <label><span>{"Sort order"}</span><input type="number" value={newDraft.sortOrder} onChange={(event) => setNewDraft((p) => ({ ...p, sortOrder: event.target.value }))} /></label>
+        <article className="plan-card plan-new">
+          <header className="plan-card-head">
+            <div>
+              <span className="plan-months-unit">{"New plan"}</span>
+            </div>
+            <Plus size={16} />
+          </header>
+          <div className="plan-fields">
+            <label>
+              <span>{"Months"}</span>
+              <input type="number" min="1" max="120" value={newMonths} onChange={(event) => setNewMonths(event.target.value)} />
+            </label>
+            <label>
+              <span>{"Lasts, days"}</span>
+              <input type="number" min="1" value={newDraft.durationDays} onChange={(event) => setNewDraft((p) => ({ ...p, durationDays: event.target.value }))} />
+            </label>
+            <label>
+              <span>{"Price, Stars"}</span>
+              <input type="number" min="1" value={newDraft.amountStars} onChange={(event) => setNewDraft((p) => ({ ...p, amountStars: event.target.value }))} />
+            </label>
+            <label>
+              <span>{"Order"}</span>
+              <input type="number" value={newDraft.sortOrder} onChange={(event) => setNewDraft((p) => ({ ...p, sortOrder: event.target.value }))} />
+            </label>
+            <label className="wide">
+              <span>{"Label"}</span>
+              <input value={newDraft.label} placeholder={"e.g. 3 months"} onChange={(event) => setNewDraft((p) => ({ ...p, label: event.target.value }))} />
+            </label>
           </div>
-          <label className="form-field"><span>{"Label"}</span><input value={newDraft.label} placeholder={"e.g. 3 months"} onChange={(event) => setNewDraft((p) => ({ ...p, label: event.target.value }))} /></label>
-          <label className="gift-switch">
-            <input type="checkbox" checked={newDraft.enabled} onChange={(event) => setNewDraft((p) => ({ ...p, enabled: event.target.checked }))} />
-            <span className="gift-switch-track" aria-hidden="true"><span /></span>
-            <span>{"Enabled"}</span>
-          </label>
-          <ActionButton
-            tone="primary"
-            label={"Add plan"}
-            icon={<Plus size={15} />}
-            path="/api/actions/premium-upsert-plan"
-            payload={() => ({
-              months: Number(newMonths),
-              duration_days: Number(newDraft.durationDays),
-              amount_stars: Number(newDraft.amountStars),
-              label: newDraft.label,
-              sort_order: Number(newDraft.sortOrder),
-              enabled: newDraft.enabled,
-              expected_version: 0
-            })}
-            onDone={() => { setNewDraft(emptyDraft); void load(); }}
-          />
-        </div>
-      </section>
+          <footer className="plan-card-foot">
+            <label className="gift-switch">
+              <input type="checkbox" checked={newDraft.enabled} onChange={(event) => setNewDraft((p) => ({ ...p, enabled: event.target.checked }))} />
+              <span className="gift-switch-track" aria-hidden="true"><span /></span>
+              <span>{"Visible"}</span>
+            </label>
+            <ActionButton
+              compact
+              tone="primary"
+              label={"Add plan"}
+              icon={<Plus size={14} />}
+              path="/api/actions/premium-upsert-plan"
+              payload={() => ({
+                months: Number(newMonths),
+                duration_days: Number(newDraft.durationDays),
+                amount_stars: Number(newDraft.amountStars),
+                label: newDraft.label,
+                sort_order: Number(newDraft.sortOrder),
+                enabled: newDraft.enabled,
+                expected_version: 0
+              })}
+              onDone={() => {
+                setNewDraft(emptyDraft);
+                void load();
+              }}
+            />
+          </footer>
+        </article>
+      </div>
+      {plans.length === 0 && !busy && <div className="plans-empty">{"No plans yet. Add the first one above."}</div>}
 
       <RefundSection />
     </PageFrame>
@@ -226,41 +232,44 @@ function RefundSection() {
   }
 
   return (
-    <section className="section-block">
-      <h2>{"Refund a purchase"}</h2>
-      <div className="card-body">
-        <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void lookup(); }}>
-          <label className="searchbox">
-            <Search size={15} />
-            <input value={paymentID} onChange={(event) => setPaymentID(event.target.value)} placeholder={"Payment intent ID"} />
-          </label>
-          <button className="btn icon-text" type="submit" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Look up"}
-          </button>
-        </form>
-        {error && <Alert>{error}</Alert>}
-        {payment && (
-          <div className="attr-block">
-            <div className="result-line"><span>{"Kind"}</span><strong>{payment.Kind}</strong></div>
-            <div className="result-line"><span>{"Buyer"}</span><strong>{payment.BuyerUserID}</strong></div>
-            <div className="result-line"><span>{"Recipient"}</span><strong>{payment.RecipientUserID}</strong></div>
-            <div className="result-line"><span>{"Months"}</span><strong>{payment.Months}</strong></div>
-            <div className="result-line"><span>{"Amount (Stars)"}</span><strong>{payment.AmountStars}</strong></div>
-            <div className="result-line"><span>{"Status"}</span><strong>{payment.Status}</strong></div>
-            {payment.Status === "paid" ? (
-              <ActionButton
-                tone="danger"
-                label={"Refund this purchase"}
-                path="/api/actions/premium-refund"
-                payload={() => ({ payment_intent_id: payment.ID })}
-                onDone={() => void lookup()}
-              />
-            ) : (
-              <Badge>{`Not refundable (status: ${payment.Status})`}</Badge>
-            )}
-          </div>
-        )}
-      </div>
+    <section className="refund-panel">
+      <header>
+        <h2>{"Refund a purchase"}</h2>
+        <p>{"Look up a paid Premium purchase by its payment intent ID and return the Stars."}</p>
+      </header>
+      <form className="refund-search" onSubmit={(event) => { event.preventDefault(); void lookup(); }}>
+        <label className="searchbox">
+          <Search size={15} />
+          <input value={paymentID} onChange={(event) => setPaymentID(event.target.value)} placeholder={"Payment intent ID"} />
+        </label>
+        <button className="btn icon-text" type="submit" disabled={busy || !paymentID.trim()}>
+          {busy ? <Loader2 size={15} className="spin" /> : <Search size={15} />} {"Look up"}
+        </button>
+      </form>
+      {error && <Alert>{error}</Alert>}
+      {payment && (
+        <div className="refund-card">
+          <dl>
+            <div><dt>{"Kind"}</dt><dd>{payment.Kind}</dd></div>
+            <div><dt>{"Buyer"}</dt><dd className="mono">{payment.BuyerUserID}</dd></div>
+            <div><dt>{"Recipient"}</dt><dd className="mono">{payment.RecipientUserID}</dd></div>
+            <div><dt>{"Months"}</dt><dd>{payment.Months}</dd></div>
+            <div><dt>{"Amount"}</dt><dd>{`★ ${payment.AmountStars}`}</dd></div>
+            <div><dt>{"Status"}</dt><dd><Badge tone={payment.Status === "paid" ? "good" : "neutral"}>{payment.Status}</Badge></dd></div>
+          </dl>
+          {payment.Status === "paid" ? (
+            <ActionButton
+              tone="danger"
+              label={"Refund this purchase"}
+              path="/api/actions/premium-refund"
+              payload={() => ({ payment_intent_id: payment.ID })}
+              onDone={() => void lookup()}
+            />
+          ) : (
+            <span className="refund-note">{`Can't be refunded (status: ${payment.Status})`}</span>
+          )}
+        </div>
+      )}
     </section>
   );
 }

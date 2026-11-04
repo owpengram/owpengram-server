@@ -626,7 +626,7 @@
   border-radius: var(--radius-lg);
   background: var(--panel);
 }
-.picker-search { flex: 0 1 420px; min-width: 220px; }
+.messages-picker-search { flex: 0 1 420px; min-width: 220px; }
 .picker-hint { flex: 1 1 280px; margin: 0; color: var(--muted); font-size: 13px; }
 .picker-grid {
   list-style: none;

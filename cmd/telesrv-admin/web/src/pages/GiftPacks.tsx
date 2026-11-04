@@ -291,9 +291,12 @@ export function GiftPacks({ onImported, reloadKey = 0 }: { onImported: () => voi
   useEffect(load, [reloadKey]);
 
   return (
-    <section className="section-block">
-      <h2>{"Your packs"}</h2>
-      <div className="card-body">
+    <section className="pack-shelf">
+      <header className="pack-shelf-head">
+        <h2>{"Your packs"}</h2>
+        <span>{"Preview a pack, then import all of it or single gifts. Gifts already in the catalog are skipped."}</span>
+      </header>
+      <div>
         {error && <Alert>{error}</Alert>}
         {packs === null && !error && <div className="gift-pack-loading"><Loader2 className="spin" size={16} /> {"Loading packs…"}</div>}
         {packs?.length === 0 && <div className="gift-pack-empty">
@@ -307,16 +310,19 @@ export function GiftPacks({ onImported, reloadKey = 0 }: { onImported: () => voi
               <article className="gift-pack-card" key={pack.id}>
                 <button className="gift-pack-cover" type="button" onClick={() => setPreviewPack(pack)} aria-label={`Preview ${pack.name}`}>
                   <PackAnimation packID={pack.id} slug={pack.icon} />
+                  <span className="gift-pack-count">{`${pack.gifts.length} ${pack.gifts.length === 1 ? "gift" : "gifts"}`}</span>
                 </button>
+                <div className="gift-pack-remove">
+                  <DeletePackButton pack={pack} onDone={() => { setPreviewPack(null); load(); }} />
+                </div>
                 <div className="gift-pack-info">
                   <strong className="gift-pack-name">{pack.name}</strong>
-                  <span className="gift-pack-meta">{giftCount(pack)}</span>
+                  <span className="gift-pack-meta">{`by ${pack.author}`}</span>
                   <p className="gift-pack-desc">{pack.description}</p>
                 </div>
                 <div className="gift-pack-actions">
-                  <button className="btn" type="button" onClick={() => setPreviewPack(pack)}><Eye size={15} /> {"Preview"}</button>
+                  <button className="btn icon-text" type="button" onClick={() => setPreviewPack(pack)}><Eye size={15} /> {"Preview"}</button>
                   <ImportPackButton pack={pack} onDone={onImported} />
-                  <DeletePackButton pack={pack} onDone={() => { setPreviewPack(null); load(); }} />
                 </div>
               </article>
             ))}
