@@ -50,6 +50,7 @@ type Service struct {
 	authorizations            store.AuthorizationStore
 	phoneChanges              store.PhoneChangeStore
 	lifecycle                 store.AccountLifecycleStore
+	tmpPasswords              store.TmpPasswordStore
 	publicBaseURL             string
 	codes                     store.CodeStore
 	phoneChangeCode           string

@@ -254,7 +254,7 @@ func setCustomVerificationRequest(peer tg.InputPeerClass, bot tg.InputUserClass,
 	}
 	req.SetEnabled(enabled)
 	if description != "" {
-		req.SetCustomDescription(description)
+		req.SetCustomDescription(tg.TextWithEntities{Text: description})
 	}
 	return req
 }

@@ -91,6 +91,9 @@ func (r *Router) registerAccount(d *tlprofile.Dispatcher) {
 	registerRPC[*tg.AccountGetPasswordRequest](d, tlprofile.SemanticMethodAccountGetPassword, func(ctx context.Context, layerRequest *tg.AccountGetPasswordRequest) (any, error) {
 		return r.onAccountGetPassword(ctx)
 	})
+	registerRPC[*tg.AccountGetTmpPasswordRequest](d, tlprofile.SemanticMethodAccountGetTmpPassword, func(ctx context.Context, layerRequest *tg.AccountGetTmpPasswordRequest) (any, error) {
+		return r.onAccountGetTmpPassword(ctx, layerRequest)
+	})
 	registerRPC[*tg.AccountGetNotifySettingsRequest](d, tlprofile.SemanticMethodAccountGetNotifySettings, func(ctx context.Context, layerRequest *tg.AccountGetNotifySettingsRequest) (any, error) {
 		return r.onAccountGetNotifySettings(ctx, layerRequest.
 			Peer)
@@ -870,7 +873,7 @@ func (r *Router) onAccountInitPasskeyRegistration(ctx context.Context) (*tg.Acco
 }
 
 // onAccountRegisterPasskey 验证注册 attestation 并持久化凭据。
-func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.InputPasskeyCredentialClass) (*tg.Passkey, error) {
+func (r *Router) onAccountRegisterPasskey(ctx context.Context, credential tg.InputPasskeyCredentialPublicKey) (*tg.Passkey, error) {
 	if r.deps.Passkey == nil {
 		return nil, internalErr()
 	}

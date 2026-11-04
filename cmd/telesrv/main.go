@@ -1229,6 +1229,7 @@ func run(logger *zap.Logger) error {
 		account.WithUsers(userStore),
 		account.WithPhoneChange(phoneChangeStore, authzStore, codeStore, userCache, cfg.DevAuthCode, cfg.AuthCodeTTL, cfg.AuthCodeMaxAttempts),
 		account.WithAccountLifecycle(accountLifecycleStore),
+		account.WithTmpPasswords(postgres.NewTmpPasswordStore(pool), authzStore),
 		account.WithPublicBaseURL(cfg.PublicBaseURL),
 		account.WithEmailSignup(cfg.EmailSignupEnable),
 		account.WithEmailSignupPhonePrefixes(cfg.EmailSignupPhonePrefixes),

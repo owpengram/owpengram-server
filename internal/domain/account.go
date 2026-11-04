@@ -13,6 +13,9 @@ var (
 	ErrPasswordHashInvalid     = errors.New("password hash invalid")
 	ErrSRPIDInvalid            = errors.New("srp id invalid")
 	ErrSRPPasswordChanged      = errors.New("srp password changed")
+	ErrTmpPasswordInvalid      = errors.New("tmp password invalid")
+	ErrTmpPasswordPeriod       = errors.New("tmp password period invalid")
+	ErrPasswordMissing         = errors.New("password missing")
 	ErrNewSettingsInvalid      = errors.New("new password settings invalid")
 	ErrNewSaltInvalid          = errors.New("new password salt invalid")
 	ErrPasswordRecoveryNA      = errors.New("password recovery not available")
@@ -129,6 +132,32 @@ type PasswordSettings struct {
 type RevenueWithdrawalPasswordState struct {
 	HasPassword       bool
 	PasswordChangedAt time.Time
+}
+
+// account.getTmpPassword period bounds in seconds, as TDLib's
+// createTemporaryPassword documents them.
+const (
+	TmpPasswordMinPeriod = 60
+	TmpPasswordMaxPeriod = 86400
+)
+
+// TmpPasswordGrant is the server record of one account.getTmpPassword
+// issuance. It keeps only the SHA-256 of the bearer secret. The grant is valid
+// for its own authorization only while AuthorizationCreatedAt and
+// PasswordChangedAt still match the live authorization and 2FA password.
+type TmpPasswordGrant struct {
+	AuthKeyID              [8]byte
+	UserID                 int64
+	AuthorizationCreatedAt time.Time
+	PasswordChangedAt      time.Time
+	SecretHash             [32]byte
+	ValidUntil             time.Time
+}
+
+// TmpPassword is an issued bearer secret; it is returned to the client once.
+type TmpPassword struct {
+	Secret     []byte
+	ValidUntil time.Time
 }
 
 // ReactionNotifyFrom stores one account-level reaction notification scope.

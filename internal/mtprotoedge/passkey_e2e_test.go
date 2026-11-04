@@ -174,7 +174,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 			return err
 		}
 		credB64 := authn.CredentialIDB64()
-		cred := &tg.InputPasskeyCredentialPublicKey{
+		cred := tg.InputPasskeyCredentialPublicKey{
 			ID:    credB64,
 			RawID: credB64,
 			Response: &tg.InputPasskeyResponseRegister{
@@ -222,7 +222,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 		}
 		credB64 := authn.CredentialIDB64()
 		res, err := raw.AuthFinishPasskeyLogin(ctx, &tg.AuthFinishPasskeyLoginRequest{
-			Credential: &tg.InputPasskeyCredentialPublicKey{
+			Credential: tg.InputPasskeyCredentialPublicKey{
 				ID:    credB64,
 				RawID: credB64,
 				Response: &tg.InputPasskeyResponseLogin{
@@ -256,7 +256,7 @@ func TestPasskeyEndToEnd(t *testing.T) {
 			return err
 		}
 		if _, err := raw.AuthFinishPasskeyLogin(ctx, &tg.AuthFinishPasskeyLoginRequest{
-			Credential: &tg.InputPasskeyCredentialPublicKey{
+			Credential: tg.InputPasskeyCredentialPublicKey{
 				ID: credB64, RawID: credB64,
 				Response: &tg.InputPasskeyResponseLogin{
 					ClientData: tg.DataJSON{Data: string(cd2)}, AuthenticatorData: ad2, Signature: sig2, UserHandle: userHandle,

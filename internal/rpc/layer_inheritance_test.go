@@ -46,7 +46,7 @@ func TestResolveInheritedAuthKeyLayerUsesAuthKeyAuthorityOnly(t *testing.T) {
 	}{
 		{name: "auth key primary", keyLayer: 225, authorization: 227, want: 225, found: true},
 		{name: "authorization mirror is not protocol evidence", keyLayer: 0, authorization: 225},
-		{name: "unsupported primary is authoritative unknown", keyLayer: 230, authorization: 227, found: true},
+		{name: "unsupported primary is authoritative unknown", keyLayer: testFutureLayer, authorization: 227, found: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -356,7 +356,7 @@ func TestResolveInheritedBoundTempUnsupportedPermanentBlocksRawShadow(t *testing
 		hasResolved:       true,
 		authKeyClientInfos: map[[8]byte]domain.AuthKeyClientInfo{
 			rawAuthKeyID:  {Layer: 225},
-			permAuthKeyID: {Layer: 230},
+			permAuthKeyID: {Layer: testFutureLayer},
 		},
 	}
 	r := New(Config{DC: 2}, Deps{Auth: auth}, zaptest.NewLogger(t), clock.System)
@@ -379,11 +379,11 @@ func TestBindTempAuthKeyFuturePermanentClearsInheritedUntilFreshExplicit(t *test
 		hasResolved:       true,
 		authKeyClientInfos: map[[8]byte]domain.AuthKeyClientInfo{
 			rawAuthKeyID:  {Layer: 225},
-			permAuthKeyID: {Layer: 230, LayerObservationID: 44},
+			permAuthKeyID: {Layer: testFutureLayer, LayerObservationID: 44},
 		},
 	}
 	auth.bindTempHook = func(domain.TempAuthKeyBinding) error {
-		auth.authKeyClientInfos[rawAuthKeyID] = domain.AuthKeyClientInfo{Layer: 230, LayerObservationID: 44}
+		auth.authKeyClientInfos[rawAuthKeyID] = domain.AuthKeyClientInfo{Layer: testFutureLayer, LayerObservationID: 44}
 		return nil
 	}
 	sessions := &inheritedLayerCaptureSessions{}
@@ -421,7 +421,7 @@ func TestBindTempAuthKeyFuturePermanentClearsInheritedUntilFreshExplicit(t *test
 func TestSupportedExplicitEvidenceClearsUnsupportedCacheState(t *testing.T) {
 	authKeyID := [8]byte{0x63, 1}
 	auth := &captureAuthService{authKeyClientInfos: map[[8]byte]domain.AuthKeyClientInfo{
-		authKeyID: {Layer: 230},
+		authKeyID: {Layer: testFutureLayer},
 	}}
 	r := New(Config{DC: 2}, Deps{Auth: auth}, zaptest.NewLogger(t), clock.System)
 	if layer, found, err := r.ResolveInheritedAuthKeyLayer(context.Background(), authKeyID); err != nil || !found || layer != 0 {

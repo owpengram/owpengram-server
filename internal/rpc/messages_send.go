@@ -333,6 +333,11 @@ func (r *Router) messageReplyFromInput(ctx context.Context, userID int64, peer d
 	if _, ok := reply.GetPollOption(); ok {
 		return nil, pollOptionInvalidErr()
 	}
+	// Layer 232 rich quote 尚未建模：只存 quote_text 会静默丢掉富文本，只带 quote_rich
+	// 时整段引用都会丢，所以在写入前拒绝。
+	if _, ok := reply.GetQuoteRich(); ok {
+		return nil, quoteTextInvalidErr()
+	}
 	replyPeer := peer
 	if inputPeer, ok := reply.GetReplyToPeerID(); ok {
 		parsed, err := r.checkedMessageReadPeer(ctx, userID, inputPeer, false)

@@ -46,7 +46,7 @@ func tgBotVerification(in domain.BotVerification) (tg.BotVerification, bool) {
 	return tg.BotVerification{
 		BotID:       in.BotID,
 		Icon:        in.Icon,
-		Description: in.Description,
+		Description: tg.TextWithEntities{Text: in.Description},
 	}, true
 }
 
@@ -70,7 +70,7 @@ func tgBotVerifierSettings(in domain.BotVerifierSettings) (tg.BotVerifierSetting
 		out.SetCanModifyCustomDescription(true)
 	}
 	if desc := strings.TrimSpace(in.DefaultDescription); desc != "" {
-		out.SetCustomDescription(desc)
+		out.SetCustomDescription(tg.TextWithEntities{Text: desc})
 	}
 	return out, true
 }

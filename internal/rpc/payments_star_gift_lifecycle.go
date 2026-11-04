@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"time"
 
 	"github.com/iamxvbaba/td/tg"
 	"github.com/iamxvbaba/td/tgerr"
@@ -634,21 +635,72 @@ func (r *Router) onPaymentsTransferStarGift(ctx context.Context, req *tg.Payment
 }
 
 func (r *Router) onPaymentsGetStarGiftWithdrawalURL(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
-	if req == nil || r.deps.Gifts == nil || r.deps.Account == nil {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	// Layer 232 proves 2FA with the tmp_password this authorization got from
+	// account.getTmpPassword.
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, authKeyID [8]byte, now time.Time) error {
+		return r.deps.Account.CheckTmpPassword(ctx, userID, authKeyID, req.TmpPassword, now)
+	})
+}
+
+// onPaymentsGetStarGiftWithdrawalURLLegacy serves exact Layer 225-231 clients:
+// their payments.getStarGiftWithdrawalUrl#d06e93a8 carries an SRP proof instead
+// of a tmp_password. td admits that constructor as its own method with the
+// proof intact, so it is checked as SRP only and never taken for a tmp_password.
+func (r *Router) onPaymentsGetStarGiftWithdrawalURLLegacy(ctx context.Context, req *tg.PaymentsGetStarGiftWithdrawalURLLegacyRequest) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if req == nil {
+		return nil, starGiftInvalidErr()
+	}
+	return r.starGiftWithdrawalURL(ctx, req.Stargift, func(userID int64, _ [8]byte, _ time.Time) error {
+		// inputCheckPasswordEmpty is not a proof, even on an account with 2FA.
+		if _, ok := req.Password.(*tg.InputCheckPasswordSRP); !ok {
+			return domain.ErrPasswordHashInvalid
+		}
+		return r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password))
+	})
+}
+
+// starGiftWithdrawalURL is the export gate both 2FA proofs share: checkProof
+// verifies only its own method's proof, everything else is identical.
+func (r *Router) starGiftWithdrawalURL(
+	ctx context.Context,
+	input tg.InputSavedStarGiftClass,
+	checkProof func(userID int64, authKeyID [8]byte, now time.Time) error,
+) (*tg.PaymentsStarGiftWithdrawalURL, error) {
+	if r.deps.Gifts == nil || r.deps.Account == nil {
 		return nil, starGiftInvalidErr()
 	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
 		return nil, internalErr()
 	}
-	if err := r.deps.Account.CheckPassword(ctx, userID, domainPasswordCheck(req.Password)); err != nil {
+	if r.userIsBot(ctx, userID) {
+		return nil, botMethodInvalidErr()
+	}
+	// An account without 2FA has no proof to check: an empty tmp_password and
+	// inputCheckPasswordEmpty both mean "no proof", so 2FA is required first.
+	passwordState, err := r.deps.Account.RevenueWithdrawalPasswordState(ctx, userID)
+	if err != nil {
+		return nil, internalErr()
+	}
+	if !passwordState.HasPassword {
+		return nil, tgerr.New(400, "PASSWORD_MISSING")
+	}
+	authKeyID, ok := AuthKeyIDFrom(ctx)
+	if !ok || authKeyID == ([8]byte{}) {
+		return nil, authKeyUnregisteredErr()
+	}
+	now := r.clock.Now()
+	if err := checkProof(userID, authKeyID, now); err != nil {
 		return nil, passwordErr(err)
 	}
-	ref, ok, err := r.starGiftRefFromInput(ctx, userID, req.Stargift)
+	ref, ok, err := r.starGiftRefFromInput(ctx, userID, input)
 	if err != nil || !ok || ref.Owner != (domain.Peer{Type: domain.PeerTypeUser, ID: userID}) {
 		return nil, starGiftInvalidErr()
 	}
-	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(r.clock.Now().Unix())})
+	withdrawal, err := r.deps.Gifts.Withdraw(ctx, domain.StarGiftWithdrawalRequest{UserID: userID, Ref: ref, Date: int(now.Unix())})
 	if err != nil {
 		return nil, starGiftLifecycleErr(err)
 	}
