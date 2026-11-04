@@ -336,16 +336,16 @@ function NetworkStep({ onNext }: { onNext: () => void }) {
 const BOT_API_KEY = "TELESRV_BOT_API_ADDR";
 const BOT_API_PORT = "2500";
 
-// Same "reuse the one IP you already told us" pattern as the public base
-// URL on the Network step -- turning bots on doesn't need a second typed
-// address, just the server's own IP with the gateway's fixed default port.
-function defaultBotApiAddr(ip: string): string {
-  return `${ip.trim() || "127.0.0.1"}:${BOT_API_PORT}`;
+// This is the address the gateway *listens* on, so it is every local
+// interface, never the advertised public IP: behind NAT (a home or office
+// router forwarding to the machine) the public IP is not on any interface,
+// the bind fails, and the server restarts in a loop.
+function defaultBotApiAddr(): string {
+  return `0.0.0.0:${BOT_API_PORT}`;
 }
 
 function BotApiStep({ onNext }: { onNext: () => void }) {
   const [enabled, setEnabled] = useState(false);
-  const [ip, setIp] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -355,15 +355,12 @@ function BotApiStep({ onNext }: { onNext: () => void }) {
     api.serverEnv()
       .then((groups) => {
         if (cancelled) return;
-        let nextIp = "";
         let botApiValue = "";
         for (const group of groups) {
           for (const field of group.fields) {
-            if (field.key === ADVERTISE_IP_KEY) nextIp = field.value;
             if (field.key === BOT_API_KEY) botApiValue = field.value.trim();
           }
         }
-        setIp(nextIp);
         setEnabled(botApiValue !== "");
         setLoaded(true);
       })
@@ -377,7 +374,7 @@ function BotApiStep({ onNext }: { onNext: () => void }) {
     try {
       const result = await api.action("/api/actions/update-server-env", {
         command_id: "", reason: WIZARD_REASON, confirm: true,
-        values: { [BOT_API_KEY]: enabled ? defaultBotApiAddr(ip) : "" }
+        values: { [BOT_API_KEY]: enabled ? defaultBotApiAddr() : "" }
       });
       if (result.error) {
         setError(result.error);
