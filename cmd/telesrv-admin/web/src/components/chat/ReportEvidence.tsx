@@ -62,21 +62,33 @@ export function ReportEvidence({ reportID, navigate }: { reportID: number; navig
         const m = item.message;
         if (!m) return null;
         const chatLink = item.peer.type === "channel" ? `/channels/${item.peer.id}` : item.peer.id ? `/accounts/${item.peer.id}` : "";
+        const privateChat = item.peer.type === "user";
+        const label =
+          item.kind === "message"
+            ? privateChat
+              ? "Private message"
+              : m.post
+                ? "Channel post"
+                : "Group message"
+            : KIND_LABEL[item.kind] ?? item.kind;
+        // In a private chat the chat is the person, so their name above the
+        // bubble would only repeat the header.
+        const showSender = m.from_id > 0 && !(privateChat && m.from_type === "user" && m.from_id === item.peer.id);
         return (
           <div key={index} className="evidence-item">
             <div className="evidence-head">
-              <span className="evidence-kind">{KIND_LABEL[item.kind] ?? item.kind}</span>
+              <span className="evidence-kind">{label}</span>
               {item.peer.id > 0 && (
                 <button type="button" className="link-btn evidence-chat" onClick={() => chatLink && navigate(chatLink)}>
                   {item.peer.type === "channel" ? <Megaphone /> : item.peer.type === "chat" ? <Persons /> : <Person />}
-                  {`in ${name(item.peer.type, item.peer.id)}`}
+                  {privateChat ? `from ${name(item.peer.type, item.peer.id)}` : `in ${name(item.peer.type, item.peer.id)}`}
                 </button>
               )}
               {m.id > 0 && <span className="evidence-id">{`#${m.id}`}</span>}
             </div>
             <div className="chat-row in">
               <div className={`chat-bubble ${m.media && !m.text ? "media-only" : ""}`}>
-                {m.from_id > 0 && (
+                {showSender && (
                   <button
                     type="button"
                     className="chat-sender link-btn"

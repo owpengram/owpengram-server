@@ -623,3 +623,35 @@
 .evidence-note { margin: 12px 0; color: var(--muted); }
 .evidence-raw { margin-top: 10px; }
 .evidence-raw summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+
+/* ---- report tabs ---- */
+.report-tabs { margin: 4px 0 12px; }
+.report-tab-id { font-size: 11px; font-weight: 500; opacity: 0.7; }
+.report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.report-reason {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--warn-tint);
+  border: 1px solid var(--warn-border);
+  color: var(--warn);
+  font-weight: 700;
+}
+.report-comment {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--panel-subtle);
+  color: var(--text-soft);
+  white-space: pre-wrap;
+}
+.evidence-item .media-photo,
+.evidence-item .media-video { max-width: 100%; }

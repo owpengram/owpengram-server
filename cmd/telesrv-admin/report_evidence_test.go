@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"telesrv/internal/domain"
@@ -43,5 +45,58 @@ func TestEvidenceToChatDrawsReportedMessages(t *testing.T) {
 	peer := domain.ModerationReportItem{Kind: domain.ModerationItemPeer, Evidence: json.RawMessage(`{"schema_version":1}`)}
 	if got = evidenceToChat(peer); got.Message != nil {
 		t.Fatalf("peer report drew a message: %+v", got.Message)
+	}
+}
+
+func TestModerationReportMediaServesHeldFilesOnly(t *testing.T) {
+	jpeg := append([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, make([]byte, 64)...)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/moderation/reports/2":
+			_, _ = w.Write([]byte(`{"ID":2,"Items":[],"MediaHolds":[{"ItemIndex":0,"Kind":"photo","StorageKey":"photo:6926057846167314953:m"}]}`))
+		case "/v1/private-media":
+			if r.URL.Query().Get("key") != "photo:6926057846167314953:m" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write(jpeg)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	srv, err := newServer(uiConfig{SessionKey: []byte("01234567890123456789012345678901"), AdminAPIURL: api.URL}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(key string) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /r/{id}/media", srv.handleModerationReportMediaAPI)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/r/2/media?key="+key, nil))
+		return rec
+	}
+	if rec := get("photo:6926057846167314953:m"); rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("held photo = %d %q %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body.String())
+	}
+	if rec := get("photo:1:m"); rec.Code != http.StatusForbidden {
+		t.Fatalf("unheld photo = %d", rec.Code)
+	}
+}
+
+func TestResolveHeldKeyRecoversRoundedIDs(t *testing.T) {
+	held := []string{"photo:6926057846167314953:m", "photo:6926057846167314953:x", "doc:6926057846167314953"}
+	cases := map[string]string{
+		"photo:6926057846167315000:m": "photo:6926057846167314953:m",
+		"photo:6926057846167315000:x": "photo:6926057846167314953:x",
+		"doc:6926057846167315000":     "doc:6926057846167314953",
+		"photo:6926057846167314953:m": "photo:6926057846167314953:m",
+		"photo:6926057846167315000:y": "photo:6926057846167315000:y", // no such size held
+		"photo:1:m":                   "photo:1:m",
+	}
+	for in, want := range cases {
+		if got := resolveHeldKey(in, held); got != want {
+			t.Errorf("resolveHeldKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -408,8 +408,14 @@ func moderationPeerValid(peer Peer) bool {
 // map-key ordering. This keeps evidence hashes stable after PostgreSQL jsonb
 // normalizes whitespace and object key order.
 func CanonicalModerationEvidence(raw json.RawMessage) (json.RawMessage, error) {
+	// UseNumber keeps every number as its literal digits. Decoding into a bare
+	// any turns them into float64, which silently rounded 64-bit photo and
+	// document ids in the snapshot (6926057846167314953 -> ...315000), so the
+	// frozen evidence no longer pointed at the file its media hold protects.
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil || decoder.More() {
 		return nil, ErrModerationReportInvalid
 	}
 	if _, ok := value.(map[string]any); !ok {

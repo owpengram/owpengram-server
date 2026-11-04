@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"telesrv/internal/domain"
 )
@@ -139,8 +140,16 @@ func (s *server) handleModerationReportEvidenceAPI(w http.ResponseWriter, r *htt
 	}
 	resp := reportEvidenceResponse{Items: []ReportEvidenceItem{}, Peers: map[string]ChatPeer{}, Replies: map[string]ChatReply{}}
 	page := newChatPage()
+	held := make([]string, 0, len(report.MediaHolds))
+	for _, hold := range report.MediaHolds {
+		held = append(held, hold.StorageKey)
+	}
 	for _, item := range report.Items {
 		converted := evidenceToChat(item)
+		if m := converted.Message; m != nil && m.Media != nil {
+			m.Media.Thumb = resolveHeldKey(m.Media.Thumb, held)
+			m.Media.Full = resolveHeldKey(m.Media.Full, held)
+		}
 		resp.Items = append(resp.Items, converted)
 		if converted.Message != nil {
 			page.Messages = append(page.Messages, *converted.Message)
@@ -188,4 +197,47 @@ func (s *server) handleModerationReportMediaAPI(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.streamStoredFile(w, r, key)
+}
+
+// resolveHeldKey maps a storage key built from the evidence snapshot to the
+// report's exact media-hold key. Reports filed before evidence kept 64-bit
+// numbers exact store photo/document ids rounded through float64, so the
+// snapshot's key misses the hold by the last few digits; the holds were taken
+// from the live message and are exact. A key matches a hold of the same kind
+// and size type whose id rounds to the same float64.
+func resolveHeldKey(key string, held []string) string {
+	if key == "" {
+		return key
+	}
+	kind, id, size, ok := splitStorageKey(key)
+	if !ok {
+		return key
+	}
+	for _, h := range held {
+		if h == key {
+			return key
+		}
+	}
+	for _, h := range held {
+		hk, hid, hsize, ok := splitStorageKey(h)
+		if ok && hk == kind && hsize == size && float64(hid) == float64(id) {
+			return h
+		}
+	}
+	return key
+}
+
+func splitStorageKey(key string) (kind string, id uint64, size string, ok bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return "", 0, "", false
+	}
+	n, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil {
+		return "", 0, "", false
+	}
+	if len(parts) == 3 {
+		size = parts[2]
+	}
+	return parts[0], n, size, true
 }

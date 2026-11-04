@@ -188,25 +188,37 @@ export function ModerationCaseDetailPage({ id, navigate }: { id: number; navigat
             </div>
             <section className="section-block">
               <SectionHead title={"Reported content"} text={"What the reporter sent in, frozen at the moment of the report. Up to the latest 100 reports."} />
-              <div className="toolbar">
-                {detail.ReportIDs.map((reportID) => (
-                  <button className={`btn ${report?.ID === reportID ? "primary" : ""}`} key={reportID} onClick={async () => selectReport(await api.moderationReport(reportID))}>
-                    #{reportID}
-                  </button>
-                ))}
-              </div>
+              {detail.ReportIDs.length > 1 && (
+                <nav className="profile-tabs report-tabs" aria-label={"Reports in this case"}>
+                  {detail.ReportIDs.map((reportID, index) => (
+                    <button
+                      key={reportID}
+                      type="button"
+                      className={report?.ID === reportID ? "active" : ""}
+                      aria-pressed={report?.ID === reportID}
+                      onClick={async () => selectReport(await api.moderationReport(reportID))}
+                    >
+                      {`Report ${detail.ReportIDs.length - index}`}
+                      <span className="report-tab-id">{`#${reportID}`}</span>
+                    </button>
+                  ))}
+                </nav>
+              )}
               {report && (
                 <>
-                  <div className="summary-grid">
-                    <Summary
-                      label={"Source / Reason"}
-                      value={`${moderationEnumLabel("source", report.Source)} / ${moderationEnumLabel("reason", report.Reason)}`}
-                    />
-                    <Summary label={"Reporter"} value={String(report.ReporterUserID)} mono />
-                    <Summary label={"Option"} value={report.Option} mono />
-                    <Summary label={"Time"} value={formatDate(report.CreatedAt)} />
+                  <div className="report-meta">
+                    <span className="report-reason">{moderationEnumLabel("reason", report.Reason)}</span>
+                    <span>{`via ${moderationEnumLabel("source", report.Source)}`}</span>
+                    {report.Option && <span className="mono">{report.Option}</span>}
+                    <span>
+                      {"by "}
+                      <button type="button" className="link-btn" onClick={() => navigate(`/accounts/${report.ReporterUserID}`)}>
+                        {`user ${report.ReporterUserID}`}
+                      </button>
+                    </span>
+                    <span>{formatDate(report.CreatedAt)}</span>
                   </div>
-                  {report.Comment && <p className="about-text">{report.Comment}</p>}
+                  {report.Comment && <blockquote className="report-comment">{report.Comment}</blockquote>}
                   <ReportEvidence reportID={report.ID} navigate={navigate} />
                   <details className="evidence-raw">
                     <summary>{"Raw report data"}</summary>

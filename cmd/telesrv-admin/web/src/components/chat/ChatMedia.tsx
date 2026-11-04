@@ -105,7 +105,25 @@ function fitBox(w = 0, h = 0, max = 320): { width: number; height: number } {
 
 export function MediaView({ media, grant, urlFor, onOpen }: { media: ChatMedia; grant: string; urlFor?: MediaURLFor; onOpen?: (media: ChatMedia) => void }) {
   const [revealed, setRevealed] = useState(!media.spoiler);
-  const [broken, setBroken] = useState(false);
+  const [broken, setBrokenState] = useState(false);
+  // Why the file failed, asked of the server once it did -- a bare "can't be
+  // previewed" hides whether it was a permission, a missing file or the size.
+  const [why, setWhy] = useState("");
+  function setBroken(value: boolean) {
+    setBrokenState(value);
+    const probe = url(media.thumb || media.full);
+    if (!value || !probe) return;
+    fetch(probe, { credentials: "same-origin", cache: "no-store" })
+      .then(async (r) => {
+        if (r.ok) {
+          setWhy(`the browser could not decode ${r.headers.get("content-type") || "the file"}`);
+          return;
+        }
+        const body = await r.json().catch(() => null);
+        setWhy(`HTTP ${r.status}${body?.error ? `: ${body.error}` : ""}`);
+      })
+      .catch((err) => setWhy(String(err)));
+  }
   const url = (key?: string, lottieJSON = false) => (key ? (urlFor ? urlFor(key, lottieJSON) : privateView.mediaURL(key, grant, lottieJSON)) : "");
 
   const fileCard = (note?: string) => (
@@ -118,7 +136,7 @@ export function MediaView({ media, grant, urlFor, onOpen }: { media: ChatMedia; 
     </a>
   );
 
-  if (broken && media.full) return fileCard("can't be previewed");
+  if (broken && media.full) return fileCard(why ? `can't be previewed (${why})` : "can't be previewed");
 
   const spoiler = (node: JSX.Element) =>
     revealed ? (
