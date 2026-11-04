@@ -634,6 +634,11 @@
   position: absolute;
   top: 0;
   left: 0;
+  /* A safe size until the script lays the field out; an unsized inline SVG
+     would otherwise fill its container's whole width. */
+  width: 32px;
+  height: 32px;
+  opacity: 0.2;
   will-change: transform;
 }
 

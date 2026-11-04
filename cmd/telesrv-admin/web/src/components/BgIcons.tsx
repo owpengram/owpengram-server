@@ -57,11 +57,12 @@ export function BgIcons() {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    // Someone who asked the system for less motion gets a still field rather
-    // than twenty-eight things drifting across their screen.
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      return;
-    }
+    // Someone who asked the system for less motion (Windows Server asks by
+    // default) gets a still field rather than twenty-eight things drifting
+    // across their screen -- but still a laid-out one: returning before the
+    // icons were sized and placed left all of them at full width in the
+    // corner, one giant glyph behind the sign-in card.
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
     const nodes = Array.from(host.querySelectorAll<SVGSVGElement>(".bg-icon"));
     let particles: Particle[] = [];
@@ -133,6 +134,23 @@ export function BgIcons() {
         nodes[i].style.transform = `translate(${p.x}px, ${p.y}px) rotate(${p.rot}deg)`;
       }
       frame = requestAnimationFrame(tick);
+    }
+
+    function place() {
+      for (let i = 0; i < nodes.length; i++) {
+        const p = particles[i];
+        nodes[i].style.transform = `translate(${p.x}px, ${p.y}px) rotate(${p.rot}deg)`;
+      }
+    }
+
+    if (still) {
+      const reseed = () => {
+        seed();
+        place();
+      };
+      reseed();
+      window.addEventListener("resize", reseed);
+      return () => window.removeEventListener("resize", reseed);
     }
 
     seed();
