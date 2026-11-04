@@ -16,6 +16,8 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{"newer release", `{"tag_name":"O9",` + url + `,"body":"notes"}`, "O8", "O9", true},
 		{"same release", `{"tag_name":"O8",` + url + `}`, "O8", "O8", false},
+		{"minor release", `{"tag_name":"O8.1",` + url + `}`, "O8", "O8.1", true},
+		{"older than running minor", `{"tag_name":"O8",` + url + `}`, "O8.1", "O8", false},
 		{"older release", `{"tag_name":"O7",` + url + `}`, "O8", "O7", false},
 		{"two digits beat one", `{"tag_name":"O10",` + url + `}`, "O9", "O10", true},
 		{"prerelease ignored", `{"tag_name":"O9","prerelease":true,` + url + `}`, "O8", "", false},

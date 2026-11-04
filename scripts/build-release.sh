@@ -60,7 +60,7 @@ done
 # panel reports the release it really is and can tell when a newer one is out.
 # Any other label (dev, a branch name) only names the archive.
 LDFLAGS="-s -w"
-if [[ "$VERSION" =~ ^[Oo][0-9]+$ ]]; then
+if [[ "$VERSION" =~ ^[Oo][0-9]+(\.[0-9]+)?$ ]]; then
   LDFLAGS="$LDFLAGS -X telesrv/internal/version.Release=O${VERSION:1}"
 fi
 

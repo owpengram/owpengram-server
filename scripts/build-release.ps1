@@ -169,7 +169,7 @@ try {
     # panel reports the release it really is and can tell when a newer one is out.
     # Any other label (dev, a branch name) only names the archive.
     $ldflags = '-s -w'
-    if ($Version -match '^[Oo]\d+$') {
+    if ($Version -match '^[Oo]\d+(\.\d+)?$') {
         $ldflags += " -X telesrv/internal/version.Release=O$($Version.Substring(1))"
     }
 

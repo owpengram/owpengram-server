@@ -31,7 +31,7 @@ const (
 	maxNotes        = 2000
 )
 
-var tagRe = regexp.MustCompile(`^[Oo](\d+)$`)
+var tagRe = regexp.MustCompile(`^[Oo](\d+(?:\.\d+)?)$`)
 
 // Status is what the admin panel shows. Available is false until a check has
 // found a release newer than this build, and stays false when checking is off.
@@ -156,7 +156,7 @@ func evaluate(body []byte, current string) (Status, error) {
 		return status, nil
 	}
 	status.Latest = "O" + match[1]
-	if version.Number(status.Latest) > version.Number(current) && strings.HasPrefix(release.HTMLURL, "https://") {
+	if version.Newer(status.Latest, current) && strings.HasPrefix(release.HTMLURL, "https://") {
 		status.Available = true
 		status.URL = release.HTMLURL
 		status.Notes = notes(release.Body)
