@@ -21,11 +21,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/iamxvbaba/td/mtproto"
-	"github.com/iamxvbaba/td/pool"
-	tdrpc "github.com/iamxvbaba/td/rpc"
-	"github.com/iamxvbaba/td/telegram"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/mtproto"
+	"github.com/owpengram/owpengram-td/pool"
+	tdrpc "github.com/owpengram/owpengram-td/rpc"
+	"github.com/owpengram/owpengram-td/telegram"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 const (

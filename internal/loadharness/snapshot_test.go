@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func TestMergeDialogPageCapturesChannelCursorAndOffset(t *testing.T) {

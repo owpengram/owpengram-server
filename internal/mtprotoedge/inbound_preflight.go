@@ -10,10 +10,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 type inboundItemKind uint8

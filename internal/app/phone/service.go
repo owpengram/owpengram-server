@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iamxvbaba/td/clock"
+	"github.com/owpengram/owpengram-td/clock"
 
 	"telesrv/internal/domain"
 )

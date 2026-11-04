@@ -11,13 +11,13 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/gotd/log/logzap"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/exchange"
-	"github.com/iamxvbaba/td/session"
-	"github.com/iamxvbaba/td/telegram"
-	"github.com/iamxvbaba/td/telegram/dcs"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/exchange"
+	"github.com/owpengram/owpengram-td/session"
+	"github.com/owpengram/owpengram-td/telegram"
+	"github.com/owpengram/owpengram-td/telegram/dcs"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/transport"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/app/updates"
@@ -26,7 +26,7 @@ import (
 	"telesrv/internal/store/memory"
 )
 
-// TestTelegramClientEndToEnd 是连接层的最强端到端验证：用 iamxvbaba/td 的完整
+// TestTelegramClientEndToEnd 是连接层的最强端到端验证：用 owpengram-td 的完整
 // telegram.Client（而非底层 cipher）连本地 mtprotoedge，client 自动经
 // invokeWithLayer(initConnection(help.getConfig)) 完成初始化，并取得含本地 DC 的 Config。
 func TestTelegramClientEndToEnd(t *testing.T) {

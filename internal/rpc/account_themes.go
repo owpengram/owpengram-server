@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/compat/tdesktop"

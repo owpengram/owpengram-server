@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/proto"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/proto"
 )
 
 const (

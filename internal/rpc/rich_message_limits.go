@@ -3,7 +3,7 @@ package rpc
 import (
 	"unicode/utf8"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 const (

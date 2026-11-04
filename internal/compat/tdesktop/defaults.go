@@ -1,7 +1,7 @@
 package tdesktop
 
 import (
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/domain"

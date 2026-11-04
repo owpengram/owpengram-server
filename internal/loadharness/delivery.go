@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 const deliveryMarkerPrefix = "telesrv-load-v3"

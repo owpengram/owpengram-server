@@ -12,9 +12,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // ErrSessionNotFound 表示目标 session 当前无活跃连接。

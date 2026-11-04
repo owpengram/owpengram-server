@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // TestPushSkipsConnReboundToOtherUser 锁定跨账号投递窗口的修复：pushToUserWithSender 在锁外

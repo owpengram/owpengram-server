@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/transport"
 
 	"telesrv/internal/store/memory"
 )
@@ -460,7 +460,7 @@ func TestDestroySessionDurabilityFailureDoesNotAcknowledgeOrRetireLiveSession(t 
 }
 
 // TestRPCDropAnswer 验证 rpc_drop_answer 以 rpc_result 包装 RpcDropAnswer 返回，
-// 与 iamxvbaba/td 和 TDesktop 的请求/响应模型对齐。
+// 与 owpengram-td 和 TDesktop 的请求/响应模型对齐。
 func TestRPCDropAnswer(t *testing.T) {
 	const dc = 2
 	addr, pub, _ := startTestServer(t, Options{DC: dc})

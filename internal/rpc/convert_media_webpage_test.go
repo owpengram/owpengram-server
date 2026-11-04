@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/domain"
 )

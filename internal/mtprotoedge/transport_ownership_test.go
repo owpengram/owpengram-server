@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
+	"github.com/owpengram/owpengram-td/bin"
 )
 
 type ownershipTestTransport struct {

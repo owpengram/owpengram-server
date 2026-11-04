@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 // TestScheduledGroupCallLifecycle 覆盖定时通话闭环：create(schedule_date) →

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/domain"
 )
 

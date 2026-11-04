@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // A 10,000-session startup can transiently retain more than one scheduled RPC

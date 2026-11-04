@@ -7,7 +7,7 @@
 **Your own private messaging server — self-hosted, protocol-compatible, fully yours.**
 
 The protocol stack is built on the published
-[`github.com/iamxvbaba/td`](https://github.com/iamxvbaba/td) module
+[`github.com/owpengram/owpengram-td`](https://github.com/owpengram/owpengram-td) module
 (`v1.3.2`), using a canonical Layer 229 schema with sparse `tlprofile`
 exact Layer 225-229 compatibility profiles.
 

@@ -7,9 +7,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/iamxvbaba/td/mtproxy/obfuscated2"
-	"github.com/iamxvbaba/td/proto/codec"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/mtproxy/obfuscated2"
+	"github.com/owpengram/owpengram-td/proto/codec"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 var errInvalidTCPTransportPrefix = errors.New("invalid MTProto TCP transport prefix")

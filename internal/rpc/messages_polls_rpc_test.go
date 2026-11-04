@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
 )
 
 // sendTestPoll 用 sendMedia 发一个 poll，返回消息与 poll id。

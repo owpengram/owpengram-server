@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func TestSeedPrimaryTargetsSelectsPrimaryAndRejectsGap(t *testing.T) {

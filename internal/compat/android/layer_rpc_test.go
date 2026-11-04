@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 func TestUpgradePrivateLayerRPCOnlyAcceptsAuditedAndroidConstructors(t *testing.T) {

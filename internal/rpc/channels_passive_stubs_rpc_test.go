@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"strings"
 	apptelemetry "telesrv/internal/app/clienttelemetry"
 	appmessages "telesrv/internal/app/messages"

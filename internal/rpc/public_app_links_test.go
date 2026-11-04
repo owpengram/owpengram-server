@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/clock"
+	"github.com/owpengram/owpengram-td/clock"
 	"go.uber.org/zap"
 )
 

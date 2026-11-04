@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap"
 
 	appsecret "telesrv/internal/app/secretchat"

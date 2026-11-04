@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func (r *Router) onMessagesGetEmojiGameInfo(ctx context.Context) (tg.MessagesEmojiGameInfoClass, error) {

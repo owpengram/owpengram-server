@@ -5,7 +5,7 @@ import (
 
 	"telesrv/internal/seed/appearance"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 const appearanceSeedDCID = 2

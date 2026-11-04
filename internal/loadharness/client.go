@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iamxvbaba/td/exchange"
-	"github.com/iamxvbaba/td/mtproto"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/telegram"
-	"github.com/iamxvbaba/td/telegram/dcs"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/exchange"
+	"github.com/owpengram/owpengram-td/mtproto"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/telegram"
+	"github.com/owpengram/owpengram-td/telegram/dcs"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 type clientHooks struct {

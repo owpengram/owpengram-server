@@ -8,16 +8,16 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
+	"github.com/owpengram/owpengram-td/transport"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/rpc"
 )
 

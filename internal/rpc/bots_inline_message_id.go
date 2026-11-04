@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/domain"
 )

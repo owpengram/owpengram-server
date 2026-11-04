@@ -21,10 +21,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/iamxvbaba/td/telegram"
-	"github.com/iamxvbaba/td/telegram/auth"
-	"github.com/iamxvbaba/td/telegram/downloader"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/telegram"
+	"github.com/owpengram/owpengram-td/telegram/auth"
+	"github.com/owpengram/owpengram-td/telegram/downloader"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/seed/appearance"
 )

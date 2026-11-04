@@ -3,7 +3,7 @@ package ios
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func TestProjectThemesMakesOnlyIOSAccentColorsOpaque(t *testing.T) {

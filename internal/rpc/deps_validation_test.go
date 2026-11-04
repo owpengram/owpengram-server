@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iamxvbaba/td/clock"
+	"github.com/owpengram/owpengram-td/clock"
 	"go.uber.org/zap"
 
 	telegramloginapp "telesrv/internal/app/telegramlogin"

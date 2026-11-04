@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"

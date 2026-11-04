@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
+	"github.com/owpengram/owpengram-td/bin"
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/rpcresult"

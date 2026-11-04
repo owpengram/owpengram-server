@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	// registerEncrypted 注册私聊端对端加密（Secret Chat）域 RPC。
 	//
 	// 归属约定：messages.getDhConfig 属通话域（DH 参数下发），由 registerPhone 注册、

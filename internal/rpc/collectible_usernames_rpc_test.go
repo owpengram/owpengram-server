@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"

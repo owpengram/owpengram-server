@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap"
 
 	appphone "telesrv/internal/app/phone"

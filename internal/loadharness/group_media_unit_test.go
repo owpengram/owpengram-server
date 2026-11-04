@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func TestGroupMediaChannelNudgeUsesOnlyMatchingChannelAndMaximumPTS(t *testing.T) {

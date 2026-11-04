@@ -4,7 +4,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 type privateContactRequirement struct {

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func botAPIRichMessageProjection(blocks []tg.PageBlockClass, rtl bool) ([]byte, error) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/proto"
+	"github.com/owpengram/owpengram-td/proto"
 )
 
 func TestLoadMessageIDSourceSkipsEmptyClientFraction(t *testing.T) {

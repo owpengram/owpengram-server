@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 // TestFirstContainerBoundaryKeepsAndroidRequestMap models DrKLO's

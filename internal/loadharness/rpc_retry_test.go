@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tgerr"
 )
 
 func TestRPCWithFloodWaitPolicyRetriesTheSameCall(t *testing.T) {

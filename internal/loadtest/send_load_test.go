@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/clock"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/owpengram/owpengram-td/clock"
 	"go.uber.org/zap"
 
 	messageapp "telesrv/internal/app/messages"

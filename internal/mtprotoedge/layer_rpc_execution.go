@@ -5,12 +5,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/tgerr"
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/observability/dbtrace"
 	"telesrv/internal/postresponse"
 	"telesrv/internal/rpcresult"

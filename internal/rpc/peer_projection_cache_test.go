@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/iamxvbaba/td/clock"
+	"github.com/owpengram/owpengram-td/clock"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"

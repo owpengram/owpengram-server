@@ -11,13 +11,13 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	"github.com/gotd/log/logzap"
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/exchange"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/exchange"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 // legacyCanonicalTestConn explicitly declares the canonical-only profile used

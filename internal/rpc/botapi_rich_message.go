@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	richbuilder "github.com/iamxvbaba/td/telegram/message/rich"
-	"github.com/iamxvbaba/td/tg"
+	richbuilder "github.com/owpengram/owpengram-td/telegram/message/rich"
+	"github.com/owpengram/owpengram-td/tg"
 	"golang.org/x/net/html"
 
 	"telesrv/internal/domain"

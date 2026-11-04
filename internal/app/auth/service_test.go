@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	mtcrypto "github.com/iamxvbaba/td/crypto"
+	mtcrypto "github.com/owpengram/owpengram-td/crypto"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/store"

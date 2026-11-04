@@ -14,8 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gotd/ige"
-	"github.com/iamxvbaba/td/bin"
-	mtcrypto "github.com/iamxvbaba/td/crypto"
+	"github.com/owpengram/owpengram-td/bin"
+	mtcrypto "github.com/owpengram/owpengram-td/crypto"
 
 	"telesrv/internal/domain"
 	"telesrv/internal/identity"

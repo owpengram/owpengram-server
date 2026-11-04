@@ -5,9 +5,9 @@ import (
 	"errors"
 	"unicode/utf8"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/app/users"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"

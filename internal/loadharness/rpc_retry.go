@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tgerr"
 )
 
 const (

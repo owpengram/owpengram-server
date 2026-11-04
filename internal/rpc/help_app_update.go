@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	ioscompat "telesrv/internal/compat/ios"
 	"telesrv/internal/updatecdn"

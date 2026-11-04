@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap"
 
 	"telesrv/internal/domain"

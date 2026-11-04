@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // registerChannels 注册超级群/频道相关 RPC。messages.createChat 在这里注册，

@@ -13,12 +13,12 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	compatandroid "telesrv/internal/compat/android"
 	"telesrv/internal/domain"
 	"telesrv/internal/links"

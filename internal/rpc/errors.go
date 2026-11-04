@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tgerr"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"

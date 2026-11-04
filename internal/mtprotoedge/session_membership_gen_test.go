@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"go.uber.org/zap/zaptest"
 )
 

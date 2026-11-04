@@ -1,6 +1,6 @@
 package ios
 
-import "github.com/iamxvbaba/td/tg"
+import "github.com/owpengram/owpengram-td/tg"
 
 // ProjectThemes converts theme accent colors to the ARGB representation used by
 // Telegram-iOS. Official chat-theme seed colors are RGB24 values, while iOS

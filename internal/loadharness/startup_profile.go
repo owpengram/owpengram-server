@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iamxvbaba/td/telegram"
+	"github.com/owpengram/owpengram-td/telegram"
 )
 
 const (

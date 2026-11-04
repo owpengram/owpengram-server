@@ -14,10 +14,10 @@ import (
 	"github.com/go-faster/errors"
 	"go.uber.org/multierr"
 
-	"github.com/iamxvbaba/td/bin"
-	tdcrypto "github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/proto/codec"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	tdcrypto "github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/proto/codec"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 const maxTransportMessageSize = 1 << 24

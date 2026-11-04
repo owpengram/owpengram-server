@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 type countingInheritedLayerResolver struct {

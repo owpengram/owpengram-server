@@ -1,6 +1,6 @@
 package ios
 
-import "github.com/iamxvbaba/td/tg"
+import "github.com/owpengram/owpengram-td/tg"
 
 // NoAppUpdate is the bounded answer used until telesrv has an application
 // release catalog. It makes iOS keep its installed build and retry on its

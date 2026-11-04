@@ -7,9 +7,9 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/proto/codec"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/proto/codec"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 const defaultInboundFrameGlobalMaxBytes int64 = 512 << 20

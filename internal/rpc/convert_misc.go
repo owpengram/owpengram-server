@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"telesrv/internal/domain"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"sort"
 )
 

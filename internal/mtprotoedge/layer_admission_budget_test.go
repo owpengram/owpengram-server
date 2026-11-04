@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	appfiles "telesrv/internal/app/files"
 	"telesrv/internal/rpc"
 )
@@ -51,13 +51,13 @@ func TestLayerRPCAdmissionMaterializationConstants(t *testing.T) {
 				// invokeWithLayer/query uses the deliberately broad bin.Object
 				// interface. Exact admission restricts that slot to generated RPC
 				// methods, so only request constructors are reachable there.
-				broad := typ.PkgPath() != "github.com/iamxvbaba/td/tg"
+				broad := typ.PkgPath() != "github.com/owpengram/owpengram-td/tg"
 				if candidate.Implements(typ) && (!broad || strings.HasSuffix(candidate.Elem().Name(), "Request")) {
 					visit(candidate)
 				}
 			}
 		case reflect.Struct:
-			if typ.PkgPath() == "github.com/iamxvbaba/td/tg" && typ.Size() > maxSize {
+			if typ.PkgPath() == "github.com/owpengram/owpengram-td/tg" && typ.Size() > maxSize {
 				maxSize, maxType = typ.Size(), typ
 			}
 			for i := 0; i < typ.NumField(); i++ {

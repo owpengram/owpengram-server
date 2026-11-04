@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // TestSetReceivesUpdatesFlushesPendingBeforeActivation 验证置位时先排空暂存推送

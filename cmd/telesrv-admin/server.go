@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"golang.org/x/sync/errgroup"
 
 	"telesrv/internal/admin"

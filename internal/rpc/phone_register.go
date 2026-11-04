@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 // registerPhone 注册通话域 RPC。

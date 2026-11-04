@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iamxvbaba/td/session"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/session"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 type ProvisionConfig struct {

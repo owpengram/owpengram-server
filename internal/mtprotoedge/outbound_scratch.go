@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
+	"github.com/owpengram/owpengram-td/bin"
 )
 
 const (

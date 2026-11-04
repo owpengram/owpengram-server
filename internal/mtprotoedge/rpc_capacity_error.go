@@ -1,6 +1,6 @@
 package mtprotoedge
 
-import "github.com/iamxvbaba/td/mt"
+import "github.com/owpengram/owpengram-td/mt"
 
 const (
 	rpcWorkerBusyErrorCode    = 500

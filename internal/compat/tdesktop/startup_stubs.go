@@ -3,7 +3,7 @@ package tdesktop
 import (
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/branding"
 	"telesrv/internal/seed/appearance"

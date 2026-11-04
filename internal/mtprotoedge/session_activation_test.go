@@ -8,8 +8,8 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
 )
 
 func newSessionActivationTestConn(t *testing.T, authKeyID [8]byte, sessionID int64) *Conn {

@@ -14,8 +14,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 // 连接层 fan-out / churn 压测：聚焦 SessionManager 的锁争用，不走真实 socket / 加密。

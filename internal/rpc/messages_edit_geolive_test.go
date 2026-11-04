@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
 )
 
 func sendTestLiveLocation(t *testing.T, r *Router, fromID int64, peer tg.InputPeerClass, randomID int64, period int) *tg.Message {

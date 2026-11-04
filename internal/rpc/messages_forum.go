@@ -3,7 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"strings"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"

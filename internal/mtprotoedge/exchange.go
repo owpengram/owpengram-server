@@ -8,12 +8,12 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/exchange"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto/codec"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/exchange"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto/codec"
+	"github.com/owpengram/owpengram-td/transport"
 
 	"telesrv/internal/store"
 )

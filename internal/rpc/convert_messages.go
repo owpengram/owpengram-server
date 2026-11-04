@@ -3,7 +3,7 @@ package rpc
 import (
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/domain"
 )

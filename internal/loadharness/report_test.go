@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/pool"
-	tdrpc "github.com/iamxvbaba/td/rpc"
+	"github.com/owpengram/owpengram-td/pool"
+	tdrpc "github.com/owpengram/owpengram-td/rpc"
 )
 
 func TestMarkClientReadyAvoidsDuplicateInitialCatchUp(t *testing.T) {

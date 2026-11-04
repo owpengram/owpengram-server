@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 func TestDeliveryTrackerReconcilesObservationBeforeSendReturn(t *testing.T) {

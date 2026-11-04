@@ -3,8 +3,8 @@ package rpc
 import (
 	"context"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 func (r *Router) registerCommunities(d *tlprofile.Dispatcher) {

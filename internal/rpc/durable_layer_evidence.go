@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/store"
 )
 

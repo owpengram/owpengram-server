@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/proto"
+	"github.com/owpengram/owpengram-td/proto"
 	"go.uber.org/zap"
 )
 

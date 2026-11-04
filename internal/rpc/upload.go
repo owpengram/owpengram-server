@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap"
 
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/tlprofile"
 	"telesrv/internal/domain"
 )
 

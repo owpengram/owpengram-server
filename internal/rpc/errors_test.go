@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tgerr"
 
 	"telesrv/internal/app/auth"
 	"telesrv/internal/domain"

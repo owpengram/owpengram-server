@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 // TestGroupCallJoinAsChannel 覆盖 join_as 身份闭环：admin 以频道身份入会 →

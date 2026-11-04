@@ -2,8 +2,8 @@ package rpc
 
 import (
 	"context"
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/tg"
 	"go.uber.org/zap/zaptest"
 	"telesrv/internal/domain"
 	"testing"

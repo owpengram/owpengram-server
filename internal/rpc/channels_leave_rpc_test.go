@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	appchannels "telesrv/internal/app/channels"

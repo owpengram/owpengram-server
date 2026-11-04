@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/iamxvbaba/td/session"
+	"github.com/owpengram/owpengram-td/session"
 )
 
 const encryptedSessionMagic = "TLSLOAD1"

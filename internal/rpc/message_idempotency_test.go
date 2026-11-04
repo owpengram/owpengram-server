@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/tg"
-	"github.com/iamxvbaba/td/tgerr"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/tg"
+	"github.com/owpengram/owpengram-td/tgerr"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"

@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/crypto"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tlprofile"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/crypto"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tlprofile"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 // Conn 是一个已识别 session 的客户端连接，持有向其加密发送消息所需的全部上下文。

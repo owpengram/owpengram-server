@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/transport"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/transport"
 )
 
 // reqPQConn 是只会不断返回同一个 req_pq_multi 帧的假 transport.Conn，用于驱动 bufferedConn

@@ -3,8 +3,8 @@ package android
 import (
 	"errors"
 
-	"github.com/iamxvbaba/td/bin"
-	"github.com/iamxvbaba/td/tlprofile"
+	"github.com/owpengram/owpengram-td/bin"
+	"github.com/owpengram/owpengram-td/tlprofile"
 )
 
 var ErrPrivateLayerRPCInvalid = errors.New("android private layer RPC is invalid")

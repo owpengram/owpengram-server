@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/mt"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/mt"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 )
 
 // TestNewSessionCreatedUniqueIDPerSession 验证两次 session 建立收到的

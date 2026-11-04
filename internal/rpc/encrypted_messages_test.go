@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 
 	appmoderation "telesrv/internal/app/moderation"
 	"telesrv/internal/domain"

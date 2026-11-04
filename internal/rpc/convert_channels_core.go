@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/tg"
 	"telesrv/internal/compat/tdesktop"
 	"telesrv/internal/domain"
 )

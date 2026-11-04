@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iamxvbaba/td/clock"
+	"github.com/owpengram/owpengram-td/clock"
 	"go.uber.org/zap/zaptest"
 
 	"telesrv/internal/domain"

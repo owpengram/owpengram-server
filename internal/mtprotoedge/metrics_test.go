@@ -7,9 +7,9 @@ import (
 
 	"go.uber.org/zap/zaptest"
 
-	"github.com/iamxvbaba/td/clock"
-	"github.com/iamxvbaba/td/proto"
-	"github.com/iamxvbaba/td/tg"
+	"github.com/owpengram/owpengram-td/clock"
+	"github.com/owpengram/owpengram-td/proto"
+	"github.com/owpengram/owpengram-td/tg"
 
 	"telesrv/internal/rpc"
 )
