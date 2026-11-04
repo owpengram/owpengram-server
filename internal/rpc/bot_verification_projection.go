@@ -8,6 +8,7 @@ import (
 	"github.com/iamxvbaba/td/tg"
 
 	"telesrv/internal/domain"
+	"telesrv/internal/seed/freeze"
 )
 
 // Third-party bot verification on the protocol edge
@@ -32,6 +33,24 @@ import (
 // mark, and nothing derives it from the official verified flag (user flags.17 /
 // channel flags.7) -- that is a separate operator-granted mechanism, and mixing the
 // two would let a third-party verifier mint platform checkmarks.
+
+// accountFrozenMarkIcon is the custom emoji document the synthetic "frozen"
+// third-party mark renders with (user#b1b8cc83 bot_verification_icon:flags2.14,
+// userFull#6cbe645 bot_verification:flags2.12). It must name a real custom emoji
+// document in the operator catalogue -- clients resolve it through
+// messages.getCustomEmojiDocuments, so an id without a concrete document decodes
+// to an invisible badge. The icon is bundled straight into the binary by
+// SeedFreezeEmoji (package telesrv/internal/seed/freeze, "freeze" custom emoji
+// set), so every server carries the resolvable document even without an on-disk
+// sticker seed directory. accountFrozenMarkBotID is the reserved verifierbot
+// identity used as the mark's issuer; the mark itself is a viewer-scoped
+// synthetic projection derived from the freeze state, never a custom_verifications
+// row, so it disappears the moment the account is unfrozen.
+const (
+	accountFrozenMarkIcon        int64 = freeze.DocumentID
+	accountFrozenMarkBotID       int64 = domain.VerifierBotUserID
+	accountFrozenMarkDescription       = "The account was frozen"
+)
 
 // tgBotVerification projects domain.BotVerification onto botVerification#f93cd45c.
 //
@@ -253,6 +272,26 @@ func (r *Router) applyBotVerificationToUserFull(ctx context.Context, userID int6
 	full.Flags2.Unset(12)
 	full.BotVerification = tg.BotVerification{}
 	if value, ok := r.peerBotVerification(ctx, domain.Peer{Type: domain.PeerTypeUser, ID: userID}); ok {
+		full.SetBotVerification(value)
+	}
+}
+
+// applyFrozenUserFullMark sets userFull#6cbe645 bot_verification:flags2.12 to the
+// synthetic "frozen" mark. It is only applied to a peer tombstone projected from
+// an account freeze (see applyAccountFreezeProjection): the mark carries the
+// operator catalogue icon and the "The account was frozen" description next to
+// the deleted-account presentation.
+func applyFrozenUserFullMark(full *tg.UserFull, u domain.User) {
+	if full == nil || !u.FrozenForViewer {
+		return
+	}
+	full.Flags2.Unset(12)
+	full.BotVerification = tg.BotVerification{}
+	if value, ok := tgBotVerification(domain.BotVerification{
+		BotID:       accountFrozenMarkBotID,
+		Icon:        accountFrozenMarkIcon,
+		Description: accountFrozenMarkDescription,
+	}); ok {
 		full.SetBotVerification(value)
 	}
 }

@@ -554,8 +554,16 @@ func (r *Router) onContactsGetStatuses(ctx context.Context) ([]tg.ContactStatus,
 		seen[id] = struct{}{}
 		u := contact.User
 		if current, ok := usersByID[id]; ok {
+			u.Deleted = current.Deleted
 			u.LastSeenAt = current.LastSeenAt
 			u.Status = current.Status
+		}
+		if u.Deleted || r.isFrozenPresenceUser(id) {
+			out = append(out, tg.ContactStatus{
+				UserID: id,
+				Status: &tg.UserStatusEmpty{},
+			})
+			continue
 		}
 		status := u.Status
 		if statusVisible[id] {
@@ -679,7 +687,9 @@ func (r *Router) onContactsAddContact(ctx context.Context, req *tg.ContactsAddCo
 	if err != nil {
 		return nil, contactErr(err)
 	}
-	if !found {
+	// A tombstone has no name, phone or avatar to keep in a contact list, so
+	// adding one would only leave an unreachable row behind.
+	if !found || target.Deleted {
 		return nil, contactIDInvalidErr()
 	}
 	rawNote, hasNote := req.GetNote()

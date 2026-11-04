@@ -74,13 +74,13 @@ import (
 	"telesrv/internal/domain"
 	"telesrv/internal/identity"
 	"telesrv/internal/mtprotoedge"
-	"telesrv/internal/webclient"
 	obsmetrics "telesrv/internal/observability/metrics"
 	"telesrv/internal/otpdelivery"
 	otpsmtp "telesrv/internal/otpdelivery/smtp"
 	otpwebhook "telesrv/internal/otpdelivery/webhook"
 	"telesrv/internal/rpc"
 	"telesrv/internal/seed/catalog"
+	freezeseed "telesrv/internal/seed/freeze"
 	"telesrv/internal/sfu"
 	storepkg "telesrv/internal/store"
 	"telesrv/internal/store/memory"
@@ -89,6 +89,7 @@ import (
 	"telesrv/internal/turnsrv"
 	"telesrv/internal/updatecdn"
 	"telesrv/internal/web"
+	"telesrv/internal/webclient"
 )
 
 func main() {
@@ -1096,6 +1097,14 @@ func run(logger *zap.Logger) error {
 	} else if seeded {
 		logger.Info("@premiumbot avatar seed import complete", zap.Int64("photo_id", domain.PremiumBotUserPhotoID))
 	}
+	if stats, err := filesService.SeedFreezeEmoji(ctx); err != nil {
+		return fmt.Errorf("seed freeze emoji: %w", err)
+	} else if stats.Imported {
+		logger.Info("built-in freeze emoji seed import complete",
+			zap.Int64("document_id", freezeseed.DocumentID),
+			zap.Int64("set_id", freezeseed.SetID),
+		)
+	}
 	if stats, err := filesService.WarmCaches(ctx); err != nil {
 		logger.Warn("media resource cache warmup failed", zap.Error(err))
 	} else if stats.StickerSets > 0 || stats.Documents > 0 || stats.Blobs > 0 {
@@ -1525,6 +1534,9 @@ func run(logger *zap.Logger) error {
 		messageapp.WithReadModelVersions(readModelVersionStore),
 		messageapp.WithBotResponder(botsService),
 		messageapp.WithSendPermissionChecker(adminService),
+		// The recipient probe only needs the unprojected row, so the users
+		// service reads the tombstone without viewer projection.
+		messageapp.WithRecipientUserReader(userStore),
 		messageapp.WithBusinessAutomation(passwordStore, businessAutomationOptions...),
 	)
 	starGiftStore := postgres.NewStarGiftStore(pool)
@@ -1746,53 +1758,54 @@ func run(logger *zap.Logger) error {
 			help.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
 			help.WithAccountFreezeProvider(adminService),
 		),
-		AppUpdates:                 appUpdateResolver,
-		AccountFreeze:              userProjectionFacts,
-		AccountFreezeNotifications: adminService,
-		AICompose:                  aiComposeService,
-		Ephemeral:                  ephemeralService,
-		EphemeralPush:              ephemeralStore,
-		WelcomeMessages:            welcomeMessageService,
-		Moderation:                 moderationService,
-		Users:                      usersService,
-		Usernames:                  usernamesService,
-		BotVerifications:           botVerificationService,
-		TelegramLogin:              telegramLoginRPCDependency(telegramLoginService),
-		Updates:                    updatesService,
-		BootstrapUpdates:           bootstrapUpdateStore,
-		BotAPIUpdates:              botAPIUpdateStore,
-		BotCallbacks:               botCallbackStore,
-		Contacts:                   contactsService,
-		Dialogs:                    dialogsService,
-		Chatlists:                  chatlistsService,
-		Messages:                   messagesService,
-		Translation:                translationService,
-		Channels:                   channelsService,
-		Communities:                communitiesService,
-		Files:                      filesService,
-		PremiumPromo:               filesService,
-		Bots:                       botsService,
-		ServiceBotCallbacks:        botsService,
-		ServiceBotInlineResults:    botsService,
-		Polls:                      pollsapp.NewService(pollStore),
-		Stories:                    storiesService,
-		Phone:                      phoneService,
-		SecretChats:                secretChatService,
-		Stars:                      starsService,
-		Premium:                    premiumService,
-		Gifts:                      starGiftsService,
-		AccountRatings:             ratingService,
-		Passkey:                    passkeyService,
-		Themes:                     themeService,
-		GroupCalls:                 groupCallsService,
-		LiveStreams:                liveStreamDep(liveStreamService),
-		SFU:                        sfuService,
-		TURN:                       turnService,
-		LangPack:                   langPackService,
-		Sessions:                   activeSessions,
-		Metrics:                    metricRegistry,
-		Inline:                     inlineRegistryStore,
-		Limiter:                    rateLimiter,
+		AppUpdates:                   appUpdateResolver,
+		AccountFreeze:                userProjectionFacts,
+		AccountFreezeNotifications:   adminService,
+		AccountDeletionNotifications: accountLifecycleStore,
+		AICompose:                    aiComposeService,
+		Ephemeral:                    ephemeralService,
+		EphemeralPush:                ephemeralStore,
+		WelcomeMessages:              welcomeMessageService,
+		Moderation:                   moderationService,
+		Users:                        usersService,
+		Usernames:                    usernamesService,
+		BotVerifications:             botVerificationService,
+		TelegramLogin:                telegramLoginRPCDependency(telegramLoginService),
+		Updates:                      updatesService,
+		BootstrapUpdates:             bootstrapUpdateStore,
+		BotAPIUpdates:                botAPIUpdateStore,
+		BotCallbacks:                 botCallbackStore,
+		Contacts:                     contactsService,
+		Dialogs:                      dialogsService,
+		Chatlists:                    chatlistsService,
+		Messages:                     messagesService,
+		Translation:                  translationService,
+		Channels:                     channelsService,
+		Communities:                  communitiesService,
+		Files:                        filesService,
+		PremiumPromo:                 filesService,
+		Bots:                         botsService,
+		ServiceBotCallbacks:          botsService,
+		ServiceBotInlineResults:      botsService,
+		Polls:                        pollsapp.NewService(pollStore),
+		Stories:                      storiesService,
+		Phone:                        phoneService,
+		SecretChats:                  secretChatService,
+		Stars:                        starsService,
+		Premium:                      premiumService,
+		Gifts:                        starGiftsService,
+		AccountRatings:               ratingService,
+		Passkey:                      passkeyService,
+		Themes:                       themeService,
+		GroupCalls:                   groupCallsService,
+		LiveStreams:                  liveStreamDep(liveStreamService),
+		SFU:                          sfuService,
+		TURN:                         turnService,
+		LangPack:                     langPackService,
+		Sessions:                     activeSessions,
+		Metrics:                      metricRegistry,
+		Inline:                       inlineRegistryStore,
+		Limiter:                      rateLimiter,
 	}, logger.Named("rpc"), clock.System)
 	readModelListener := postgres.NewReadModelChangeListener(cfg.PostgresDSN, postgres.ReadModelCacheSet{
 		ReadModelVersions:   readModelVersionStore,
@@ -1964,6 +1977,7 @@ func run(logger *zap.Logger) error {
 	go router.RunPremiumSweeper(ctx, cfg.PremiumSweepInterval, cfg.PremiumSweepBatch)
 	go router.RunAccountLifecycle(ctx, time.Minute, 500)
 	go router.RunAccountFreezeNotifications(ctx, time.Minute, 500)
+	go router.RunAccountDeletionNotifications(ctx, time.Minute, 500)
 	if telegramLoginService != nil {
 		go runTelegramLoginRetention(ctx, telegramLoginService, cfg.TelegramLoginRetention, cfg.TelegramLoginSweepInterval, cfg.TelegramLoginSweepBatch, logger.Named("telegram-login-retention"))
 	}

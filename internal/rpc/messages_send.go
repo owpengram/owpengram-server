@@ -278,6 +278,10 @@ func messageSendErr(err error) error {
 		return chatForwardsRestrictedErr()
 	case errors.Is(err, domain.ErrQuoteTextInvalid):
 		return quoteTextInvalidErr()
+	case errors.Is(err, domain.ErrPeerDeleted):
+		// The official shape for writing to an account that no longer exists:
+		// the peer is not a valid target, not a permission problem.
+		return peerIDInvalidErr()
 	default:
 		return internalErr()
 	}

@@ -95,6 +95,30 @@ charge_stars,issued_at,expires_at FROM star_gift_purchase_forms WHERE buyer_user
 	return nil
 }
 
+// validateStarGiftPurchaseRecipient rejects a star gift destined for a frozen
+// account inside the send transaction. The projection-level Deleted check alone
+// has a check-then-send TOCTOU: the RPC reads the freeze fact, then the freeze
+// commits before the gift message/ledger write. FOR SHARE serializes against the
+// freeze upsert (account_restrictions.user_id is its PK), so an in-flight freeze
+// resolves before we commit. Never-frozen accounts have no row and pass.
+func validateStarGiftPurchaseRecipient(ctx context.Context, tx pgx.Tx, to domain.Peer) error {
+	if to.Type != domain.PeerTypeUser || to.ID <= 0 {
+		return nil
+	}
+	var frozen bool
+	err := tx.QueryRow(ctx, `SELECT frozen FROM account_restrictions WHERE user_id = $1 FOR SHARE`, to.ID).Scan(&frozen)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("check star gift recipient restrictions: %w", err)
+	}
+	if frozen {
+		return domain.ErrStarGiftRecipientUnavailable
+	}
+	return nil
+}
+
 func (s *StarGiftLifecycleStore) PurchaseStarGift(ctx context.Context, req domain.StarGiftPurchaseRequest) (domain.StarGiftPurchaseResult, error) {
 	req.CommandKey = strings.TrimSpace(req.CommandKey)
 	if s == nil || s.db == nil || req.BuyerUserID <= 0 || !validLifecyclePeer(req.To) || req.GiftID <= 0 ||
@@ -124,6 +148,9 @@ func (s *StarGiftLifecycleStore) PurchaseStarGift(ctx context.Context, req domai
 	var result domain.StarGiftPurchaseResult
 	hooks := privateSendTxHooks{
 		before: func(ctx context.Context, tx pgx.Tx, send *domain.SendPrivateTextRequest) error {
+			if err := validateStarGiftPurchaseRecipient(ctx, tx, req.To); err != nil {
+				return err
+			}
 			if err := validateStarGiftPurchaseForm(ctx, tx, req, true); err != nil {
 				return err
 			}

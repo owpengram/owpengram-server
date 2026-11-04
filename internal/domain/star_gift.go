@@ -1170,6 +1170,9 @@ var (
 	ErrStarGiftResaleUnavailable           = errors.New("stargift: resale unavailable")
 	ErrStarGiftOfferInvalid                = errors.New("stargift: offer invalid")
 	ErrStarGiftOfferExpired                = errors.New("stargift: offer expired")
+	// ErrStarGiftRecipientUnavailable 表示收礼人对其它用户呈 deleted 墓碑
+	// （冻结账号），礼物不能再被送出。
+	ErrStarGiftRecipientUnavailable = errors.New("stargift: recipient account unavailable")
 	ErrStarGiftCraftUnavailable            = errors.New("stargift: craft unavailable")
 	ErrStarGiftAuctionUnavailable          = errors.New("stargift: auction unavailable")
 	ErrStarGiftWithdrawalUnavailable       = errors.New("stargift: withdrawal provider unavailable")

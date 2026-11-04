@@ -452,9 +452,19 @@ func (r *Router) onPhotosGetUserPhotos(ctx context.Context, req *tg.PhotosGetUse
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	photos, total, err := r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
-	if err != nil {
-		return nil, internalErr()
+	// 冻结/已删除账号对观察者呈 deleted 墓碑：主头像已塌缩为「已删除账号」占位，
+	// 相册必须一并清空，否则资料页同时出现墓碑占位与用户真实照片两枚头像。
+	// 相册数据保留在 Files 存储（drop 会破坏解冻恢复），墓碑是视图期投影，
+	// 解冻后此处自然放行、真实照片原样恢复。相册数据不被删除。
+	var photos []domain.Photo
+	var total int
+	if target.ID != currentUserID && target.Deleted {
+		// tombstone: empty album
+	} else {
+		photos, total, err = r.deps.Files.GetProfilePhotos(ctx, domain.PeerTypeUser, target.ID, offset, limit, req.MaxID)
+		if err != nil {
+			return nil, internalErr()
+		}
 	}
 	tgPhotos := make([]tg.PhotoClass, 0, len(photos))
 	for _, p := range photos {

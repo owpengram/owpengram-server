@@ -487,7 +487,21 @@ func projectBatch(ctx context.Context, contacts store.ContactStore, photos Profi
 }
 
 func applyAccountFreezeProjection(user domain.User, viewerUserID int64, freeze domain.AccountFreeze) domain.User {
-	// Base users and self users must never retain a viewer-scoped restriction.
+	// Frozen accounts are presented to peers as deleted accounts: the client
+	// renders "Deleted account" instead of the frozen persona. The owner and
+	// unauthenticated/system views keep the live account. The tombstone carries
+	// FrozenForViewer so the RPC boundary can attach the synthetic "frozen"
+	// third-party mark alongside the deleted presentation.
+	if freeze.Frozen && viewerUserID != 0 && user.ID != 0 && user.ID != viewerUserID && user.ID != domain.OfficialSystemUserID {
+		user.Deleted = true
+		tombstone := user.DeletedTombstone()
+		tombstone.FrozenForViewer = true
+		return tombstone
+	}
+	if freeze.Frozen {
+		user.Status = domain.UserStatus{Kind: domain.UserStatusEmpty}
+		user.LastSeenAt = 0
+	}
 	user.RestrictionReasons = nil
 	if user.Deleted || viewerUserID == 0 || user.ID == 0 || user.ID == viewerUserID || !freeze.Frozen {
 		return user

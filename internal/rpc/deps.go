@@ -561,6 +561,14 @@ type AccountFreezeNotificationService interface {
 	CompleteAccountFreezeNotification(ctx context.Context, id, version int64, now time.Time) error
 }
 
+// AccountDeletionNotificationService owns the durable tombstone queue. Deletion
+// fans out to every viewer who ever shared a contact or a dialog with the
+// account, so it is a queue rather than a synchronous fan-out.
+type AccountDeletionNotificationService interface {
+	ClaimAccountDeletionNotifications(ctx context.Context, now time.Time, limit int, lease time.Duration) ([]domain.AccountDeletionNotification, error)
+	CompleteAccountDeletionNotification(ctx context.Context, id int64, now time.Time) error
+}
+
 // UpdatesService 抽象 update 状态查询。
 type UpdatesService interface {
 	GetState(ctx context.Context, authKeyID [8]byte, userID int64) (domain.UpdateState, error)
@@ -1145,55 +1153,56 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers       store.AuthKeySessionLayerStore
-	ReadModelVersions          store.ReadModelVersionStore
-	UserProjectionFacts        UserProjectionFactInvalidator
-	Account                    AccountService
-	Privacy                    PrivacyService
-	Help                       HelpService
-	AppUpdates                 updatecdn.Resolver
-	AccountFreeze              AccountFreezeService
-	AccountFreezeNotifications AccountFreezeNotificationService
-	AICompose                  AIComposeService
-	Ephemeral                  EphemeralService
-	EphemeralPush              store.EphemeralPushBroker
-	WelcomeMessages            WelcomeMessageService
-	Moderation                 ModerationService
-	Users                      UsersService
-	Usernames                  UsernameRegistryService
-	BotVerifications           BotVerificationService
-	TelegramLogin              TelegramLoginService
-	Updates                    UpdatesService
-	BootstrapUpdates           store.BootstrapUpdateJobStore
-	BotAPIUpdates              store.BotAPIUpdateStore
-	BotCallbacks               store.BotCallbackRegistryStore
-	Contacts                   ContactsService
-	Dialogs                    DialogsService
-	Chatlists                  ChatlistsService
-	Messages                   MessagesService
-	Translation                TranslationService
-	Stories                    StoriesService
-	Channels                   ChannelsService
-	Communities                CommunitiesService
-	Files                      FilesService
-	PremiumPromo               PremiumPromoService
-	Bots                       BotsService
-	ServiceBotCallbacks        ServiceBotCallbacks
-	ServiceBotInlineResults    ServiceBotInlineResults
-	Polls                      PollsService
-	Phone                      PhoneService
-	GroupCalls                 GroupCallsService
-	LiveStreams                LiveStreamsService
-	SFU                        sfu.Service
-	TURN                       turnsrv.Service
-	LangPack                   LangPackService
-	Sessions                   SessionBinder
-	Inline                     store.InlineRegistryStore
-	Limiter                    RateLimiter
-	Metrics                    Metrics
-	SecretChats                SecretChatService
-	Passkey                    PasskeyService
-	Themes                     ThemeService
+	AuthKeySessionLayers         store.AuthKeySessionLayerStore
+	ReadModelVersions            store.ReadModelVersionStore
+	UserProjectionFacts          UserProjectionFactInvalidator
+	Account                      AccountService
+	Privacy                      PrivacyService
+	Help                         HelpService
+	AppUpdates                   updatecdn.Resolver
+	AccountFreeze                AccountFreezeService
+	AccountFreezeNotifications   AccountFreezeNotificationService
+	AccountDeletionNotifications AccountDeletionNotificationService
+	AICompose                    AIComposeService
+	Ephemeral                    EphemeralService
+	EphemeralPush                store.EphemeralPushBroker
+	WelcomeMessages              WelcomeMessageService
+	Moderation                   ModerationService
+	Users                        UsersService
+	Usernames                    UsernameRegistryService
+	BotVerifications             BotVerificationService
+	TelegramLogin                TelegramLoginService
+	Updates                      UpdatesService
+	BootstrapUpdates             store.BootstrapUpdateJobStore
+	BotAPIUpdates                store.BotAPIUpdateStore
+	BotCallbacks                 store.BotCallbackRegistryStore
+	Contacts                     ContactsService
+	Dialogs                      DialogsService
+	Chatlists                    ChatlistsService
+	Messages                     MessagesService
+	Translation                  TranslationService
+	Stories                      StoriesService
+	Channels                     ChannelsService
+	Communities                  CommunitiesService
+	Files                        FilesService
+	PremiumPromo                 PremiumPromoService
+	Bots                         BotsService
+	ServiceBotCallbacks          ServiceBotCallbacks
+	ServiceBotInlineResults      ServiceBotInlineResults
+	Polls                        PollsService
+	Phone                        PhoneService
+	GroupCalls                   GroupCallsService
+	LiveStreams                  LiveStreamsService
+	SFU                          sfu.Service
+	TURN                         turnsrv.Service
+	LangPack                     LangPackService
+	Sessions                     SessionBinder
+	Inline                       store.InlineRegistryStore
+	Limiter                      RateLimiter
+	Metrics                      Metrics
+	SecretChats                  SecretChatService
+	Passkey                      PasskeyService
+	Themes                       ThemeService
 	// Stars is the local Stars ledger (grant/credit/debit/history). Nil is
 	// valid -- payments.go falls back to the zero-balance compatibility
 	// response when it is unset, same as before this ledger existed.
