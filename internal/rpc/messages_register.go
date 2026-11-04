@@ -615,9 +615,9 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			if err := r.checkFrozenChannelParticipants(ctx, userID, filter.Peer.ID); err != nil {
 				return nil, err
 			}
-			if isLegacyInputPeerChat(req.Peer) {
-				return &tg.MessagesMessages{}, nil
-			}
+			// legacy inputPeerChat 与 inputPeerChannel 指向同一个 channel id,历史读取口径一致;
+			// 旧实现直接返回空列表,导致任何以 legacy chat 寻址的客户端(以及收到 migrated
+			// legacy chat 对象的 TDesktop)打开频道时恒为空。
 			history, err := r.deps.Channels.GetHistory(ctx, userID, domain.ChannelHistoryFilter{
 				ChannelID:                 filter.Peer.ID,
 				OffsetID:                  filter.OffsetID,
@@ -726,9 +726,7 @@ func (r *Router) registerMessages(d *tlprofile.Dispatcher) {
 			if r.deps.Channels == nil {
 				return messagesNotModifiedOrEmpty(req.Hash), nil
 			}
-			if isLegacyInputPeerChat(req.Peer) {
-				return &tg.MessagesMessages{}, nil
-			}
+			// legacy inputPeerChat 与 inputPeerChannel 同 id,搜索口径一致(见 getHistory 同处注释)。
 			// P2P calls are stored exclusively in private message boxes. Returning
 			// an empty result is important here: falling through to channel history
 			// would make ordinary channel posts appear in the Calls tab.

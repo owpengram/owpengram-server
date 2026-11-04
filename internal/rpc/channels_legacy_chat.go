@@ -667,3 +667,20 @@ func legacyBasicGroupAdminRights() tg.ChatAdminRights {
 		Other:          true,
 	}
 }
+
+// onMessagesDeleteChat maps the legacy creator-only "delete chat" entry onto
+// channels.deleteChannel for the megagroup that messages.createChat created
+// under the same id, so the creator check and the channelForbidden fanout stay
+// in one place. The method returns Bool, so the calling session gets the
+// tombstone as a pushed update instead of an rpc_result.
+func (r *Router) onMessagesDeleteChat(ctx context.Context, chatID int64) (bool, error) {
+	if chatID <= 0 {
+		return false, peerIDInvalidErr()
+	}
+	updates, err := r.onChannelsDeleteChannel(ctx, &tg.InputChannel{ChannelID: chatID})
+	if err != nil {
+		return false, err
+	}
+	r.pushCurrentSessionMessage(ctx, "push legacy delete chat updates", updates)
+	return true, nil
+}

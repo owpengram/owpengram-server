@@ -301,10 +301,26 @@ func tgDocument(d domain.Document) tg.DocumentClass {
 		Date:          d.Date,
 		MimeType:      d.MimeType,
 		Size:          d.Size,
-		Thumbs:        tgDocumentThumbs(d.Thumbs),
+		Thumbs:        withAnimatedStickerPlaceholder(d.MimeType, tgDocumentThumbs(d.Thumbs)),
 		DCID:          d.DCID,
 		Attributes:    tgDocumentAttributes(d.MimeType, d.Attributes),
 	}
+}
+
+// emptyStickerPathThumb is an outline thumbnail of a single point: it draws
+// nothing. The bytes decode to the SVG path "M0,0z".
+var emptyStickerPathThumb = []byte{0x00, 0x80}
+
+// withAnimatedStickerPlaceholder gives a .tgs document without thumbnails an
+// invisible outline thumbnail. Telegram clients play a .tgs as an animated
+// sticker only when it has at least one thumbnail and show it as a file
+// otherwise (Android MessageObject.isAnimatedStickerDocument); every Telegram
+// sticker carries one, but imported or uploaded ones often do not.
+func withAnimatedStickerPlaceholder(mimeType string, thumbs []tg.PhotoSizeClass) []tg.PhotoSizeClass {
+	if len(thumbs) > 0 || mimeType != mimeApplicationXTGSticker {
+		return thumbs
+	}
+	return []tg.PhotoSizeClass{&tg.PhotoPathSize{Type: "j", Bytes: append([]byte(nil), emptyStickerPathThumb...)}}
 }
 
 func tgDocuments(docs []domain.Document) []tg.DocumentClass {
@@ -655,13 +671,19 @@ func tgStickerSet(set domain.StickerSet) tg.StickerSet {
 	return out
 }
 
+// tgStickerSetThumbs keeps only path outlines. upload.getFile serves no
+// inputStickerSetThumb location, yet clients build one for a cached size as
+// well as for downloadable ones and request it once the inline bytes leave
+// their cache. Android also shows a stripped size as the set icon instead of
+// the sticker. Without these sizes clients draw the icon from
+// thumb_document_id or the first sticker.
 func tgStickerSetThumbs(sizes []domain.PhotoSize) []tg.PhotoSizeClass {
 	if len(sizes) == 0 {
 		return nil
 	}
 	filtered := make([]domain.PhotoSize, 0, len(sizes))
 	for _, s := range sizes {
-		if s.Downloadable() {
+		if s.Kind != domain.PhotoSizeKindPath {
 			continue
 		}
 		filtered = append(filtered, s)

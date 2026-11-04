@@ -20,19 +20,23 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 	defer func() {
 		r.metrics().MessageSend(r.clock.Now().Sub(start), duplicate, sendErr)
 	}()
-	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
-		sendErr = messageTooLongErr()
-		return nil, sendErr
-	}
-	if len(req.Entities) > maxMessageEntityCount {
-		sendErr = entitiesTooLongErr()
-		return nil, sendErr
-	}
 	if req.RandomID == 0 {
 		sendErr = randomIDEmptyErr()
 		return nil, sendErr
 	}
+	if req.ScheduleRepeatPeriod != 0 {
+		sendErr = scheduleDateInvalidErr()
+		return nil, sendErr
+	}
 	if req.QuickReplyShortcut != nil {
+		if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
+			sendErr = messageTooLongErr()
+			return nil, sendErr
+		}
+		if len(req.Entities) > maxMessageEntityCount {
+			sendErr = entitiesTooLongErr()
+			return nil, sendErr
+		}
 		updates, err := r.onMessagesSaveQuickReplyText(ctx, req)
 		if err != nil {
 			sendErr = err
@@ -40,32 +44,383 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		}
 		return updates, nil
 	}
-	if req.ScheduleRepeatPeriod != 0 {
-		sendErr = scheduleDateInvalidErr()
-		return nil, sendErr
-	}
 	if err := sendMessageUnsupportedOptionErr(req); err != nil {
 		sendErr = err
 		return nil, sendErr
 	}
+
+	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
+		var updates tg.UpdatesClass
+		updates, duplicate, sendErr = r.sendSplitMessage(ctx, req)
+		return updates, sendErr
+	}
+
+	var updates tg.UpdatesClass
+	updates, duplicate, sendErr = r.sendSingleSendMessage(ctx, req)
+	return updates, sendErr
+}
+
+func (r *Router) sendSplitMessage(ctx context.Context, req *tg.MessagesSendMessageRequest) (tg.UpdatesClass, bool, error) {
+	chunks := splitMessageRunes(req.Message, maxSendMessageTextLength)
+	if len(chunks) <= 1 {
+		return r.sendSingleSendMessage(ctx, req)
+	}
+
+	var combinedUpdates *tg.Updates
+	var anyDuplicate bool
+
+	chunkUtf16Lens := make([]int, len(chunks))
+	for i, chunk := range chunks {
+		chunkUtf16Lens[i] = utf16CodeUnitLen(chunk)
+	}
+
+	currentUtf16Offset := 0
+	for i, chunk := range chunks {
+		chunkStartUtf16 := currentUtf16Offset
+		chunkEndUtf16 := currentUtf16Offset + chunkUtf16Lens[i]
+		currentUtf16Offset = chunkEndUtf16
+
+		chunkEntities := sliceTGEntitiesForChunk(req.Entities, chunkStartUtf16, chunkEndUtf16)
+
+		chunkReq := *req
+		chunkReq.Message = chunk
+		chunkReq.Entities = chunkEntities
+
+		if i == 0 {
+			chunkReq.RandomID = req.RandomID
+		} else {
+			chunkReq.RandomID = randomNonZeroInt64()
+		}
+
+		if i == len(chunks)-1 {
+			chunkReq.ClearDraft = req.ClearDraft
+			chunkReq.ReplyMarkup = req.ReplyMarkup
+			chunkReq.Effect = req.Effect
+		} else {
+			chunkReq.ClearDraft = false
+			chunkReq.ReplyMarkup = nil
+			chunkReq.Effect = 0
+		}
+
+		upd, dup, err := r.sendSingleSendMessage(ctx, &chunkReq)
+		if err != nil {
+			return nil, false, err
+		}
+		if dup {
+			return upd, true, nil
+		}
+
+		combinedUpdates = mergeMessageUpdates(combinedUpdates, upd)
+	}
+
+	if combinedUpdates == nil {
+		return &tg.Updates{}, anyDuplicate, nil
+	}
+	return combinedUpdates, anyDuplicate, nil
+}
+
+func splitMessageRunes(text string, limit int) []string {
+	if limit <= 0 {
+		return []string{text}
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return []string{text}
+	}
+	var chunks []string
+	for len(runes) > 0 {
+		if len(runes) <= limit {
+			chunks = append(chunks, string(runes))
+			break
+		}
+		chunks = append(chunks, string(runes[:limit]))
+		runes = runes[limit:]
+	}
+	return chunks
+}
+
+func sliceTGEntitiesForChunk(entities []tg.MessageEntityClass, chunkStartUtf16, chunkEndUtf16 int) []tg.MessageEntityClass {
+	if len(entities) == 0 {
+		return nil
+	}
+	var out []tg.MessageEntityClass
+	for _, entity := range entities {
+		if entity == nil {
+			continue
+		}
+		entStart := entity.GetOffset()
+		entLength := entity.GetLength()
+		if entStart < 0 || entLength <= 0 {
+			continue
+		}
+		entEnd := entStart + entLength
+		overlapStart := entStart
+		if chunkStartUtf16 > overlapStart {
+			overlapStart = chunkStartUtf16
+		}
+		overlapEnd := entEnd
+		if chunkEndUtf16 < overlapEnd {
+			overlapEnd = chunkEndUtf16
+		}
+		if overlapEnd > overlapStart {
+			newOffset := overlapStart - chunkStartUtf16
+			newLength := overlapEnd - overlapStart
+			cloned := cloneEntityWithBounds(entity, newOffset, newLength)
+			if cloned != nil {
+				out = append(out, cloned)
+			}
+		}
+	}
+	return out
+}
+
+func cloneEntityWithBounds(entity tg.MessageEntityClass, offset, length int) tg.MessageEntityClass {
+	switch e := entity.(type) {
+	case *tg.MessageEntityUnknown:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityMention:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityHashtag:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityBotCommand:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityURL:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityEmail:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityBold:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityItalic:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityCode:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityPre:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityTextURL:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityMentionName:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.InputMessageEntityMentionName:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityPhone:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityCashtag:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityUnderline:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityStrike:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityBankCard:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntitySpoiler:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityCustomEmoji:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityBlockquote:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityFormattedDate:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityDiffInsert:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityDiffReplace:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	case *tg.MessageEntityDiffDelete:
+		c := *e
+		c.Offset = offset
+		c.Length = length
+		return &c
+	default:
+		return nil
+	}
+}
+
+func mergeMessageUpdates(base *tg.Updates, next tg.UpdatesClass) *tg.Updates {
+	if next == nil {
+		return base
+	}
+	if base == nil {
+		base = &tg.Updates{}
+	}
+	switch u := next.(type) {
+	case *tg.Updates:
+		base.Updates = append(base.Updates, u.Updates...)
+		base.Users = append(base.Users, u.Users...)
+		base.Chats = append(base.Chats, u.Chats...)
+		if u.Date > base.Date {
+			base.Date = u.Date
+		}
+		if u.Seq > base.Seq {
+			base.Seq = u.Seq
+		}
+	case *tg.UpdatesCombined:
+		base.Updates = append(base.Updates, u.Updates...)
+		base.Users = append(base.Users, u.Users...)
+		base.Chats = append(base.Chats, u.Chats...)
+		if u.Date > base.Date {
+			base.Date = u.Date
+		}
+		if u.Seq > base.Seq {
+			base.Seq = u.Seq
+		}
+	case *tg.UpdateShort:
+		base.Updates = append(base.Updates, u.Update)
+		if u.Date > base.Date {
+			base.Date = u.Date
+		}
+	case *tg.UpdateShortSentMessage:
+		base.Updates = append(base.Updates, &tg.UpdateNewMessage{
+			Pts:      u.Pts,
+			PtsCount: u.PtsCount,
+		})
+		if u.Date > base.Date {
+			base.Date = u.Date
+		}
+	}
+	base.Users = deduplicateUsers(base.Users)
+	base.Chats = deduplicateChats(base.Chats)
+	return base
+}
+
+func deduplicateUsers(users []tg.UserClass) []tg.UserClass {
+	if len(users) <= 1 {
+		return users
+	}
+	seen := make(map[int64]struct{}, len(users))
+	out := make([]tg.UserClass, 0, len(users))
+	for _, u := range users {
+		if u == nil {
+			continue
+		}
+		id := u.GetID()
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func deduplicateChats(chats []tg.ChatClass) []tg.ChatClass {
+	if len(chats) <= 1 {
+		return chats
+	}
+	seen := make(map[int64]struct{}, len(chats))
+	out := make([]tg.ChatClass, 0, len(chats))
+	for _, c := range chats {
+		if c == nil {
+			continue
+		}
+		id := c.GetID()
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSendMessageRequest) (tg.UpdatesClass, bool, error) {
+	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
+		return nil, false, messageTooLongErr()
+	}
+	if len(req.Entities) > maxMessageEntityCount {
+		return nil, false, entitiesTooLongErr()
+	}
+	if req.RandomID == 0 {
+		return nil, false, randomIDEmptyErr()
+	}
+	if req.ScheduleRepeatPeriod != 0 {
+		return nil, false, scheduleDateInvalidErr()
+	}
+	if err := sendMessageUnsupportedOptionErr(req); err != nil {
+		return nil, false, err
+	}
 	userID, _, err := r.currentUserID(ctx)
 	if err != nil {
-		sendErr = internalErr()
-		return nil, sendErr
+		return nil, false, internalErr()
 	}
 	if userID == 0 {
-		sendErr = peerIDInvalidErr()
-		return nil, sendErr
+		return nil, false, peerIDInvalidErr()
 	}
 	peer, ok := r.domainPeerFromInputPeer(userID, req.Peer)
 	if !ok || peer.ID == 0 {
-		sendErr = peerIDInvalidErr()
-		return nil, sendErr
+		return nil, false, peerIDInvalidErr()
 	}
 	idempotencyFingerprint, err := sendMessageIdempotencyFingerprint(req)
 	if err != nil {
-		sendErr = internalErr()
-		return nil, sendErr
+		return nil, false, internalErr()
 	}
 	// 自动实体必须在普通/频道/monoforum 分流前完成，保证所有文本写路径持久化同一份
 	// 服务端补全结果。指纹仍基于原始请求，派生实体不改变 random_id 幂等语义。
@@ -84,55 +439,45 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		case err == nil:
 			monoforum = true
 		case !errors.Is(err, domain.ErrChannelInvalid):
-			sendErr = internalErr()
-			return nil, sendErr
+			return nil, false, internalErr()
 		}
 	}
 	if hasSuggestedPost && !monoforum {
-		sendErr = suggestedPostPeerInvalidErr()
-		return nil, sendErr
+		return nil, false, suggestedPostPeerInvalidErr()
 	}
 	if monoforum {
 		suggestedPost, suggestedErr := domainSuggestedPost(suggestedInput, hasSuggestedPost)
 		if suggestedErr != nil {
-			sendErr = suggestedErr
-			return nil, sendErr
+			return nil, false, suggestedErr
 		}
 		savedPeer, err := r.monoforumSavedPeerForSender(userID, monoforumAdmin, req.ReplyTo)
 		if err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 		replyTo, err := r.monoforumMessageReplyFromInput(ctx, userID, peer, req.ReplyTo)
 		if err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 		replay, err := r.lookupChannelSendReplay(ctx, userID, peer.ID, savedPeer, req.RandomID, idempotencyFingerprint)
 		if err != nil {
-			sendErr = err
-			return nil, err
+			return nil, false, err
 		}
 		if replay.found {
-			duplicate = true
 			if req.ClearDraft {
 				r.clearDraftAfterSend(ctx, userID, peer, replyTo)
 			}
 			updates, projectionErr := r.monoforumSendUpdatesStrict(ctx, userID, replay.channel.Channel, savedPeer, replay.channel)
 			if projectionErr != nil {
-				sendErr = projectionErr
-				return nil, projectionErr
+				return nil, false, projectionErr
 			}
-			return updates, nil
+			return updates, true, nil
 		}
 		if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 		checkedPeer, err := r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 		if err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 		updates, err := r.sendMonoforumMessage(ctx, userID, checkedPeer, mono, monoforumAdmin, domain.SendMonoforumMessageRequest{
 			SavedPeer:              savedPeer,
@@ -149,34 +494,28 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			ClearDraft:             req.ClearDraft,
 		})
 		if err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
-		return updates, nil
+		return updates, false, nil
 	}
 	replay, err := r.lookupOutgoingReplay(ctx, userID, peer, req.RandomID, idempotencyFingerprint)
 	if err != nil {
-		sendErr = err
-		return nil, err
+		return nil, false, err
 	}
 	if replay.found {
-		duplicate = true
-		return r.outgoingReplayUpdates(ctx, userID, peer, req.RandomID, replay), nil
+		return r.outgoingReplayUpdates(ctx, userID, peer, req.RandomID, replay), true, nil
 	}
 	// Mutable catalog state, rate accounting and access checks are intentionally after exact
 	// replay lookup: a committed send remains acknowledgeable after those states change.
 	if r.messageEffectInvalid(ctx, req.Effect) {
-		sendErr = effectIDInvalidErr()
-		return nil, sendErr
+		return nil, false, effectIDInvalidErr()
 	}
 	if err := r.checkSendRateLimit(ctx, userID, 1); err != nil {
-		sendErr = err
-		return nil, sendErr
+		return nil, false, err
 	}
 	peer, err = r.checkedDomainPeerFromInputPeer(ctx, userID, req.Peer)
 	if err != nil {
-		sendErr = err
-		return nil, sendErr
+		return nil, false, err
 	}
 	// reply_markup：bot 可发送 inline keyboard 与普通 reply keyboard/hide/force；
 	// 非 bot 静默丢弃。仅请求携带 markup 时查询 is_bot。
@@ -185,12 +524,10 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 	if req.ReplyMarkup != nil {
 		replyMarkup, err = domainOutgoingReplyMarkupForSender(req.ReplyMarkup, r.userIsBot(ctx, userID))
 		if err != nil {
-			sendErr = replyMarkupErr(err)
-			return nil, sendErr
+			return nil, false, replyMarkupErr(err)
 		}
 		if err := r.validateReplyMarkupForPeer(ctx, userID, peer, replyMarkup); err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 	}
 	// rich_message（Layer 228 富文本）：blocks、HTML、Markdown 均在边界归一为
@@ -199,17 +536,14 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 	if req.RichMessage != nil {
 		richMessage, err = r.domainRichMessageFromInput(ctx, req.RichMessage)
 		if err != nil {
-			sendErr = err
-			return nil, sendErr
+			return nil, false, err
 		}
 	}
 	if req.Message != "" && richMessage != nil {
-		sendErr = mediaInvalidErr()
-		return nil, sendErr
+		return nil, false, mediaInvalidErr()
 	}
 	if req.Message == "" && richMessage == nil {
-		sendErr = messageEmptyErr()
-		return nil, sendErr
+		return nil, false, messageEmptyErr()
 	}
 	// 链接预览：纯文本消息（私聊或频道）含可预览 URL 且未抑制时，挂 pending 占位，异步解析回填。
 	// 富文本消息有独立媒体语义，不叠加。
@@ -234,10 +568,9 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 			allowPaidStars:         req.AllowPaidStars,
 		}, req.ScheduleDate, req.ScheduleRepeatPeriod)
 		if err != nil {
-			sendErr = err
-			return nil, err
+			return nil, false, err
 		}
-		return updates, nil
+		return updates, false, nil
 	}
 	updates, dup, err := r.sendOutgoing(ctx, userID, peer, outgoingSend{
 		randomID:               req.RandomID,
@@ -256,12 +589,10 @@ func (r *Router) onMessagesSendMessage(ctx context.Context, req *tg.MessagesSend
 		effect:                 req.Effect,
 		allowPaidStars:         req.AllowPaidStars,
 	})
-	duplicate = dup
 	if err != nil {
-		sendErr = err
-		return nil, sendErr
+		return nil, false, err
 	}
-	return updates, nil
+	return updates, dup, nil
 }
 
 func messageSendErr(err error) error {

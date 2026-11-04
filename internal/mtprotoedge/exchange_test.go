@@ -228,6 +228,74 @@ func TestKeyExchangeAcceptsTDLibZeroMessageIDs(t *testing.T) {
 	}
 }
 
+func TestKeyExchangeRestartsStaleHandshakeAfterProbe(t *testing.T) {
+	addr, pub, _ := startTestServer(t, Options{DC: 2, AuthKeys: memory.NewAuthKeyStore()})
+	for _, kind := range []string{"fresh", "nonce", "server_nonce", "dh_without_probe", "client_dh_after_probe"} {
+		t.Run(kind, func(t *testing.T) {
+			conn := dialTransportOnly(t, addr)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			send := func(value bin.Encoder, id int64) {
+				t.Helper()
+				var payload, frame bin.Buffer
+				if err := value.Encode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				if err := (tgproto.UnencryptedMessage{MessageID: id, MessageData: payload.Copy()}).Encode(&frame); err != nil {
+					t.Fatal(err)
+				}
+				if err := conn.Send(ctx, &frame); err != nil {
+					t.Fatal(err)
+				}
+			}
+			nonce := bin.Int128{1}
+			serverNonce := bin.Int128{2}
+			if kind != "dh_without_probe" {
+				send(&mt.ReqPqMultiRequest{Nonce: nonce}, 1)
+				var frame bin.Buffer
+				if err := conn.Recv(ctx, &frame); err != nil {
+					t.Fatal(err)
+				}
+				var response tgproto.UnencryptedMessage
+				if err := response.Decode(&frame); err != nil {
+					t.Fatal(err)
+				}
+				var pq mt.ResPQ
+				if err := pq.Decode(&bin.Buffer{Buf: response.MessageData}); err != nil {
+					t.Fatal(err)
+				}
+				serverNonce = pq.ServerNonce
+			}
+			if kind != "fresh" {
+				switch kind {
+				case "nonce":
+					nonce[0] ^= 1
+				case "server_nonce":
+					serverNonce[0] ^= 1
+				}
+				if kind == "client_dh_after_probe" {
+					send(&mt.SetClientDHParamsRequest{Nonce: nonce, ServerNonce: serverNonce}, 0)
+				} else {
+					send(&mt.ReqDHParamsRequest{Nonce: nonce, ServerNonce: serverNonce, PublicKeyFingerprint: pub.Fingerprint()}, 0)
+				}
+				var rejected bin.Buffer
+				err := conn.Recv(ctx, &rejected)
+				var protocolError *codec.ProtocolErr
+				if !errors.As(err, &protocolError) || protocolError.Code != codec.CodeAuthKeyNotFound {
+					t.Fatalf("missing handshake reset: %v", err)
+				}
+			}
+			// TDLib clears the old nonce/last_query only on -404. A new full exchange
+			// must succeed; neither a probe nor a rejected resume may poison it.
+			_, err := exchange.NewExchanger(&tdlibZeroHandshakeMessageIDConn{Conn: conn}, 2).
+				WithRand(rand.Reader).Client([]exchange.PublicKey{pub}).Run(ctx)
+			if err != nil {
+				t.Fatalf("fresh exchange: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidUnencryptedHandshakeMessageID(t *testing.T) {
 	encode := func(value bin.Encoder) []byte {
 		t.Helper()
