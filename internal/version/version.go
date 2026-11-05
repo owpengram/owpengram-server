@@ -11,7 +11,7 @@ import (
 // Bump it for every release. The release scripts also set it at build time
 // (-ldflags "-X telesrv/internal/version.Release=O9"), so an archive built
 // with --version O9 reports O9 whatever the source says.
-var Release = "O8.1"
+var Release = "O9"
 
 // Parse splits a release name "ON" or "ON.M" (case-insensitive) into its
 // major and minor numbers. ok is false when the name is not of that form --
