@@ -220,12 +220,12 @@ Without the web wizard you also have to fill in `.env` yourself; see
 The admin panel's sidebar footer identifies exactly what is running:
 
 ```text
-Version: O8
-API layers: 225-229
+Version: O9
+API layers: 225-232
 Build: 7ad68c3
 ```
 
-- **Version** — the OwpenGram server release line (`O8`).
+- **Version** — the OwpenGram server release line (`O9`).
 - **API layers** — every MTProto TL schema layer this binary can talk, read
   straight from the compatibility profiles rather than hardcoded.
 - **Build** — the short commit the binary was built from, stamped
