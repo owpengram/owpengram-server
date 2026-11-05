@@ -558,8 +558,11 @@ of new `NOT_IMPLEMENTED`, `Unhandled RPC`, `bad_msg`, panic, or internal errors.
 - 📢 Channel: [@owpengram](https://t.me/owpengram)
 - 💬 Chat: [Join the discussion](https://t.me/+sVB6Ymv70jEwNTAy)
 
-OwpenGram Server builds on the open-source
-[gramsrv](https://github.com/iamxvbaba/gramsrv) project.
+OwpenGram Server is an independent project with its own codebase and its own
+MTProto library, [owpengram-td](https://github.com/owpengram/owpengram-td)
+(built on [gotd/td](https://github.com/gotd/td)). It originally started from the
+open-source [gramsrv](https://github.com/iamxvbaba/gramsrv) project, which we
+thank for the foundation.
 
 ## 📄 License
 
