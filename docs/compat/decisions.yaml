@@ -389,3 +389,37 @@
   status: planned
   priority: P3
   note: Screenshot notice in secret chats.
+
+# --- Layer 233 (2026-11-08) -------------------------------------------------
+- match: messages.transcribeAudioFile
+  status: planned
+  priority: P2
+  note: Layer 233 transcription of an uploaded audio file; messages.transcribeAudio for voice messages already works.
+- match: messages.getTranscriptionLangs
+  status: planned
+  priority: P2
+  note: Layer 233 list of languages for audio transcription; pair of messages.transcribeAudioFile.
+- match: messages.getBotWidgetQueryAnswer
+  status: planned
+  priority: P3
+  note: Layer 233 bot message widgets (HTML widgets in messages); a new bot platform feature, not used by the clients yet.
+- match: messages.setBotWidgetQueryAnswer
+  status: planned
+  priority: P3
+  note: Layer 233 bot message widgets; bot side of messages.getBotWidgetQueryAnswer.
+- match: messages.editMessageWidgetData
+  status: planned
+  priority: P3
+  note: Layer 233 bot message widgets; updates a widget's data (emits updateMessageWidgetData, never to Layers 225-232).
+- match: messages.editInlineBotMessageWidgetData
+  status: planned
+  priority: P3
+  note: Layer 233 bot message widgets in inline messages.
+- match: messages.editWidgetData
+  status: planned
+  priority: P3
+  note: Layer 233 shared widget data by widget id.
+- match: messages.getWidgetPublicData
+  status: planned
+  priority: P3
+  note: Layer 233 public data of a message widget.

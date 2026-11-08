@@ -307,8 +307,8 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.0 h1:8SG7/vwALn54lVB/0yZ/MMwhFrPYtpEHQb2IpWsCzug=
 github.com/opencontainers/image-spec v1.1.0/go.mod h1:W4s4sFTMaBeK1BQLXbG4AdM2szdn85PY75RI83NrTrM=
-github.com/owpengram/owpengram-td v1.7.0 h1:FRHrDNz/hVhuSg3/0QVlSwu1EopXjBfK708/uyz1BpA=
-github.com/owpengram/owpengram-td v1.7.0/go.mod h1:eb7LgJwljFRRXRSnaQCjup15HZI9yH2OBJ/KIpbkCyc=
+github.com/owpengram/owpengram-td v1.8.0 h1:BaW2C14NlDmbe/o2Jri3OVHB9iTzMo6SRlqr5IFkyYo=
+github.com/owpengram/owpengram-td v1.8.0/go.mod h1:eb7LgJwljFRRXRSnaQCjup15HZI9yH2OBJ/KIpbkCyc=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pion/datachannel v1.6.2 h1:7EXQ8TH3vTouBUdRWYbcX2edSx9Yj6k5zl5P+qyxEPc=

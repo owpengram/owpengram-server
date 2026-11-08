@@ -8,8 +8,8 @@
 
 The protocol stack is built on the published
 [`github.com/owpengram/owpengram-td`](https://github.com/owpengram/owpengram-td) module
-(`v1.7.0`), using a canonical Layer 232 schema with sparse `tlprofile`
-exact Layer 225-232 compatibility profiles.
+(`v1.8.0`), using a canonical Layer 233 schema with sparse `tlprofile`
+exact Layer 225-233 compatibility profiles.
 
 If you are looking for a **Telegram server**, **MTProto server**,
 **Telegram backend**, **Telegram clone server**, or **self-hosted
@@ -21,7 +21,7 @@ in Go. Run it on your own network for a private, closed setup, or on a VPS to
 be reachable anywhere in the world. Your data, your keys, your rules — no
 cloud, no lock-in, no censorship.
 
-> 🔗 Implements **MTProto API layers 225-232** — a client is admitted on the
+> 🔗 Implements **MTProto API layers 225-233** — a client is admitted on the
 > exact layer it announces, so older builds keep working after the server moves
 > forward. The running server reports its version, the layers it accepts, and
 > its build in the admin panel sidebar.
@@ -72,7 +72,7 @@ or sponsored by Telegram or the official Telegram team.
 
 | Status | Feature | What works today |
 |---|---|---|
-| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 232, sparse exact Layer 225-232 compatibility profiles, and a same-port HTTP side that serves WebSocket transport plus the `/owpengram/server-info` and `/owpengram/server-icon` self-configuration endpoints. |
+| ✅ | MTProto server edge | TCP transport, RSA key exchange, auth keys, encrypted sessions, salts, ack/resend, bad messages, RPC dispatch, canonical Layer 233, sparse exact Layer 225-233 compatibility profiles, and a same-port HTTP side that serves WebSocket transport plus the `/owpengram/server-info` and `/owpengram/server-icon` self-configuration endpoints. |
 | ✅ | Login and accounts | Development login code, configurable external code delivery (SMS webhook or SMTP), login email as a second factor, email-as-identity sign-up (no phone number needed), sign-in, sign-up, log-out, authorizations, account settings, SRP/password state, WebAuthn passkey sign-in, and a self-hosted Telegram Login (OpenID Connect) provider for third-party sites. |
 | ✅ | Users and contacts | User profiles, usernames, profile photos, contact import/search, blocked/privacy state, presence, and last-seen style status. |
 | ✅ | Dialogs and sync | Dialog list, pinned dialogs, manual unread, folders/filters, drafts, read boundaries, durable updates, online fan-out, and offline difference recovery. |
@@ -221,7 +221,7 @@ The admin panel's sidebar footer identifies exactly what is running:
 
 ```text
 Version: O10
-API layers: 225-232
+API layers: 225-233
 Build: 7ad68c3
 ```
 
@@ -437,12 +437,12 @@ rebased on the upstream release that introduced it:
 
 | Client | Upstream base | Upstream commit | TL layer |
 |---|---|---|---|
-| 💻 [Desktop](https://github.com/owpengram/owpengram-desktop-client) | Telegram Desktop `v7.3.5` | `3a2a9a34e833d3243a13787215b8a7cdcf5dc3c3` | 232 |
-| 🤖 [Android](https://github.com/owpengram/owpengram-android-client) | Telegram for Android `v13.1.1` | `3de37c8cfb039452be7398909461da6288babf15` | 232 |
+| 💻 [Desktop](https://github.com/owpengram/owpengram-desktop-client) | Telegram Desktop `v7.4.1` | `157f5cfc85e2dd1fa67f129a5e31a81db5ddeb19` | 233 |
+| 🤖 [Android](https://github.com/owpengram/owpengram-android-client) | Telegram for Android `v13.2.1` | `7be672ead283d022812d75c729d3a04dd4c2a2c6` | 233 |
 
 A stock Telegram client will not connect, since it only trusts Telegram's own
-DC list and RSA keys. The server's canonical layer is 232, with exact
-compatibility profiles for layers 225-232 — so an older fork build keeps
+DC list and RSA keys. The server's canonical layer is 233, with exact
+compatibility profiles for layers 225-233 — so an older fork build keeps
 working after the server moves forward. Locally that server is
 `127.0.0.1:2398`, DC id `2`.
 
