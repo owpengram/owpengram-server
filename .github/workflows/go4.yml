@@ -1,0 +1,53 @@
+name: Build OwpenGram Admin Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download source
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check Admin Panel
+        run: |
+          echo "Available commands:"
+          ls -la cmd/
+
+          if [ ! -d "./cmd/telesrv-admin" ]; then
+            echo "ERROR: Admin panel source not found!"
+            echo "Expected: ./cmd/telesrv-admin"
+            exit 1
+          fi
+
+      - name: Build Admin Panel ARM64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: android
+          GOARCH: arm64
+        run: |
+          mkdir -p dist
+
+          go build -p 4 \
+            -trimpath \
+            -ldflags="-s -w" \
+            -o dist/admin-panel \
+            ./cmd/telesrv-admin
+
+          file dist/admin-panel
+          ls -lh dist/admin-panel
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: OwpenGram-Admin-Android-ARM64
+          path: dist/admin-panel
+          if-no-files-found: error
