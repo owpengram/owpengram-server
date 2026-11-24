@@ -663,7 +663,7 @@ func TestChannelStoreUserChannelMemberIndexListPaths(t *testing.T) {
 	if len(friendGroups) != 1 || friendGroups[0].ID != discussionCandidate.Channel.ID {
 		t.Fatalf("friend discussion groups after admin = %+v, want candidate", friendGroups)
 	}
-	if _, err := channels.SetForum(ctx, owner.ID, discussionCandidate.Channel.ID, true, false); err != nil {
+	if _, err := channels.SetForum(ctx, owner.ID, discussionCandidate.Channel.ID, true, false, false); err != nil {
 		t.Fatalf("enable forum: %v", err)
 	}
 	friendGroups, err = channels.ListDiscussionGroups(ctx, friend.ID, 10)

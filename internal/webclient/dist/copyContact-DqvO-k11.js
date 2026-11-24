@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{r as e}from"./toast-DkZx6h4q.js";import{r as t}from"./clipboard-DlKyqr83.js";var n=`https://t.me/`;function r(n){t(`@`+n),e({langPackKey:`UsernameCopied`})}function i(r){t(n+r),e({langPackKey:`LinkCopied`})}function a(n){t(n.replace(/\s/g,``)),e({langPackKey:`PhoneCopied`})}function o(n){t(n),e({langPackKey:`IdCopied`})}export{r as a,i,o as n,a as r,n as t};

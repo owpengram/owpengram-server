@@ -765,11 +765,11 @@ func (s *Service) SetParticipantsHidden(ctx context.Context, userID, channelID i
 }
 
 // SetForum toggles forum topics and their preferred TDesktop layout for a megagroup.
-func (s *Service) SetForum(ctx context.Context, userID, channelID int64, enabled, tabs bool) (domain.Channel, error) {
+func (s *Service) SetForum(ctx context.Context, userID, channelID int64, enabled, tabs, sidebar bool) (domain.Channel, error) {
 	if s == nil || s.channels == nil || userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
-	return s.channels.SetForum(ctx, userID, channelID, enabled, tabs)
+	return s.channels.SetForum(ctx, userID, channelID, enabled, tabs, sidebar)
 }
 
 // SetAutotranslation toggles channel autotranslation for all users.

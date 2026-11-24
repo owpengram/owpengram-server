@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func (s *ChannelStore) SetForum(_ context.Context, userID, channelID int64, enabled, tabs bool) (domain.Channel, error) {
+func (s *ChannelStore) SetForum(_ context.Context, userID, channelID int64, enabled, tabs, sidebar bool) (domain.Channel, error) {
 	if userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
@@ -30,10 +30,12 @@ func (s *ChannelStore) SetForum(_ context.Context, userID, channelID int64, enab
 	}
 	prevForum := channel.Forum
 	prevTabs := channel.ForumTabs
+	prevSidebar := channel.ForumSidebar
 	channel.Forum = enabled
 	channel.ForumTabs = enabled && tabs
+	channel.ForumSidebar = enabled && sidebar
 	s.channels[channelID] = channel
-	if prevForum != channel.Forum || prevTabs != channel.ForumTabs {
+	if prevForum != channel.Forum || prevTabs != channel.ForumTabs || prevSidebar != channel.ForumSidebar {
 		s.appendChannelAdminLogLocked(domain.ChannelAdminLogEvent{
 			ChannelID: channelID,
 			UserID:    userID,

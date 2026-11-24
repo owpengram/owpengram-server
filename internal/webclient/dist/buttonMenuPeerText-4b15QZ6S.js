@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{ft as e}from"./confirmationPopup-BS3wTndx.js";function t(t,n,r){let i=document.createElement(`span`);i.classList.add(`btn-menu-item-peer`),r||(r=new e({peerId:t,dialog:!1}).element),r.classList.add(`btn-menu-item-peer-title`);let a=document.createElement(`span`);return a.classList.add(`btn-menu-item-peer-subtitle`),a.append(n),i.append(r,a),i}export{t};

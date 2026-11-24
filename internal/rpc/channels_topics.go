@@ -8,7 +8,7 @@ import (
 
 func (r *Router) onChannelsToggleForum(ctx context.Context, req *tg.ChannelsToggleForumRequest) (tg.UpdatesClass, error) {
 	return r.applyChannelAdminStateMutation(ctx, req.Channel, func(ctx context.Context, userID, channelID int64) (domain.Channel, error) {
-		return r.deps.Channels.SetForum(ctx, userID, channelID, req.Enabled, req.Tabs)
+		return r.deps.Channels.SetForum(ctx, userID, channelID, req.Enabled, req.Tabs, req.Sidebar)
 	})
 }
 

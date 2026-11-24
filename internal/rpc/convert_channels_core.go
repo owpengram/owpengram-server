@@ -448,21 +448,23 @@ func tgChannelForbidden(ch domain.Channel) *tg.ChannelForbidden {
 
 func tgChannel(viewerUserID int64, ch domain.Channel, self *domain.ChannelMember) *tg.Channel {
 	out := &tg.Channel{
-		Creator:    ch.CreatorUserID == viewerUserID && viewerUserID != 0,
-		Verified:   ch.Verified,
-		Scam:       ch.Scam,
-		Fake:       ch.Fake,
-		Gigagroup:  ch.Gigagroup,
-		Broadcast:  ch.Broadcast,
-		Megagroup:  ch.Megagroup,
-		Forum:      ch.Forum,
-		ForumTabs:  ch.ForumTabs,
-		Noforwards: ch.NoForwards,
-		Signatures: ch.Signatures,
-		ID:         ch.ID,
-		Title:      ch.Title,
-		Photo:      tgChatPhoto(ch),
-		Date:       ch.Date,
+		Creator:   ch.CreatorUserID == viewerUserID && viewerUserID != 0,
+		Verified:  ch.Verified,
+		Scam:      ch.Scam,
+		Fake:      ch.Fake,
+		Gigagroup: ch.Gigagroup,
+		Broadcast: ch.Broadcast,
+		Megagroup: ch.Megagroup,
+		Forum:     ch.Forum,
+		ForumTabs: ch.ForumTabs,
+		// Layer 233; dropped for older clients by the protocol library.
+		ForumSidebar: ch.ForumSidebar,
+		Noforwards:   ch.NoForwards,
+		Signatures:   ch.Signatures,
+		ID:           ch.ID,
+		Title:        ch.Title,
+		Photo:        tgChatPhoto(ch),
+		Date:         ch.Date,
 	}
 	out.SetAccessHash(ch.AccessHash)
 	out.SetJoinToSend(ch.JoinToSend)

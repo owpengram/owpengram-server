@@ -115,7 +115,46 @@ func (r *Router) onMessagesEditForumTopic(ctx context.Context, req *tg.MessagesE
 	echoCache := newViewerPeerCache(r)
 	updates := r.channelMessageUpdatesWithPeerCache(ctx, userID, sendRes, 0, echoCache)
 	r.enqueueChannelMessageFanout(ctx, userID, sendRes, nil)
+	// Layer 233 clients also get updateEditForumTopic; the Layer policy drops
+	// it for 225-232, which keep relying on the topic edit service message.
+	if updates != nil {
+		updates.Updates = append(updates.Updates, editForumTopicUpdate(res.Channel.ID, edit, res.Topic))
+	}
+	r.pushChannelUpdates(ctx, userID, res.Channel.ID, res.Recipients, func(viewerUserID int64) *tg.Updates {
+		return r.editForumTopicUpdates(viewerUserID, res.Channel, edit, res.Topic)
+	})
 	return updates, nil
+}
+
+// editForumTopicUpdate carries only the fields the edit asked for, with the
+// values the store ended up with.
+func editForumTopicUpdate(channelID int64, edit domain.EditChannelForumTopicRequest, topic domain.ChannelForumTopic) *tg.UpdateEditForumTopic {
+	update := &tg.UpdateEditForumTopic{
+		Peer:    &tg.PeerChannel{ChannelID: channelID},
+		TopicID: edit.TopicID,
+	}
+	if edit.Title != nil {
+		update.SetTitle(topic.Title)
+	}
+	if edit.IconEmojiID != nil {
+		update.SetIconEmojiID(topic.IconEmojiID)
+	}
+	if edit.Closed != nil {
+		update.SetClosed(topic.Closed)
+	}
+	if edit.Hidden != nil {
+		update.SetHidden(topic.Hidden)
+	}
+	return update
+}
+
+func (r *Router) editForumTopicUpdates(viewerUserID int64, channel domain.Channel, edit domain.EditChannelForumTopicRequest, topic domain.ChannelForumTopic) *tg.Updates {
+	return &tg.Updates{
+		Updates: []tg.UpdateClass{editForumTopicUpdate(channel.ID, edit, topic)},
+		Chats:   []tg.ChatClass{tgChannelChatMin(viewerUserID, channel)},
+		Date:    int(r.clock.Now().Unix()),
+		Seq:     0,
+	}
 }
 
 func (r *Router) onMessagesUpdatePinnedForumTopic(ctx context.Context, req *tg.MessagesUpdatePinnedForumTopicRequest) (tg.UpdatesClass, error) {

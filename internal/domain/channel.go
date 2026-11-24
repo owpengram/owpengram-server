@@ -429,6 +429,7 @@ type Channel struct {
 	Megagroup                bool
 	Forum                    bool
 	ForumTabs                bool
+	ForumSidebar             bool // Layer 233: topics shown in a sidebar
 	Autotranslation          bool
 	RestrictedSponsored      bool
 	BroadcastMessagesAllowed bool

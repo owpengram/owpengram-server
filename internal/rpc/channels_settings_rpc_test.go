@@ -990,8 +990,34 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 		t.Fatalf("toggle forum updates = %+v, want channel chat", forumUpdates)
 	}
 	forumChat, ok := forumUpdates.(*tg.Updates).Chats[0].(*tg.Channel)
-	if !ok || !forumChat.Forum || !forumChat.ForumTabs {
-		t.Fatalf("toggle forum chat = %+v, want forum+forum_tabs", forumUpdates.(*tg.Updates).Chats[0])
+	if !ok || !forumChat.Forum || !forumChat.ForumTabs || forumChat.ForumSidebar {
+		t.Fatalf("toggle forum chat = %+v, want forum+forum_tabs without sidebar", forumUpdates.(*tg.Updates).Chats[0])
+	}
+	// Layer 233: the sidebar layout is stored and reported, not ignored.
+	sidebarUpdates, err := r.onChannelsToggleForum(WithUserID(ctx, owner.ID), &tg.ChannelsToggleForumRequest{Channel: input, Enabled: true, Sidebar: true})
+	if err != nil {
+		t.Fatalf("toggle forum sidebar: %v", err)
+	}
+	sidebarChat, ok := sidebarUpdates.(*tg.Updates).Chats[0].(*tg.Channel)
+	if !ok || !sidebarChat.Forum || !sidebarChat.ForumSidebar || sidebarChat.ForumTabs {
+		t.Fatalf("toggle forum sidebar chat = %+v, want forum+forum_sidebar", sidebarUpdates.(*tg.Updates).Chats[0])
+	}
+	fullWithSidebar, err := r.onChannelsGetFullChannel(WithUserID(ctx, owner.ID), input)
+	if err != nil {
+		t.Fatalf("full channel after sidebar: %v", err)
+	}
+	var sidebarStored bool
+	for _, chat := range fullWithSidebar.Chats {
+		if ch, ok := chat.(*tg.Channel); ok && ch.ID == channel.ID {
+			sidebarStored = ch.ForumSidebar
+		}
+	}
+	if !sidebarStored {
+		t.Fatalf("channel forum_sidebar not kept after re-reading the channel")
+	}
+	// Back to tabs, as the rest of this test expects.
+	if _, err := r.onChannelsToggleForum(WithUserID(ctx, owner.ID), &tg.ChannelsToggleForumRequest{Channel: input, Enabled: true, Tabs: true}); err != nil {
+		t.Fatalf("toggle forum back to tabs: %v", err)
 	}
 	forumPeer := &tg.InputPeerChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}
 	if _, err := r.onMessagesGetForumTopicsByID(WithUserID(ctx, owner.ID), &tg.MessagesGetForumTopicsByIDRequest{
@@ -1263,6 +1289,27 @@ func TestChannelUsernameAndManagementRPC(t *testing.T) {
 	}
 	if editedRootID == 0 {
 		t.Fatalf("messages.editForumTopic updates = %+v, want topic edit service message", editedForumTopic)
+	}
+	var topicEditUpdate *tg.UpdateEditForumTopic
+	for _, update := range editedForumTopic.(*tg.Updates).Updates {
+		if edited, ok := update.(*tg.UpdateEditForumTopic); ok {
+			topicEditUpdate = edited
+		}
+	}
+	if topicEditUpdate == nil || topicEditUpdate.TopicID != topicID {
+		t.Fatalf("messages.editForumTopic updates = %+v, want updateEditForumTopic for topic %d", editedForumTopic, topicID)
+	}
+	if title, ok := topicEditUpdate.GetTitle(); !ok || title != "Ops 2" {
+		t.Fatalf("updateEditForumTopic title = %q/%v, want Ops 2", title, ok)
+	}
+	if closed, ok := topicEditUpdate.GetClosed(); !ok || !closed {
+		t.Fatalf("updateEditForumTopic closed = %v/%v, want true", closed, ok)
+	}
+	if _, ok := topicEditUpdate.GetIconEmojiID(); ok {
+		t.Fatalf("updateEditForumTopic carries icon_emoji_id the edit did not touch")
+	}
+	if _, ok := topicEditUpdate.GetHidden(); ok {
+		t.Fatalf("updateEditForumTopic carries hidden the edit did not touch")
 	}
 	pinnedTopic, err := r.onMessagesUpdatePinnedForumTopic(WithUserID(ctx, owner.ID), &tg.MessagesUpdatePinnedForumTopicRequest{
 		Peer:    forumPeer,

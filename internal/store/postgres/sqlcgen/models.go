@@ -670,6 +670,7 @@ type Channel struct {
 	Scam                          bool
 	Fake                          bool
 	Gigagroup                     bool
+	ForumSidebar                  bool
 }
 
 type ChannelAdminLogEvent struct {

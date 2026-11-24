@@ -11,7 +11,7 @@ import (
 	"telesrv/internal/store/postgres/sqlcgen"
 )
 
-func (s *ChannelStore) SetForum(ctx context.Context, userID, channelID int64, enabled, tabs bool) (domain.Channel, error) {
+func (s *ChannelStore) SetForum(ctx context.Context, userID, channelID int64, enabled, tabs, sidebar bool) (domain.Channel, error) {
 	if userID == 0 || channelID == 0 {
 		return domain.Channel{}, domain.ErrChannelInvalid
 	}
@@ -44,21 +44,25 @@ func (s *ChannelStore) SetForum(ctx context.Context, userID, channelID int64, en
 	}
 	prevForum := channel.Forum
 	prevTabs := channel.ForumTabs
+	prevSidebar := channel.ForumSidebar
 	nextTabs := enabled && tabs
+	nextSidebar := enabled && sidebar
 	if _, err := tx.Exec(ctx, `
 UPDATE channels
 SET forum = $2,
     forum_tabs = $3,
+    forum_sidebar = $4,
     updated_at = now()
-WHERE id = $1`, channelID, enabled, nextTabs); err != nil {
+WHERE id = $1`, channelID, enabled, nextTabs, nextSidebar); err != nil {
 		return domain.Channel{}, fmt.Errorf("update channel forum: %w", err)
 	}
 	channel.Forum = enabled
 	channel.ForumTabs = nextTabs
+	channel.ForumSidebar = nextSidebar
 	if err := markUserChannelMemberIndexForumTx(ctx, tx, channelID, enabled); err != nil {
 		return domain.Channel{}, err
 	}
-	if prevForum != channel.Forum || prevTabs != channel.ForumTabs {
+	if prevForum != channel.Forum || prevTabs != channel.ForumTabs || prevSidebar != channel.ForumSidebar {
 		if err := s.insertChannelAdminLogTx(ctx, tx, domain.ChannelAdminLogEvent{
 			ChannelID: channelID,
 			UserID:    userID,

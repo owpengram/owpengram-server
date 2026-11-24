@@ -69,7 +69,7 @@ type ChannelStore interface {
 	SetChannelPhoto(ctx context.Context, userID, channelID int64, photo *domain.Photo, date int) (domain.SetChannelPhotoResult, error)
 	SetPreHistoryHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetParticipantsHidden(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
-	SetForum(ctx context.Context, userID, channelID int64, enabled, tabs bool) (domain.Channel, error)
+	SetForum(ctx context.Context, userID, channelID int64, enabled, tabs, sidebar bool) (domain.Channel, error)
 	SetAutotranslation(ctx context.Context, userID, channelID int64, enabled bool) (domain.Channel, error)
 	SetRestrictedSponsored(ctx context.Context, userID, channelID int64, restricted bool) (domain.Channel, error)
 	SetPaidMessagesPrice(ctx context.Context, userID, channelID int64, stars int64, broadcastMessagesAllowed bool) (domain.ChannelPaidMessagesPriceResult, error)

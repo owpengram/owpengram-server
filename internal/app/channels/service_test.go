@@ -1790,7 +1790,7 @@ func TestFineGrainedBannedRightsRestrictMediaReactionsAndTopics(t *testing.T) {
 		t.Fatalf("member clear reactions under send_reactions ban: %v", err)
 	}
 
-	if _, err := service.SetForum(ctx, 1001, created.Channel.ID, true, true); err != nil {
+	if _, err := service.SetForum(ctx, 1001, created.Channel.ID, true, true, false); err != nil {
 		t.Fatalf("SetForum: %v", err)
 	}
 	if _, err := service.EditDefaultBannedRights(ctx, 1001, domain.EditChannelDefaultBannedRightsRequest{
@@ -2429,7 +2429,7 @@ func TestChannelAdminTitlePinAndInvite(t *testing.T) {
 	if len(joined.Members) != 1 || joined.Members[0].UserID != 1003 || joined.Event.Pts == 0 {
 		t.Fatalf("joined = %+v, want imported member with megagroup join event", joined)
 	}
-	forum, err := service.SetForum(ctx, 1001, created.Channel.ID, true, true)
+	forum, err := service.SetForum(ctx, 1001, created.Channel.ID, true, true, false)
 	if err != nil {
 		t.Fatalf("SetForum: %v", err)
 	}
