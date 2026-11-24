@@ -329,6 +329,9 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	if doc, found, err := s.replayUploadedDocument(ctx, file, intentHash); err != nil || found {
 		return doc, err
 	}
+	if err := s.checkUploadContent(ctx, file, spec.MimeType); err != nil {
+		return domain.Document{}, err
+	}
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
 		return domain.Document{}, err

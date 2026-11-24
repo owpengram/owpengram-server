@@ -498,6 +498,9 @@ func (r *Router) onAuthSendCode(ctx context.Context, req *tg.AuthSendCodeRequest
 	}
 	hash, err := r.deps.Auth.SendCode(ctx, req.PhoneNumber)
 	if err != nil {
+		if errors.Is(err, auth.ErrAccountBanned) {
+			return nil, phoneNumberBannedErr()
+		}
 		if errors.Is(err, auth.ErrPhoneNumberInvalid) ||
 			errors.Is(err, auth.ErrSystemUserLoginForbidden) {
 			return nil, phoneNumberInvalidErr()
@@ -909,6 +912,9 @@ func (r *Router) onAuthResetLoginEmail(ctx context.Context, req *tg.AuthResetLog
 	}
 	hash, err := resetConsumer.SendPhoneCodeAfterLoginEmailReset(ctx, req.PhoneNumber, resetUserID)
 	if err != nil {
+		if errors.Is(err, auth.ErrAccountBanned) {
+			return nil, phoneNumberBannedErr()
+		}
 		if errors.Is(err, auth.ErrCodeExpired) || errors.Is(err, auth.ErrCodeInvalid) {
 			return nil, signInErr(err)
 		}

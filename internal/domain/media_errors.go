@@ -1,6 +1,9 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // 文件分片上传与媒体相关业务错误。rpc 层据此映射为对应 rpc_error（见 internal/rpc/errors.go）：
 // 文件分片（part invalid/parts invalid/part too big）、上传配额、照片与文档。
@@ -20,4 +23,9 @@ var (
 	// write: local disk free bytes (or, on the s3 backend, the configured
 	// total-bytes budget) has fallen below the configured threshold.
 	ErrStorageFull = errors.New("storage full")
+	// ErrMediaContentBlocked is returned when an uploaded document is refused
+	// by the upload content policy (known abuse encryption container, or
+	// opaque random-looking bytes with no file signature). It wraps
+	// ErrDocumentInvalid so every existing caller maps it to MEDIA_INVALID.
+	ErrMediaContentBlocked = fmt.Errorf("%w: content blocked by upload policy", ErrDocumentInvalid)
 )

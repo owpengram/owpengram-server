@@ -78,7 +78,18 @@ func frozenMethodRequiresWriteGate(method string) bool {
 }
 
 func (r *Router) checkFrozenRPC(ctx context.Context, method string) error {
-	if r == nil || r.deps.AccountFreeze == nil || !frozenMethodRequiresWriteGate(method) {
+	if r == nil || r.deps.AccountFreeze == nil {
+		return nil
+	}
+	// Ban mode (TELESRV_FROZEN_ACCOUNT_POLICY=ban): a frozen account has no
+	// read-only grace at all -- every authorized RPC except logging out is
+	// refused with 401 USER_DEACTIVATED_BAN, which makes clients drop the
+	// session. Login itself is refused in the auth service.
+	ban := r.deps.FrozenAccountsBanned
+	if ban && method == "auth.logOut" {
+		return nil
+	}
+	if !ban && !frozenMethodRequiresWriteGate(method) {
 		return nil
 	}
 	userID, authorized := UserIDFrom(ctx)
@@ -90,6 +101,9 @@ func (r *Router) checkFrozenRPC(ctx context.Context, method string) error {
 		return internalErr()
 	}
 	if found && freeze.Frozen {
+		if ban {
+			return userDeactivatedBanErr()
+		}
 		return frozenMethodInvalidErr()
 	}
 	return nil

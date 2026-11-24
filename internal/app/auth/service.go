@@ -46,7 +46,41 @@ var (
 	ErrPhoneNumberInvalid = errors.New("phone number invalid")
 	// ErrSystemUserLoginForbidden 表示内置系统账号被尝试绑定为普通业务会话。
 	ErrSystemUserLoginForbidden = errors.New("system user login forbidden")
+	// ErrAccountBanned: the account is frozen by moderation and the server
+	// runs with frozen accounts banned (WithFrozenLoginBlock) -- no login code
+	// is issued and no new authorization is bound. RPC maps it to
+	// PHONE_NUMBER_BANNED.
+	ErrAccountBanned = errors.New("account banned")
 )
+
+// AccountFreezeReader reads a user's moderation freeze state.
+type AccountFreezeReader interface {
+	AccountFreeze(ctx context.Context, userID int64) (domain.AccountFreeze, bool, error)
+}
+
+// WithFrozenLoginBlock makes every login path refuse frozen accounts: SendCode
+// returns ErrAccountBanned for a frozen phone owner, and bind (the single
+// choke point of sign-in, sign-up, password, QR/login-token, passkey,
+// verified and bot logins) refuses to create an authorization for one.
+func WithFrozenLoginBlock(freezes AccountFreezeReader) Option {
+	return func(s *Service) { s.freezes = freezes }
+}
+
+// checkLoginNotFrozen returns ErrAccountBanned when frozen-login blocking is
+// enabled and the user is frozen.
+func (s *Service) checkLoginNotFrozen(ctx context.Context, userID int64) error {
+	if s == nil || s.freezes == nil || userID == 0 {
+		return nil
+	}
+	freeze, found, err := s.freezes.AccountFreeze(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if found && freeze.Frozen {
+		return ErrAccountBanned
+	}
+	return nil
+}
 
 const (
 	codeChannelPhone              = store.PhoneCodeChannelPhone
@@ -79,6 +113,9 @@ func systemLoginPhoneForbidden(phone string) bool {
 // 后生成随机验证码并通过 otpdelivery 投递。已有账号的外部投递是 durable
 // 777000 App-code 的附加渠道，不能替换或削弱原有消息事实。
 type Service struct {
+	// freezes, when set, bans frozen accounts from logging in (see
+	// WithFrozenLoginBlock).
+	freezes                AccountFreezeReader
 	users                  store.UserStore
 	auths                  store.AuthorizationStore
 	codes                  store.CodeStore
@@ -504,6 +541,11 @@ func (s *Service) SendCode(ctx context.Context, phone string) (string, error) {
 	}
 	if found && systemUserLoginForbidden(existing) {
 		return "", ErrSystemUserLoginForbidden
+	}
+	if found {
+		if err := s.checkLoginNotFrozen(ctx, existing.ID); err != nil {
+			return "", err
+		}
 	}
 	issuedUserID := int64(0)
 	if found {
@@ -1632,6 +1674,9 @@ func (s *Service) bind(ctx context.Context, auth domain.Authorization, userID in
 	}
 	if !found || systemUserLoginForbidden(u) {
 		return ErrSystemUserLoginForbidden
+	}
+	if err := s.checkLoginNotFrozen(ctx, userID); err != nil {
+		return err
 	}
 	if s.authKeys != nil {
 		key, found, err := s.authKeys.Get(ctx, auth.AuthKeyID)

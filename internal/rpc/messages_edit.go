@@ -24,6 +24,9 @@ func (r *Router) onMessagesEditMessage(ctx context.Context, req *tg.MessagesEdit
 	if hasMessage && utf8.RuneCountInString(message) > maxSendMessageTextLength {
 		return nil, messageTooLongErr()
 	}
+	if hasMessage && domain.ContainsBlockedClientMarker(message) {
+		return nil, messageContentBlockedErr()
+	}
 	entities, _ := req.GetEntities()
 	if hasMessage {
 		if len(entities) > maxMessageEntityCount {

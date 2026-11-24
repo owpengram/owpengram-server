@@ -563,6 +563,15 @@ var _ verificationapp.PeerNotifier = compositeVerificationNotifier{}
 
 var _ verificationapp.PeerNotifier = rpcProjectionVerificationNotifier{}
 
+// frozenLoginBlockOption bans frozen accounts from every login path unless
+// TELESRV_FROZEN_ACCOUNT_POLICY=readonly.
+func frozenLoginBlockOption(cfg config.Config, freezes auth.AccountFreezeReader) auth.Option {
+	if !cfg.FrozenAccountsBanned() {
+		return func(*auth.Service) {}
+	}
+	return auth.WithFrozenLoginBlock(freezes)
+}
+
 func externalMediaOption(cfg config.Config) filesapp.Option {
 	if !cfg.ExternalMediaEnable {
 		return nil
@@ -967,6 +976,7 @@ func run(logger *zap.Logger) error {
 		filesapp.WithAdditionalBlobBackend(additionalBlobBackend),
 		filesapp.WithSpaceGuard(spaceGuard),
 		filesapp.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
+		filesapp.WithOpaqueUploadPolicy(cfg.StorageOpaqueUploadPolicy),
 		filesapp.WithStorageRetentionAges(cfg.StorageRetentionMaxAge, cfg.StorageRetentionMaxAgeByCategory, cfg.StorageRetentionMaxAgeAvatar),
 		filesapp.WithStorageMaxTotalBytes(cfg.StorageMaxTotalBytes),
 		filesapp.WithSecretChatDeleteFileAfterDownload(cfg.SecretChatDeleteFileAfterDownload),
@@ -1615,6 +1625,7 @@ func run(logger *zap.Logger) error {
 		auth.WithCodeTTL(cfg.AuthCodeTTL),
 		auth.WithCodeMaxAttempts(cfg.AuthCodeMaxAttempts),
 		auth.WithPhoneCodeDelivery(phoneCodeSender, cfg.PhoneCodeLength),
+		frozenLoginBlockOption(cfg, userProjectionFacts),
 		auth.WithOTPDeliveryFailureObserver(func(_ context.Context, request otpdelivery.Request, err error) {
 			logger.Named("otp").Warn("supplementary OTP provider delivery failed, 777000 app-code login remains valid",
 				zap.String("delivery_id", request.DeliveryID),
@@ -1760,6 +1771,7 @@ func run(logger *zap.Logger) error {
 		),
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
+		FrozenAccountsBanned:         cfg.FrozenAccountsBanned(),
 		AccountFreezeNotifications:   adminService,
 		AccountDeletionNotifications: accountLifecycleStore,
 		AICompose:                    aiComposeService,

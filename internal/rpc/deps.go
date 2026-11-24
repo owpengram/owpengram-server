@@ -1153,14 +1153,18 @@ type Deps struct {
 	// AuthKeySessionLayers is the protocol-only durable ordering boundary for
 	// explicit invokeWithLayer evidence. Production must wire the same auth-key
 	// store used by the MTProto edge; nil is reserved for isolated router tests.
-	AuthKeySessionLayers         store.AuthKeySessionLayerStore
-	ReadModelVersions            store.ReadModelVersionStore
-	UserProjectionFacts          UserProjectionFactInvalidator
-	Account                      AccountService
-	Privacy                      PrivacyService
-	Help                         HelpService
-	AppUpdates                   updatecdn.Resolver
-	AccountFreeze                AccountFreezeService
+	AuthKeySessionLayers store.AuthKeySessionLayerStore
+	ReadModelVersions    store.ReadModelVersionStore
+	UserProjectionFacts  UserProjectionFactInvalidator
+	Account              AccountService
+	Privacy              PrivacyService
+	Help                 HelpService
+	AppUpdates           updatecdn.Resolver
+	AccountFreeze        AccountFreezeService
+	// FrozenAccountsBanned (TELESRV_FROZEN_ACCOUNT_POLICY=ban) turns an account
+	// freeze into a full ban: every authorized RPC of a frozen user except
+	// auth.logOut fails with 401 USER_DEACTIVATED_BAN (see checkFrozenRPC).
+	FrozenAccountsBanned         bool
 	AccountFreezeNotifications   AccountFreezeNotificationService
 	AccountDeletionNotifications AccountDeletionNotificationService
 	AICompose                    AIComposeService

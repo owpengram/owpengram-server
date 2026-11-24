@@ -116,6 +116,9 @@ type Service struct {
 	// TELESRV_SECRET_CHAT_DELETE_FILE_AFTER_DOWNLOAD -- see
 	// DeleteEncryptedFileBlob's doc comment.
 	secretChatDeleteFileAfterDownload bool
+	// opaqueUploadPolicy is TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY -- see
+	// content_policy.go. Empty means "block".
+	opaqueUploadPolicy string
 
 	// retentionNotifyMu guards retentionMessages/retentionChannels: they are
 	// set post-construction (see SetRetentionPurgeNotifier) from

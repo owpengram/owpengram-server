@@ -125,7 +125,15 @@ func storageFullErr() error { return tgerr.New(400, "STORAGE_FULL") }
 
 func mediaEmptyErr() error { return tgerr.New(400, "MEDIA_EMPTY") }
 
-func frozenMethodInvalidErr() error      { return tgerr.New(420, "FROZEN_METHOD_INVALID") }
+func frozenMethodInvalidErr() error { return tgerr.New(420, "FROZEN_METHOD_INVALID") }
+
+// phoneNumberBannedErr: login refused for a frozen account when frozen
+// accounts are banned (TELESRV_FROZEN_ACCOUNT_POLICY=ban).
+func phoneNumberBannedErr() error { return tgerr.New(400, "PHONE_NUMBER_BANNED") }
+
+// userDeactivatedBanErr: an existing session of a frozen account when frozen
+// accounts are banned; 401 makes clients drop the session.
+func userDeactivatedBanErr() error       { return tgerr.New(401, "USER_DEACTIVATED_BAN") }
 func frozenParticipantMissingErr() error { return tgerr.New(400, "FROZEN_PARTICIPANT_MISSING") }
 
 func photoInvalidErr() error { return tgerr.New(400, "PHOTO_INVALID") }
@@ -281,6 +289,10 @@ func messageEmptyErr() error { return tgerr.New(400, "MESSAGE_EMPTY") }
 
 // messageTooLongErr 表示文本超出当前阶段限制。
 func messageTooLongErr() error { return tgerr.New(400, "MESSAGE_TOO_LONG") }
+
+// messageContentBlockedErr: text carries a blocked third-party encryption
+// protocol marker (domain.ContainsBlockedClientMarker).
+func messageContentBlockedErr() error { return tgerr.New(400, "MESSAGE_CONTENT_BLOCKED") }
 
 func entitiesTooLongErr() error { return tgerr.New(400, "ENTITIES_TOO_LONG") }
 
@@ -449,6 +461,8 @@ func quoteTextInvalidErr() error { return tgerr.New(400, "QUOTE_TEXT_INVALID") }
 // signInErr 把登录业务错误映射为客户端可识别的 rpc_error。
 func signInErr(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrAccountBanned):
+		return phoneNumberBannedErr()
 	case errors.Is(err, auth.ErrPhoneNumberInvalid),
 		errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return phoneNumberInvalidErr()
@@ -471,6 +485,8 @@ func signInErr(err error) error {
 // 具体哪一步失败(防探测);非验证类(store/内部)返回 500。
 func passkeyErr(err error) error {
 	switch {
+	case errors.Is(err, auth.ErrAccountBanned):
+		return phoneNumberBannedErr()
 	case errors.Is(err, auth.ErrSystemUserLoginForbidden):
 		return tgerr.New(400, "PASSKEY_INVALID")
 	case errors.Is(err, domain.ErrPasskeyChallengeInvalid):

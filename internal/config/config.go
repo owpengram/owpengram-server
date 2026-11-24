@@ -343,6 +343,18 @@ type Config struct {
 	// value could never actually be reached, so it's refused as a
 	// startup-time misconfiguration rather than silently accepted as a no-op.
 	StorageMaxUploadFileBytes int64
+	// StorageOpaqueUploadPolicy (TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY) controls
+	// regular document uploads that carry a known abuse encryption container
+	// (e.g. ALICEU01) or are opaque random bytes with no file signature:
+	// "block" (default) rejects them with MEDIA_INVALID, "log" only logs
+	// opaque files (known abuse containers are still rejected), "off"
+	// disables the check. Secret-chat files are never inspected.
+	StorageOpaqueUploadPolicy string
+	// FrozenAccountPolicy (TELESRV_FROZEN_ACCOUNT_POLICY): "ban" (default)
+	// makes a moderation freeze a full ban -- no login code, no new
+	// authorization, and every existing session gets 401 USER_DEACTIVATED_BAN;
+	// "readonly" keeps Telegram's read-only frozen-account semantics.
+	FrozenAccountPolicy string
 	// StorageUsageRefreshInterval is how often the cached free-space/budget
 	// usage gauge refreshes; <=0 uses a 1 minute default.
 	StorageUsageRefreshInterval time.Duration
@@ -1170,6 +1182,8 @@ func Load() (Config, error) {
 		StorageMinFreeBytes:               envInt64Or("TELESRV_STORAGE_MIN_FREE_BYTES", 1<<30),
 		StorageMaxTotalBytes:              envInt64Or("TELESRV_STORAGE_MAX_TOTAL_BYTES", 0),
 		StorageMaxUploadFileBytes:         envInt64Or("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES", 0),
+		StorageOpaqueUploadPolicy:         strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY", files.OpaqueUploadPolicyBlock))),
+		FrozenAccountPolicy:               strings.ToLower(strings.TrimSpace(envOr("TELESRV_FROZEN_ACCOUNT_POLICY", FrozenAccountPolicyBan))),
 		StorageUsageRefreshInterval:       envDurationOr("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", time.Minute),
 		StorageRetentionMode:              strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_RETENTION_MODE", StorageRetentionModeOff))),
 		StorageRetentionMaxAge:            envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE", 30*24*time.Hour),
@@ -1582,6 +1596,12 @@ func validateBlobStorageConfig(cfg Config) error {
 	if err := validateMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes); err != nil {
 		return err
 	}
+	if err := validateOpaqueUploadPolicy(cfg.StorageOpaqueUploadPolicy); err != nil {
+		return err
+	}
+	if err := validateFrozenAccountPolicy(cfg.FrozenAccountPolicy); err != nil {
+		return err
+	}
 	if cfg.StorageLowSpaceGuardEnable && cfg.StorageUsageRefreshInterval <= 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be positive when storage capacity guard is enabled")
 	}
@@ -1818,6 +1838,12 @@ func validateStorageConfig(cfg Config) error {
 	if err := validateMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes); err != nil {
 		return err
 	}
+	if err := validateOpaqueUploadPolicy(cfg.StorageOpaqueUploadPolicy); err != nil {
+		return err
+	}
+	if err := validateFrozenAccountPolicy(cfg.FrozenAccountPolicy); err != nil {
+		return err
+	}
 	if cfg.StorageUsageRefreshInterval < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be non-negative")
 	}
@@ -1858,6 +1884,37 @@ func validateMaxUploadFileBytes(v int64) error {
 		return fmt.Errorf("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES (%d) must not exceed the protocol upload ceiling of %d bytes (%d parts x %d bytes)", v, protocolCeiling, files.MaxUploadParts, files.MaxUploadPartBytes)
 	}
 	return nil
+}
+
+// validateOpaqueUploadPolicy checks TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY. Empty
+// is accepted (treated as "block") so configs built without Load stay valid.
+func validateOpaqueUploadPolicy(v string) error {
+	switch v {
+	case "", files.OpaqueUploadPolicyBlock, files.OpaqueUploadPolicyLog, files.OpaqueUploadPolicyOff:
+		return nil
+	}
+	return fmt.Errorf("TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY must be %q, %q or %q, got %q",
+		files.OpaqueUploadPolicyBlock, files.OpaqueUploadPolicyLog, files.OpaqueUploadPolicyOff, v)
+}
+
+// Frozen account policies (TELESRV_FROZEN_ACCOUNT_POLICY).
+const (
+	FrozenAccountPolicyBan      = "ban"
+	FrozenAccountPolicyReadOnly = "readonly"
+)
+
+// FrozenAccountsBanned reports whether a moderation freeze is a full ban.
+// Empty (configs built without Load) counts as the "ban" default.
+func (c Config) FrozenAccountsBanned() bool {
+	return c.FrozenAccountPolicy != FrozenAccountPolicyReadOnly
+}
+
+func validateFrozenAccountPolicy(v string) error {
+	switch v {
+	case "", FrozenAccountPolicyBan, FrozenAccountPolicyReadOnly:
+		return nil
+	}
+	return fmt.Errorf("TELESRV_FROZEN_ACCOUNT_POLICY must be %q or %q, got %q", FrozenAccountPolicyBan, FrozenAccountPolicyReadOnly, v)
 }
 
 // validateAdminRBACConfig checks the panel/adminapi permission configuration.
