@@ -262,8 +262,8 @@ func (r *Router) onMessagesSendMedia(ctx context.Context, req *tg.MessagesSendMe
 	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
 		return nil, mediaCaptionTooLongErr()
 	}
-	if domain.ContainsBlockedClientMarker(req.Message) {
-		return nil, messageContentBlockedErr()
+	if err := r.checkMessageTextPolicy(ctx, "messages.sendMedia", req.Message); err != nil {
+		return nil, err
 	}
 	if len(req.Entities) > maxMessageEntityCount {
 		return nil, limitInvalidErr()
@@ -498,8 +498,8 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 		if utf8.RuneCountInString(item.Message) > maxSendMessageTextLength {
 			return nil, mediaCaptionTooLongErr()
 		}
-		if domain.ContainsBlockedClientMarker(item.Message) {
-			return nil, messageContentBlockedErr()
+		if err := r.checkMessageTextPolicy(ctx, "messages.sendMultiMedia", item.Message); err != nil {
+			return nil, err
 		}
 		if len(item.Entities) > maxMessageEntityCount {
 			return nil, limitInvalidErr()

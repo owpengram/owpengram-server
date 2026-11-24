@@ -291,7 +291,7 @@ func messageEmptyErr() error { return tgerr.New(400, "MESSAGE_EMPTY") }
 func messageTooLongErr() error { return tgerr.New(400, "MESSAGE_TOO_LONG") }
 
 // messageContentBlockedErr: text carries a blocked third-party encryption
-// protocol marker (domain.ContainsBlockedClientMarker).
+// protocol marker or a bare public key (checkMessageTextPolicy).
 func messageContentBlockedErr() error { return tgerr.New(400, "MESSAGE_CONTENT_BLOCKED") }
 
 func entitiesTooLongErr() error { return tgerr.New(400, "ENTITIES_TOO_LONG") }

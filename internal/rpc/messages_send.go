@@ -395,8 +395,8 @@ func (r *Router) sendSingleSendMessage(ctx context.Context, req *tg.MessagesSend
 	if utf8.RuneCountInString(req.Message) > maxSendMessageTextLength {
 		return nil, false, messageTooLongErr()
 	}
-	if domain.ContainsBlockedClientMarker(req.Message) {
-		return nil, false, messageContentBlockedErr()
+	if err := r.checkMessageTextPolicy(ctx, "messages.sendMessage", req.Message); err != nil {
+		return nil, false, err
 	}
 	if len(req.Entities) > maxMessageEntityCount {
 		return nil, false, entitiesTooLongErr()
