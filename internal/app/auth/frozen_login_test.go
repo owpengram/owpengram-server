@@ -66,3 +66,47 @@ func TestFrozenAccountCannotLogIn(t *testing.T) {
 		t.Fatalf("SignIn after unfreeze: %v", err)
 	}
 }
+
+// Production signs up and logs in by email (the wire "phone" is an encoded
+// email); a frozen account must be refused there too, both before a code is
+// mailed and with a code mailed before the freeze.
+func TestFrozenEmailAccountCannotLogIn(t *testing.T) {
+	ctx := context.Background()
+	freezes := &fakeFreezes{frozen: map[int64]bool{}}
+	sender := &testMailSender{}
+	dialogs := memory.NewDialogStore()
+	delivery := memory.NewLoginCodeDeliveryStore(memory.NewMessageStore(dialogs), memory.NewUpdateEventStore())
+	svc := NewService(memory.NewUserStore(), memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithLoginCodeDelivery(delivery),
+		WithLoginEmail(LoginEmailOptions{Sender: sender, Enabled: true}),
+		WithEmailSignup(true),
+		WithFrozenLoginBlock(freezes))
+	phone, ok := domain.EncodeEmailPhone("frozen@owpengram.local")
+	if !ok {
+		t.Fatal("EncodeEmailPhone failed")
+	}
+
+	hash, err := svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	if _, _, _, err := svc.SignInWithEmail(ctx, domain.Authorization{}, phone, hash, sender.code); err != nil {
+		t.Fatalf("SignInWithEmail: %v", err)
+	}
+	u, _, err := svc.SignUp(ctx, domain.Authorization{AuthKeyID: [8]byte{1}}, phone, hash, "Frozen", "")
+	if err != nil {
+		t.Fatalf("SignUp: %v", err)
+	}
+
+	hash2, err := svc.SendCode(ctx, phone)
+	if err != nil {
+		t.Fatalf("SendCode before freeze: %v", err)
+	}
+	freezes.frozen[u.ID] = true
+	if _, _, _, err := svc.SignInWithEmail(ctx, domain.Authorization{AuthKeyID: [8]byte{2}}, phone, hash2, sender.code); !errors.Is(err, ErrAccountBanned) {
+		t.Fatalf("SignInWithEmail of frozen account err = %v, want ErrAccountBanned", err)
+	}
+	if _, err := svc.SendCode(ctx, phone); !errors.Is(err, ErrAccountBanned) {
+		t.Fatalf("SendCode for frozen email account err = %v, want ErrAccountBanned", err)
+	}
+}
