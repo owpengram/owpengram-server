@@ -24,8 +24,19 @@ const DefaultDialogListSnapshotTTL = time.Hour
 // ids, or to build a differently-typed snapshot), never mutates an element
 // in place; a future caller that needs to mutate what it gets back must
 // copy first.
+//
+// Entries are held one per user, not one per (user, OwnerHash): OwnerHash
+// changes on every dialog change, so keying by it kept every superseded
+// snapshot alive until its TTL -- in the 8k-session load test (2026-11-24)
+// that was ~200 MB of dead snapshots per minute. A Get with a different
+// OwnerHash is a miss, exactly as a different key was before.
 type DialogListSnapshotCache struct {
-	c *ttlCache[store.DialogListSnapshotCacheKey, store.DialogListSnapshotCacheValue]
+	c *ttlCache[int64, dialogListSnapshotEntry]
+}
+
+type dialogListSnapshotEntry struct {
+	ownerHash int64
+	value     store.DialogListSnapshotCacheValue
 }
 
 var _ store.DialogListSnapshotCache = (*DialogListSnapshotCache)(nil)
@@ -36,19 +47,19 @@ func NewDialogListSnapshotCache(ttl time.Duration) *DialogListSnapshotCache {
 	if ttl <= 0 {
 		ttl = DefaultDialogListSnapshotTTL
 	}
-	return &DialogListSnapshotCache{c: newTTLCache[store.DialogListSnapshotCacheKey, store.DialogListSnapshotCacheValue](ttl)}
+	return &DialogListSnapshotCache{c: newTTLCache[int64, dialogListSnapshotEntry](ttl)}
 }
 
 func (c *DialogListSnapshotCache) GetDialogListSnapshot(_ context.Context, key store.DialogListSnapshotCacheKey) (store.DialogListSnapshotCacheValue, bool, error) {
-	v, ok := c.c.get(key)
-	if !ok {
+	entry, ok := c.c.get(key.UserID)
+	if !ok || entry.ownerHash != key.OwnerHash {
 		return store.DialogListSnapshotCacheValue{}, false, nil
 	}
-	return v, true, nil
+	return entry.value, true, nil
 }
 
 func (c *DialogListSnapshotCache) PutDialogListSnapshot(_ context.Context, key store.DialogListSnapshotCacheKey, value store.DialogListSnapshotCacheValue) error {
-	c.c.put(key, value, 0)
+	c.c.put(key.UserID, dialogListSnapshotEntry{ownerHash: key.OwnerHash, value: value}, 0)
 	return nil
 }
 
