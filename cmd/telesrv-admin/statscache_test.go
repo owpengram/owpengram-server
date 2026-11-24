@@ -71,6 +71,59 @@ func TestSWRCacheKeepsValueWhenRefreshFails(t *testing.T) {
 	}
 }
 
+// A value older than maxStale (e.g. cached yesterday) must not be shown: the
+// read waits for a fresh load.
+func TestSWRCacheReloadsPastMaxStale(t *testing.T) {
+	var calls atomic.Int32
+	cache := newSWRCache("test", time.Millisecond, func(ctx context.Context) (int, error) {
+		return int(calls.Add(1)), nil
+	}).withMaxStale(5 * time.Millisecond)
+	if got, _ := cache.Get(context.Background()); got != 1 {
+		t.Fatalf("first Get = %d, want 1", got)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got, _ := cache.Get(context.Background()); got != 2 {
+		t.Fatalf("Get past maxStale = %d, want the fresh value 2", got)
+	}
+}
+
+func TestSWRCacheServesOldValueWhenStaleReloadFails(t *testing.T) {
+	var calls atomic.Int32
+	cache := newSWRCache("test", time.Millisecond, func(ctx context.Context) (string, error) {
+		if calls.Add(1) > 1 {
+			return "", errors.New("database down")
+		}
+		return "ok", nil
+	}).withMaxStale(5 * time.Millisecond)
+	cache.Get(context.Background())
+	time.Sleep(20 * time.Millisecond)
+	if got, err := cache.Get(context.Background()); err != nil || got != "ok" {
+		t.Fatalf("Get = %q, %v; want the old value", got, err)
+	}
+}
+
+// Invalidate refreshes in the background; it must not make the next read wait.
+func TestSWRCacheInvalidateDoesNotBlock(t *testing.T) {
+	var calls atomic.Int32
+	release := make(chan struct{})
+	defer close(release)
+	cache := newSWRCache("test", time.Minute, func(ctx context.Context) (int, error) {
+		if calls.Add(1) > 1 {
+			<-release
+		}
+		return 1, nil
+	}).withMaxStale(10 * time.Minute)
+	cache.Get(context.Background())
+	cache.Invalidate()
+	done := make(chan struct{})
+	go func() { cache.Get(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Get after Invalidate waited for the reload")
+	}
+}
+
 func TestSWRCacheFirstLoadErrorIsReturned(t *testing.T) {
 	cache := newSWRCache("test", time.Minute, func(ctx context.Context) (int, error) {
 		return 0, errors.New("boom")

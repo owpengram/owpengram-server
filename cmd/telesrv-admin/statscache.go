@@ -15,10 +15,17 @@ import (
 // once it is older than `fresh` (stale-while-revalidate). Only the very first
 // call, before anything was ever loaded, waits for the query -- and main warms
 // the caches at start-up, so normally not even that one does.
+//
+// Serving stale is only right while "stale" means seconds or minutes. When
+// nobody has opened the panel for hours, the cached value can be from another
+// day (the overview once showed "Messages today: 1" in the afternoon, from a
+// value cached just after midnight UTC). Past maxStale the read waits for a
+// fresh load instead, and falls back to the old value only if that fails.
 type swrCache[T any] struct {
-	name  string
-	fresh time.Duration
-	load  func(context.Context) (T, error)
+	name     string
+	fresh    time.Duration
+	maxStale time.Duration // 0 = always serve stale
+	load     func(context.Context) (T, error)
 
 	mu         sync.Mutex
 	value      T
@@ -35,11 +42,35 @@ func newSWRCache[T any](name string, fresh time.Duration, load func(context.Cont
 // request that triggered it, so it needs a deadline of its own.
 const refreshTimeout = 2 * time.Minute
 
+// withMaxStale sets how old a cached value may be and still be served without
+// waiting; see the type comment.
+func (c *swrCache[T]) withMaxStale(d time.Duration) *swrCache[T] {
+	c.maxStale = d
+	return c
+}
+
 func (c *swrCache[T]) Get(ctx context.Context) (T, error) {
 	c.mu.Lock()
 	if c.loaded {
 		value := c.value
-		if time.Since(c.at) > c.fresh && !c.refreshing {
+		age := time.Since(c.at)
+		// Too old to show: load now -- unless a load is already running, in
+		// which case this caller gets the old value rather than a second query.
+		if c.maxStale > 0 && age > c.maxStale && !c.refreshing {
+			c.refreshing = true
+			c.mu.Unlock()
+			fresh, err := c.load(ctx)
+			c.mu.Lock()
+			c.refreshing = false
+			c.mu.Unlock()
+			if err != nil {
+				log.Printf("admin: reloading stale %s failed: %v", c.name, err)
+				return value, nil
+			}
+			c.store(fresh)
+			return fresh, nil
+		}
+		if age > c.fresh && !c.refreshing {
 			c.refreshing = true
 			go c.refresh()
 		}
@@ -85,7 +116,11 @@ func (c *swrCache[T]) store(value T) {
 // from the old value), e.g. right after an action that changed the numbers.
 func (c *swrCache[T]) Invalidate() {
 	c.mu.Lock()
-	c.at = time.Time{}
+	// Just past fresh, not the zero time: stale enough to refresh in the
+	// background, not so old that the next read would wait (maxStale).
+	if c.loaded {
+		c.at = time.Now().Add(-c.fresh - time.Nanosecond)
+	}
 	c.mu.Unlock()
 }
 
@@ -142,6 +177,11 @@ const (
 	storageListPageSize = 50
 	// The activity chart is per day; a few minutes behind is invisible on it.
 	activityFresh = 5 * time.Minute
+
+	// Older than this, a value is reloaded before it is shown (see swrCache).
+	dashboardCountMaxStale = 2 * time.Minute
+	activityMaxStale       = 15 * time.Minute
+	storageMaxStale        = 10 * time.Minute
 )
 
 func newStatsCaches(read *readStore) *statsCaches {
@@ -150,9 +190,9 @@ func newStatsCaches(read *readStore) *statsCaches {
 	}
 	return &statsCaches{
 		read:      read,
-		storage:   newSWRCache("storage stats", storageStatsFresh, read.StorageStats),
-		dashboard: newSWRCache("dashboard counts", dashboardCountFresh, read.DashboardCounts),
-		activity:  newSWRCache("dashboard activity", activityFresh, read.DashboardActivity),
+		storage:   newSWRCache("storage stats", storageStatsFresh, read.StorageStats).withMaxStale(storageMaxStale),
+		dashboard: newSWRCache("dashboard counts", dashboardCountFresh, read.DashboardCounts).withMaxStale(dashboardCountMaxStale),
+		activity:  newSWRCache("dashboard activity", activityFresh, read.DashboardActivity).withMaxStale(activityMaxStale),
 		usageList: map[string]*swrCache[storageUsagePage]{},
 	}
 }
@@ -170,7 +210,7 @@ func (c *statsCaches) storageList(sortBy string, sortDesc bool) *swrCache[storag
 	cache := newSWRCache("storage list "+key, storageListFresh, func(ctx context.Context) (storageUsagePage, error) {
 		rows, hasMore, err := c.read.ListAccountStorageUsage(ctx, "", sortBy, sortDesc, 0, storageListPageSize)
 		return storageUsagePage{rows: rows, hasMore: hasMore}, err
-	})
+	}).withMaxStale(storageMaxStale)
 	c.usageList[key] = cache
 	return cache
 }
