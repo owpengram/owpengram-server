@@ -1,2 +1,0 @@
-//# allFunctionsCalledOnLoad
-import{r as e}from"./apiManagerProxy-BUUJOm5Z.js";import{p as t}from"./solid-B0Du5GQu.js";import{d as n}from"./web-FH1QzTRi.js";import{t as r}from"./communityAvatar-B49hi-TV.js";function i(i,a){let o=document.createElement(`div`);return{dispose:n(()=>{let n=e(()=>i);return t(r,{get community(){return n()},get title(){return n()?.title},size:a})},o),element:o.firstElementChild}}export{i as t};
