@@ -1,0 +1,2 @@
+//# allFunctionsCalledOnLoad
+import{w as e}from"./commonStateStorage-BGiBZvzE.js";import{d as t}from"./langPack-CJKeKWI7.js";import{g as n}from"./renderer-fj9Mry78.js";function r(r){r=e(r);let i=window.showMaskedAlert;if(i&&n(r)){let e=t(document.createElement(`a`));e.href=r,i(e)}else window.open(r,`_blank`,`noreferrer`)}export{r as t};

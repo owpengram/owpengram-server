@@ -466,8 +466,29 @@ func compactPhotoSizeClasses(in []tg.PhotoSizeClass) []tg.PhotoSizeClass {
 	return out
 }
 
+// animatedStickerFileName is the name Telegram gives every animated (.tgs)
+// sticker and custom emoji. Clients key on it: Telegram Web K treats a .tgs
+// as a Lottie sticker only when it is named so or carries a sticker
+// attribute, so a custom emoji uploaded under its own name ("007_x.tgs")
+// rendered as a broken image there.
+const animatedStickerFileName = "AnimatedSticker.tgs"
+
+func tgsStickerLike(mimeType string, attrs []domain.DocumentAttribute) bool {
+	if mimeType != mimeApplicationXTGSticker {
+		return false
+	}
+	for _, a := range attrs {
+		if a.Kind == domain.DocAttrSticker || a.Kind == domain.DocAttrCustomEmoji {
+			return true
+		}
+	}
+	return false
+}
+
 func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []tg.DocumentAttributeClass {
-	out := make([]tg.DocumentAttributeClass, 0, len(attrs))
+	out := make([]tg.DocumentAttributeClass, 0, len(attrs)+1)
+	animatedSticker := tgsStickerLike(mimeType, attrs)
+	hasFileName := false
 	for _, a := range attrs {
 		switch a.Kind {
 		case domain.DocAttrImageSize:
@@ -508,7 +529,12 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 			}
 			out = append(out, attr)
 		case domain.DocAttrFilename:
-			out = append(out, &tg.DocumentAttributeFilename{FileName: a.FileName})
+			hasFileName = true
+			name := a.FileName
+			if animatedSticker {
+				name = animatedStickerFileName
+			}
+			out = append(out, &tg.DocumentAttributeFilename{FileName: name})
 		case domain.DocAttrCustomEmoji:
 			out = append(out, &tg.DocumentAttributeCustomEmoji{
 				Free:       a.Free,
@@ -517,6 +543,9 @@ func tgDocumentAttributes(mimeType string, attrs []domain.DocumentAttribute) []t
 				Stickerset: tgInputStickerSetFromIDs(a.StickerSetID, a.StickerSetAccessHash),
 			})
 		}
+	}
+	if animatedSticker && !hasFileName {
+		out = append(out, &tg.DocumentAttributeFilename{FileName: animatedStickerFileName})
 	}
 	return out
 }
