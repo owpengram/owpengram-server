@@ -977,6 +977,7 @@ func run(logger *zap.Logger) error {
 		filesapp.WithSpaceGuard(spaceGuard),
 		filesapp.WithMaxUploadFileBytes(cfg.StorageMaxUploadFileBytes),
 		filesapp.WithOpaqueUploadPolicy(cfg.StorageOpaqueUploadPolicy),
+		filesapp.WithEncryptedContainerPolicy(cfg.StorageEncryptedContainerPolicy),
 		filesapp.WithStorageRetentionAges(cfg.StorageRetentionMaxAge, cfg.StorageRetentionMaxAgeByCategory, cfg.StorageRetentionMaxAgeAvatar),
 		filesapp.WithStorageMaxTotalBytes(cfg.StorageMaxTotalBytes),
 		filesapp.WithSecretChatDeleteFileAfterDownload(cfg.SecretChatDeleteFileAfterDownload),
@@ -1598,6 +1599,12 @@ func run(logger *zap.Logger) error {
 		moderationapp.WithPeerReaders(usersService, channelsService),
 		moderationapp.WithProfilePhotoReader(filesService),
 	)
+	var contentPolicyReporter domain.ContentPolicyReporter
+	if cfg.ContentPolicyAutoReport {
+		flagger := moderationapp.NewAutoFlagger(moderationService, domain.OfficialSystemUserID, logger.Named("autoflag"))
+		filesService.SetContentPolicyReporter(flagger)
+		contentPolicyReporter = flagger
+	}
 	legacyReportsMigrated, err := moderationService.MigrateLegacyEphemeralReports(ctx, ephemeralReportStore, 500)
 	if err != nil {
 		return fmt.Errorf("migrate legacy ephemeral reports: %w", err)
@@ -1772,6 +1779,7 @@ func run(logger *zap.Logger) error {
 		AppUpdates:                   appUpdateResolver,
 		AccountFreeze:                userProjectionFacts,
 		FrozenAccountsBanned:         cfg.FrozenAccountsBanned(),
+		ContentPolicyReporter:        contentPolicyReporter,
 		AccountFreezeNotifications:   adminService,
 		AccountDeletionNotifications: accountLifecycleStore,
 		AICompose:                    aiComposeService,

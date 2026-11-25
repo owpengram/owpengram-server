@@ -1164,7 +1164,10 @@ type Deps struct {
 	// FrozenAccountsBanned (TELESRV_FROZEN_ACCOUNT_POLICY=ban) turns an account
 	// freeze into a full ban: every authorized RPC of a frozen user except
 	// auth.logOut fails with 401 USER_DEACTIVATED_BAN (see checkFrozenRPC).
-	FrozenAccountsBanned         bool
+	FrozenAccountsBanned bool
+	// ContentPolicyReporter receives anti-abuse text-policy hits (automatic
+	// moderation reports); nil disables reporting.
+	ContentPolicyReporter        domain.ContentPolicyReporter
 	AccountFreezeNotifications   AccountFreezeNotificationService
 	AccountDeletionNotifications AccountDeletionNotificationService
 	AICompose                    AIComposeService

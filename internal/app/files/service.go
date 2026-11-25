@@ -119,6 +119,11 @@ type Service struct {
 	// opaqueUploadPolicy is TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY -- see
 	// content_policy.go. Empty means "block".
 	opaqueUploadPolicy string
+	// encryptedContainerPolicy is TELESRV_STORAGE_ENCRYPTED_CONTAINER_POLICY;
+	// empty means "flag".
+	encryptedContainerPolicy string
+	// contentReporter receives content-policy hits (SetContentPolicyReporter).
+	contentReporter contentPolicyReporterHolder
 
 	// retentionNotifyMu guards retentionMessages/retentionChannels: they are
 	// set post-construction (see SetRetentionPurgeNotifier) from

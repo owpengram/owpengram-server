@@ -634,6 +634,7 @@ func (r *Router) onMessagesSendMultiMedia(ctx context.Context, req *tg.MessagesS
 // resolveInputMedia 把 tg.InputMedia 解析为 domain.MessageMedia（上传则落库，引用则加载）。
 // 返回 nil 表示 InputMediaEmpty（调用方退化为纯文本）。
 func (r *Router) resolveInputMedia(ctx context.Context, userID int64, input tg.InputMediaClass) (*domain.MessageMedia, error) {
+	ctx = domain.WithContentUploader(ctx, userID)
 	switch in := input.(type) {
 	case *tg.InputMediaEmpty:
 		return nil, nil

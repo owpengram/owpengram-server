@@ -209,6 +209,9 @@ func (s *Service) CreateAvatarVideoFromBytes(ctx context.Context, data []byte, o
 }
 
 func (s *Service) createAvatarVideoFromUpload(ctx context.Context, file domain.UploadedFileRef, videoStartTs float64, extraSizes []domain.PhotoSize) (domain.Photo, error) {
+	if err := s.checkUploadContent(ctx, file, "video/mp4", "avatar_video"); err != nil {
+		return domain.Photo{}, domain.ErrPhotoInvalid
+	}
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
 	if err != nil {
 		return domain.Photo{}, err
@@ -329,7 +332,10 @@ func (s *Service) CreateDocumentFromUpload(ctx context.Context, file domain.Uplo
 	if doc, found, err := s.replayUploadedDocument(ctx, file, intentHash); err != nil || found {
 		return doc, err
 	}
-	if err := s.checkUploadContent(ctx, file, spec.MimeType); err != nil {
+	if domain.ContentUploaderFrom(ctx) == 0 {
+		ctx = domain.WithContentUploader(ctx, file.OwnerUserID)
+	}
+	if err := s.checkUploadContent(ctx, file, spec.MimeType, "upload"); err != nil {
 		return domain.Document{}, err
 	}
 	body, err := s.assembleUploadBlob(ctx, file.OwnerUserID, file.FileID, file.Parts)
@@ -646,6 +652,9 @@ func (s *Service) CreateDocumentFromBytes(ctx context.Context, data []byte, spec
 	if len(data) == 0 {
 		return domain.Document{}, domain.ErrDocumentInvalid
 	}
+	if err := s.checkBytesContent(ctx, data, spec.MimeType, "bytes"); err != nil {
+		return domain.Document{}, err
+	}
 	if strings.TrimSpace(spec.MimeType) == "" {
 		spec.MimeType = "application/octet-stream"
 	}
@@ -765,6 +774,7 @@ func (s *Service) DeleteProfilePhotosKind(ctx context.Context, ownerType domain.
 
 // createPhoto 把字节落 blob（每个尺寸一个 location_key，指向同一内容）并写 photos 表。
 func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSizeSpec, ownerUserID int64) (domain.Photo, error) {
+	data = s.sanitizeImageBytes(ctx, data, ownerUserID, "photo")
 	photoID := randomID()
 	sizes, err := s.putPhotoStaticSizes(ctx, photoID, data, specs)
 	if err != nil {
@@ -786,6 +796,7 @@ func (s *Service) createPhoto(ctx context.Context, data []byte, specs []photoSiz
 }
 
 func (s *Service) createAvatarPhoto(ctx context.Context, data []byte, ownerUserID int64) (domain.Photo, error) {
+	data = s.sanitizeImageBytes(ctx, data, ownerUserID, "avatar")
 	photoID := randomID()
 	sizes, err := s.putAvatarStaticSizes(ctx, photoID, data, photoSizeSpecsForAvatar(data))
 	if err != nil {
@@ -916,6 +927,12 @@ func (s *Service) putDocumentThumb(ctx context.Context, docID int64, thumbData [
 	if len(thumbData) == 0 {
 		return domain.PhotoSize{}, fmt.Errorf("empty document thumbnail")
 	}
+	// A thumbnail is re-served verbatim: it must be a real image, and nothing
+	// may be appended after it.
+	if _, _, err := image.DecodeConfig(bytes.NewReader(thumbData)); err != nil {
+		return domain.PhotoSize{}, fmt.Errorf("document thumbnail is not an image: %w", err)
+	}
+	thumbData = s.sanitizeImageBytes(ctx, thumbData, domain.ContentUploaderFrom(ctx), "document_thumb")
 	thumbKey, err := s.blobs.Put(ctx, thumbData)
 	if err != nil {
 		return domain.PhotoSize{}, err

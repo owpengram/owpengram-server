@@ -869,6 +869,9 @@ func validInlineExternalContentResultType(t string) bool {
 }
 
 func (r *Router) domainInlineExternalContentMedia(ctx context.Context, result domain.BotInlineResult) (*domain.MessageMedia, error) {
+	if userID, ok := UserIDFrom(ctx); ok && userID != 0 {
+		ctx = domain.WithContentUploader(ctx, userID)
+	}
 	if r.deps.Files == nil || result.Content == nil {
 		return nil, mediaInvalidErr()
 	}

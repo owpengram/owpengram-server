@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"time"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
@@ -31,6 +32,17 @@ func (r *Router) checkMessageTextPolicy(ctx context.Context, method, text string
 			zap.Int("text_len", utf8.RuneCountInString(text)),
 		}, r.contextLogFields(ctx)...)
 		r.log.Warn("message content policy hit", fields...)
+	}
+	if r != nil && r.deps.ContentPolicyReporter != nil {
+		userID, _ := UserIDFrom(ctx)
+		r.deps.ContentPolicyReporter.ReportContentPolicyHit(ctx, domain.ContentPolicyHit{
+			UserID:  userID,
+			Source:  "message",
+			Kind:    verdict.String(),
+			Blocked: verdict.Blocks(),
+			Size:    int64(len(text)),
+			At:      time.Now(),
+		})
 	}
 	if verdict.Blocks() {
 		return messageContentBlockedErr()

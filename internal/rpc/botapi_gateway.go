@@ -500,6 +500,7 @@ func (r *Router) botAPIEphemeralMedia(ctx context.Context, botID int64, kind str
 }
 
 func (r *Router) botAPIDocumentMedia(ctx context.Context, botID int64, kind string, file domain.BotAPIFileInput) (*domain.MessageMedia, error) {
+	ctx = domain.WithContentUploader(ctx, botID)
 	if r.deps.Files == nil {
 		return nil, errors.New("MEDIA_INVALID")
 	}
@@ -719,6 +720,7 @@ func botAPIChannelSendErr(err error) error {
 }
 
 func (r *Router) botAPIMedia(ctx context.Context, botID int64, kind, locationKey, remoteURL, fileName, mimeType string, fileBytes []byte) (*domain.MessageMedia, error) {
+	ctx = domain.WithContentUploader(ctx, botID)
 	switch kind {
 	case "photo":
 		var photo domain.Photo

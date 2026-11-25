@@ -159,6 +159,9 @@ func importBotAuthorizationErr(err error) error {
 	if errors.Is(err, domain.ErrBotTokenInvalid) {
 		return accessTokenInvalidErr()
 	}
+	if errors.Is(err, auth.ErrAccountBanned) {
+		return userDeactivatedBanErr()
+	}
 	return internalErr()
 }
 

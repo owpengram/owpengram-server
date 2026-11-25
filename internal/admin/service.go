@@ -1545,6 +1545,13 @@ func (s *Service) SetAccountFrozen(ctx context.Context, req SetAccountFrozenRequ
 		if err := s.notifyAccountFreezeChanged(ctx, updated); err != nil {
 			details["notify_error"] = err.Error()
 		}
+		cascaded, cascadeErr := s.cascadeOwnedBotsFreeze(ctx, req, next, now)
+		if len(cascaded) > 0 {
+			details["cascaded_bots"] = cascaded
+		}
+		if cascadeErr != nil {
+			details["cascade_error"] = cascadeErr.Error()
+		}
 		return CommandResult{Message: "account freeze updated", Details: details}, nil
 	})
 }
@@ -4207,4 +4214,78 @@ func messageIDs(messages []domain.Message) []int {
 		out = append(out, msg.ID)
 	}
 	return out
+}
+
+// botFreezeCascadePrefix marks a bot freeze created because its owner was
+// frozen, so unfreezing the owner lifts exactly those (and never a bot that
+// was frozen on its own).
+const botFreezeCascadePrefix = "owner frozen: "
+
+type ownedBotLister interface {
+	ListOwnedBots(ctx context.Context, ownerUserID int64) ([]domain.User, error)
+}
+
+// cascadeOwnedBotsFreeze freezes every bot owned by a newly frozen user (a
+// frozen owner must not keep operating through bots) and unfreezes the
+// cascaded ones when the owner is unfrozen. It returns the affected bot ids.
+func (s *Service) cascadeOwnedBotsFreeze(ctx context.Context, req SetAccountFrozenRequest, owner domain.AccountFreeze, now time.Time) ([]int64, error) {
+	lister, ok := s.bots.(ownedBotLister)
+	if !ok || lister == nil {
+		return nil, nil
+	}
+	bots, err := lister.ListOwnedBots(ctx, req.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("list owned bots: %w", err)
+	}
+	marker := fmt.Sprintf("%s%d", botFreezeCascadePrefix, req.UserID)
+	var affected []int64
+	var firstErr error
+	for _, bot := range bots {
+		if bot.ID == 0 || bot.ID == req.UserID {
+			continue
+		}
+		prev, found, err := s.restrictions.GetAccountFreeze(ctx, bot.ID)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		var next domain.AccountFreeze
+		switch {
+		case req.Frozen && !(found && prev.Frozen):
+			next = domain.AccountFreeze{
+				UserID:    bot.ID,
+				Frozen:    true,
+				Since:     now,
+				Until:     owner.Until,
+				AppealURL: owner.AppealURL,
+				Reason:    marker + ": " + req.Reason,
+				Actor:     req.Actor,
+				CommandID: req.CommandID,
+			}
+		case !req.Frozen && found && prev.Frozen && strings.HasPrefix(prev.Reason, marker+":"):
+			next = domain.AccountFreeze{
+				UserID:    bot.ID,
+				Frozen:    false,
+				Reason:    marker + ": owner unfrozen",
+				Actor:     req.Actor,
+				CommandID: req.CommandID,
+			}
+		default:
+			continue
+		}
+		updated, err := s.restrictions.SetAccountFreeze(ctx, next)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		affected = append(affected, bot.ID)
+		if err := s.notifyAccountFreezeChanged(ctx, updated); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return affected, firstErr
 }

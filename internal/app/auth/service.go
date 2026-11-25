@@ -1493,6 +1493,10 @@ func (s *Service) SignInBot(ctx context.Context, auth domain.Authorization, toke
 		subtle.ConstantTimeCompare([]byte(profile.TokenSecret), []byte(secret)) != 1 {
 		return domain.User{}, domain.ErrBotTokenInvalid
 	}
+	// A bot of a frozen owner is banned together with its owner.
+	if err := s.checkLoginNotFrozen(ctx, profile.OwnerUserID); err != nil {
+		return domain.User{}, err
+	}
 	u, found, err := s.users.ByID(ctx, botUserID)
 	if err != nil {
 		return domain.User{}, err

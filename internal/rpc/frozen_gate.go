@@ -142,3 +142,34 @@ func (r *Router) checkFrozenChannelParticipants(ctx context.Context, userID int6
 	}
 	return nil
 }
+
+// BotAPIAccessBlocked implements botapi.BotAccessChecker: while frozen
+// accounts are banned, a Bot API bot is refused when the bot itself or its
+// owner is frozen (a frozen owner must not keep operating through bots).
+func (r *Router) BotAPIAccessBlocked(ctx context.Context, botID int64) (bool, error) {
+	if r == nil || r.deps.AccountFreeze == nil || !r.deps.FrozenAccountsBanned || botID == 0 {
+		return false, nil
+	}
+	if frozen, err := r.accountFrozen(ctx, botID); err != nil || frozen {
+		return frozen, err
+	}
+	if r.deps.Bots == nil {
+		return false, nil
+	}
+	profile, found, err := r.deps.Bots.BotInfo(ctx, botID)
+	if err != nil {
+		return false, err
+	}
+	if !found || profile.OwnerUserID == 0 {
+		return false, nil
+	}
+	return r.accountFrozen(ctx, profile.OwnerUserID)
+}
+
+func (r *Router) accountFrozen(ctx context.Context, userID int64) (bool, error) {
+	freeze, found, err := r.deps.AccountFreeze.AccountFreeze(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return found && freeze.Frozen, nil
+}

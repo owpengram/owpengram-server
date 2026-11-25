@@ -53,3 +53,40 @@ func TestFrozenReadOnlyModeKeepsReadsAllowed(t *testing.T) {
 		t.Fatalf("write err = %v, want FROZEN_METHOD_INVALID", err)
 	}
 }
+
+type frozenBanBots struct {
+	BotsService
+	owner map[int64]int64
+}
+
+func (b frozenBanBots) BotInfo(_ context.Context, botID int64) (domain.BotProfile, bool, error) {
+	owner, ok := b.owner[botID]
+	return domain.BotProfile{BotUserID: botID, OwnerUserID: owner}, ok, nil
+}
+
+func TestBotAPIAccessBlockedForFrozenBotOrOwner(t *testing.T) {
+	const (
+		owner      = int64(3001)
+		bot        = int64(3002)
+		frozenBot  = int64(3003)
+		otherOwner = int64(3004)
+		otherBot   = int64(3005)
+	)
+	provider := &frozenGateFreezeProvider{items: map[int64]domain.AccountFreeze{
+		owner:     frozenGateActiveState(owner),
+		frozenBot: frozenGateActiveState(frozenBot),
+	}}
+	bots := frozenBanBots{owner: map[int64]int64{bot: owner, frozenBot: otherOwner, otherBot: otherOwner}}
+	router := &Router{deps: Deps{AccountFreeze: provider, FrozenAccountsBanned: true, Bots: bots}}
+	ctx := context.Background()
+	for id, want := range map[int64]bool{bot: true, frozenBot: true, otherBot: false} {
+		got, err := router.BotAPIAccessBlocked(ctx, id)
+		if err != nil || got != want {
+			t.Fatalf("bot %d blocked=%v err=%v, want %v", id, got, err, want)
+		}
+	}
+	readonly := &Router{deps: Deps{AccountFreeze: provider, Bots: bots}}
+	if got, _ := readonly.BotAPIAccessBlocked(ctx, bot); got {
+		t.Fatal("readonly mode must not ban bots of frozen owners")
+	}
+}

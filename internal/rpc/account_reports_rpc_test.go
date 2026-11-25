@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/owpengram/owpengram-td/clock"
 	"github.com/owpengram/owpengram-td/tg"
@@ -67,5 +68,31 @@ func TestAccountReportPeerPersistsImmutableSnapshot(t *testing.T) {
 	if err != nil || !found ||
 		string(again.Items[0].Evidence) != string(stored[0].Items[0].Evidence) {
 		t.Fatalf("immutable snapshot=%+v found=%v err=%v", again, found, err)
+	}
+}
+
+// Automatic content-policy flags are filed by the official system account
+// through the real moderation service and land in the report store.
+func TestAutoFlaggerFilesRealModerationReport(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	target, err := users.Create(ctx, domain.User{AccessHash: 303, Phone: "15550005003", FirstName: "Uploader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userService := appusers.NewService(users)
+	reports := memory.NewModerationReportStore()
+	svc := appmoderation.NewService(reports, appmoderation.WithPeerReaders(userService, nil))
+	flagger := appmoderation.NewAutoFlagger(svc, domain.OfficialSystemUserID, zaptest.NewLogger(t))
+	flagger.ReportContentPolicyHit(ctx, domain.ContentPolicyHit{UserID: target.ID, Source: "upload", Kind: "blocked_format", Format: "ALICEU", Blocked: true})
+	deadline := time.Now().Add(3 * time.Second)
+	for len(reports.Reports()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	stored := reports.Reports()
+	if len(stored) != 1 || stored[0].ReporterUserID != domain.OfficialSystemUserID ||
+		stored[0].Target != (domain.Peer{Type: domain.PeerTypeUser, ID: target.ID}) ||
+		stored[0].Option != "auto_content_policy" {
+		t.Fatalf("stored = %+v", stored)
 	}
 }

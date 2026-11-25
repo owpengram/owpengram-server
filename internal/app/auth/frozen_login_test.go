@@ -110,3 +110,29 @@ func TestFrozenEmailAccountCannotLogIn(t *testing.T) {
 		t.Fatalf("SendCode for frozen email account err = %v, want ErrAccountBanned", err)
 	}
 }
+
+func TestBotOfFrozenOwnerCannotLogIn(t *testing.T) {
+	ctx := context.Background()
+	users := memory.NewUserStore()
+	owner, err := users.Create(ctx, domain.User{AccessHash: 1, Phone: "15550009101", FirstName: "Owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bots := memory.NewBotStore(users)
+	botUser, _, err := bots.CreateBotAccount(ctx, domain.User{AccessHash: 2, FirstName: "Bot", Username: "owner_test_bot", Bot: true},
+		domain.BotProfile{OwnerUserID: owner.ID, TokenSecret: "s3cret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	freezes := &fakeFreezes{frozen: map[int64]bool{owner.ID: true}}
+	svc := NewService(users, memory.NewAuthorizationStore(), memory.NewCodeStore(), nil, nil, "12345",
+		WithBotLogin(bots), WithFrozenLoginBlock(freezes))
+	token := domain.FormatBotToken(botUser.ID, "s3cret")
+	if _, err := svc.SignInBot(ctx, domain.Authorization{AuthKeyID: [8]byte{9}}, token); !errors.Is(err, ErrAccountBanned) {
+		t.Fatalf("bot of frozen owner err = %v, want ErrAccountBanned", err)
+	}
+	delete(freezes.frozen, owner.ID)
+	if _, err := svc.SignInBot(ctx, domain.Authorization{AuthKeyID: [8]byte{9}}, token); err != nil {
+		t.Fatalf("bot login after owner unfrozen: %v", err)
+	}
+}

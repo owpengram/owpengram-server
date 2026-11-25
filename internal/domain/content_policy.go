@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"context"
 	"math"
 	"strings"
+	"time"
 )
 
 // blockedClientMarkers are protocol strings of third-party client-side
@@ -192,4 +194,39 @@ func looksOpaque(token string) bool {
 		h -= p * math.Log2(p)
 	}
 	return h >= minOpaqueTokenEntropy
+}
+
+// ContentPolicyHit is one anti-abuse content-policy signal (an upload or a
+// message text that tripped a check). It carries metadata only, never
+// content.
+type ContentPolicyHit struct {
+	UserID  int64
+	Source  string // "upload", "bytes", "photo", "avatar_video", "message"
+	Kind    string // e.g. "blocked_format", "opaque", "trailing_data", "raw_public_key"
+	Format  string
+	Blocked bool
+	Size    int64
+	At      time.Time
+}
+
+// ContentPolicyReporter receives content-policy hits (e.g. to file automatic
+// moderation reports). Implementations must not block the caller.
+type ContentPolicyReporter interface {
+	ReportContentPolicyHit(ctx context.Context, hit ContentPolicyHit)
+}
+
+type contentUploaderKey struct{}
+
+// WithContentUploader attributes uploads made through byte-based paths (Bot
+// API, inline bots, external media) to a user for content-policy logging.
+func WithContentUploader(ctx context.Context, userID int64) context.Context {
+	return context.WithValue(ctx, contentUploaderKey{}, userID)
+}
+
+// ContentUploaderFrom returns the user set by WithContentUploader.
+func ContentUploaderFrom(ctx context.Context) int64 {
+	if v, ok := ctx.Value(contentUploaderKey{}).(int64); ok {
+		return v
+	}
+	return 0
 }

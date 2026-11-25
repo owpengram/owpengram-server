@@ -355,6 +355,13 @@ type Config struct {
 	// authorization, and every existing session gets 401 USER_DEACTIVATED_BAN;
 	// "readonly" keeps Telegram's read-only frozen-account semantics.
 	FrozenAccountPolicy string
+	// StorageEncryptedContainerPolicy (TELESRV_STORAGE_ENCRYPTED_CONTAINER_POLICY):
+	// password-protected zip/7z/rar, openssl/age/OpenPGP encrypted files --
+	// "flag" (default: allowed, logged, reported to moderation), "block", "off".
+	StorageEncryptedContainerPolicy string
+	// ContentPolicyAutoReport (TELESRV_CONTENT_POLICY_AUTO_REPORT, default
+	// true) files automatic moderation reports for content-policy hits.
+	ContentPolicyAutoReport bool
 	// StorageUsageRefreshInterval is how often the cached free-space/budget
 	// usage gauge refreshes; <=0 uses a 1 minute default.
 	StorageUsageRefreshInterval time.Duration
@@ -1131,9 +1138,9 @@ func Load() (Config, error) {
 		PostgresMode:            strings.ToLower(strings.TrimSpace(envOr("TELESRV_POSTGRES_MODE", ""))),
 		EmbeddedPostgresDataDir: envOr("TELESRV_EMBEDDED_POSTGRES_DIR", "data/postgres"),
 		EmbeddedPostgresPort:    envIntOr("TELESRV_EMBEDDED_POSTGRES_PORT", 15433),
-		PostgresDSN:      envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable"),
-		PostgresMaxConns: envIntOr("TELESRV_POSTGRES_MAX_CONNS", 50),
-		PostgresMinConns: envIntOr("TELESRV_POSTGRES_MIN_CONNS", 16),
+		PostgresDSN:             envOr("TELESRV_POSTGRES_DSN", "postgres://telesrv:telesrv@127.0.0.1:5432/telesrv_main?sslmode=disable"),
+		PostgresMaxConns:        envIntOr("TELESRV_POSTGRES_MAX_CONNS", 50),
+		PostgresMinConns:        envIntOr("TELESRV_POSTGRES_MIN_CONNS", 16),
 
 		DevAuthCode:                 envOr("TELESRV_DEV_AUTH_CODE", "12345"),
 		WelcomeMessagePhoneTemplate: envOr("TELESRV_WELCOME_MESSAGE_PHONE_TEMPLATE", domain.DefaultWelcomeMessagePhoneTemplate),
@@ -1184,6 +1191,8 @@ func Load() (Config, error) {
 		StorageMaxUploadFileBytes:         envInt64Or("TELESRV_STORAGE_MAX_UPLOAD_FILE_BYTES", 0),
 		StorageOpaqueUploadPolicy:         strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_OPAQUE_UPLOAD_POLICY", files.OpaqueUploadPolicyBlock))),
 		FrozenAccountPolicy:               strings.ToLower(strings.TrimSpace(envOr("TELESRV_FROZEN_ACCOUNT_POLICY", FrozenAccountPolicyBan))),
+		StorageEncryptedContainerPolicy:   strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_ENCRYPTED_CONTAINER_POLICY", files.EncryptedContainerPolicyFlag))),
+		ContentPolicyAutoReport:           envBoolOr("TELESRV_CONTENT_POLICY_AUTO_REPORT", true),
 		StorageUsageRefreshInterval:       envDurationOr("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL", time.Minute),
 		StorageRetentionMode:              strings.ToLower(strings.TrimSpace(envOr("TELESRV_STORAGE_RETENTION_MODE", StorageRetentionModeOff))),
 		StorageRetentionMaxAge:            envDurationOr("TELESRV_STORAGE_RETENTION_MAX_AGE", 30*24*time.Hour),
@@ -1311,20 +1320,20 @@ func Load() (Config, error) {
 		CallSignalingRate:      envIntOr("TELESRV_CALL_SIGNALING_RATE", 50),
 		CallExpiryInterval:     envDurationOr("TELESRV_CALL_EXPIRY_INTERVAL", time.Second),
 
-		PremiumGrantMonths:        envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
-		DefaultStickerSetID:       envInt64Or("TELESRV_DEFAULT_STICKER_SET_ID", 0),
-		PasskeyRPID:               envOr("TELESRV_PASSKEY_RP_ID", "owpengram.org"),
-		PasskeyAllowedOrigins:     envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
-		StarsStartingGrant:        envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
-		StarsMonthlyClaimAmount:   envInt64Or("TELESRV_STARS_MONTHLY_CLAIM_AMOUNT", 100),
-		StarsMonthlyClaimInterval: envDurationOr("TELESRV_STARS_MONTHLY_CLAIM_INTERVAL", 30*24*time.Hour),
+		PremiumGrantMonths:          envIntOr("TELESRV_PREMIUM_GRANT_MONTHS", 3),
+		DefaultStickerSetID:         envInt64Or("TELESRV_DEFAULT_STICKER_SET_ID", 0),
+		PasskeyRPID:                 envOr("TELESRV_PASSKEY_RP_ID", "owpengram.org"),
+		PasskeyAllowedOrigins:       envListOr("TELESRV_PASSKEY_ALLOWED_ORIGINS", nil),
+		StarsStartingGrant:          envInt64Or("TELESRV_STARS_STARTING_GRANT", 1000),
+		StarsMonthlyClaimAmount:     envInt64Or("TELESRV_STARS_MONTHLY_CLAIM_AMOUNT", 100),
+		StarsMonthlyClaimInterval:   envDurationOr("TELESRV_STARS_MONTHLY_CLAIM_INTERVAL", 30*24*time.Hour),
 		StarsAntiFarmGuardEnabled:   envBoolOr("TELESRV_STARS_ANTI_FARM_GUARD_ENABLED", true),
 		StarsAntiFarmGuardThreshold: int(envInt64Or("TELESRV_STARS_ANTI_FARM_GUARD_THRESHOLD", 3)),
-		RatingEnabled:             envBoolOr("TELESRV_RATING_ENABLED", true),
-		RatingPendingDelay:        envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
-		RatingRecomputeInterval:   envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
-		RatingRecomputeBatch:      envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
-		RatingStaleAfter:          envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
+		RatingEnabled:               envBoolOr("TELESRV_RATING_ENABLED", true),
+		RatingPendingDelay:          envDurationOr("TELESRV_RATING_PENDING_DELAY", 24*time.Hour),
+		RatingRecomputeInterval:     envDurationOr("TELESRV_RATING_RECOMPUTE_INTERVAL", 15*time.Minute),
+		RatingRecomputeBatch:        envIntOr("TELESRV_RATING_RECOMPUTE_BATCH", 500),
+		RatingStaleAfter:            envDurationOr("TELESRV_RATING_STALE_AFTER", 6*time.Hour),
 		// Every TELESRV_RATING_WEIGHT_* default mirrors domain.DefaultAccountRatingWeights()
 		// exactly, so the shipped behaviour cannot drift from it.
 		RatingWeightStarsReceivedPermille: envInt64Or("TELESRV_RATING_WEIGHT_STARS_RECEIVED_PERMILLE", domain.DefaultAccountRatingWeights().StarsReceivedPermille),
@@ -1602,6 +1611,9 @@ func validateBlobStorageConfig(cfg Config) error {
 	if err := validateFrozenAccountPolicy(cfg.FrozenAccountPolicy); err != nil {
 		return err
 	}
+	if err := validateEncryptedContainerPolicy(cfg.StorageEncryptedContainerPolicy); err != nil {
+		return err
+	}
 	if cfg.StorageLowSpaceGuardEnable && cfg.StorageUsageRefreshInterval <= 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be positive when storage capacity guard is enabled")
 	}
@@ -1844,6 +1856,9 @@ func validateStorageConfig(cfg Config) error {
 	if err := validateFrozenAccountPolicy(cfg.FrozenAccountPolicy); err != nil {
 		return err
 	}
+	if err := validateEncryptedContainerPolicy(cfg.StorageEncryptedContainerPolicy); err != nil {
+		return err
+	}
 	if cfg.StorageUsageRefreshInterval < 0 {
 		return fmt.Errorf("TELESRV_STORAGE_USAGE_REFRESH_INTERVAL must be non-negative")
 	}
@@ -1907,6 +1922,15 @@ const (
 // Empty (configs built without Load) counts as the "ban" default.
 func (c Config) FrozenAccountsBanned() bool {
 	return c.FrozenAccountPolicy != FrozenAccountPolicyReadOnly
+}
+
+func validateEncryptedContainerPolicy(v string) error {
+	switch v {
+	case "", files.EncryptedContainerPolicyFlag, files.EncryptedContainerPolicyBlock, files.EncryptedContainerPolicyOff:
+		return nil
+	}
+	return fmt.Errorf("TELESRV_STORAGE_ENCRYPTED_CONTAINER_POLICY must be %q, %q or %q, got %q",
+		files.EncryptedContainerPolicyFlag, files.EncryptedContainerPolicyBlock, files.EncryptedContainerPolicyOff, v)
 }
 
 func validateFrozenAccountPolicy(v string) error {

@@ -194,6 +194,9 @@ func (h *handler) handle(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "ACCESS_TOKEN_INVALID")
 		return
 	}
+	if !h.checkBotAccess(w, r.Context(), botID) {
+		return
+	}
 	switch strings.ToLower(method) {
 	case "getme":
 		h.getMe(w, r, botID)
@@ -933,6 +936,9 @@ func (h *handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "ACCESS_TOKEN_INVALID")
 		return
 	}
+	if !h.checkBotAccess(w, r.Context(), botID) {
+		return
+	}
 	locationKey, ok := decodeBotAPIFileID(fileID)
 	if !ok {
 		writeAPIError(w, http.StatusBadRequest, "FILE_ID_INVALID")
@@ -1104,6 +1110,33 @@ func validWebhookSecret(secret string) bool {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 			continue
 		}
+		return false
+	}
+	return true
+}
+
+// BotAccessChecker is implemented by the gateway when moderation can refuse a
+// bot (a frozen bot, or a bot whose owner is frozen, while frozen accounts
+// are banned).
+type BotAccessChecker interface {
+	BotAPIAccessBlocked(ctx context.Context, botID int64) (bool, error)
+}
+
+// checkBotAccess writes the error response and returns false when the bot
+// must be refused. A lookup failure is a 500 (retryable), never a 401, so bot
+// libraries do not treat a transient error as a revoked token.
+func (h *handler) checkBotAccess(w http.ResponseWriter, ctx context.Context, botID int64) bool {
+	checker, ok := h.gateway.(BotAccessChecker)
+	if !ok || checker == nil {
+		return true
+	}
+	blocked, err := checker.BotAPIAccessBlocked(ctx, botID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR")
+		return false
+	}
+	if blocked {
+		writeAPIError(w, http.StatusUnauthorized, "BOT_BANNED")
 		return false
 	}
 	return true
